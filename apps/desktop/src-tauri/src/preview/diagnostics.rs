@@ -43,7 +43,7 @@ use super::dto::{
     PreviewErrorDto, bounded_text, invalid_diagnostics_reservation, redact_absolute_paths,
 };
 use super::operation::{AttemptFacts, CancellationFacts, ItemOutputTopology, ItemState};
-use super::selection::DatasetSourceKind;
+use super::selection::{DatasetSourceKind, NotVerifiedByMscanvas};
 
 pub(super) mod payload;
 
@@ -52,7 +52,8 @@ const DIAGNOSTICS_RESERVATION_PREFIX: &str = "diagnostics-reservation-";
 /// The default name the native save dialog offers.
 pub(super) const DIAGNOSTICS_FILE_NAME: &str = "mscanvas-conversion-diagnostics.json";
 
-/// The largest diagnostics document MSCanvas will write.
+/// The largest diagnostics document MSCanvas will write for a document that
+/// diagnoses `items` queue items.
 ///
 /// Checked against the serialized UTF-8 bytes plus their trailing newline,
 /// before anything is created. A payload over it is a refusal and not a
@@ -60,10 +61,19 @@ pub(super) const DIAGNOSTICS_FILE_NAME: &str = "mscanvas-conversion-diagnostics.
 /// would hand the user something no reader can open in exchange for hiding the
 /// fact that the bound was reached.
 ///
-/// Sixteen items, each with two 32 KiB excerpts, is a little over one mebibyte
-/// of text before structure. Two is that with room for the structure and the
-/// facts, and far below what a person or a text editor finds awkward.
-pub(super) const MAX_DIAGNOSTIC_EXPORT_BYTES: usize = 2 * 1024 * 1024;
+/// **The rule (ADR 0057, decision 3): the 2 MiB this bound always was, or
+/// 128 KiB per diagnosed item, whichever is larger.** The document holds the
+/// queue's counts and one entry per diagnosed item, and one item may retain two
+/// 32 KiB excerpts; 128 KiB is those with room for the structure and the
+/// facts. A queue of sixteen or fewer keeps exactly the 2 MiB it had, and a
+/// full queue of 1,024 is 128 MiB. Excerpts that need heavy escaping can still
+/// exceed it, and the document is then refused whole.
+pub(super) const fn max_diagnostic_export_bytes(items: usize) -> usize {
+    const FLOOR: usize = 2 * 1024 * 1024;
+    const PER_ITEM: usize = 128 * 1024;
+    let scaled = PER_ITEM.saturating_mul(items);
+    if scaled > FLOOR { scaled } else { FLOOR }
+}
 
 /// The one sentence this feature must never be shipped without.
 ///
@@ -116,7 +126,8 @@ impl fmt::Debug for DiagnosticsReservationId {
 ///
 /// One per queue item at most, replaced whole when a later attempt settles, and
 /// dropped when the queue is replaced or the process exits. Bounded by the
-/// queue's existing sixteen items and by the excerpt bound inside each.
+/// queue's capacity (`MAX_CONVERSION_QUEUE_ITEMS`) and by the excerpt bound
+/// inside each: up to about 64 MiB of excerpts across a full queue.
 pub(super) struct ConversionFailureDiagnosticTicket {
     identity: DiagnosticItemIdentity,
     /// The state this was built for. Compared against the item's current state
@@ -159,6 +170,13 @@ pub(super) struct ConversionFailureDiagnosticTicket {
     /// Present only for a set item, which is why an export of an ordinary queue
     /// is byte-identical to what it was before this existed.
     output_set: Option<OutputSetDiagnosticFacts>,
+    /// The release the "unverified build" label names, for an attempt that
+    /// ran, or was bound to run, on a build with no measured row (ADR 0055).
+    unverified_build_release: Option<String>,
+    /// Whether the attempt ran under settings "not verified by MSCanvas"
+    /// (ADR 0055 decision 1): its report's answer, or else the label `BEGIN`
+    /// bound to its row (`labelled`). `None` only on a ticket given neither.
+    unverified_settings: Option<bool>,
 }
 
 /// What an export says about one backend-named set's attempt.
@@ -293,6 +311,8 @@ impl ConversionFailureDiagnosticTicket {
             // its job, and the run itself already declined to retain its text.
             text: (state == ItemState::Failed).then_some(text).flatten(),
             output_set: None,
+            unverified_build_release: report.unverified_build_release().map(str::to_owned),
+            unverified_settings: Some(report.unverified_settings()),
         })
     }
 
@@ -361,6 +381,8 @@ impl ConversionFailureDiagnosticTicket {
             attempt,
             text: (state == ItemState::Failed).then_some(text).flatten(),
             output_set: Some(facts),
+            unverified_build_release: None,
+            unverified_settings: None,
         })
     }
 
@@ -400,6 +422,8 @@ impl ConversionFailureDiagnosticTicket {
             // A refusal reaches every family, so the shape comes from the item
             // rather than from the run it never made.
             output_set,
+            unverified_build_release: None,
+            unverified_settings: None,
         }
     }
 
@@ -447,7 +471,21 @@ impl ConversionFailureDiagnosticTicket {
             // reaches the run before it settles, so these are the shape and
             // nothing else -- see `SetStopFacts::bound_source_objects`.
             output_set,
+            unverified_build_release: None,
+            unverified_settings: None,
         })
+    }
+
+    /// Gives a ticket with no single-output report -- a refusal, a stop, a
+    /// set -- the "not verified by MSCanvas" label `BEGIN` bound to its row
+    /// (ADR 0055 decision 3), so the export says what the queue row says. No
+    /// label is the measured build under verified settings, not "unknown".
+    #[must_use]
+    pub(super) fn labelled(mut self, label: Option<&NotVerifiedByMscanvas>) -> Self {
+        self.unverified_build_release =
+            label.and_then(|label| label.unverified_build_release.clone());
+        self.unverified_settings = Some(label.is_some_and(|label| label.unverified_settings));
+        self
     }
 
     pub(super) const fn operation(&self) -> u64 {

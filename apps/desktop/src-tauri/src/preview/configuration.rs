@@ -13,7 +13,9 @@
 //!
 //! [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
 
-use mscanvas_proteowizard::{ConversionIntent, InstalledHelpCapabilities, OpenFormat};
+use mscanvas_proteowizard::{
+    ConversionIntent, ConversionSourceKind, InstalledHelpCapabilities, OpenFormat,
+};
 
 use super::authority::{BackendBindingReceipt, Binding};
 use super::dto::{
@@ -125,7 +127,7 @@ pub(crate) enum RowAdmission {
 /// Every admitted combination, judged against this product's source evidence
 /// and then against one installation's grammar.
 ///
-/// Always all nine rows, in the order `ConversionIntent::ADMITTED` states them.
+/// Always every row, in the order `ConversionIntent::ADMITTED` states them.
 /// A catalog that omitted its unavailable rows could not answer the question
 /// Decision 7's one-axis edit asks -- *does a row for this combination exist at
 /// all, and if so is it available here?* -- and the answers are different
@@ -135,6 +137,14 @@ pub(crate) enum RowAdmission {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConversionCatalog {
     rows: Vec<CatalogRow>,
+    /// Each convertible family this build admits without a measured row, with
+    /// the release its "unverified build" label names (ADR 0055's relaxed
+    /// gate). Read with the grammar, because a plan runs no discovery.
+    unverified_builds: Vec<(ConversionSourceKind, String)>,
+    /// The grammar the rows were judged against, kept so a plan -- which runs
+    /// no discovery -- can ask the same build about an advanced intent's
+    /// options and filters, and about decision 1's tier per family.
+    capabilities: Box<InstalledHelpCapabilities>,
 }
 
 impl ConversionCatalog {
@@ -159,6 +169,13 @@ impl ConversionCatalog {
                     availability: Self::availability_of(admitted.intent(), capabilities),
                 })
                 .collect(),
+            unverified_builds: super::conversion::convertible_source_kinds()
+                .filter_map(|kind| {
+                    super::conversion::unverified_build_release(capabilities, kind)
+                        .map(|release| (kind, release))
+                })
+                .collect(),
+            capabilities: Box::new(capabilities.clone()),
         }
     }
 
@@ -386,6 +403,14 @@ impl ConversionConfigurations {
     /// statement about the build the receipt names, so a lookup that fell back
     /// to the admitted table would report the *product's* evidence as though it
     /// were this installation's.
+    /// The grammar this binding's catalog was read from, where it has one.
+    pub(crate) fn capabilities(&mut self, binding: Binding) -> Option<InstalledHelpCapabilities> {
+        match self.for_binding(binding) {
+            ConversionConfiguration::Ready { catalog } => Some((*catalog.capabilities).clone()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn admits(&mut self, binding: Binding, intent: &ConversionIntent) -> RowAdmission {
         let ConversionConfiguration::Ready { catalog } = self.for_binding(binding) else {
             return RowAdmission::NoCatalog;
@@ -406,6 +431,18 @@ impl ConversionConfigurations {
                     RowAdmission::NotEvidencedForSources
                 }
             })
+    }
+
+    /// The families this binding's build admits unverified, with the release
+    /// each label names. Empty without a catalog and on a measured build.
+    pub(crate) fn unverified_builds(
+        &mut self,
+        binding: Binding,
+    ) -> Vec<(ConversionSourceKind, String)> {
+        match self.for_binding(binding) {
+            ConversionConfiguration::Ready { catalog } => catalog.unverified_builds.clone(),
+            _ => Vec::new(),
+        }
     }
 
     pub(crate) fn for_binding(&mut self, binding: Binding) -> &ConversionConfiguration {
@@ -740,8 +777,8 @@ This filter performs centroiding on spectra with the selected <ms levels>.
 
     #[test]
     fn the_catalog_keeps_every_admitted_row_including_the_unavailable_ones() {
-        // A build lacking only the peak-picking grammar. Two admitted rows
-        // compose processing, and both are unavailable on it.
+        // A build lacking only the peak-picking grammar. Four admitted rows
+        // compose processing, and all are unavailable on it.
         let rows = catalog_of(&ConversionConfiguration::Ready {
             catalog: ConversionCatalog::of(&help_without("peakPicking [")),
         });
@@ -749,9 +786,9 @@ This filter performs centroiding on spectra with the selected <ms levels>.
 
         let centroided: Vec<_> = rows
             .iter()
-            .filter(|row| row.intent.processing == "unscoped_default_centroiding")
+            .filter(|row| row.intent.processing != "no_additional_centroiding")
             .collect();
-        assert_eq!(centroided.len(), 2);
+        assert_eq!(centroided.len(), 4);
         assert!(centroided.iter().all(|row| !row.available));
 
         // And the axis values those two rows use are not condemned with them.
@@ -816,7 +853,7 @@ This filter performs centroiding on spectra with the selected <ms levels>.
         let rows = catalog_of(&ConversionConfiguration::Ready {
             catalog: ConversionCatalog::of(&complete_help()),
         });
-        assert_eq!(rows.len(), 9);
+        assert_eq!(rows.len(), 11);
         assert!(
             ConversionIntent::admitted(
                 OutputFormat::MzMl,
@@ -826,7 +863,7 @@ This filter performs centroiding on spectra with the selected <ms levels>.
                 CompressionIntent::Zlib,
             )
             .is_none(),
-            "MS1 at 32/32 is one of the thirty-nine the evidence never measured"
+            "MS1 at 32/32 is one of the combinations the evidence never measured"
         );
     }
 }

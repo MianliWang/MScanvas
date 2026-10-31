@@ -57,6 +57,14 @@ const SHOWN_AS_UNTRANSLATED_ORIGINAL: readonly string[] = [
   // derived, a destination that could not be used -- and which one applies is
   // the part a reader acts on. One resource would have to merge them.
   "conversion_not_plannable",
+  // ADR 0055's structured conversion intent. No surface sends one yet; the
+  // conversion UI lane gives each a resource with its "not verified by
+  // MSCanvas" copy.
+  "conversion_intent_ambiguous",
+  "conversion_intent_not_checkable",
+  "conversion_intent_rejected",
+  "conversion_intent_unsupported",
+  "conversion_step_blocked_for_source",
   // Test seams. Not reachable from any shipped path; `spectrum_failed` is
   // produced only in `preview/tests.rs` (PM9 UI-44).
   "spectrum_failed",

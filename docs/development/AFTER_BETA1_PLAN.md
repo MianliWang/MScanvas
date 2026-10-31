@@ -140,6 +140,16 @@ accepted):
 
 **Still open** (not decided on 2026-10-29):
 
+- what the schema-5 build does with beta 1's schema-4 projects. Implemented on
+  `be/integrate` (draft PR #161), pending an owner decision before merge: it
+  reads them, writes nothing on a Save with nothing unsaved, writes schema 5 on
+  the first Save after a change, and from then on beta 1 cannot open that
+  project (ADR 0055, risks, the note of 2026-10-29 on a schema-4 document). A
+  beta-1 document near the 4 MiB bound opens but cannot be saved here. Beta 1's `INSTALL_AND_SUPPORT.md` says no compatibility
+  between betas is promised, while the M9 closure says publishing begins
+  schema 4's promise; the owner decides which one stands. *Decided by the
+  owner on 2026-10-30: read and upgrade, as implemented, and the M9 closure's
+  position stands (the later decisions of 2026-10-30 below);*
 - the R0 real-file comparison for the reader (ADR 0056, decision 8): the PRIDE
   `PXD081190` download, an MS1 profile-mode file from the owner, and a
   ProteoWizard hold release. *R0 ran on 2026-10-29 on public files
@@ -193,7 +203,37 @@ there is capacity, no decompilation, and every other point as recommended):
    profile-MS2 file is measured (*one was on 2026-10-30: see
    [section 7.5](#75-evidence-gated-items)*)
    ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
-   [PR #162](https://github.com/MianliWang/MScanvas/pull/162)).
+   [PR #162](https://github.com/MianliWang/MScanvas/pull/162)). *Implemented
+   2026-10-30 on `be/thermo-ms1`;
+   [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)
+   records how. Later on 2026-10-30 "MS2 and up" became verified too (the
+   later decisions below).*
+
+**Owner decisions, later on 2026-10-30** (every recommendation accepted):
+
+1. **Beta 1's schema-4 projects are read and upgraded.** The schema-5 build
+   keeps the disposition implemented on `be/integrate` (draft PR #161).
+   Opening writes nothing, and a Save with nothing unsaved writes nothing. The
+   first Save after a change writes schema 5, which beta 1 cannot open. A
+   beta-1 document near the 4 MiB bound opens but cannot be saved. The M9
+   closure's position stands: publishing beta 1 began schema 4's compatibility
+   promise. Beta 1's `INSTALL_AND_SUPPORT.md` carries a dated correction, and
+   the next release notes say to keep a copy of a project before saving it in
+   the new version. A warning before the first schema-5 Save is still
+   interface work ([ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+   risks).
+   *Implemented on `be/integrate` (PR #161), 2026-10-30: Save, Save first and
+   Save As over a beta-1 file ask first (ADR 0055, "The prompt"): Save only
+   with unsaved changes, Save As whenever the bound document is schema 4, the
+   keyboard on Cancel.*
+2. **"MS2 and up" vendor centroiding is verified.** `peakPicking vendor
+   msLevel=2-` becomes the eleventh verified row, for Thermo RAW on the
+   evidenced build, with the same family domain and output check as "MS1 and
+   up". The measurement decision 6 above waited for is source 3c of the
+   [evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md) (PR #173): all
+   23,676 Orbitrap profile MS2 spectra of a Q Exactive data-independent run
+   centroided, and its 474 profile MS1 spectra left bit-identical. The default
+   conversion stays profile ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).
 
 **Owner direction, 2026-10-30** (later the same day), verbatim:
 "我们需要把这些后端功能都计划好来做，只有msconvert的其实只能算初版，但是也算是能用的MVP了"
@@ -672,7 +712,7 @@ None can be delivered by engineering alone; each waits for one input.
 | --- | --- | --- |
 | Folder/drop vendor files | Owner decision (given 2026-10-28 for Thermo and Shimadzu; section 6.1). SCIEX: a measurement that its derived companion cannot pair with a same-stem `.wiff2` | M–L |
 | XIC (VIEW-007) | A new scope record for a bounded project-owned mzML array decoder: a new candidate, not a repair of PX's refused one, rerunning all 77 rows; a written decision on reader work and dependency approval. *2026-10-30: the scope record is [ADR 0071](../architecture/adr/0071-xic-re-entry-and-its-first-version.md), accepted with owner decisions X-1 and X-2; it needs no new dependency, and the 77-row rerun and its decision still gate the feature* | L–XL |
-| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2). Later the same day a public Q Exactive profile-MS2 file (PRIDE `PXD066799`) was measured, so "MS2 and up" meets that condition; its verified row is a follow-up code change ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#consequences))* | M–L |
+| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2). Later the same day a public Q Exactive profile-MS2 file (PRIDE `PXD066799`) was measured, so "MS2 and up" meets that condition; its verified row is a follow-up code change ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#consequences)). That change is made: "MS2 and up" is the eleventh verified row (section 2, the later decisions of 2026-10-30)* | M–L |
 | Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
 | Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |
 

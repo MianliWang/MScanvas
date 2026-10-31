@@ -362,6 +362,14 @@ family before a staging directory exists. Widening support is *adding a measured
 row*, not relaxing a check. The executable is re-verified before launch and
 `ExecutableChanged` fails a run whose binary moved under it.
 
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** The rows
+now define the verified tier rather than the whole gate. `provider_build_admission`
+answers measured, unverified (with the release) or refused: Thermo RAW and
+Shimadzu LCD convert on any build that reports its release, labelled
+"unverified build" in the plan, the item outcome and the diagnostics;
+`SciexWiffBundle` keeps the measured-row requirement; a build that cannot report
+its release converts no vendor family.
+
 **What M6 extends it to.** Today the binding answers one question — may this
 *family* be converted on this build. M6 makes settings expressible, so it must
 answer a second: may this *setting* be admitted on this build. The binding
@@ -2272,6 +2280,12 @@ The locked semantics:
   twice and binding the second plan.
 
 ### CNV-D6 — queue capacity
+
+> **Re-decided 2026-10-29 by [ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md),
+> decision 3, on `be/integrate` (draft PR #161): the value is 1,024, the roster's capacity.**
+> Bounded-ness stays `LOCKED`: Rust enforces it, reports it as the plan's
+> `capacity` and refuses with `queue_too_large`, and no frontend constant
+> restates it.
 
 **Status: `DECIDED` by M6.8, 2026-09-08 — the value is `16`, unchanged, on a
 stated basis. Bounded-ness remains `LOCKED`.** M6.7 surfaced the bound; M6.8

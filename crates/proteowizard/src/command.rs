@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::capability::{CapabilityRequirementError, InstalledHelpCapabilities, Sha256Digest};
+use crate::conversion_run::ConversionSourceKind;
 use crate::intent::{ConversionIntent, OutputFormat};
+use crate::structured::{Lowering, SourceBlock, StructuredIntent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendTool {
@@ -689,6 +691,12 @@ pub enum PlanError {
     SourceSpellingNotEquivalent,
     #[error(transparent)]
     InstalledHelpCapability(#[from] CapabilityRequirementError),
+    /// ADR 0055 decision 7: a step this source refuses.
+    #[error("a conversion step is blocked for this source")]
+    StepBlockedForSource(SourceBlock),
+    /// ADR 0055 ground rule 1: no output checks exist for this intent here.
+    #[error("no output checks exist for this conversion intent on this source")]
+    IntentNotCheckable,
 }
 
 impl PlanError {
@@ -720,6 +728,8 @@ impl PlanError {
             Self::MzXmlIntegrityGateRequired => "mzxml_integrity_gate_required",
             Self::SourceSpellingNotEquivalent => "source_spelling_not_equivalent",
             Self::InstalledHelpCapability(_) => "installed_help_capability_missing",
+            Self::StepBlockedForSource(block) => block.stable_id(),
+            Self::IntentNotCheckable => "intent_not_checkable",
         }
     }
 }
@@ -740,13 +750,35 @@ fn build_msconvert_command(
     intent: &ConversionIntent,
     source_directory_boundary: Option<PathBuf>,
 ) -> Result<CommandSpec, PlanError> {
+    build_msconvert_command_from(
+        executable,
+        input,
+        output_directory,
+        output_file_name,
+        OpenFormat::of_intent(intent.format()),
+        intent.lower(),
+        source_directory_boundary,
+    )
+}
+
+/// The argv order every single-output conversion uses: the source, the
+/// intent's lowering, then the destination.
+fn build_msconvert_command_from(
+    executable: impl Into<PathBuf>,
+    input: &Path,
+    output_directory: &Path,
+    output_file_name: &OsStr,
+    format: OpenFormat,
+    lowered: Vec<OsString>,
+    source_directory_boundary: Option<PathBuf>,
+) -> Result<CommandSpec, PlanError> {
     let executable = executable.into();
     validate_paths(&executable, input, output_directory)?;
-    validate_output_file_name(output_file_name, OpenFormat::of_intent(intent.format()))?;
+    validate_output_file_name(output_file_name, format)?;
 
-    let mut arguments = Vec::with_capacity(6 + intent.lower().len());
+    let mut arguments = Vec::with_capacity(6 + lowered.len());
     arguments.push(input.as_os_str().to_owned());
-    arguments.extend(intent.lower());
+    arguments.extend(lowered);
     arguments.push(OsString::from("--outdir"));
     arguments.push(output_directory.as_os_str().to_owned());
     arguments.push(OsString::from("--outfile"));
@@ -896,6 +928,56 @@ pub fn build_msconvert_command_for_source(
         }
         OpenFormat::MzXml => Err(PlanError::MzXmlIntegrityGateRequired),
     }
+}
+
+/// Builds the one run of an advanced intent that writes mzML directly (ADR
+/// 0055 decision 6's `Direct` route), with every guard the row builder above
+/// applies.
+///
+/// In be/core's order: the source-dependent refusals first (`tier()` is the
+/// only place `lowering()` meets a source), then the provider requirements,
+/// and only then the lowering. Any other route is refused: the two-run route
+/// is not wired into a run.
+pub(crate) fn build_structured_msconvert_command_for_source(
+    capabilities: &InstalledHelpCapabilities,
+    input: &Path,
+    output_directory: &Path,
+    output_file_name: &OsStr,
+    intent: &StructuredIntent,
+    source: ConversionSourceKind,
+    spelling: InputSpelling,
+) -> Result<CommandSpec, PlanError> {
+    intent
+        .tier(source, capabilities)
+        .map_err(PlanError::StepBlockedForSource)?;
+    if intent.integrity_route(source).is_none() {
+        return Err(PlanError::IntentNotCheckable);
+    }
+    intent.confirm_provider_requirements(capabilities)?;
+    let Lowering::Direct(lowered) = intent.lowering() else {
+        return Err(PlanError::IntentNotCheckable);
+    };
+    let executable = capabilities.executable().to_path_buf();
+    validate_paths(&executable, input, output_directory)?;
+    let safe_output = require_safe_output_directory(input, output_directory)?;
+    let canonical_input = backend_input_spelling(&safe_output.source_identity, spelling)?;
+    let command = build_msconvert_command_from(
+        executable,
+        &canonical_input,
+        &safe_output.output_directory,
+        output_file_name,
+        OpenFormat::MzMl,
+        lowered,
+        safe_output.source_directory_boundary,
+    )?;
+    require_output_destination_available(
+        command
+            .output_destination()
+            .expect("conversion commands have an output destination"),
+    )?;
+    Ok(command
+        .with_executable_identity(capabilities.executable_sha256())
+        .with_source_identity(safe_output.source_identity))
 }
 
 #[cfg(test)]

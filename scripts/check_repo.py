@@ -9,6 +9,7 @@ import re
 import sys
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1845,16 +1846,47 @@ M63_INTENT = "crates/proteowizard/src/intent.rs"
 #: How many combinations the five axes span, and how many the evidence admits.
 #: Stated here as well as in the module so a widened table has to be widened
 #: deliberately in two places rather than drifting in one.
-M63_CROSS_PRODUCT = 48
-M63_ADMITTED_ROWS = 9
+M63_CROSS_PRODUCT = 96
+M63_ADMITTED_ROWS = 11
 
-#: The one shape a picker filter may take in an admitted row's evidence.
+#: The frontend's hand transcription of the admitted table, one `intent(...)`
+#: call per row.
+M63_FRONTEND_FIXTURE = "apps/desktop/src/test/previewFixtures.ts"
+M63_FRONTEND_FIXTURE_ROW = re.compile(
+    r'^\s*intent\("(\w+)", "(\w+)", "(\w+)", "(\w+)"\),$', re.MULTILINE
+)
+
+#: The one shape a default-picker filter may take in an admitted row's evidence.
 #:
 #: M6.2 measured that `peakPicking msLevel=<set>` with no picker token silently
-#: centroids every level while exiting 0, and that every named picker token is
-#: either rejected or blocked. So the bare filter is the only measured form, and
-#: a row citing any other is citing something that does not mean what it reads.
+#: centroids every level while exiting 0, and that `cwt` is rejected. So the
+#: bare filter is the only measured default-picker form, and a row citing any
+#: other is citing something that does not mean what it reads.
 M63_ADMITTED_PICKER_FILTER = "peakPicking"
+
+#: The two shapes the vendor picker may take, one per vendor-picker row: the
+#: Thermo vendor centroiding evidence measured `msLevel=1-` (`TV1`, `TE1`,
+#: `TQ1`) and `msLevel=2-` (`TV2`, `TE2`, `TQ2`), and the owner admitted both on
+#: 2026-10-30 (ADR 0059). Every other scope stays advanced.
+M63_VENDOR_PICKER_FILTERS: dict[str, str] = {
+    "VendorCentroidingFromMs1": "peakPicking vendor msLevel=1-",
+    "VendorCentroidingFromMs2": "peakPicking vendor msLevel=2-",
+}
+
+#: The record of the Thermo vendor centroiding measurements, outside M6.2's
+#: ledger, and the cases from it an admitted row may cite, with the argv the
+#: record states between the source and the destination. Pinned here and held
+#: against the record's method and run-ledger tables, so a case cannot be cited
+#: that the record does not show run with that filter and exit 0.
+THERMO_VENDOR_EVIDENCE = "docs/spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md"
+THERMO_VENDOR_CASES: dict[str, tuple[str, ...]] = {
+    case: ("--mzML", "--zlib", "--filter", M63_VENDOR_PICKER_FILTERS[processing])
+    for processing, cases in (
+        ("VendorCentroidingFromMs1", ("TV1", "TE1", "TQ1")),
+        ("VendorCentroidingFromMs2", ("TV2", "TE2", "TQ2")),
+    )
+    for case in cases
+}
 
 #: The MS-level filter forms that mean "every level".
 #:
@@ -1924,23 +1956,27 @@ M63_INTENT_ROW = re.compile(
     r"\}",
 )
 
-#: The processing intent whose evidence is reader-sensitive, and the only
-#: source family it was measured on.
+#: The processing intents whose evidence is reader-sensitive, each with the
+#: only source family it was measured on.
 #:
-#: M6.2 measured every admitted row on generated mzML fixtures. For output
+#: M6.2 measured nine admitted rows on generated mzML fixtures. For output
 #: format, numeric precision, compression and MS-level population that
 #: carries, because those are decided by the writer. Peak picking is chosen
 #: by the *reader* -- CNV-D2 records the provider selecting vendor
 #: centroiding by a `dynamic_cast` on the immediately inner spectrum list --
 #: so the same measurement says nothing about a vendor acquisition, and M6.10
-#: measured a vendor reader choosing its own picker.
+#: measured a vendor reader choosing its own picker. The vendor picker was
+#: measured on Thermo RAW, and says nothing about another vendor's reader.
 #:
-#: Pinned here because widening it is the one edit that would quietly restore
+#: Pinned here because widening one is the edit that would quietly restore
 #: the defect: a row whose domain became `AnyAdmittedSource` would offer a
 #: combination on families nobody measured it on, and every other check in
 #: this file would still pass.
-M63_READER_SENSITIVE_PROCESSING = "UnscopedDefaultCentroiding"
-M63_READER_SENSITIVE_DOMAIN = "MeasuredOn(&[ConversionSourceKind::MzmlFile])"
+M63_READER_SENSITIVE_DOMAINS: dict[str, str] = {
+    "UnscopedDefaultCentroiding": "MeasuredOn(&[ConversionSourceKind::MzmlFile])",
+    "VendorCentroidingFromMs1": "MeasuredOn(&[ConversionSourceKind::ThermoRawFile])",
+    "VendorCentroidingFromMs2": "MeasuredOn(&[ConversionSourceKind::ThermoRawFile])",
+}
 M63_WRITER_SIDE_DOMAIN = "AnyAdmittedSource"
 
 
@@ -2664,6 +2700,7 @@ def validate_the_admitted_intent_table_cites_measurements_that_support_it(
             "error rather than a quieter table",
             errors,
         )
+    _validate_the_frontend_fixture_transcribes_the_rows(rows, errors)
 
     ledger = _msconvert_ledger(errors)
     if ledger is None:
@@ -2673,6 +2710,7 @@ def validate_the_admitted_intent_table_cites_measurements_that_support_it(
         # cannot support any statement about what it measured.
         return
     cases = {case.case: case for case in ledger.CASES}
+    cases.update(_thermo_vendor_cases(errors))
 
     seen: set[tuple[str, ...]] = set()
     for row in rows:
@@ -2706,8 +2744,9 @@ def validate_the_admitted_intent_table_cites_measurements_that_support_it(
             if case is None:
                 fail(
                     f"{M63_INTENT} admits {'+'.join(combination)} on case {name!r}, which is "
-                    "not in the M6.2 ledger. An intent may only name a semantic the build "
-                    "was measured performing, and there is no such measurement",
+                    f"not in the M6.2 ledger or {THERMO_VENDOR_EVIDENCE}. An intent may only "
+                    "name a semantic the build was measured performing, and there is no such "
+                    "measurement",
                     errors,
                 )
                 continue
@@ -2727,6 +2766,85 @@ def validate_the_admitted_intent_table_cites_measurements_that_support_it(
             _validate_one_admitted_row_against_its_case(combination, name, case, errors)
 
         _validate_one_admitted_rows_source_domain(row, combination, errors)
+
+
+def _validate_the_frontend_fixture_transcribes_the_rows(
+    rows: list[dict[str, str]], errors: list[str]
+) -> None:
+    """The frontend's `admittedIntents` is Rust's table, row for row, in order.
+
+    The fixture is transcribed by hand, and every frontend suite and browser spec
+    renders its catalog from it, so a stale transcription passes them all while
+    the product offers a row no test has rendered.
+    """
+    path = ROOT / M63_FRONTEND_FIXTURE
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    def stable_id(variant: str) -> str:
+        if variant == "NoCompression":
+            return "none"
+        return re.sub(r"(?<!^)(?=[A-Z])", "_", variant).lower()
+
+    axes = ("processing", "population", "precision", "compression")
+    expected = [tuple(stable_id(row[axis]) for axis in axes) for row in rows]
+    transcribed = M63_FRONTEND_FIXTURE_ROW.findall(text)
+    if transcribed != expected:
+        fail(
+            f"{M63_FRONTEND_FIXTURE}'s `admittedIntents` is {transcribed}, not {M63_INTENT}'s "
+            f"rows in order, {expected}. Transcribe the table again",
+            errors,
+        )
+
+
+def _thermo_vendor_cases(errors: list[str]) -> dict[str, object]:
+    """The Thermo vendor centroiding cases a row may cite, as ledger-shaped cases.
+
+    Each pinned case must appear in the record's method table with its filter
+    and in its run ledger with exit `0`; one that does not is reported and left
+    out, so a row citing it fails as citing no measurement.
+    """
+    path = ROOT / THERMO_VENDOR_EVIDENCE
+    if not path.is_file():
+        fail(
+            f"{THERMO_VENDOR_EVIDENCE} is missing. It is the measurement the vendor "
+            "centroiding row rests on",
+            errors,
+        )
+        return {}
+    text = path.read_text(encoding="utf-8")
+    # The record states one full argv, for one case, and says every case holds
+    # the encoding fixed: the flags between the source and `--outdir` are the
+    # pinned ones, and every pinned case shares them up to its filter value.
+    example = re.search(
+        r"^Full argv, for example `(\w+)`:\n\n```text\n(.*?)\n```", text, re.MULTILINE | re.DOTALL
+    )
+    tokens = re.findall(r'"([^"]*)"', example.group(2)) if example else []
+    stated = tuple(tokens[2 : tokens.index("--outdir")]) if "--outdir" in tokens else ()
+    if not example or THERMO_VENDOR_CASES.get(example.group(1)) != stated or any(
+        arguments[:-1] != stated[:-1] for arguments in THERMO_VENDOR_CASES.values()
+    ):
+        fail(
+            f"{THERMO_VENDOR_EVIDENCE}'s full argv {list(stated)} is not the argv pinned for "
+            "its cases. A row is judged against the argv the record states",
+            errors,
+        )
+        return {}
+    found: dict[str, object] = {}
+    for name, arguments in THERMO_VENDOR_CASES.items():
+        method = re.search(
+            rf"^\| `{name}` \| [^|\n]* \| `{re.escape(arguments[-1])}` \|", text, re.MULTILINE
+        )
+        ran = re.search(rf"^\| `{name}` \| [^|\n]* \| 0 \|", text, re.MULTILINE)
+        if method is None or ran is None:
+            fail(
+                f"{THERMO_VENDOR_EVIDENCE} does not record case {name!r} as run with "
+                f"`{arguments[-1]}` and exit 0. A row may only cite a measurement the record "
+                "holds",
+                errors,
+            )
+            continue
+        found[name] = SimpleNamespace(arguments=arguments, output_format="mzML", posture="exit 0")
+    return found
 
 
 def _msconvert_case_semantics(
@@ -2781,23 +2899,25 @@ def _validate_one_admitted_rows_source_domain(
     requested-processing contract then refuses.
 
     So the rule this holds is narrow and specific. A centroiding row carries the
-    mzML-only domain; every other row carries the writer-side one. Widening a
-    centroiding row is the single edit that would restore the defect while every
-    other check in this file went on passing, and narrowing a writer-side row
-    would withdraw a posture the product has converted vendor acquisitions under
-    since M3.
+    one family it was measured on -- mzML for the default picker, Thermo RAW for
+    the vendor picker; every other row carries the writer-side domain. Widening
+    a centroiding row is the single edit that would restore the defect while
+    every other check in this file went on passing, and narrowing a writer-side
+    row would withdraw a posture the product has converted vendor acquisitions
+    under since M3.
     """
     domain = row["sources"].strip()
-    reader_sensitive = row["processing"] == M63_READER_SENSITIVE_PROCESSING
-    expected = M63_READER_SENSITIVE_DOMAIN if reader_sensitive else M63_WRITER_SIDE_DOMAIN
+    reader_sensitive = row["processing"] in M63_READER_SENSITIVE_DOMAINS
+    expected = M63_READER_SENSITIVE_DOMAINS.get(row["processing"], M63_WRITER_SIDE_DOMAIN)
     if domain == expected:
         return
     if reader_sensitive:
         fail(
             f"{M63_INTENT} admits {'+'.join(combination)} over sources {domain!r}, not "
-            f"{expected!r}. Its evidence was measured on mzML fixtures, and peak picking is "
-            "chosen by the reader -- so offering it for another family would offer an outcome "
-            "nobody has observed. M6.10 measured the vendor reader choosing its own picker",
+            f"{expected!r}. Its evidence was measured on that family alone, and peak picking "
+            "is chosen by the reader -- so offering it for another family would offer an "
+            "outcome nobody has observed. M6.10 measured the vendor reader choosing its own "
+            "picker",
             errors,
         )
         return
@@ -2844,6 +2964,14 @@ def _validate_one_admitted_row_against_its_case(
                 f"[{M63_ADMITTED_PICKER_FILTER!r}]. The bare filter is the only measured "
                 "form: a picker token is rejected or blocked, and an `msLevel=` scope "
                 "without one is silently discarded while exiting 0"
+            )
+    elif processing in M63_VENDOR_PICKER_FILTERS:
+        wanted = M63_VENDOR_PICKER_FILTERS[processing]
+        if list(pickers) != [wanted]:
+            refuse(
+                f"whose picker filters are {list(pickers)}, not [{wanted!r}]. That is the "
+                f"vendor-picker scope the Thermo evidence admits for {processing}; every "
+                "other scope stays advanced (ADR 0059)"
             )
     else:
         refuse(

@@ -92,11 +92,21 @@ measured intent rows cover the visible vendor workflow, conditional on grammar;
 the two reader-sensitive centroiding rows do not. Whole-combination refusals
 retain their separate evidence, installation and source-family reasons.
 
+> **Amended 2026-10-29 (ADR 0055, msconvert parity).** The paragraph above
+> described beta 1. An imported mzML is now also a conversion source: it is
+> queued like a vendor row, judged by source comparison rather than output
+> only, and its output takes the name `<stem>-converted.mzML`, so an output
+> written beside its source never names it. Fail and Skip stay the only
+> conflict policies. The two centroiding rows are therefore offered, for mzML
+> sources only; a vendor row asked for one is still refused for source
+> evidence. The record of this change is the amendment at the end of
+> [ADR 0045](0045-conversion-completion-closure-and-handoff.md#amendment-2026-10-29-mzml-as-a-conversion-source).
+
 Rust owns filesystem identity, discovery, backend receipts, queue/capacity,
 processes and scientific data. React consumes typed operations and projections,
 never shell strings, unrestricted paths or a second capability registry. Keep
 source-qualified intents, bound order, authoritative capacity (currently sixteen
-serial items), destination revalidation/cleanup, Fail/Skip and
+serial items; 1,024 under ADR 0057, decision 3, 2026-10-29), destination revalidation/cleanup, Fail/Skip and
 `OVERWRITE_REFUSED`, confirmed cancellation versus quarantine, and independent
 process/staged/finalized/integrity/adoption facts. Output-only validation does
 not establish vendor fidelity. Adoption stays explicit and identity-checked;
@@ -629,3 +639,11 @@ The owner also set direction for the work after beta 1, recorded in the
 conversion is to be no less capable than msconvert, through verified defaults
 plus an advanced set of msconvert options labelled unverified; and the
 frontend falls short in both execution and scope.
+
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** Vendor
+conversion is no longer bound to 3.0.26013 after beta 1. Thermo RAW and
+Shimadzu LCD convert on any build that reports its release, labelled
+"unverified build" with that release when the build has no measured row;
+`SciexWiffBundle` stays bound to the measured build; a build that cannot report
+its release converts no vendor family. Beta 1 itself shipped with the binding
+recorded above.

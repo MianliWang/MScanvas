@@ -27,7 +27,7 @@ use super::backend::{
     PreviewProvider, ResolvedInstallation, interpretation_error,
 };
 use super::conversion::{
-    ALL_DATASET_SOURCE_KINDS, conversion_source_kind, convertible_source_kinds,
+    ALL_DATASET_SOURCE_KINDS, BoundIntent, conversion_source_kind, convertible_source_kinds,
     dataset_source_kind_index, is_convertible,
 };
 #[cfg(windows)]
@@ -4061,6 +4061,8 @@ fn every_conversion_dimension_value_is_one_the_frontend_declares() {
     for processing in [
         ProcessingIntent::NoAdditionalCentroiding,
         ProcessingIntent::UnscopedDefaultCentroiding,
+        ProcessingIntent::VendorCentroidingFromMs1,
+        ProcessingIntent::VendorCentroidingFromMs2,
     ] {
         declared.push(("ConversionProcessing", processing.stable_id().to_owned()));
     }
@@ -4137,6 +4139,9 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     let preferences = include_str!("../../../src/features/preferences/preferencesApi.ts");
     // The project store's own boundary, beside the preference store's.
     let projects = include_str!("../../../src/features/project/projectApi.ts");
+    // The conversion preset store's, beside the preference store it shares a
+    // binding with.
+    let presets = include_str!("../../../src/features/presets/presetsApi.ts");
 
     let registered = host
         .split_once("generate_handler![")
@@ -4164,6 +4169,13 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // commands below, because what it clears was written by Rust.
             "load_ui_preferences",
             "save_ui_preferences",
+            // User-saved conversion presets (ADR 0055), addressed by name. Four
+            // commands; none names a path, and a save carries its own
+            // confirmations rather than a separate overwrite operation.
+            "list_conversion_presets",
+            "save_conversion_preset",
+            "rename_conversion_preset",
+            "delete_conversion_preset",
             // The M8.1 project store, on its own boundary for the same reason
             // the preference store has one: a project references files and the
             // roster admits them, and keeping the two boundaries apart is what
@@ -4339,7 +4351,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             api.contains(&format!("\"{name}\""))
                 || drop_transport.contains(&format!("\"{name}\""))
                 || preferences.contains(&format!("\"{name}\""))
-                || projects.contains(&format!("\"{name}\"")),
+                || projects.contains(&format!("\"{name}\""))
+                || presets.contains(&format!("\"{name}\"")),
             "the frontend never calls {name}"
         );
     }
@@ -7470,6 +7483,17 @@ fn capabilities_declaring(
     .expect("parse the msconvert help fixture")
 }
 
+/// Capabilities whose help reports no release: the one build ADR 0055's
+/// relaxed gate still refuses every vendor family on.
+fn capabilities_without_a_release() -> InstalledHelpCapabilities {
+    let capabilities = conversion_capabilities("", None, EVIDENCED_EXECUTABLE_SHA256);
+    assert!(
+        capabilities.provider_build().is_none(),
+        "no release is reported"
+    );
+    capabilities
+}
+
 /// Capabilities for the exact build the vendor evidence was recorded on.
 fn evidenced_capabilities() -> InstalledHelpCapabilities {
     conversion_capabilities(
@@ -7480,7 +7504,7 @@ fn evidenced_capabilities() -> InstalledHelpCapabilities {
 }
 
 /// What a substituted backend process does when it is launched.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BackendAct {
     /// Writes the document the plan asked for, where it asked for it.
     Convert,
@@ -7507,6 +7531,11 @@ enum BackendAct {
     /// that the process it owned is gone. Labelled as injected, because no
     /// vendor run was observed doing this.
     StrandAnOwnedProcess,
+    /// Writes the document and exits 0 while its owned Job still counts a
+    /// process, so the tree is not confirmed gone. Injected, like the above.
+    ConvertLeavingAProcess,
+    /// Exits 1 while its owned Job still counts a process. Injected.
+    FailLeavingAProcess,
 }
 
 /// A hook a test can run inside a provider's backend resolution, shared so it
@@ -7691,7 +7720,7 @@ impl FakeConversionRunner {
             .expect("a conversion plan carries an output destination")
             .to_path_buf();
         let exit_code = match self.act {
-            BackendAct::Convert => {
+            BackendAct::Convert | BackendAct::ConvertLeavingAProcess => {
                 fs::write(destination, mzml_document(2, true)).expect("write staged output");
                 0
             }
@@ -7705,7 +7734,7 @@ impl FakeConversionRunner {
                 0
             }
             BackendAct::WriteNothing => 0,
-            BackendAct::Fail => 1,
+            BackendAct::Fail | BackendAct::FailLeavingAProcess => 1,
             BackendAct::FailAfterStaging => {
                 fs::write(destination, b"<indexedmzML partial")
                     .expect("write a partial staged output");
@@ -7730,7 +7759,10 @@ impl FakeConversionRunner {
             elapsed: Duration::from_millis(3),
             termination: Termination::Exited,
             max_active_processes: Some(1),
-            final_active_processes: Some(0),
+            final_active_processes: Some(u32::from(matches!(
+                self.act,
+                BackendAct::ConvertLeavingAProcess | BackendAct::FailLeavingAProcess
+            ))),
             peak_job_memory_bytes: Some(2_048),
             total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
@@ -7884,7 +7916,7 @@ impl ConvertingProvider<FakeConversionRunner> {
         )
     }
 
-    /// The same, on a build whose grammar admits every one of the nine rows.
+    /// The same, on a build whose grammar admits every admitted row.
     ///
     /// For the tests where a reader *chooses*: on the narrow build there is one
     /// available row, so a selection could not be wrong in a way anything could
@@ -8247,6 +8279,49 @@ fn an_mzml_dataset_converts_through_the_same_path_and_is_compared_to_its_source(
     );
 }
 
+/// ADR 0055: an mzML row converts through the visible queue beside itself,
+/// under a name that is not its own, compared with its source, and the source
+/// is left exactly as it was.
+#[test]
+fn an_mzml_row_converts_beside_itself_without_ever_naming_its_source() {
+    let here = TestFile::new("mzml-source-sibling");
+    let source = here.readable_mzml("run.mzML");
+    let before = fs::read(&source).expect("read the source");
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    let handle = service
+        .add_dataset(&source)
+        .expect("add an mzML row")
+        .handle;
+    let document = current_document(&service);
+
+    let reservation = service
+        .begin_conversion_under_now(
+            &[handle],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::SourceSibling,
+        )
+        .expect("an mzML row is a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    let update = service.resolve_claimed_conversion(operation);
+
+    let report = sole_report(&update.state).expect("the conversion reaches an outcome");
+    assert_eq!(report.outcome, "finalized", "{report:?}");
+    assert_eq!(report.validation_mode, ValidationModeDto::SourceComparison);
+    assert_eq!(
+        report.output_file_name.as_deref(),
+        Some("run-converted.mzML")
+    );
+    assert!(here.directory.join("run-converted.mzML").is_file());
+    assert_eq!(
+        fs::read(&source).expect("read the source again"),
+        before,
+        "the source is never written"
+    );
+}
+
 /// A dataset is named by a handle the session issued, and nothing else reaches
 /// the conversion boundary.
 #[test]
@@ -8264,21 +8339,22 @@ fn a_handle_the_session_never_issued_converts_nothing() {
     assert_eq!(entry_names(&destination), Vec::<String>::new());
 }
 
-/// A build the repository has no vendor evidence for is refused before anything
-/// is created and before any process is launched.
+/// A build that cannot report its release is refused before anything is
+/// created and before any process is launched (ADR 0055's relaxed gate leaves
+/// it nothing to name in the label).
 ///
-/// The refusal is the point, and so is where it happens: an unevidenced build
-/// must not reach the stage where a staging directory exists, because a caller
-/// then has to be told about a directory as well as a refusal.
+/// The refusal is the point, and so is where it happens: a refused build must
+/// not reach the stage where a staging directory exists, because a caller then
+/// has to be told about a directory as well as a refusal.
 #[test]
-fn an_unevidenced_build_refuses_a_vendor_conversion_before_it_stages_anything() {
+fn a_build_without_a_release_refuses_a_vendor_conversion_before_it_stages_anything() {
     let fixture = TestFile::new("unevidenced-build");
     let acquisition = fixture.thermo_raw("acquisition.raw");
     let destination = fixture.destination("out");
     let runner = FakeConversionRunner::new(BackendAct::Convert);
     let launches = runner.launches();
     let provider = Box::new(ConvertingProvider::new(
-        conversion_capabilities("3.0.99999", Some("deadbee"), EVIDENCED_EXECUTABLE_SHA256),
+        capabilities_without_a_release(),
         runner,
     ));
     let service = PreviewService::new(provider);
@@ -8305,9 +8381,9 @@ fn an_unevidenced_build_refuses_a_vendor_conversion_before_it_stages_anything() 
 
 /// The same build, reporting the same release and revision, from a different
 /// executable. Two strings out of a help banner say what a build calls itself,
-/// not what it is.
+/// not what it is: it converts, labelled unverified, never as the measured one.
 #[test]
-fn a_build_naming_the_evidenced_release_from_another_executable_is_still_refused() {
+fn a_build_naming_the_evidenced_release_from_another_executable_converts_unverified() {
     let fixture = TestFile::new("substituted-executable");
     let acquisition = fixture.thermo_raw("acquisition.raw");
     let destination = fixture.destination("out");
@@ -8324,11 +8400,17 @@ fn a_build_naming_the_evidenced_release_from_another_executable_is_still_refused
         .add_thermo_dataset(&acquisition)
         .expect("admit the acquisition");
 
-    let error = service
+    let report = service
         .convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail)
-        .expect_err("evidence is about an artifact, not about what it calls itself");
+        .expect("a build that reports its release converts")
+        .to_dto();
 
-    assert_eq!(error.kind, "provider_build_not_evidenced");
+    assert_eq!(report.outcome, "finalized");
+    assert_eq!(
+        report.unverified_build_release.as_deref(),
+        Some(EVIDENCED_RELEASE),
+        "evidence is about an artifact, not about what it calls itself"
+    );
 }
 
 /// An mzML source needs no vendor evidence, because the repository's evidence
@@ -9356,7 +9438,8 @@ fn the_family_recorded_at_admission_is_the_one_every_later_use_applies() {
     assert!(!DatasetSourceKind::ShimadzuLcd.is_previewable());
     assert!(is_convertible(DatasetSourceKind::ShimadzuLcd));
     assert!(is_convertible(DatasetSourceKind::ThermoRaw));
-    assert!(!is_convertible(DatasetSourceKind::Mzml));
+    // And since ADR 0055, mzML too: msconvert re-filters an mzML.
+    assert!(is_convertible(DatasetSourceKind::Mzml));
 }
 
 /// An acquisition another program is writing is not a finished acquisition.
@@ -9467,8 +9550,10 @@ fn a_chromatogram_only_shimadzu_output_is_finalized() {
 }
 
 /// The gate is asked about this family, on this build, before anything exists.
+/// Under ADR 0055's relaxed gate any build that reports its release converts,
+/// labelled with that release; a build that cannot report one converts nothing.
 #[test]
-fn a_shimadzu_conversion_runs_only_on_a_build_evidenced_for_this_family() {
+fn a_shimadzu_conversion_runs_on_any_build_that_reports_its_release() {
     let fixture = TestFile::new("shimadzu-evidence");
     let acquisition = fixture.shimadzu_lcd("acquisition.lcd");
 
@@ -9484,25 +9569,29 @@ fn a_shimadzu_conversion_runs_only_on_a_build_evidenced_for_this_family() {
         let outcome =
             service.convert_workspace_dataset(&dataset.handle, &destination, ConflictPolicy::Fail);
         (
-            outcome.map(|report| report.to_dto().outcome),
+            outcome.map(|report| report.to_dto()),
             launches.load(Ordering::SeqCst),
             entry_names(&destination),
         )
     };
 
-    let (outcome, launches, entries) = attempt(evidenced_capabilities(), "evidenced");
-    assert_eq!(outcome.expect("the evidenced build converts"), "finalized");
+    let (report, launches, entries) = attempt(evidenced_capabilities(), "evidenced");
+    let report = report.expect("the evidenced build converts");
+    assert_eq!(report.outcome, "finalized");
+    assert_eq!(
+        report.unverified_build_release, None,
+        "measured, so no label"
+    );
     assert_eq!(launches, 1);
     assert_eq!(entries, vec!["acquisition.mzML"]);
 
-    // A different release, a different revision, a build that will not say, and
-    // the same two strings out of a different executable. Every one of them is
-    // refused, nothing is launched, and the destination stays empty -- the
-    // refusal happens before a staging directory could exist.
-    for (capabilities, label) in [
+    // A different release, a different revision, no revision, and the same two
+    // strings out of a different executable: each converts, labelled.
+    for (capabilities, label, release) in [
         (
             conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
             "other-release",
+            "3.0.26204",
         ),
         (
             conversion_capabilities(
@@ -9511,10 +9600,12 @@ fn a_shimadzu_conversion_runs_only_on_a_build_evidenced_for_this_family() {
                 EVIDENCED_EXECUTABLE_SHA256,
             ),
             "other-revision",
+            EVIDENCED_RELEASE,
         ),
         (
             conversion_capabilities(EVIDENCED_RELEASE, None, EVIDENCED_EXECUTABLE_SHA256),
             "no-revision",
+            EVIDENCED_RELEASE,
         ),
         (
             conversion_capabilities(
@@ -9523,23 +9614,31 @@ fn a_shimadzu_conversion_runs_only_on_a_build_evidenced_for_this_family() {
                 OTHER_EXECUTABLE_SHA256,
             ),
             "other-executable",
+            EVIDENCED_RELEASE,
         ),
     ] {
-        let (outcome, launches, entries) = attempt(capabilities, label);
+        let (report, launches, entries) = attempt(capabilities, label);
+        let report = report.expect("a build that reports its release converts");
+        assert_eq!(report.outcome, "finalized", "{label}");
         assert_eq!(
-            outcome.expect_err("an unevidenced build is refused").kind,
-            "provider_build_not_evidenced",
+            report.unverified_build_release.as_deref(),
+            Some(release),
             "{label}"
         );
-        assert_eq!(
-            launches, 0,
-            "{label}: an unevidenced build launched a process"
-        );
-        assert!(
-            entries.is_empty(),
-            "{label}: an unevidenced build created {entries:?}"
-        );
+        assert_eq!(launches, 1, "{label}");
+        assert_eq!(entries, vec!["acquisition.mzML"], "{label}");
     }
+
+    // Nothing to name in the label, so nothing is launched or created.
+    let (report, launches, entries) = attempt(capabilities_without_a_release(), "no-release");
+    assert_eq!(
+        report
+            .expect_err("a build without a release is refused")
+            .kind,
+        "provider_build_not_evidenced"
+    );
+    assert_eq!(launches, 0);
+    assert!(entries.is_empty(), "a refused build created {entries:?}");
 }
 
 /// Every handle that is not a live Shimadzu row, refused.
@@ -10376,10 +10475,10 @@ fn a_vendor_row_is_refused_a_preview_by_rust_not_only_by_a_disabled_button() {
     assert_eq!(service.requests_made(&handle), 0, "no backend was asked");
 }
 
-/// The plan summary is derived from the run, and refuses a row that has nothing
-/// to convert.
+/// The plan summary is derived from the run, and states an mzML row's own name
+/// and the stronger comparison it is judged under.
 #[test]
-fn the_plan_summary_describes_the_fixed_plan_and_refuses_an_mzml_row() {
+fn the_plan_summary_describes_the_fixed_plan_for_a_vendor_and_an_mzml_row() {
     let fixture = TestFile::new("plan-summary");
     let acquisition = fixture.thermo_raw("acquisition.raw");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
@@ -10392,15 +10491,18 @@ fn the_plan_summary_describes_the_fixed_plan_and_refuses_an_mzml_row() {
     assert_eq!(summary.items.len(), 1);
     assert_eq!(summary.items[0].dataset_handle, handle);
     assert_eq!(plan_output_name(&summary.items[0]), "acquisition.mzML");
-    assert_eq!(summary.capacity, 16);
+    assert_eq!(summary.capacity, MAX_CONVERSION_QUEUE_ITEMS);
     assert_eq!(summary.output_format, ConversionOutputFormatDto::MzMl);
     assert_eq!(summary.compression, "zlib");
     assert_eq!(summary.validation_mode, ValidationModeDto::OutputOnly);
 
-    let refused = service
+    // ADR 0055: an mzML row converts too. Its output never takes its own name,
+    // and the summary says it is compared with its source.
+    let summary = service
         .conversion_plan_summary(&mzml.handle)
-        .expect_err("an mzML row is already the output format");
-    assert_eq!(refused.kind, "dataset_not_convertible");
+        .expect("an mzML row has a plan");
+    assert_eq!(plan_output_name(&summary.items[0]), "sample-converted.mzML");
+    assert_eq!(summary.validation_mode, ValidationModeDto::SourceComparison);
 }
 
 /// The whole visible vertical: begin, claim, choose a folder, convert, report.
@@ -11358,10 +11460,11 @@ fn a_queue_whose_items_would_share_an_output_name_is_refused_before_anything_run
     let fixture = TestFile::new("queue-collision");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
     // Different folders, same basename -- so the same planned output name.
+    // A comma in it, which the bounded detail cannot keep apart.
     let nested = fixture.directory.join("nested");
     fs::create_dir_all(&nested).expect("create the nested folder");
-    let one = add_one_acquisition(&service, &fixture.thermo_raw("run.raw"));
-    let other = nested.join("run.raw");
+    let one = add_one_acquisition(&service, &fixture.thermo_raw("run, final.raw"));
+    let other = nested.join("run, final.raw");
     fs::write(&other, thermo_raw_bytes()).expect("write the twin");
     let two = add_one_acquisition(&service, &other);
 
@@ -11369,7 +11472,14 @@ fn a_queue_whose_items_would_share_an_output_name_is_refused_before_anything_run
         .conversion_queue_plan_now(&[one.clone(), two.clone()])
         .expect_err("two items cannot write one name");
     assert_eq!(error.kind, "queue_output_name_collision");
-    assert_eq!(error.detail.as_deref(), Some("run.mzML"));
+    assert_eq!(error.detail.as_deref(), Some("run, final.mzML"));
+    // On the wire the names are a list, each one whole (ADR 0057 decision 3).
+    let wire = serde_json::to_value(&error).expect("the error serializes");
+    assert_eq!(wire["context"]["kind"], "outputNameCollision");
+    assert_eq!(
+        wire["context"]["names"],
+        serde_json::json!(["run, final.mzML"])
+    );
 
     // And no reservation exists to claim.
     let document = current_document(&service);
@@ -11402,20 +11512,22 @@ fn a_queue_is_bounded_deduplicated_and_convertible_or_it_is_refused() {
             .kind,
         "queue_is_empty"
     );
-    // The number itself, not only the refusal above it. M6.8 re-decided this
-    // bound and kept it; a test that only refused "one more than the constant"
-    // would pass for any value the constant took, including one nobody chose.
+    // The number itself, not only the refusal above it. ADR 0057 raised it to
+    // the roster's capacity; a test that only refused "one more than the
+    // constant" would pass for any value the constant took, including one
+    // nobody chose.
     assert_eq!(
-        MAX_CONVERSION_QUEUE_ITEMS, 16,
-        "the queue bound is sixteen, decided under ADR 0043's CNV-D6"
+        MAX_CONVERSION_QUEUE_ITEMS, 1_024,
+        "the queue bound is the roster's, decided under ADR 0057 decision 3"
     );
+    assert_eq!(MAX_CONVERSION_QUEUE_ITEMS, MAX_WORKSPACE_DATASETS);
     let too_many: Vec<String> = (0..MAX_CONVERSION_QUEUE_ITEMS + 1)
         .map(|_| handle.clone())
         .collect();
     assert_eq!(
         service
             .conversion_queue_plan_now(&too_many)
-            .expect_err("seventeen is more than a session runs")
+            .expect_err("one more than the roster is more than a session runs")
             .kind,
         "queue_too_large"
     );
@@ -11427,12 +11539,13 @@ fn a_queue_is_bounded_deduplicated_and_convertible_or_it_is_refused() {
         "queue_output_name_collision",
         "the same row twice would also write one name, and that is refused first"
     );
+    // A mixed queue is admitted, and states the weaker judgement it holds.
     assert_eq!(
         service
             .conversion_queue_plan_now(&[handle.clone(), mzml.handle])
-            .expect_err("an mzML row is not queued silently")
-            .kind,
-        "dataset_not_convertible"
+            .expect("an mzML row queues beside a vendor row")
+            .validation_mode,
+        ValidationModeDto::OutputOnly
     );
     assert_eq!(
         service
@@ -11893,6 +12006,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "error",
             "fileName",
             "finalizedOutputs",
+            "notVerifiedByMscanvas",
             "output",
             "process",
             "result",
@@ -11906,6 +12020,8 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
         ],
         "one latest attempt per item, never a history of them"
     );
+    // The shipped row on the measured build: nothing to label.
+    assert_eq!(item["notVerifiedByMscanvas"], serde_json::Value::Null);
     // A known single output states its one name, under the arm that has one.
     assert_eq!(
         sorted_keys(&item["output"]),
@@ -11931,11 +12047,20 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "receipt",
             "sourceKind",
             "stagingResidue",
+            // ADR 0055's label, `null` on the measured build this ran on.
+            "unverifiedBuildRelease",
+            // ADR 0055 decision 1's settings label.
+            "unverifiedSettings",
             "validation",
             // The scope of the check, stated beside the record rather than
             // inside it: a refused output keeps no record and still has one.
             "validationMode",
         ]
+    );
+    assert!(report["unverifiedBuildRelease"].is_null());
+    assert_eq!(
+        report["unverifiedSettings"], false,
+        "the shipped row on its measured build"
     );
     assert_eq!(
         sorted_keys(&report["backend"]),
@@ -14015,7 +14140,7 @@ fn running_two_item_slot(
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![
             test_queue_item_named(0, "first.raw"),
@@ -14425,7 +14550,7 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14466,7 +14591,7 @@ fn releasing_another_attempt_leaves_the_live_stop_handle_alone() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14507,7 +14632,7 @@ fn a_stop_arriving_before_the_handle_is_bound_still_reaches_that_attempt() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14557,7 +14682,7 @@ fn an_item_stop_before_its_handle_is_bound_reaches_the_attempt_and_is_readable()
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14624,7 +14749,7 @@ fn an_unbound_item_stop_is_not_carried_to_a_different_attempt() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -14658,7 +14783,7 @@ fn an_unbound_item_stop_is_not_carried_to_a_different_attempt() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -15080,7 +15205,7 @@ fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        bound,
+        BoundIntent::Row(bound),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -15095,7 +15220,7 @@ fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
     );
     assert_eq!(
         slot.running(operation).expect("a running queue").intent(),
-        bound,
+        &BoundIntent::Row(bound),
         "the first attempt did not run under what was bound"
     );
 
@@ -15124,7 +15249,7 @@ fn a_queue_keeps_the_intent_it_was_bound_to_across_a_retry() {
         slot.running(operation)
             .expect("the retry is running")
             .intent(),
-        bound,
+        &BoundIntent::Row(bound),
         "the retry converted under an intent nobody asked for"
     );
 }
@@ -15143,7 +15268,7 @@ fn a_stopped_retry_keeps_the_failures_it_had_not_reached() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
     )
@@ -15323,7 +15448,7 @@ fn a_stop_accepted_while_a_queue_settles_is_not_overwritten_by_completion() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -15556,6 +15681,7 @@ fn test_queue_item_named(index: usize, file_name: &str) -> QueueItem {
             byte_length: 78_309,
             source_kind: DatasetSourceKindDto::ThermoRaw,
             relative_context: None,
+            not_verified_by_mscanvas: None,
         },
         super::operation::ItemOutputTopology::KnownSingle {
             basename: file_name.replace(".raw", ".mzML"),
@@ -16032,8 +16158,10 @@ fn a_chromatogram_only_shimadzu_result_completes_the_visible_queue() {
 #[test]
 fn an_unevidenced_build_refuses_a_queue_before_the_destination_picker() {
     let fixture = TestFile::new("preflight-evidence");
+    // ADR 0055's relaxed gate: the one build every vendor family is still
+    // refused on is the one that cannot report its release.
     let service = PreviewService::new(Box::new(ConvertingProvider::new(
-        conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+        capabilities_without_a_release(),
         FakeConversionRunner::new(BackendAct::Convert),
     )));
     let document = current_document(&service);
@@ -16124,6 +16252,7 @@ fn a_queue_reports_each_distinct_family_once_in_first_appearance_order() {
         byte_length: 1,
         source_kind: kind,
         relative_context: None,
+        not_verified_by_mscanvas: None,
     };
     let item = |index: u64, name: &str, kind: DatasetSourceKind, wire: DatasetSourceKindDto| {
         QueueItem::new(
@@ -16143,7 +16272,7 @@ fn a_queue_reports_each_distinct_family_once_in_first_appearance_order() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![
             item(
@@ -16575,7 +16704,8 @@ fn plan_request(
 ) -> ConversionPlanRequestDto {
     ConversionPlanRequestDto {
         handles: handles.to_vec(),
-        intent_id: intent.stable_id(),
+        intent_id: Some(intent.stable_id()),
+        intent: None,
         conflict_policy: conflict,
         expected_receipt: receipt,
         destination_policy: None,
@@ -16591,7 +16721,8 @@ fn begin_request(
 ) -> ConversionBeginRequestDto {
     ConversionBeginRequestDto {
         handles: handles.to_vec(),
-        intent_id: intent.stable_id(),
+        intent_id: Some(intent.stable_id()),
+        intent: None,
         conflict_policy: conflict,
         expected_receipt: receipt,
         destination_policy: None,
@@ -16651,6 +16782,97 @@ fn a_chosen_intent() -> ConversionIntent {
         "the proof needs a row a fallback to the shipped posture would not land on"
     );
     chosen
+}
+
+/// ADR 0055's relaxed gate, on the plan: every row on a build without a
+/// measured row names the release its "unverified build" label shows, and no
+/// row does on the measured build. The plan runs no discovery, so this is read
+/// from the catalog the binding's configuration read produced.
+#[test]
+fn a_plan_on_an_unmeasured_build_labels_every_row_with_its_release() {
+    let fixture = TestFile::new("plan-unverified-build");
+    for (capabilities, expected) in [
+        (
+            conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+            Some("3.0.26204"),
+        ),
+        (evidenced_capabilities(), None),
+    ] {
+        let service = PreviewService::new(Box::new(ConvertingProvider::new(
+            capabilities,
+            FakeConversionRunner::new(BackendAct::Convert),
+        )));
+        let handles = vec![
+            add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw")),
+            add_one_acquisition(&service, &fixture.shimadzu_lcd("second.lcd")),
+        ];
+        let receipt = current_receipt(&service);
+        let plan = planned(
+            service
+                .conversion_queue_plan(&plan_request(
+                    &handles,
+                    ConversionIntent::SHIPPED,
+                    ConversionConflictPolicyDto::Fail,
+                    receipt,
+                ))
+                .expect("the plan is answered"),
+        );
+        assert_eq!(plan.items.len(), 2);
+        for item in &plan.items {
+            assert_eq!(
+                item.unverified_build_release.as_deref(),
+                expected,
+                "{:?}",
+                item.source_kind
+            );
+        }
+    }
+}
+
+/// The plan's label is bound into the queue at `BEGIN`, so a row waiting for
+/// its destination says it before any report exists, and its report agrees
+/// once it has run.
+#[test]
+fn a_queue_on_an_unmeasured_build_labels_every_row_before_it_runs() {
+    let fixture = TestFile::new("queue-unverified-build");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+        FakeConversionRunner::new(BackendAct::Convert),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_now(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("the queue is admitted");
+    let waiting = serde_json::to_value(service.conversion_state()).expect("the state serializes");
+    let label = &waiting["state"]["queue"]["items"][0]["notVerifiedByMscanvas"];
+    assert_eq!(label["unverifiedBuildRelease"], "3.0.26204");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(operation, &destination);
+    let item = &terminal_queue(&update).items[0];
+    assert_eq!(item.state, ConversionQueueItemStateDto::Finalized);
+    let Some(super::dto::ConversionAttemptResultDto::Single { report }) = &item.result else {
+        panic!("a Thermo item reports once: {:?}", item.result);
+    };
+    assert_eq!(
+        item.not_verified_by_mscanvas
+            .as_ref()
+            .and_then(|label| label.unverified_build_release.as_deref()),
+        report.unverified_build_release.as_deref()
+    );
+    assert_eq!(
+        item.not_verified_by_mscanvas
+            .as_ref()
+            .map(|label| label.unverified_settings),
+        Some(report.unverified_settings)
+    );
 }
 
 /// A plan asked under a binding the session has left is refused with the one it
@@ -16721,8 +16943,14 @@ fn a_plan_answers_the_intent_policy_and_binding_it_was_asked_under() {
             .expect("a build offering every row answers this one"),
     );
 
-    assert_eq!(plan.intent.id, chosen.stable_id());
-    assert_eq!(plan.intent.precision, "mz64_intensity64");
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").id,
+        chosen.stable_id()
+    );
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").precision,
+        "mz64_intensity64"
+    );
     assert_eq!(plan.conflict_policy, ConversionConflictPolicyDto::Skip);
     assert_eq!(plan.receipt, receipt);
     // And the summary fields are read off that intent rather than off the
@@ -16739,13 +16967,21 @@ fn m67_capacity_is_authoritative_before_queue_destination_or_provider_work() {
     let provider = ConvertingProvider::offering_every_admitted_row();
     let launches = provider.runner.launches();
     let service = PreviewService::new(Box::new(provider));
-    let handles: Vec<_> = (0..=MAX_CONVERSION_QUEUE_ITEMS)
+    let handles: Vec<_> = (0..MAX_CONVERSION_QUEUE_ITEMS)
         .map(|index| {
             add_one_acquisition(
                 &service,
                 &fixture.thermo_raw(&format!("source-{index}.raw")),
             )
         })
+        .collect();
+    // The bound is the roster's, so one more than it is reachable only by
+    // naming a row twice. Capacity is answered before any row is resolved or
+    // compared, so it still answers first.
+    let over: Vec<_> = handles
+        .iter()
+        .chain(std::iter::once(&handles[0]))
+        .cloned()
         .collect();
     let receipt = current_receipt(&service);
     let document = current_document(&service);
@@ -16756,7 +16992,7 @@ fn m67_capacity_is_authoritative_before_queue_destination_or_provider_work() {
         MAX_CONVERSION_QUEUE_ITEMS + 1,
     ] {
         let mut request = plan_request(
-            &handles[..count],
+            &over[..count],
             a_chosen_intent(),
             ConversionConflictPolicyDto::Fail,
             receipt,
@@ -16788,7 +17024,7 @@ fn m67_capacity_is_authoritative_before_queue_destination_or_provider_work() {
             );
             let refused = service.begin_conversion_queue(
                 &begin_request(
-                    &handles,
+                    &over,
                     a_chosen_intent(),
                     ConversionConflictPolicyDto::Fail,
                     receipt,
@@ -16821,7 +17057,7 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
     let receipt = current_receipt(&service);
     let document = current_document(&service);
     // Every part of it is a real identity token -- this is one of the
-    // thirty-nine combinations the evidence never measured, composed out of
+    // eighty-five combinations the evidence never measured, composed out of
     // five values that are each perfectly valid on their own. A fixture with a
     // mistyped token would be refused for being unparseable and would prove
     // nothing about the table.
@@ -16840,7 +17076,8 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
     let refusal = service
         .conversion_queue_plan(&ConversionPlanRequestDto {
             handles: handles.clone(),
-            intent_id: invented.clone(),
+            intent_id: Some(invented.clone()),
+            intent: None,
             conflict_policy: ConversionConflictPolicyDto::Fail,
             expected_receipt: receipt,
             destination_policy: None,
@@ -16857,7 +17094,8 @@ fn an_identity_no_admitted_row_carries_never_becomes_a_plan_or_a_queue() {
     let answered = service.begin_conversion_queue(
         &ConversionBeginRequestDto {
             handles,
-            intent_id: invented,
+            intent_id: Some(invented),
+            intent: None,
             conflict_policy: ConversionConflictPolicyDto::Fail,
             expected_receipt: receipt,
             destination_policy: None,
@@ -16910,7 +17148,10 @@ fn a_row_this_build_cannot_run_produces_no_plan() {
             ))
             .expect("the shipped row runs here"),
     );
-    assert_eq!(plan.intent.id, ConversionIntent::SHIPPED.stable_id());
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").id,
+        ConversionIntent::SHIPPED.stable_id()
+    );
 }
 
 /// A binding whose settings have not been read produces no plan.
@@ -17411,7 +17652,10 @@ fn a_queue_runs_the_exact_admitted_intent_its_plan_described() {
             ))
             .expect("this build offers the chosen row"),
     );
-    assert_eq!(plan.intent.id, chosen.stable_id());
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").id,
+        chosen.stable_id()
+    );
 
     // And what they press.
     let answered = service.begin_conversion_queue(
@@ -17524,7 +17768,10 @@ fn settings_chosen_after_begin_change_only_the_next_conversion() {
             ))
             .expect("the settings the reader moved to are a plan of their own"),
     );
-    assert_eq!(plan.intent.id, ConversionIntent::SHIPPED.stable_id());
+    assert_eq!(
+        plan.intent.as_ref().expect("a row plan").id,
+        ConversionIntent::SHIPPED.stable_id()
+    );
 
     service
         .retry_conversion_queue(document)
@@ -18412,7 +18659,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item(), test_queue_item_named(1, "two.raw")],
     )
@@ -18534,7 +18781,7 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
     let replacement = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -18551,6 +18798,84 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         .eligible_item_count,
         0
     );
+}
+
+/// An attempt with no report of its own -- a refusal, a stop that could not
+/// be confirmed -- exports the label `BEGIN` bound to its row, so on a build
+/// with no measured row the export names the release the queue row names
+/// (ADR 0055 decision 3), and never reads as a measured build.
+#[test]
+fn a_refusal_and_an_unconfirmed_stop_export_the_label_their_row_shows() {
+    let label = super::selection::NotVerifiedByMscanvas::of(false, Some("3.0.26204".to_owned()));
+    let mut items = vec![test_queue_item(), test_queue_item_named(1, "two.raw")];
+    for item in &mut items {
+        item.set_not_verified(label.clone());
+    }
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
+        DestinationPolicy::CustomFolder,
+        items,
+    )
+    .expect("two items are a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0", "file-1"]))
+            .is_ok()
+    );
+    let first = slot.start_item(operation, 0).expect("the item starts");
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Refused {
+            attempt: AttemptFacts::NOTHING_RAN,
+            retryable: true,
+            error: PreviewErrorDto::new("file_unreadable", "unreadable", true),
+        },
+    ));
+    slot.release_attempt(operation, 0, first);
+    let second = slot.start_item(operation, 1).expect("the item starts");
+    assert!(slot.settle_item(
+        operation,
+        1,
+        ItemOutcome::Stopped {
+            attempt: stopped_attempt_facts(),
+            set: None,
+            facts: CancellationFacts {
+                process_launched: Some(true),
+                owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::Unconfirmed,
+                elapsed: Duration::from_millis(7),
+                termination: None,
+                staging_residue: None,
+            },
+            diagnostics: None,
+        },
+    ));
+    slot.release_attempt(operation, 1, second);
+    slot.finish(operation, None, TerminalReason::StopFailed);
+
+    let (queue, provider, _round, tickets) = slot
+        .terminal_diagnostics(operation)
+        .expect("a stop-failed queue is exportable");
+    assert_eq!(tickets[1].describes(), ItemState::CancellationFailed);
+    let rendered =
+        super::diagnostics::payload::render(&super::diagnostics::DiagnosticsExportRequest {
+            queue,
+            provider,
+            tickets,
+        });
+    let document: serde_json::Value = serde_json::from_slice(&rendered.bytes).expect("valid JSON");
+    let items = document["items"].as_array().expect("an item array");
+    assert_eq!(items.len(), 2);
+    for item in items {
+        assert_eq!(item["unverifiedBuildRelease"], "3.0.26204", "{item}");
+        assert_eq!(item["unverifiedSettings"], false, "{item}");
+    }
 }
 
 /// A backend that fails after printing a great deal of text that needs
@@ -18591,13 +18916,30 @@ impl ProcessRunner for VerboseFailingRunner {
 /// hiding the fact that the bound was reached.
 #[test]
 fn a_diagnostics_document_over_the_bound_is_refused_and_writes_nothing() {
+    use super::diagnostics::max_diagnostic_export_bytes;
+    for small in [0, 1, 16] {
+        assert_eq!(
+            max_diagnostic_export_bytes(small),
+            2 * 1024 * 1024,
+            "a queue of sixteen or fewer keeps the 2 MiB it had"
+        );
+    }
+    assert_eq!(max_diagnostic_export_bytes(17), 17 * 128 * 1024);
+    assert_eq!(
+        max_diagnostic_export_bytes(MAX_CONVERSION_QUEUE_ITEMS),
+        128 * 1024 * 1024
+    );
     let fixture = TestFile::new("diagnostics-bound");
     let destination = destination_root(&fixture, "out");
     let service = PreviewService::new(Box::new(ConvertingProvider::new(
         evidenced_capabilities(),
         VerboseFailingRunner,
     )));
-    let handles: Vec<String> = (0..MAX_CONVERSION_QUEUE_ITEMS)
+    // Past sixteen the bound is per diagnosed item (ADR 0057, decision 3), so
+    // seventeen items whose excerpts double under escaping exceed it, as
+    // sixteen exceeded the old 2 MiB, without running a full queue of 1,024.
+    let count = 17;
+    let handles: Vec<String> = (0..count)
         .map(|index| {
             add_one_acquisition(&service, &fixture.thermo_raw(&format!("item-{index}.raw")))
         })
@@ -18605,11 +18947,8 @@ fn a_diagnostics_document_over_the_bound_is_refused_and_writes_nothing() {
 
     let update = queue_and_run(&service, &handles, &destination);
     let queue = terminal_queue(&update);
-    assert_eq!(queue.failed_count, MAX_CONVERSION_QUEUE_ITEMS);
-    assert_eq!(
-        update.diagnostics.eligible_item_count, MAX_CONVERSION_QUEUE_ITEMS,
-        "the queue's own capacity is what bounds the item count"
-    );
+    assert_eq!(queue.failed_count, count);
+    assert_eq!(update.diagnostics.eligible_item_count, count);
 
     let saved = destination.join("diagnostics.json");
     let refusal = export_diagnostics(&service, &terminal_operation(&update), &saved)
@@ -22074,9 +22413,9 @@ fn the_queue_output_name_authority_is_bounded() {
     assert_eq!(
         bound,
         MAX_CONVERSION_QUEUE_ITEMS * MAX_CONVERSION_OUTPUTS_PER_SOURCE,
-        "sixteen acquisitions of at most twenty-four documents each"
+        "1,024 acquisitions of at most twenty-four documents each"
     );
-    assert_eq!(bound, 384, "the bound is 384 with today's constants");
+    assert_eq!(bound, 24_576, "the bound is 24,576 with today's constants");
     assert!(
         claimed.is_empty(),
         "a set claims nothing before it has published"
@@ -28561,7 +28900,7 @@ fn the_bound_collision_key_is_the_destination_and_the_folded_name() {
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::SourceSibling,
         vec![
             test_queue_item_named(0, "sample.raw"),
@@ -28925,7 +29264,7 @@ fn the_shipped_custom_folder_workflow_runs_through_the_new_authority() {
 fn a_non_shipped_intent_survives_source_relative_resolution() {
     let here = TestFile::new("m65-intent");
     let acquisition = here.thermo_raw("one.raw");
-    // A build whose grammar admits every one of the nine rows, because this
+    // A build whose grammar admits every admitted row, because this
     // test is about a *chosen* combination surviving resolution -- on the
     // narrow build there is one available row and the choice could not be seen.
     let service = PreviewService::new(Box::new(ConvertingProvider::offering_every_admitted_row()));
@@ -28940,7 +29279,8 @@ fn a_non_shipped_intent_survives_source_relative_resolution() {
 
     let request = ConversionBeginRequestDto {
         handles: vec![handle],
-        intent_id: other.stable_id(),
+        intent_id: Some(other.stable_id()),
+        intent: None,
         conflict_policy: ConversionConflictPolicyDto::Fail,
         expected_receipt: service.readied_receipt(),
         destination_policy: None,
@@ -29379,7 +29719,8 @@ fn m66_describe_and_begin_validate_the_same_policy_without_creating_a_folder() {
         assert_eq!(plan.destination_policy, policy);
         let begin = ConversionBeginRequestDto {
             handles: request.handles.clone(),
-            intent_id: plan.intent.id.clone(),
+            intent_id: Some(plan.intent.as_ref().expect("a row plan").id.clone()),
+            intent: None,
             conflict_policy: plan.conflict_policy,
             expected_receipt: plan.receipt,
             destination_policy: Some(plan.destination_policy.clone()),
@@ -29438,6 +29779,7 @@ fn m66_describe_and_begin_validate_the_same_policy_without_creating_a_folder() {
         let begin = ConversionBeginRequestDto {
             handles: request.handles.clone(),
             intent_id: request.intent_id.clone(),
+            intent: request.intent.clone(),
             conflict_policy: request.conflict_policy,
             expected_receipt: request.expected_receipt,
             destination_policy: request.destination_policy.clone(),
@@ -29734,7 +30076,7 @@ fn a_cancelled_item_that_launched_nothing_says_so_rather_than_claiming_a_tree() 
     let queue = ConversionQueue::new(
         0,
         ConversionConflictPolicyDto::Fail,
-        ConversionIntent::SHIPPED,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
         DestinationPolicy::CustomFolder,
         vec![test_queue_item()],
     )
@@ -29867,6 +30209,90 @@ fn an_owned_process_this_run_cannot_account_for_stops_the_queue_without_a_stop()
         "an item nothing will ever start is not waiting its turn"
     );
     assert_eq!(queue.not_run_count, 1);
+}
+
+/// A run that exits, cleanly or not, while its owned tree is unconfirmed is
+/// neither judged nor finalized, and it quarantines the backend with no stop
+/// asked for.
+///
+/// The crate's guard says the report leaves a process unaccounted for; this is
+/// the desktop half: the session stops trusting the backend, the next BEGIN is
+/// refused, the queue launches nothing more and the target name stays free.
+/// Injected, like the test above.
+#[cfg(windows)]
+#[test]
+fn an_exit_with_an_unconfirmed_tree_quarantines_the_backend_without_a_stop() {
+    for act in [
+        BackendAct::ConvertLeavingAProcess,
+        BackendAct::FailLeavingAProcess,
+    ] {
+        let fixture = TestFile::new("unconfirmed-tree-exit");
+        let runner = FakeConversionRunner::new(act);
+        let launches = runner.launches();
+        let service = PreviewService::new(Box::new(ConvertingProvider::new(
+            evidenced_capabilities(),
+            runner,
+        )));
+        let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+        let second = add_one_acquisition(&service, &fixture.thermo_raw("second.raw"));
+        let document = current_document(&service);
+        let reservation = service
+            .begin_conversion_under_now(
+                &[first.clone(), second],
+                ConversionConflictPolicyDto::Fail,
+                document,
+                DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+            )
+            .expect("two acquisitions are a queue");
+        let operation = service
+            .claim_conversion(&reservation.reservation_id, document)
+            .expect("claim the reservation");
+        assert!(service.start_resolved_for_test(operation, None));
+
+        let update = service.drain_queue_for_test(operation);
+
+        assert_eq!(launches.load(Ordering::SeqCst), 1, "{act:?}");
+        assert!(service.backend_is_quarantined(), "{act:?}");
+        assert!(update.backend_quarantined, "{act:?}");
+        let queue = terminal_queue(&update);
+        assert_eq!(
+            queue.items[0].state,
+            ConversionQueueItemStateDto::Failed,
+            "{act:?}"
+        );
+        let report = item_report(&queue.items[0]).expect("the attempt reports");
+        assert_eq!(
+            report.detailed_outcome.as_deref(),
+            Some("backend_not_terminated"),
+            "{act:?}: {report:?}"
+        );
+        assert_eq!(queue.finalized_count, 0, "{act:?}");
+        assert_eq!(
+            queue.items[1].state,
+            ConversionQueueItemStateDto::NotRun,
+            "{act:?}"
+        );
+        assert!(
+            !fixture
+                .directory
+                .join("converted")
+                .join("first.mzML")
+                .exists(),
+            "{act:?}: nothing was published under the target name"
+        );
+        assert_eq!(
+            service
+                .begin_conversion_now(
+                    std::slice::from_ref(&first),
+                    ConversionConflictPolicyDto::Fail,
+                    current_document(&service),
+                )
+                .unwrap_err()
+                .kind,
+            "backend_quarantined",
+            "{act:?}"
+        );
+    }
 }
 
 /// The admitted per-item stop, end to end through the command the interface
@@ -30792,17 +31218,18 @@ fn the_dataset_family_list_and_its_index_agree() {
 }
 
 /// The families the visible workflow converts are derived from `is_convertible`
-/// rather than listed, and are exactly the three vendor ones.
+/// rather than listed, and are every family the roster holds.
 ///
-/// mzML is deliberately absent: the crate converts it and the visible workflow
-/// declines it, which is what makes the two centroiding rows unavailable in the
-/// vendor workflow without anything naming a vendor family.
+/// mzML joined in ADR 0055. That makes the centroiding rows available in the
+/// catalog for mzML sources; a vendor row asked for one is still refused per
+/// row, because no vendor family's evidence covers it.
 #[test]
-fn the_convertible_family_set_is_derived_and_holds_the_three_vendor_families() {
+fn the_convertible_family_set_is_derived_and_holds_every_family() {
     let derived: Vec<_> = convertible_source_kinds().collect();
     assert_eq!(
         derived,
         vec![
+            mscanvas_proteowizard::ConversionSourceKind::MzmlFile,
             mscanvas_proteowizard::ConversionSourceKind::ThermoRawFile,
             mscanvas_proteowizard::ConversionSourceKind::ShimadzuLcdFile,
             mscanvas_proteowizard::ConversionSourceKind::SciexWiffBundle,
@@ -30817,29 +31244,99 @@ fn the_convertible_family_set_is_derived_and_holds_the_three_vendor_families() {
     }
 }
 
-/// No admitted combination that asks for centroiding is offered for any family
-/// the visible workflow converts.
+/// Every admitted combination that asks for centroiding is offered for exactly
+/// the one family it was measured on: the default picker for mzML, and the
+/// vendor picker for Thermo RAW (ADR 0059). No other vendor family is covered.
 ///
 /// The product-level statement of the repair, asked through the crate's own rule
-/// rather than through a list of rows: a centroiding row admitted for a vendor
+/// rather than through a list of rows: a centroiding row widened to another
 /// family later would fail here without anyone having to remember this test.
 #[test]
-fn no_centroiding_combination_is_evidenced_for_a_family_the_workflow_converts() {
-    use mscanvas_proteowizard::{ConversionIntent, ProcessingIntent};
+fn each_centroiding_combination_is_evidenced_only_for_the_family_it_was_measured_on() {
+    use mscanvas_proteowizard::{ConversionIntent, ConversionSourceKind, ProcessingIntent};
 
     for admitted in ConversionIntent::ADMITTED {
-        // Every processing that asks for a picker, not one variant by name, so
-        // a scoped MS-level preset added later is covered without an edit here.
-        if admitted.intent().processing() == ProcessingIntent::NoAdditionalCentroiding {
-            continue;
-        }
+        // Every processing that asks for a picker, by its measured family, so a
+        // picker row added later has to be given one here.
+        let measured_on = match admitted.intent().processing() {
+            ProcessingIntent::NoAdditionalCentroiding => continue,
+            ProcessingIntent::UnscopedDefaultCentroiding => ConversionSourceKind::MzmlFile,
+            ProcessingIntent::VendorCentroidingFromMs1
+            | ProcessingIntent::VendorCentroidingFromMs2 => ConversionSourceKind::ThermoRawFile,
+        };
         for kind in convertible_source_kinds() {
-            assert!(
-                !admitted.intent().evidence_covers_source(kind),
-                "{:?} is offered for {kind:?}, which nobody measured it on",
+            assert_eq!(
+                admitted.intent().evidence_covers_source(kind),
+                kind == measured_on,
+                "{:?} is offered for {kind:?} against its evidence",
                 admitted.intent()
             );
         }
+    }
+}
+
+/// Each vendor-centroiding row, MS1 and above and MS2 and above, is verified on
+/// the evidenced build only. On a build that reports another release it
+/// converts Thermo RAW labelled with that release and as unverified settings
+/// (ADR 0055's relaxed gate); a build that reports none converts no Thermo RAW
+/// at all.
+#[test]
+fn the_vendor_centroiding_rows_are_labelled_on_any_build_but_the_evidenced_one() {
+    for processing in [
+        ProcessingIntent::VendorCentroidingFromMs1,
+        ProcessingIntent::VendorCentroidingFromMs2,
+    ] {
+        vendor_centroiding_row_is_labelled_on_any_build_but_the_evidenced_one(processing);
+    }
+}
+
+fn vendor_centroiding_row_is_labelled_on_any_build_but_the_evidenced_one(
+    processing: ProcessingIntent,
+) {
+    use super::conversion::{settings_unverified, unverified_build_release};
+
+    let row = BoundIntent::Row(
+        ConversionIntent::admitted(
+            OutputFormat::MzMl,
+            processing,
+            SpectrumPopulation::All,
+            NumericPrecision::Mz64Intensity32,
+            CompressionIntent::Zlib,
+        )
+        .expect("a vendor-centroiding row"),
+    );
+    let thermo = ConversionSourceKind::ThermoRawFile;
+
+    let evidenced = wide_conversion_capabilities();
+    assert!(row.require_on(&evidenced).is_ok());
+    assert!(row.refusal_for_source(thermo).is_none());
+    assert!(!settings_unverified(&row, thermo, &evidenced));
+    assert_eq!(unverified_build_release(&evidenced, thermo), None);
+
+    let other = capabilities_declaring(
+        BackendTool::MsConvert,
+        "3.0.26204",
+        None,
+        OTHER_EXECUTABLE_SHA256,
+        WIDE_MSCONVERT_HELP,
+    );
+    assert!(row.require_on(&other).is_ok());
+    assert!(settings_unverified(&row, thermo, &other));
+    assert_eq!(
+        unverified_build_release(&other, thermo).as_deref(),
+        Some("3.0.26204")
+    );
+
+    assert!(
+        !mscanvas_proteowizard::provider_build_admission(&capabilities_without_a_release(), thermo)
+            .admits()
+    );
+    for kind in [
+        ConversionSourceKind::MzmlFile,
+        ConversionSourceKind::ShimadzuLcdFile,
+        ConversionSourceKind::SciexWiffBundle,
+    ] {
+        assert!(row.refusal_for_source(kind).is_some(), "{kind:?}");
     }
 }
 
@@ -31006,7 +31503,9 @@ fn begin_still_reserves_a_vendor_queue_under_an_intent_whose_evidence_covers_it(
 #[test]
 fn a_plan_for_an_intent_measured_only_on_mzml_names_the_evidence_not_the_build() {
     let fixture = TestFile::new("plan-not-evidenced-for-source");
-    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    // A build that can express the row, since ADR 0055 made the catalog offer
+    // it for mzML: the refusal left is the vendor row's own evidence.
+    let service = PreviewService::new(Box::new(ConvertingProvider::offering_every_admitted_row()));
     let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
     let receipt = current_receipt(&service);
 
@@ -31030,12 +31529,12 @@ fn a_plan_for_an_intent_measured_only_on_mzml_names_the_evidence_not_the_build()
 /// surface with one boolean and two facts to explain with it, and a test that
 /// built the reply by hand would be asserting about its own fixture.
 ///
-/// This installation's help declares mzML and zlib and nothing else, so the
-/// snapshot carries all three answers at once: the shipped row runs, the rows
-/// needing grammar it lacks are refused for the installation, and the two
-/// centroiding rows are refused for absent source evidence.
+/// This installation's help declares mzML and zlib and nothing else: the
+/// shipped row runs and the rows needing grammar it lacks are refused for the
+/// installation. Since ADR 0055 an mzML source converts, so no row is refused
+/// for absent source evidence: the centroiding rows are evidenced for mzML.
 #[test]
-fn the_catalog_wire_states_which_of_the_three_answers_each_row_got() {
+fn the_catalog_wire_states_which_answer_each_row_got() {
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
     let snapshot = service
         .read_conversion_configuration()
@@ -31057,34 +31556,19 @@ fn the_catalog_wire_states_which_of_the_three_answers_each_row_got() {
             .expect("every row keeps the boolean beside it");
         // The boolean and the discriminator are one decision, not two.
         assert_eq!(available, availability == "available");
-        let centroiding = row["intent"]["processing"]
-            .as_str()
-            .expect("every row names its processing")
-            == "unscoped_default_centroiding";
-        if centroiding {
-            assert_eq!(
-                availability, "not_evidenced_for_conversion_sources",
-                "a centroiding row was refused for the wrong reason on the wire"
-            );
-        } else {
-            assert_ne!(
-                availability, "not_evidenced_for_conversion_sources",
-                "a writer-side row was refused for absent source evidence"
-            );
-        }
+        assert_ne!(
+            availability, "not_evidenced_for_conversion_sources",
+            "every row covers a converted family, so none lacks source evidence"
+        );
     }
 
-    // All three answers really are present, so the cases above are exercised
+    // Both answers really are present, so the cases above are exercised
     // rather than vacuously satisfied by a catalog that refused everything.
     let answers: Vec<&str> = rows
         .iter()
         .map(|row| row["availability"].as_str().expect("an answer"))
         .collect();
-    for expected in [
-        "available",
-        "unsupported_by_installation",
-        "not_evidenced_for_conversion_sources",
-    ] {
+    for expected in ["available", "unsupported_by_installation"] {
         assert!(
             answers.contains(&expected),
             "no row on this wire answered {expected:?}: {answers:?}"
@@ -31092,6 +31576,7 @@ fn the_catalog_wire_states_which_of_the_three_answers_each_row_got() {
     }
 }
 mod active_clear;
+mod conversion_intent_wire;
 #[cfg(windows)]
 mod figure_preview;
 mod output_opening;

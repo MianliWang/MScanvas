@@ -37,8 +37,8 @@ use mscanvas_proteowizard::{
     ConversionRunOutcome, ConversionSource, ConversionSourceKind, ConversionSourceRejection,
     DiscoveryRequest, InstalledHelpCapabilities, MzmlScanLimits, OpenFormat, OutputEntryKind,
     ProcessError, ProcessOutput, ProcessRunner, Sha256Digest, SystemProcessRunner,
-    build_msconvert_command_for_source, discover, execute, run_conversion,
-    snapshot_output_directory,
+    build_msconvert_command_for_source, conversion_output_file_name, discover, execute,
+    run_conversion, snapshot_output_directory,
 };
 
 fn main() -> ExitCode {
@@ -520,14 +520,8 @@ fn require_admitted_bytes(
 
 /// The name the conversion plan would derive, without forming a plan.
 fn planned_output_name(input: &Path) -> Result<OsString, String> {
-    let stem = input
-        .file_stem()
-        .filter(|stem| !stem.is_empty())
-        .ok_or("the input has no convertible name")?;
-    let mut name = stem.to_os_string();
-    name.push(".");
-    name.push(OpenFormat::MzMl.extension());
-    Ok(name)
+    conversion_output_file_name(input, OpenFormat::MzMl)
+        .ok_or_else(|| "the input has no convertible name".to_owned())
 }
 
 /// The argv shape, with every path replaced by its role. Argument order and the

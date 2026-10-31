@@ -4,6 +4,14 @@ Status: **Accepted** by the owner on 2026-10-29. The storage contract below is
 the one draft PR #151 implements (branch `be/presets`, head `1c215a7`,
 `apps/desktop/src-tauri/src/presets.rs`). That PR is not merged, and no
 surface lists, saves or applies a preset yet.
+
+*Note, 2026-10-29:* #151 is merged into the integration branch `be/integrate`
+(draft PR #161), where `check_intent` is decision 5's structured reader: the
+same function a conversion plan reads its `intent` with
+(`read_structured_intent`), so its 64 KiB wire bound applies to a preset too.
+A value of the wrong shape, a stable id string included, is `notExpressible`;
+a refusal of the validating constructor answers with that constructor's
+stable id. Still no surface lists, saves or applies a preset.
 Related: [0044](0044-conversion-configuration-authority.md),
 [0055](0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
 [0057](0057-conversion-capacity-and-viewing-during-conversion.md);
