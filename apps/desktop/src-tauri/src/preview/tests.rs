@@ -4328,8 +4328,27 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // takes the same token, shares the same one figure-operation lane,
             // and answers whether the clipboard was written.
             "copy_selected_spectrum_plot",
+            // The ADR 0061 workspace restore store, on its own boundary like
+            // the preference store. Registered ahead of its interface: see
+            // `AHEAD_OF_THEIR_INTERFACE` below.
+            "read_workspace_restore",
+            "save_workspace_restore",
+            "clear_workspace_restore",
+            "set_workspace_restore_enabled",
         ]
     );
+    // Commands whose Rust side has landed before the webview calls them. Each
+    // entry leaves this list in the slice that gives it a caller. ADR 0052's
+    // per-output adoption lands before its contract and hook slice (the
+    // webview is rebuilt on its own branch); ADR 0061's restore store before
+    // its interface.
+    const AHEAD_OF_THEIR_INTERFACE: [&str; 5] = [
+        "adopt_workspace_conversion_output",
+        "read_workspace_restore",
+        "save_workspace_restore",
+        "clear_workspace_restore",
+        "set_workspace_restore_enabled",
+    ];
     // The picker command is named for the workspace it fills rather than for
     // one format, because it now admits two families and `choose_mzml_files`
     // had become a name that said something false about what it does.
@@ -4350,28 +4369,23 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
     // caller here and is deliberately not in this list.
     //
-    // ADR 0052's per-output adoption lands in Rust before its contract and
-    // hook slice (the webview is rebuilt on its own branch), so it is the one
-    // registered command no caller names yet. Declared rather than skipped,
-    // and the declaration retires itself: once the frontend calls it, this
-    // list must lose it.
-    let awaiting_a_caller = ["adopt_workspace_conversion_output"];
+    // A command ahead of its interface is declared rather than skipped, and
+    // the declaration retires itself: once the frontend calls one, the list
+    // must lose it.
     for name in &registered[1..] {
-        if awaiting_a_caller.contains(name) {
+        let called = api.contains(&format!("\"{name}\""))
+            || drop_transport.contains(&format!("\"{name}\""))
+            || preferences.contains(&format!("\"{name}\""))
+            || projects.contains(&format!("\"{name}\""))
+            || presets.contains(&format!("\"{name}\""));
+        if AHEAD_OF_THEIR_INTERFACE.contains(name) {
             assert!(
-                !api.contains(&format!("\"{name}\"")),
-                "the frontend calls {name} now; remove it from awaiting_a_caller"
+                !called,
+                "the frontend calls {name} now; remove it from AHEAD_OF_THEIR_INTERFACE"
             );
             continue;
         }
-        assert!(
-            api.contains(&format!("\"{name}\""))
-                || drop_transport.contains(&format!("\"{name}\""))
-                || preferences.contains(&format!("\"{name}\""))
-                || projects.contains(&format!("\"{name}\""))
-                || presets.contains(&format!("\"{name}\"")),
-            "the frontend never calls {name}"
-        );
+        assert!(called, "the frontend never calls {name}");
     }
     assert!(
         !api.contains("\"choose_mzml_file\""),

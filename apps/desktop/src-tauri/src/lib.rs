@@ -32,6 +32,9 @@ mod targeted_ms1;
 #[cfg(windows)]
 #[cfg_attr(not(test), allow(dead_code))]
 mod view_cache;
+/// The workspace restore document of ADR 0061 (WSP-010). Its own store beside
+/// the preference store: it records rows, never admits them.
+mod workspace_restore;
 
 use preferences::UiPreferenceStore;
 use preferences::dto::{UiPreferenceReadDto, UiPreferenceSaveDto, UiPreferenceWriteDto};
@@ -2445,6 +2448,86 @@ async fn clear_workspace(
     off_the_async_runtime(move || service.clear_workspace()).await?
 }
 
+// ---------------------------------------------------------------------------
+// Workspace restore commands (ADR 0061, WSP-010).
+//
+// Bound to the calling document like the preference commands. None names a
+// path in either direction: rows are addressed by handle, and what comes back
+// is a display name, a family, a checked state and a re-checked state.
+// ---------------------------------------------------------------------------
+
+/// The session's workspace restore store.
+type SharedRestore = Arc<workspace_restore::WorkspaceRestoreStore>;
+
+/// The start-up read: the rows still waiting to be put back, each
+/// re-checked now by identity and length. Admits nothing and reads no byte of
+/// any acquisition.
+#[tauri::command]
+async fn read_workspace_restore(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestoreReadDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    off_the_async_runtime(move || restore.read()).await
+}
+
+/// Records the session for the next start: Rust's own rows, arranged as the
+/// webview arranges them. An arrangement that does not place every row of this
+/// process exactly once is refused, and so is a save over a document another
+/// MSCanvas process wrote since this one last read or wrote it.
+#[tauri::command]
+async fn save_workspace_restore(
+    arrangement: workspace_restore::WorkspaceArrangementDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestoreWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    let service = Arc::clone(&service);
+    // The registry is read once this save is the one saving, so an older
+    // arrangement never publishes over a newer roster.
+    off_the_async_runtime(move || {
+        restore.save_with(&arrangement, || service.workspace_restore_rows())
+    })
+    .await
+}
+
+/// Forgets every row the document stored, and writes restore off, answering
+/// `turnedOff`, if the document is no longer what this process last saw.
+/// Source acquisitions are not touched; a copy kept aside after a refusal is
+/// not removed.
+#[tauri::command]
+async fn clear_workspace_restore(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestoreWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    off_the_async_runtime(move || restore.clear()).await
+}
+
+/// The off switch. Off forgets every row and path the document stored; a copy
+/// kept aside after a refusal is not removed.
+#[tauri::command]
+async fn set_workspace_restore_enabled(
+    enabled: bool,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestoreWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    off_the_async_runtime(move || restore.set_enabled(enabled)).await
+}
+
 fn picker_unavailable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "file_picker_unavailable",
@@ -2662,6 +2745,23 @@ pub fn run() {
             // It resolves nothing, reads nothing and creates nothing until a
             // user acts, so binding it cannot fail and cannot touch the disk.
             app.manage(SharedProjects::new(project::ProjectStore::new()));
+            // The workspace restore document is read once, here, from the same
+            // per-user directory. A QA build binds none, so a rendered
+            // campaign never reads or writes the real profile's workspace.
+            // ponytail: once the preference store exposes its bound directory
+            // (`sibling_directory`, which the conversion preset store adds),
+            // bind that instead, so a QA build uses its own QA root; the
+            // interface slice needs it for rendered QA (ADR 0061, decision 2).
+            #[cfg(not(feature = "e2e"))]
+            let restore_directory = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|_| "rootUnresolved");
+            #[cfg(feature = "e2e")]
+            let restore_directory = Err("qaBuild");
+            app.manage(SharedRestore::new(
+                workspace_restore::WorkspaceRestoreStore::open(restore_directory),
+            ));
             // One synthetic spectrum in the ordinary export slot, so a rendered
             // test can reach the real export path on a machine with no
             // ProteoWizard installation and no mzML file. Not a command: there
@@ -2781,7 +2881,11 @@ pub fn run() {
             save_linked_figure_export,
             save_chromatogram_export,
             copy_chromatogram_plot,
-            copy_selected_spectrum_plot
+            copy_selected_spectrum_plot,
+            read_workspace_restore,
+            save_workspace_restore,
+            clear_workspace_restore,
+            set_workspace_restore_enabled
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");
