@@ -604,10 +604,10 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
       usable(state.applied.locale);
       dispatch({ type: "open" });
       setAnnouncement(null);
-      // A previous failure's actions are cleared, because they belong to a
-      // press that is over. `sessionOnly` is not: it is a fact about this
-      // session, and the footer keeps saying what a restart will use.
-      setSave(current => ({ ...IDLE_APPEARANCE, sessionOnly: current.sessionOnly }));
+      // The save state is kept. Settings close while a write is in flight, so
+      // a write still pending, or one that failed or was refused after the
+      // close, is about a choice still on screen: clearing it here let the
+      // next Close discard that choice. A settled press already left it idle.
     },
     preview: (preferences) => {
       // Editing is a claim on the record: a hydration answer still in flight

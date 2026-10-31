@@ -231,6 +231,28 @@ describe("durable UI preferences", () => {
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
+  it("keeps a choice whose write is still in flight through a reopen and a close, and after it fails", async () => {
+    const { preferences } = mount({ preferences: { deferred: true, failWith: { problem: "notWritten", retryable: true } } });
+    await preferences.release();
+    await screen.findByText("No ProteoWizard installation was found");
+    choose(openSettings(), en.simplifiedChinese);
+    await applyAndClose(screen.getByRole("dialog"), zh.close);
+    // Reopened and closed before the reply: the write is still outstanding.
+    const reopened = openSettings();
+    expect(reopened.querySelector("[data-storage-note]")).toHaveTextContent(zh.savePending);
+    await applyAndClose(reopened, zh.close);
+    expect(document.documentElement.lang).toBe("zh-CN");
+
+    await preferences.release();
+    // The failure arrived while Settings was closed; it is still said on the
+    // next open, and Close keeps the choice for this session.
+    const afterFailure = openSettings();
+    expect(within(afterFailure).getByRole("alert")).toHaveTextContent(zh.saveFailedTitle);
+    await applyAndClose(afterFailure, zh.close);
+    expect(document.documentElement.lang).toBe("zh-CN");
+    expect(preferences.stored()).toBeNull();
+  });
+
   it("keeps the draft, offers retry, and succeeds on the retry after a write failure", async () => {
     const { preferences } = mount({
       preferences: { failWith: { problem: "notPublished", retryable: true } },
