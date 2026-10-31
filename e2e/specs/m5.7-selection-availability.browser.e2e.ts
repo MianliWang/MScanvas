@@ -40,7 +40,7 @@ import {
   viewerReads,
   visibleSpan,
 } from "../support/viewer";
-import { showBackendBanner } from "../support/backendBanner";
+import { hideBackendBanner, showBackendBanner } from "../support/backendBanner";
 
 const VIEWPORTS = [
   { name: "1920x1080", width: 1_920, height: 1_080 },
@@ -51,14 +51,14 @@ const VIEWPORTS = [
 /** The one explanation, and the region that carries it either way. */
 const NOTICE = "#viewer-selection-availability";
 const REGION = '[data-live-region="spectrum-selection-availability"]';
-const VIEWER_COLUMN = ".viewer-column";
-const VIEWER_STACK = ".viewer-stack";
+/** The evidence column, the open file (its row, then its view), and the file row's name (direction A). */
+const VIEWER_COLUMN = "#workbench-evidence";
+const VIEWER_STACK = ".viewer-file";
+const IDENTITY = ".viewer-file-name";
 const GRID = "div.spectrum-table";
 const FIRST_ROW = 'div.spectrum-table-row[data-row-position="0"]';
 
-const BACKEND_REASON =
-  "Selecting a scan needs ProteoWizard, and this session has no usable backend. " +
-  "See the backend status above.";
+const BACKEND_REASON = "Scan selection needs ProteoWizard, which is unavailable. See backend status.";
 
 /**
  * Closes the lane the way a reader can actually close it here.
@@ -78,6 +78,8 @@ async function recheckTheBackend(verdict: unknown): Promise<void> {
     throw new Error("the backend banner offers no recheck action");
   }
   await recheck.click();
+  // The details float over the viewer this spec goes on to press.
+  await hideBackendBanner();
 }
 
 async function noticeText(): Promise<string | null> {
@@ -133,8 +135,9 @@ describe("M5.7 — selection availability, rendered", () => {
     expect(await browser.$(REGION).isExisting()).toBe(true);
     expect(await noticeText()).toBe(null);
     expect(await describedBy(GRID)).toBe(null);
-    // The readout, then each axis's unit state (PM9 UI-33).
-    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units");
+    // The readout, then each axis's unit state (PM9 UI-33), then the plot's
+    // gestures, whose disclosure became a hidden description (rebuild spec 3.4).
+    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures");
   });
 
   it("explains a closed lane once, and points both surfaces at that one sentence", async () => {
@@ -152,7 +155,7 @@ describe("M5.7 — selection availability, rendered", () => {
     expect(await browser.$$(NOTICE).length).toBe(1);
 
     expect(await describedBy(GRID)).toBe("viewer-selection-availability");
-    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-units viewer-selection-availability");
+    expect(await describedBy(PLOT)).toBe("chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures viewer-selection-availability");
     // Announced politely, by the element that was already there.
     expect(
       await browser.execute(
@@ -265,9 +268,9 @@ describe("M5.7 — selection availability, rendered", () => {
       const before = await boxOf(VIEWER_COLUMN);
       await blockSelection();
 
-      // The sentence is on screen and inside the column it belongs to.
-      const notice = await boxOf(NOTICE);
-      expect(notice.height).toBeGreaterThan(0);
+      // The sentence is the controls' description and the live region (S4: the
+      // empty spectrum says it on screen in a few words, once).
+      expect(await browser.$(NOTICE).getProperty("textContent")).not.toBe("");
       const column = await boxOf(VIEWER_COLUMN);
       expect(Math.abs(column.width - before.width)).toBeLessThan(1);
 
@@ -276,13 +279,16 @@ describe("M5.7 — selection availability, rendered", () => {
         expect(await browser.$(panel).isExisting()).toBe(true);
       }
 
-      // And the stack still fills what the column has left. Presence is not
-      // enough: wrapping the stack in a flex column takes away the stretch it
-      // had for free as a grid item, and the symptom is a band of nothing under
-      // three views that have bunched at the top.
+      // And the view still fills what the column has left. Presence is not
+      // enough: a flex item takes its own content height, and the symptom is
+      // a band of nothing under three views that have bunched at the top.
       const stack = await boxOf(VIEWER_STACK);
       expect(Math.abs(stack.bottom - column.bottom)).toBeLessThan(2);
-      expect(stack.top).toBeGreaterThanOrEqual(notice.bottom - 1);
+      // The file row (the file's name and its tabs, direction A) carries no
+      // sentence, and the chromatogram below it is not covered.
+      const identity = await boxOf(IDENTITY);
+      expect(identity.top).toBeGreaterThanOrEqual(stack.top - 1);
+      expect((await boxOf(CHROMATOGRAM)).top).toBeGreaterThanOrEqual(identity.bottom - 1);
       const overflow = await horizontalOverflow();
       expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
 

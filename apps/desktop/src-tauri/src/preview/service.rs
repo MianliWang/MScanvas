@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+mod conversion_intent;
 mod figure_preview;
 mod output_opening;
 mod staging_recovery;
@@ -33,9 +34,11 @@ use super::chromatogram::{
 use super::conversion::conversion_source_kind;
 #[cfg(test)]
 use mscanvas_proteowizard::ConflictPolicy;
+#[cfg(test)]
+use mscanvas_proteowizard::ConversionIntent;
 use mscanvas_proteowizard::{
-    AdmittedSetRun, ConversionIntent, MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed,
-    SetRunSeam, run_admitted_multi_output_conversion_seamed,
+    AdmittedSetRun, MAX_CONVERSION_OUTPUTS_PER_SOURCE, OutputNamesClaimed, SetRunSeam,
+    run_admitted_multi_output_conversion_seamed,
 };
 #[allow(clippy::wildcard_imports)]
 use mscanvas_proteowizard::{ConversionAttempt, ConversionCancellation, OwnedTreeDisposition};
@@ -58,9 +61,9 @@ use super::conversion::WorkspaceMultiOutputConversionReport;
 #[cfg(test)]
 use super::conversion::run_planned_conversion;
 use super::conversion::{
-    ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression,
+    BoundIntent, ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression,
     fixed_output_format, plan_conversion, refusal_is_retryable, refuse_unevidenced_build,
-    run_planned_conversion_cancellable,
+    run_planned_conversion_cancellable, settings_unverified, unverified_build_release,
 };
 use super::destination::admit_destination_root;
 use super::destination_policy::{
@@ -70,7 +73,7 @@ use super::diagnostics::OutputSetDiagnosticFacts;
 use super::diagnostics::payload;
 use super::diagnostics::{
     DIAGNOSTICS_FILE_NAME, DiagnosticsExportRequest, DiagnosticsExportSlot,
-    MAX_DIAGNOSTIC_EXPORT_BYTES,
+    max_diagnostic_export_bytes,
 };
 use super::dialog::{DIAGNOSTICS_SAVE_DIALOG, SaveDialogFacts};
 use super::discovery::{
@@ -106,7 +109,7 @@ use super::dto::{
     ConversionBeginRequestDto, ConversionConfigurationOutcomeDto,
     ConversionConfigurationRefusalDto, ConversionConfigurationSnapshotDto,
     ConversionPlanOutcomeDto, ConversionPlanRequestDto, conversion_backend_busy,
-    conversion_binding_replaced, conversion_configuration_unread, conversion_intent_not_admitted,
+    conversion_binding_replaced, conversion_configuration_unread, conversion_intent_not_checkable,
     conversion_intent_unavailable, conversion_without_an_installation,
 };
 use super::dto::{
@@ -140,8 +143,9 @@ use super::dto::{
     conversion_item_not_skippable, conversion_not_stoppable,
 };
 use super::dto::{
-    SpectrumDomainRefusalDto, SpectrumProjectionDto, SpectrumViewportDomainDto,
-    spectrum_projection_no_domain, spectrum_projection_stale, spectrum_projection_window_refused,
+    ProjectionSampleDto, SpectrumDomainRefusalDto, SpectrumProjectionDto,
+    SpectrumViewportDomainDto, spectrum_projection_no_domain, spectrum_projection_stale,
+    spectrum_projection_window_refused,
 };
 use super::dto::{
     WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto, adoption_in_progress,
@@ -159,19 +163,22 @@ use super::figure::{
 use super::installation::{InstallationIdentity, PreviewProducerFacts};
 use super::operation::{
     AdmittedDestination, AttemptFacts, CancellationFacts, ConversionQueue, ConversionSlot,
-    ItemOutcome, PendingDisposition, QueueItem, QueueItemAttempt, SettledItemAdoption,
-    StopAccepted, TerminalReason, folded_output_name, item_output_topology, item_state_of,
+    ItemOutcome, QueueItem, QueueItemAttempt, SettledItemAdoption, StopAccepted, TerminalReason,
+    folded_output_name, item_output_topology, item_state_of,
 };
 use super::operation::{ItemOutputTopology, SetStopFacts};
 use super::projection::{self, ProjectionRefusal};
 use super::selection::DatasetSourceKind;
 use super::selection::{
-    AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity, RevocationReason,
-    accept_mzml_file, accept_workspace_file, candidate_display_name, file_identity,
-    lock_against_replacement, open_conversion_source, relative_contexts, revalidate,
-    selected_file_dto, source_kind_dto, unknown_dataset,
+    AcceptedFile, AddDatasetOutcome, DatasetId, DatasetRegistry, FileIdentity,
+    NotVerifiedByMscanvas, RevocationReason, accept_mzml_file, accept_workspace_file,
+    candidate_display_name, file_identity, lock_against_replacement, open_conversion_source,
+    relative_contexts, revalidate, selected_file_dto, source_kind_dto, unknown_dataset,
 };
+pub(crate) use conversion_intent::read_structured_intent;
+use conversion_intent::resolve_requested_intent;
 use mscanvas_plot_spec::spec::{Domain, FigureTheme};
+use mscanvas_proteowizard::InstalledHelpCapabilities;
 
 /// The name the native save dialog offers for a diagnostics export.
 //
@@ -383,7 +390,12 @@ fn roster_of(workspace: &Workspace) -> WorkspaceRosterDto {
             .iter()
             .filter_map(|id| {
                 workspace.registry.get(*id).map(|dataset| {
-                    selected_file_dto(*id, dataset.file(), contexts.get(id).cloned())
+                    selected_file_dto(
+                        *id,
+                        dataset.file(),
+                        contexts.get(id).cloned(),
+                        dataset.not_verified(),
+                    )
                 })
             })
             .collect(),
@@ -397,10 +409,14 @@ fn roster_of(workspace: &Workspace) -> WorkspaceRosterDto {
 /// same dataset in the roster beside it can never disagree about its context.
 fn dataset_dto(workspace: &Workspace, id: DatasetId) -> Option<SelectedFileDto> {
     let contexts = relative_contexts(&workspace.registry);
-    workspace
-        .registry
-        .get(id)
-        .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+    workspace.registry.get(id).map(|dataset| {
+        selected_file_dto(
+            id,
+            dataset.file(),
+            contexts.get(&id).cloned(),
+            dataset.not_verified(),
+        )
+    })
 }
 
 /// What happened to one candidate, before it is described.
@@ -433,10 +449,14 @@ fn describe_outcomes(
 ) -> Vec<WorkspaceAddOutcomeDto> {
     let contexts = relative_contexts(&workspace.registry);
     let describe = |id: DatasetId| {
-        workspace
-            .registry
-            .get(id)
-            .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+        workspace.registry.get(id).map(|dataset| {
+            selected_file_dto(
+                id,
+                dataset.file(),
+                contexts.get(&id).cloned(),
+                dataset.not_verified(),
+            )
+        })
     };
     pending
         .into_iter()
@@ -633,6 +653,13 @@ pub struct PreviewService {
     // is weakened — the hook is handed a position and can only act on the
     /// world, exactly as another process could.
     publication_seam: Mutex<Option<PublicationHook>>,
+    /// Whether the next queue set settlement forgets its completeness proof.
+    //
+    // The SCIEX path proves completeness before publication, so a fully
+    // finalized queue set without it cannot occur; this forges one, so the
+    /// per-output adoption's refusal of it can be tested (ADR 0052).
+    #[cfg(test)]
+    forget_next_set_completeness: AtomicBool,
     /// The session's one diagnostics export.
     //
     // A leaf beside the conversion slot rather than a field inside it. What it
@@ -747,6 +774,8 @@ impl PreviewService {
             adopting_outputs: AtomicBool::new(false),
             session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
             publication_seam: Mutex::new(None),
+            #[cfg(test)]
+            forget_next_set_completeness: AtomicBool::new(false),
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
             spectrum_export: Mutex::new(ScientificExportSlots::default()),
@@ -1552,6 +1581,63 @@ impl PreviewService {
         Some(identities)
     }
 
+    /// The "not verified by MSCanvas" label of the row whose primary is the
+    /// object `identity` names, where this session adopted it from a labelled
+    /// conversion (ADR 0055; owner decision 2 of 2026-10-29).
+    ///
+    /// Asked by a project registration about the object it just hashed, so
+    /// the label follows the object whatever route the user registers it by.
+    /// A row's identity is one its lease holds, so a match is that row's own
+    /// object. Memory only; reads nothing.
+    pub(crate) fn not_verified_label_of_object(
+        &self,
+        identity: (u64, [u8; 16]),
+    ) -> Option<NotVerifiedByMscanvas> {
+        let workspace = self.workspace();
+        let registry = &workspace.registry;
+        registry
+            .ids()
+            .iter()
+            .filter_map(|id| registry.get(*id))
+            .find(|dataset| dataset.object_identities().first() == Some(&identity))
+            .and_then(|dataset| dataset.not_verified().cloned())
+    }
+
+    /// Gives the row a project reference was admitted as the label the
+    /// project recorded for that object, and says it in the add's own answer.
+    ///
+    /// The other half of `not_verified_label_of_object`: the label is a
+    /// property of the object, so a reference carried back into the Workbench
+    /// brings it to the row (ADR 0055; owner decision 2 of 2026-10-29). Called
+    /// only once the project has claimed `handle`, which is what proves the
+    /// row is the object the label was recorded for. Memory only.
+    pub(crate) fn label_admitted_row(
+        &self,
+        result: &mut WorkspaceAddResultDto,
+        handle: &str,
+        label: NotVerifiedByMscanvas,
+    ) {
+        let Some(id) = DatasetId::parse(handle) else {
+            return;
+        };
+        let gate = self.enter_workspace_mutation_after_drop();
+        let mut workspace = self.workspace();
+        let Some(held) = workspace.registry.label(id, label) else {
+            return;
+        };
+        result.roster = roster_of(&workspace);
+        drop(workspace);
+        drop(gate);
+        for outcome in &mut result.outcomes {
+            if let WorkspaceAddOutcomeDto::Added { dataset }
+            | WorkspaceAddOutcomeDto::Duplicate { existing: dataset } = outcome
+                && dataset.handle == handle
+            {
+                dataset.not_verified_by_mscanvas = Some(held.clone());
+            }
+        }
+    }
+
     /// The run summary the preview on screen established for one row, and
     /// what is known about the build that produced it.
     ///
@@ -1727,11 +1813,11 @@ impl PreviewService {
         // that start work, and that position is the whole of it. A discovery
         // happens inside other operations, so a probe that lost a process is
         // learned about halfway through one -- and the reader that has to know
-        // is not only the next launch. `refuse_queue` decides whether a waiting
-        // item is still waiting by asking this: with the latch read only on the
-        // way into new work, a queue refused by that very probe left its rows
-        // `Pending` in a terminal queue, offered no retry, and quarantined the
-        // next operation instead. One place, and it cannot be forgotten.
+        // is not only the next launch. `refuse_queue` reports the quarantine by
+        // asking this: with the latch read only on the way into new work, a
+        // queue refused by that very probe was described as recoverable, and
+        // the quarantine fell on the next operation instead. One place, and it
+        // cannot be forgotten.
         if self.provider.discovery_lost_a_process() {
             self.quarantine_backend();
         }
@@ -1915,14 +2001,15 @@ impl PreviewService {
     ) -> Result<ConversionPlanOutcomeDto, PreviewErrorDto> {
         // The identity first, and from the admitted table rather than from
         // anything the caller sent beside it. A combination this product has
-        // never measured is not a plan with a problem; it is not a plan.
-        let Some(intent) = ConversionIntent::from_stable_id(&request.intent_id) else {
-            return Err(conversion_intent_not_admitted());
-        };
+        // never measured is not a plan with a problem; it is not a plan. A
+        // structured intent is rebuilt and validated here, and one equal to a
+        // row is that row (ADR 0055).
+        let intent =
+            resolve_requested_intent(request.intent_id.as_deref(), request.intent.as_ref())?;
         // The binding and its catalog in one critical section, so a check
         // installing a new binding between the two reads cannot produce an
         // answer that pairs one binding's receipt with another's availability.
-        let admission = {
+        let (admission, unverified_builds, capabilities) = {
             let mut observed = self
                 .resolved
                 .lock()
@@ -1939,7 +2026,16 @@ impl PreviewService {
                     authority: projection.to_dto(),
                 });
             };
-            observed.configurations.admits(binding, &intent)
+            (
+                match &intent {
+                    BoundIntent::Row(row) => observed.configurations.admits(binding, row),
+                    // Asked of the catalog's own grammar below; with no
+                    // catalog there is no grammar to ask.
+                    BoundIntent::Advanced(_) => RowAdmission::Available,
+                },
+                observed.configurations.unverified_builds(binding),
+                observed.configurations.capabilities(binding),
+            )
         };
         match admission {
             RowAdmission::Available => {}
@@ -1954,6 +2050,12 @@ impl PreviewService {
             }
             RowAdmission::NoCatalog => return Err(conversion_configuration_unread()),
         }
+        let Some(capabilities) = capabilities else {
+            return Err(conversion_configuration_unread());
+        };
+        // Every option and filter an advanced intent's lowering emits, against
+        // the grammar this catalog was read from. A row was asked above.
+        intent.require_on(&capabilities)?;
         // The same validated decision BEGIN consumes. Planning creates nothing
         // and acquires no destination object: source-relative anchors remain
         // conditional until BEGIN captures the logical acquisitions under its
@@ -1965,7 +2067,7 @@ impl PreviewService {
             });
         }
         let policy = DestinationPolicy::from_request(request.destination_policy.as_ref())?;
-        let items = self.plan_queue_items(&request.handles, intent, &policy)?;
+        let items = self.plan_queue_items(&request.handles, &intent, &policy)?;
         Ok(ConversionPlanOutcomeDto::Planned {
             plan: Box::new(ConversionQueuePlanDto {
                 items: items
@@ -1975,20 +2077,37 @@ impl PreviewService {
                         file_name: item.file_name().to_owned(),
                         source_kind: source_kind_dto(item.kind()),
                         output: item.output().to_dto(),
+                        unverified_build_release: unverified_builds
+                            .iter()
+                            .find(|(kind, _)| *kind == conversion_source_kind(item.kind()))
+                            .map(|(_, release)| release.clone()),
+                        // Per row: decision 1's tier depends on the source.
+                        unverified_settings: settings_unverified(
+                            &intent,
+                            conversion_source_kind(item.kind()),
+                            &capabilities,
+                        ),
                     })
                     .collect(),
                 // All three read off the intent this queue would be bound to,
                 // so what the panel is told before the picker opens is the same
                 // fact the conversion is judged against afterwards.
-                output_format: fixed_output_format(intent),
-                compression: fixed_compression(intent).to_owned(),
-                intent: intent_dto(&intent),
-                // Stated before the run rather than after it. A vendor
-                // acquisition has no mzML reading, so nothing about any output
-                // can be compared to a source model -- and a user deciding
-                // whether to convert a batch is entitled to know that before
-                // they choose a folder.
-                validation_mode: ValidationModeDto::OutputOnly,
+                output_format: fixed_output_format(&intent),
+                compression: fixed_compression(&intent).to_owned(),
+                intent: intent.row().as_ref().map(intent_dto),
+                canonical_intent: intent.canonical(),
+                // Stated before the run rather than after it, as the weakest
+                // claim any item holds. A vendor acquisition has no mzML
+                // reading, so nothing about its output can be compared to a
+                // source model; only a queue of mzML sources is compared.
+                validation_mode: if items
+                    .iter()
+                    .all(|item| conversion_source_kind(item.kind()).supports_source_comparison())
+                {
+                    ValidationModeDto::SourceComparison
+                } else {
+                    ValidationModeDto::OutputOnly
+                },
                 capacity: MAX_CONVERSION_QUEUE_ITEMS,
                 conflict_policy: request.conflict_policy,
                 destination_policy: policy.to_dto(),
@@ -2007,7 +2126,7 @@ impl PreviewService {
     fn plan_queue_items(
         &self,
         handles: &[String],
-        intent: ConversionIntent,
+        intent: &BoundIntent,
         policy: &DestinationPolicy,
     ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
         self.plan_items(handles, intent, policy)
@@ -2030,7 +2149,7 @@ impl PreviewService {
     fn plan_items(
         &self,
         handles: &[String],
-        intent: ConversionIntent,
+        intent: &BoundIntent,
         policy: &DestinationPolicy,
     ) -> Result<Vec<QueueItem>, PreviewErrorDto> {
         // Refused before the workspace is even read. A list longer than a
@@ -2054,18 +2173,15 @@ impl PreviewService {
             // What this row's outputs will look like. For a known single output
             // the name is derived from the display name the roster already
             // carries, through the same function the plan itself uses -- nothing
-            // here touches a path. mzML rows are refused rather than silently
-            // dropped: the interface states how many selected rows are
-            // excluded, and a boundary that quietly shortened the list would
-            // make that count a fiction.
+            // here touches a path.
             // The same applicability question the crate's plan asks, asked here
             // so it is answered before the queue commits, before a destination
             // picker opens and before any folder is created. It is a *refusal*,
             // not an exclusion: the row is convertible, and shortening the batch
             // to make this intent succeed would change what the user asked for
             // and make the stated exclusion count a fiction.
-            if !intent.evidence_covers_source(conversion_source_kind(kind)) {
-                return Err(conversion_settings_not_evidenced_for_source());
+            if let Some(refusal) = intent.refusal_for_source(conversion_source_kind(kind)) {
+                return Err(refusal);
             }
             let output = item_output_topology(kind, &dto.file_name, intent)?;
             items.push(QueueItem::new(
@@ -2240,15 +2356,14 @@ impl PreviewService {
         // The identity, from the admitted table and from nothing else. A
         // caller-supplied string that names no row never becomes an intent, so
         // there is no partially-valid semantic for anything downstream to run.
-        let Some(intent) = ConversionIntent::from_stable_id(&request.intent_id) else {
-            return Err(conversion_intent_not_admitted());
-        };
+        let intent =
+            resolve_requested_intent(request.intent_id.as_deref(), request.intent.as_ref())?;
         // Planned once here so the preflight below has a validated family set
         // to ask about -- and planned *again* under the mutation gate, which
         // is the plan the queue is actually bound from. This first pass also
         // keeps a batch of dead handles from costing a help probe.
         let preflight_families: Vec<ConversionSourceKind> = {
-            let items = self.plan_items(&request.handles, intent, &policy)?;
+            let items = self.plan_items(&request.handles, &intent, &policy)?;
             let mut families = Vec::new();
             for item in &items {
                 let kind = conversion_source_kind(item.kind());
@@ -2258,7 +2373,8 @@ impl PreviewService {
             }
             families
         };
-        self.prove_begin(request.expected_receipt, intent, &preflight_families)?;
+        let capabilities =
+            self.prove_begin(request.expected_receipt, &intent, &preflight_families)?;
         // The same gate every workspace mutation takes, so a queue and a batch
         // cannot both be admitted by each reading the other's state before
         // either committed. `_after_drop` because a drop is accepted by a
@@ -2281,7 +2397,16 @@ impl PreviewService {
         // picker would open for a run guaranteed to end superseded. Planning
         // is lock-cheap and launches nothing, so it is simply done again where
         // it counts.
-        let items = self.plan_items(&request.handles, intent, &policy)?;
+        let mut items = self.plan_items(&request.handles, &intent, &policy)?;
+        // Each row's "not verified by MSCanvas" label, as the plan stated it,
+        // so a waiting or running row says it before its report exists.
+        for item in &mut items {
+            let kind = conversion_source_kind(item.kind());
+            item.set_not_verified(NotVerifiedByMscanvas::of(
+                settings_unverified(&intent, kind, &capabilities),
+                unverified_build_release(&capabilities, kind),
+            ));
+        }
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -2409,9 +2534,9 @@ impl PreviewService {
     fn prove_begin(
         &self,
         expected_receipt: BackendBindingReceiptDto,
-        intent: ConversionIntent,
+        intent: &BoundIntent,
         families: &[ConversionSourceKind],
-    ) -> Result<(), PreviewErrorDto> {
+    ) -> Result<InstalledHelpCapabilities, PreviewErrorDto> {
         let Some(running) = self.try_enter_backend() else {
             return Err(conversion_backend_busy());
         };
@@ -2476,13 +2601,7 @@ impl PreviewService {
         // exact combination the reader selected -- not of the shipped posture,
         // and not of "conversion in general" -- because a build can admit an
         // mzML conversion and lack the grammar one admitted row emits.
-        if backend
-            .capabilities
-            .require_conversion_intent(&intent)
-            .is_err()
-        {
-            return Err(conversion_intent_unavailable());
-        }
+        intent.require_on(&backend.capabilities)?;
         // The courtesy, out of the same one discovery. Execution re-asks
         // fail-closed per item and per family regardless; what this adds is
         // that a user is normally refused before choosing a folder rather than
@@ -2491,7 +2610,8 @@ impl PreviewService {
         for kind in families {
             refuse_unevidenced_build(&backend.capabilities, *kind)?;
         }
-        Ok(())
+        // The grammar just proved, for the label each queued row carries.
+        Ok(backend.capabilities)
     }
 
     /// Consumes one exact reservation before its picker is dispatched.
@@ -2750,6 +2870,43 @@ impl PreviewService {
         operation_id: &str,
         document_epoch: u64,
     ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+        self.adopt_terminal_outputs(operation_id, None, document_epoch)
+    }
+
+    /// Adds one finalized output of a terminal queue to the workspace.
+    //
+    // ADR 0052. The sibling of the queue-wide action, and the same adoption:
+    // the queue-wide candidates are filtered to the one whose ticket carries
+    // `output_id` before anything is claimed. So the authority is the
+    // expanded adoption authority and nothing else -- an id the item carries
+    // only for opening (a partial set's prefix, a set whose sample
+    // completeness was not established), an unfinalized item and an unknown
+    // id all answer `outputs_not_adoptable`, with no flag claimed and no
+    // generation reserved.
+    //
+    // The answer is recorded on the output's item exactly as a queue-wide
+    // answer is, replacing what that item held: it says what the latest
+    // adoption did with the item's outputs.
+    ///
+    /// Errors as the queue-wide action does, and also for an output this
+    /// queue does not offer.
+    pub fn adopt_conversion_output(
+        &self,
+        operation_id: &str,
+        output_id: &str,
+        document_epoch: u64,
+    ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+        self.adopt_terminal_outputs(operation_id, Some(output_id), document_epoch)
+    }
+
+    /// The adoption both visible actions run: every offered output, or the one
+    /// named.
+    fn adopt_terminal_outputs(
+        &self,
+        operation_id: &str,
+        only: Option<&str>,
+        document_epoch: u64,
+    ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
         let operation: u64 = operation_id.parse().map_err(|_| outputs_not_adoptable())?;
 
         let (reserved, tickets, reserved_round) = {
@@ -2770,10 +2927,16 @@ impl PreviewService {
                     true,
                 ));
             }
-            let tickets = self
+            let mut tickets = self
                 .conversion_slot()
                 .terminal_adoption_tickets(operation)
                 .ok_or_else(outputs_not_adoptable)?;
+            // Filtered before the round is read and before the flag is
+            // claimed, and only ever narrowed: a candidate keeps the
+            // `(item, member)` identity the queue-wide action gives it.
+            if let Some(output_id) = only {
+                tickets.retain(|(_, ticket)| ticket.output_id() == output_id);
+            }
             if tickets.is_empty() {
                 return Err(outputs_not_adoptable());
             }
@@ -2930,6 +3093,13 @@ impl PreviewService {
     pub(super) fn mark_retryable_for_test(&self, operation: u64, index: usize) -> bool {
         self.conversion_slot()
             .mark_retryable_for_test(operation, index)
+    }
+
+    /// Makes the next queue set settlement forget its completeness proof.
+    #[cfg(test)]
+    pub(super) fn forget_next_set_completeness(&self) {
+        self.forget_next_set_completeness
+            .store(true, Ordering::Release);
     }
 
     /// What the live queue's runtime name authority currently owns, and the
@@ -3295,6 +3465,9 @@ impl PreviewService {
                 .map_err(|refusal| {
                     Self::projection_refusal(SpectrumProjectionRefusal::Source(refusal))
                 })?;
+        let sample = |outside: Option<(f64, f64)>| {
+            outside.map(|(mz, intensity)| ProjectionSampleDto { mz, intensity })
+        };
         Ok(SpectrumProjectionDto {
             low: projection.window().low(),
             high: projection.window().high(),
@@ -3302,6 +3475,8 @@ impl PreviewService {
             intensity: projection.intensity().to_vec(),
             source_points: projection.source_points(),
             reduced: projection.reduced(),
+            outside_low: sample(projection.outside()[0]),
+            outside_high: sample(projection.outside()[1]),
         })
     }
 
@@ -4374,6 +4549,7 @@ impl PreviewService {
             return Err(diagnostics_export_superseded());
         }
 
+        let bound = max_diagnostic_export_bytes(tickets.len());
         let rendered = payload::render(&DiagnosticsExportRequest {
             queue,
             provider,
@@ -4382,7 +4558,7 @@ impl PreviewService {
         // Before anything is opened or created. A document over the bound is a
         // refusal and never a truncation: half a JSON document is not a smaller
         // diagnostics file, it is one no reader can open.
-        if rendered.bytes.len() > MAX_DIAGNOSTIC_EXPORT_BYTES {
+        if rendered.bytes.len() > bound {
             return Err(diagnostics_too_large());
         }
 
@@ -5106,6 +5282,7 @@ impl PreviewService {
                         generation,
                         &plan,
                         &report,
+                        &backend.capabilities,
                     );
                     // Taken rather than copied, so the report the queue keeps
                     // and projects holds no backend text at all.
@@ -5184,8 +5361,14 @@ impl PreviewService {
         } = run;
         // Read off the queue, once, before anything runs. A retry reaches this
         // same line and reads the same field.
-        let queue_intent = queue.intent();
+        // A set source has no advanced checks (`integrity_route`), so its queue
+        // is refused at the plan; this is the run refusing it too.
+        let queue_intent = queue
+            .intent()
+            .row()
+            .ok_or_else(conversion_intent_not_checkable);
         let settled = (|| -> Result<SciexConversion, PreviewErrorDto> {
+            let queue_intent = queue_intent.clone()?;
             let file = revalidate(&remembered)?;
             // Every member, held together for the whole run. A companion
             // released early is a companion the backend could be reading while
@@ -5278,6 +5461,13 @@ impl PreviewService {
         // paths with which to redact them. Dropping it would leave every
         // non-cancellation failure exporting two empty excerpts.
         let diagnostics = conversion.take_diagnostics();
+        #[cfg(test)]
+        if self
+            .forget_next_set_completeness
+            .swap(false, Ordering::AcqRel)
+        {
+            conversion = conversion.without_completeness();
+        }
         QueueItemAttempt::Settled(ItemOutcome::ReportedSet(Box::new(
             SciexAttemptSettlement::of(
                 self.session,
@@ -5289,16 +5479,11 @@ impl PreviewService {
     }
 
     fn refuse_queue(&self, operation: u64, error: PreviewErrorDto) -> WorkspaceConversionUpdateDto {
-        // Whether a waiting item is still waiting depends on whether anything
-        // of this session's can still run, and a quarantined backend is the one
-        // state where nothing can.
-        let pending = if self.backend_is_quarantined() {
-            PendingDisposition::Strand
-        } else {
-            PendingDisposition::Keep
-        };
+        // What the refusal kept from starting is settled as not run either
+        // way; whether a retry may reach it again is the retry's question, and
+        // a quarantined session refuses every retry.
         let mut slot = self.conversion_slot();
-        slot.refuse(operation, error, pending);
+        slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
         slot.read(
             self.backend_is_quarantined(),
@@ -5487,7 +5672,8 @@ impl PreviewService {
     pub(super) fn shipped_plan_request(&self, handles: &[String]) -> ConversionPlanRequestDto {
         ConversionPlanRequestDto {
             handles: handles.to_vec(),
-            intent_id: ConversionIntent::SHIPPED.stable_id(),
+            intent_id: Some(ConversionIntent::SHIPPED.stable_id()),
+            intent: None,
             conflict_policy: ConversionConflictPolicyDto::Fail,
             expected_receipt: self.readied_receipt(),
             destination_policy: None,
@@ -5582,7 +5768,8 @@ impl PreviewService {
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         let request = ConversionBeginRequestDto {
             handles: handles.to_vec(),
-            intent_id: ConversionIntent::SHIPPED.stable_id(),
+            intent_id: Some(ConversionIntent::SHIPPED.stable_id()),
+            intent: None,
             conflict_policy: conflict,
             expected_receipt: self.readied_receipt(),
             destination_policy: None,
@@ -6972,7 +7159,7 @@ impl PreviewService {
             source,
             destination_root,
             conflict,
-            ConversionIntent::SHIPPED,
+            &BoundIntent::Row(ConversionIntent::SHIPPED),
         )?;
         let report = run_planned_conversion(&plan, &backend);
         drop(guard);
@@ -6983,6 +7170,7 @@ impl PreviewService {
             generation,
             &plan,
             &report,
+            &backend.capabilities,
         ))
     }
 
@@ -7323,7 +7511,7 @@ impl PreviewService {
         // request has not been superseded, not that the row is still there --
         // and the accepted file is what the read was actually of.
         let described =
-            dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None));
+            dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None, None));
         drop(workspace);
 
         Ok(PreviewDto {
@@ -8891,6 +9079,7 @@ fn commit_adoption_candidates(
                         ticket.source(),
                         ticket.source_display_name().to_owned(),
                         ticket.operation(),
+                        ticket.not_verified().cloned(),
                     );
                     // Released here and not a statement earlier. What was
                     // proved about this file is that it is the finalized
@@ -8988,10 +9177,14 @@ fn describe_adoptions(
 ) -> Vec<WorkspaceOutputAdoptionOutcomeDto> {
     let contexts = relative_contexts(&workspace.registry);
     let describe = |id: DatasetId| {
-        workspace
-            .registry
-            .get(id)
-            .map(|dataset| selected_file_dto(id, dataset.file(), contexts.get(&id).cloned()))
+        workspace.registry.get(id).map(|dataset| {
+            selected_file_dto(
+                id,
+                dataset.file(),
+                contexts.get(&id).cloned(),
+                dataset.not_verified(),
+            )
+        })
     };
     pending
         .into_iter()

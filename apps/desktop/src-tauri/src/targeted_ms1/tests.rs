@@ -863,7 +863,7 @@ fn a_result_is_published_before_it_is_referenced_and_saved_only_by_save() {
     );
     store.save().expect("save");
     let saved = document_json(&document);
-    assert_eq!(saved["schemaVersion"], 4);
+    assert_eq!(saved["schemaVersion"], record::SCHEMA_VERSION);
     assert_eq!(saved["artifacts"][0]["id"], artifact.to_string());
     assert_eq!(saved["plans"][0]["planSha256"], plan.plan_sha256);
     // The record names the result by digest and never by path.
@@ -1230,6 +1230,9 @@ fn a_foreign_store_at_the_result_name_blocks_a_run_rather_than_being_written_int
     let scratch = Scratch::new("m91-foreign-store");
     let (store, layer, document) = fake_project(&scratch);
     let store_dir = payload::store_of(&document).expect("store");
+    // The store Save As reserved, replaced outside MSCanvas by another
+    // project's.
+    fs::remove_dir_all(&store_dir).expect("the reserved store");
     fs::create_dir(&store_dir).expect("dir");
     fs::write(
         store_dir.join(".owner.json"),
@@ -1697,6 +1700,141 @@ fn a_save_as_at_the_last_revision_copies_no_result_and_writes_nothing() {
             .total,
         1
     );
+}
+
+/// M9.1's pre-copy refusal: a Save As whose document could not be published
+/// is refused before one result file is copied, not after a copy that is then
+/// thrown away. The test above cannot tell the two apart; this one counts.
+#[test]
+fn a_save_as_that_could_not_publish_is_refused_before_any_result_is_copied() {
+    let scratch = Scratch::new("m91-save-as-pre-copy");
+    let (_, document, _) = saved_with_result(&scratch);
+    let mut value = document_json(&document);
+    value["revision"] = serde_json::Value::from(u64::MAX);
+    fs::write(
+        &document,
+        serde_json::to_vec_pretty(&value).expect("serializable"),
+    )
+    .expect("write");
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    let copy = scratch.join("copy/study-copy.mscanvas");
+    fs::create_dir_all(copy.parent().expect("parent")).expect("dir");
+    let copies = AtomicU64::new(0);
+    let counted = |from: &Path, to: &Path| {
+        copies.fetch_add(1, Ordering::SeqCst);
+        payload::plain_copy(from, to)
+    };
+    let seams = SaveAsSeams {
+        copy_file: &counted,
+        before_document: &|| Ok(()),
+    };
+
+    assert_eq!(
+        reopened.save_as_with(&copy, &seams),
+        Err(ProjectError::RevisionExhausted)
+    );
+    assert_eq!(
+        copies.load(Ordering::SeqCst),
+        0,
+        "no result file was copied"
+    );
+}
+
+/// A plan that would take the document past what a Save publishes is refused
+/// before its worker runs: whatever the attempt ended as, its record could
+/// not be kept.
+#[test]
+fn a_run_whose_plan_cannot_fit_the_document_is_refused_before_its_worker_runs() {
+    let scratch = Scratch::new("m9-size-before-attempt");
+    let (store, layer, _) = fake_project(&scratch);
+    let attempts = AtomicU64::new(0);
+    let executor = Fake::new(|order| {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        completed(order)
+    });
+    let reviewed = plan(&store, layer, one_target(), &executor);
+    let unpad = crate::project::tests::fill_to_just_short(&store, 64);
+    let before = store.describe();
+
+    assert_eq!(
+        run(&store, &reviewed, &executor),
+        Err(ProjectError::Oversized)
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 0, "the worker never ran");
+    let after = store.describe();
+    assert_eq!(
+        (after.runs.len(), after.dirty),
+        (before.runs.len(), before.dirty),
+        "nothing was recorded"
+    );
+    // A member's own refusal is said first: `oversized` stops a whole batch,
+    // a preflight refusal only the member it is about.
+    assert_eq!(
+        run(&store, &reviewed, &NoRoom),
+        Err(ProjectError::InsufficientWorkAreaSpace)
+    );
+
+    // Control: with room for it, the same plan runs.
+    unpad(&store);
+    run(&store, &reviewed, &executor).expect("it runs once there is room");
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+}
+
+/// The other side of that check: a plan that fits, with an attempt whose
+/// records do not, is measured after its worker ran and refused `oversized`
+/// with nothing recorded, published or left staged.
+#[test]
+fn a_run_whose_records_cannot_fit_after_its_attempt_is_refused_and_leaves_nothing() {
+    use crate::project::tests::{document_of, fill_to_just_short};
+    let length = |document: &record::ProjectDocument| {
+        record::serialize(document).expect("serializable").len() as u64
+    };
+    let scratch = Scratch::new("m9-size-after-attempt");
+    let (store, layer, document) = fake_project(&scratch);
+    let attempts = AtomicU64::new(0);
+    let ordered = std::sync::Mutex::new(None);
+    let executor = Fake::new(|order| {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        *ordered.lock().expect("ordered") = Some(order.artifact);
+        completed(order)
+    });
+    let reviewed = plan(&store, layer, one_target(), &executor);
+    // Room for the plan alone and the revision's growth, and less than
+    // padding's step more: not room for the run and result records too.
+    let mut with_plan = document_of(&store);
+    let without = length(&with_plan);
+    with_plan.plans.push(reviewed.clone());
+    let slack = length(&with_plan) - without + 64;
+    let unpad = fill_to_just_short(&store, slack);
+    let before = document_of(&store);
+    let dirty = store.describe().dirty;
+
+    assert_eq!(
+        run(&store, &reviewed, &executor),
+        Err(ProjectError::Oversized),
+        "{slack} bytes of room"
+    );
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "the plan fitted, so the worker ran"
+    );
+    assert_eq!(document_of(&store), before, "no run, result or plan stayed");
+    assert_eq!(store.describe().dirty, dirty);
+    let artifact = ordered
+        .lock()
+        .expect("ordered")
+        .take()
+        .expect("the attempt was given an artifact");
+    let results = payload::store_of(&document).expect("store");
+    assert!(!payload::result_directory(&results, artifact).exists());
+    assert!(!results.join(".staging").join(artifact.to_string()).exists());
+
+    // Control: with room for it, the same plan runs.
+    unpad(&store);
+    run(&store, &reviewed, &executor).expect("it runs once there is room");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -4200,6 +4338,7 @@ fn plan_over(source: &Path, adapter: &'static [u8]) -> TargetedMs1Plan {
                 sha256: digest,
             },
         }],
+        not_verified_by_mscanvas: None,
     };
     let layer = record::LayerRecord {
         id: LayerId::new(),

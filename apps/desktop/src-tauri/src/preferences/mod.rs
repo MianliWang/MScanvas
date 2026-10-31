@@ -140,6 +140,17 @@ impl UiPreferenceStore {
         }
     }
 
+    /// The directory this store is bound to, or why there is none, for the
+    /// conversion preset store that lives beside it: the same per-user
+    /// directory, the same QA root under `e2e`, the same reason. Never sent
+    /// anywhere.
+    pub(crate) fn sibling_directory(&self) -> Result<std::path::PathBuf, &'static str> {
+        match &self.binding {
+            RootBinding::Bound(root) => Ok(root.directory().to_path_buf()),
+            RootBinding::Unavailable(problem) => Err(problem),
+        }
+    }
+
     /// Reads the stored record for a starting document.
     ///
     /// Answers what is there, or why what is there cannot be used, and never

@@ -4,6 +4,14 @@ Status: **Accepted** by the owner on 2026-10-29. The storage contract below is
 the one draft PR #151 implements (branch `be/presets`, head `1c215a7`,
 `apps/desktop/src-tauri/src/presets.rs`). That PR is not merged, and no
 surface lists, saves or applies a preset yet.
+
+*Note, 2026-10-29:* #151 is merged into the integration branch `be/integrate`
+(draft PR #161), where `check_intent` is decision 5's structured reader: the
+same function a conversion plan reads its `intent` with
+(`read_structured_intent`), so its 64 KiB wire bound applies to a preset too.
+A value of the wrong shape, a stable id string included, is `notExpressible`;
+a refusal of the validating constructor answers with that constructor's
+stable id. Still no surface lists, saves or applies a preset.
 Related: [0044](0044-conversion-configuration-authority.md),
 [0055](0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
 [0057](0057-conversion-capacity-and-viewing-during-conversion.md);
@@ -63,6 +71,15 @@ about them.
   the document epoch and runs off the async runtime, like the preference pair.
   A preset is addressed by its name; no command takes a path, a file name or a
   document. Request payloads refuse unknown fields.
+
+  > **Amended 2026-10-30 by the owner's decision A0064
+  > ([ADR 0064](0064-m10-automation-route.md#owner-decision-2026-10-30)).**
+  > Presets no longer stay in the app only: a method can leave the app as a
+  > plan file, exported and imported as JSON. An imported plan is validated by
+  > the same constructor as a preset (decision 5) and never runs without
+  > review. The four commands above are unchanged. Still open, for the slice
+  > that implements export and import: the file's format and size cap, and the
+  > commands that write and read it.
 - **Bounds:**
   - 512 KiB per document, checked on read and on write;
   - 200 presets;

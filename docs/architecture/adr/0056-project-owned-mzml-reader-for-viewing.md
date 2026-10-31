@@ -496,6 +496,13 @@ table:
   retained rows (about 76,000 at M0's row size). Without that cap on the table,
   this rule bounds them across the session instead. The worst case is one file
   at the reader's limit: 1,000,000 rows and offsets, and never arrays.
+
+  > **Amended 2026-10-30 by
+  > [ADR 0070](0070-computation-over-decoded-arrays.md), decision 2** (owner
+  > decision U7). The preview state still retains no arrays. A computation
+  > that its own record admits may run one bounded, cancellable pass over a
+  > file's spectra, decoding one spectrum's arrays at a time under decision
+  > 2's caps, and keep only its result.
 - **A selected spectrum needs its preview.** For a dataset with no retained
   preview state, a selected spectrum is refused with a typed error that asks
   for a reopen.
@@ -672,6 +679,13 @@ intensity stay `msaccess`'s (decision 3). Taking the lowest and highest of the
 table rows' own retention times, for the preview's range, is a selection from
 read values, not a computation.
 
+> **Amended 2026-10-30 by
+> [ADR 0070](0070-computation-over-decoded-arrays.md), decision 1** (owner
+> decision U7). The records this decision asks for are written under ADR 0070:
+> one per computation, for projections of stored values only, never a
+> reimplemented mature algorithm. Until a computation's record is accepted,
+> this decision applies to it unchanged.
+
 ### 8. Re-measure before implementing
 
 The spike's scale data is synthetic. Before slice 1 starts, the spike's
@@ -778,9 +792,8 @@ Slice 1 therefore meets this decision's merge condition.
    - Copy for the new refusals.
    - Rendered QA.
 
-> **2026-10-30: slice 2's Rust side is implemented**; its webview commit is
-> pending, and until it lands the Rust and webview contracts disagree, so the
-> two merge together. What the implementation records:
+> **2026-10-30: slice 2 is implemented**, its Rust side and its webview commit
+> together, in one PR. What the implementation records:
 >
 > - **The `msaccess` operations stay in the crate, ratified by the owner on
 >   2026-10-30.** Decisions 5 and 9 say slice 2 removes them; the owner accepted
@@ -816,8 +829,17 @@ Slice 1 therefore meets this decision's merge condition.
 >   window's value scale, as the chromatogram's does. The caption states the
 >   declared representation and units; the linked figure's caption gives each
 >   panel its own units, because the chromatogram's intensity has none. The
->   screen draws sticks until slice 2's webview commit, which draws the same
->   line. Centroid and undeclared spectra are unchanged.
+>   webview commit draws the same line on screen over a viewport: a profile
+>   projection carries the measured sample beyond each edge, and the plot's
+>   clip cuts the line there, scaled to those heights as the export is. In a
+>   window holding more samples than a screen projection carries, the
+>   reduction keeps each column's greatest and least value (the figure
+>   contract's `MinMaxPerColumn`, never the sticks' per-sign rule), so the
+>   line keeps its valleys; it also keeps the window's first and last
+>   samples, so each edge is cut from the same two samples as in the export,
+>   at the same height (one column fewer keeps them in the budget). With
+>   no viewport (no admitted m/z domain) a profile spectrum stays sticks and
+>   Details says why. Centroid and undeclared spectra are unchanged.
 >
 >   **Owner decision P175 (2026-10-30).** Shown the decisions that block work
 >   now, the owner replied "全部按推荐，继续" ("all as recommended,

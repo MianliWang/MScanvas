@@ -4,12 +4,22 @@ import { join, resolve } from "node:path";
 import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 import { ipcTable } from "../support/fixtures";
 import { readBackSavedPreferences, revealRosterRow, seedARunOf } from "../support/viewer";
+import { choosePlotMenuItem, FIGURE_DIALOG, openFigureDialog } from "../support/figure";
 import { installIpcBoundary, IPC_TABLE_KEY, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult, setInvokeRejection } from "../support/harness";
 
 const RT = "svg.chromatogram-svg";
 const MZ = "svg.spectrum-plot";
 const SCANS = ".spectrum-table-panel";
 const row = (index: number) => SCANS + ' [data-source-index="' + index + '"]';
+/**
+ * Brings the scan table to the top of its scroller with the DOM's own
+ * scrollIntoView. WebdriverIO 9.32's element scrollIntoView is a wheel action
+ * whose origin is the element, so over the table it scrolls the table's own
+ * viewport instead, and the first rows are windowed away (CI, 2026-10-30).
+ */
+async function revealScans() {
+  await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "start" }), SCANS);
+}
 let output = "";
 const evidence: unknown[] = [];
 
@@ -32,22 +42,21 @@ async function preferences(language: "en" | "zh-CN", density: "comfortable" | "c
   // Settings saves the choice and the shell adopts what the save confirms.
   await readBackSavedPreferences();
   await browser.$("[data-settings-entry]").click();
-  await browser.$('[data-settings-dialog] input[value="' + language + '"]').click();
-  await browser.$('[data-settings-dialog] input[value="' + density + '"]').click();
-  await browser.$("[data-settings-dialog]").$(language === "en" ? "button=Apply" : "button=应用").click();
+  await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="' + language + '"])').click();
+  await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="' + density + '"])').click();
+  await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
-function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" = "complete") {
+function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" | "minutes" = "complete") {
   const table: Record<string, unknown> = ipcTable({ emptySpectrum: kind === "empty", refusedViewport: kind === "refused", oneMzViewport: kind === "one" });
   const preview = buildPreview(8);
   preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, {
     identifier: (index === 3 || index === 7 ? "rare-" : "raw-") + index + "-原始标识符_controllerType=0_controllerNumber=1_scan=" + (index + 1),
-    retentionTime: { value: index, unitKnown: false }, msLevel: index % 2 + 1,
+    retentionTime: { value: index, unit: "notReported" }, msLevel: index % 2 + 1,
     totalIonCurrent: (index + 1) * 10,
   }));
-  Object.assign(preview.runSummary, { retentionTimeRange: {
-    minimum: { value: 0, unitKnown: false }, maximum: { value: 7, unitKnown: false },
-  }, msLevels: [{ msLevel: 1, spectrumCount: 4 }, { msLevel: 2, spectrumCount: 4 }] });
+  Object.assign(preview.runSummary, { retentionTimeRange: { state: "reported", minimum: 0, maximum: 7, unit: "notReported" },
+    msLevels: [{ msLevel: 1, spectrumCount: 4 }, { msLevel: 2, spectrumCount: 4 }] });
   if (kind === "large-values") preview.spectrumTable.rows.forEach((row, index) => {
     Object.assign(row, { totalIonCurrent: index === 0 ? -1e12 : (index + 1) * 1e12 });
   });
@@ -55,13 +64,26 @@ function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "la
     Object.assign(preview.spectrumTable, { truncated: true, totalRowCount: 120000 });
     Object.assign(preview.runSummary, { totalSpectrumCount: 120000 });
   }
+  if (kind === "mixed") {
+    // Half the scans declare minutes and half seconds (ADR 0056): Rust gives no
+    // range and no chromatogram token, and nothing converts one to the other.
+    preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, {
+      retentionTime: { value: index, unit: index % 2 === 0 ? "minute" : "second" } }));
+    Object.assign(preview.runSummary, { retentionTimeRange: { state: "mixedUnits" } });
+    Object.assign(preview, { chromatogramExportToken: null });
+  }
+  if (kind === "minutes") {
+    // Every scan declares minutes, as most native mzML does (ADR 0056).
+    preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, { retentionTime: { value: index, unit: "minute" } }));
+    Object.assign(preview.runSummary, { retentionTimeRange: { state: "reported", minimum: 0, maximum: 7, unit: "minute" } });
+  }
   table.open_mzml_preview = preview;
   table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
   table.subscribe_workspace_drop_updates = { reservationId: "browser-m73-reservation" };
   return table;
 }
 /** The fixture answers requested source indices and exact retained windows, with no production state patch. */
-async function sourceBoundary(rtStep = 1) {
+async function sourceBoundary(rtStep = 1, declared: Record<string, unknown> = {}) {
   await browser.execute((tableKey, fixture, step) => {
     const table = Reflect.get(window, tableKey) as Record<string, unknown>;
     const internals = Reflect.get(window, "__TAURI_INTERNALS__") as {
@@ -73,29 +95,36 @@ async function sourceBoundary(rtStep = 1) {
       if (command === "load_selected_spectrum") {
         const index = Number(args.index);
         table[command] = { authority: template.authority, outcome: { outcome: "spectrum", spectrum: {
-          ...fixture, index, exportToken: "m73-spectrum-" + index, retentionTime: { value: index * step, unitKnown: false },
+          ...fixture, index, exportToken: "m73-spectrum-" + index, retentionTime: { value: index * step, unit: "notReported" },
         } } };
       } else if (command === "project_selected_spectrum") {
         const response = table[command];
         if (response !== null && typeof response === "object" && "__reject" in response) return invoke(command, args);
         const low = Number(args.low), high = Number(args.high);
         const positions = fixture.mz.flatMap((value, index) => value >= low && value <= high ? [index] : []);
+        // Rust's rule: a profile projection carries the measured sample beyond each edge.
+        const sample = (index: number) => fixture.representation === "profile" && index >= 0 && index < fixture.mz.length
+          ? { mz: fixture.mz[index], intensity: fixture.intensity[index] } : null;
+        const first = fixture.mz.findIndex(value => value >= low);
+        const after = fixture.mz.findIndex(value => value > high);
         table[command] = { low, high, mz: positions.map(index => fixture.mz[index]),
-          intensity: positions.map(index => fixture.intensity[index]), sourcePoints: positions.length, reduced: false };
+          intensity: positions.map(index => fixture.intensity[index]), sourcePoints: positions.length, reduced: false,
+          outsideLow: sample((first < 0 ? fixture.mz.length : first) - 1), outsideHigh: after < 0 ? null : sample(after) };
       }
       return invoke(command, args);
     };
   }, IPC_TABLE_KEY, { ...buildSpectrum(0, 12), mz: Array.from({ length: 12 }, (_, i) => 100 + i * 50),
     intensity: [10, 35, -5, 65, 100, 42, 18, 75, 30, 19, 55, 8], mzLow: 100, mzHigh: 650,
-    viewportDomain: { state: "admitted", low: 100, high: 650 } }, rtStep);
+    viewportDomain: { state: "admitted", low: 100, high: 650 }, ...declared }, rtStep);
 }
-async function open(kind: Parameters<typeof answers>[0] = "complete", options = { width: 1366, height: 768, dpr: 1.5 }, count?: number) {
+async function open(kind: Parameters<typeof answers>[0] = "complete", options = { width: 1366, height: 768, dpr: 1.5 }, count?: number,
+  declared: Record<string, unknown> = {}) {
   await installIpcBoundary(answers(kind));
   await metrics(options.width, options.height, options.dpr);
   await browser.url("/");
   await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').waitForExist();
   if (count !== undefined) await seedARunOf(count);
-  if (kind === "complete" || kind === "prefix") await sourceBoundary(count === undefined ? 1 : .0125);
+  if (kind === "complete" || kind === "prefix") await sourceBoundary(count === undefined ? 1 : .0125, declared);
   const rosterToggle = browser.$('[aria-controls="workbench-roster"]');
   await revealRosterRow(selectedFile.handle);
   await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').click();
@@ -177,19 +206,22 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     const initial = await capture("selected-" + scenario.width);
     expect(initial.plots[0].y).toBeLessThan(scenario.height);
     expect(initial.plots[1].y).toBeLessThan(scenario.height);
-    expect(await browser.$(".spectrum-export-disclosure").getAttribute("open")).toBeNull();
+    // Every action in the evidence is a button; nothing is folded behind a disclosure.
+    expect(await browser.$("#workbench-evidence details").isExisting()).toBe(false);
     expect(await consoleEntries()).toEqual([]);
   });
   it("uses real full header and row targets, raw search, source identity and loaded-only navigation", async () => {
-    await open(); await browser.$(SCANS).scrollIntoView({ block: "start" });
-    const header = browser.$(SCANS + ' [role="columnheader"]:nth-child(8) button');
+    await open(); await revealScans();
+    const header = browser.$(SCANS + ' [role="columnheader"]:nth-child(2) button');
     const before = await scientificCalls(); await header.click(); await header.click();
-    expect(await browser.$(SCANS + ' [aria-sort="descending"]').getText()).toContain("Total ion current");
+    // The header shows "RT"; its full name is its tooltip and the rest of its name.
+    expect(await browser.$(SCANS + ' [aria-sort="descending"]').getText()).toContain("RT");
+    expect(await header.getAttribute("title")).toBe("Retention time");
     await browser.$(SCANS + ' input[type="search"]').setValue("rare-");
     expect(await browser.$$(SCANS + " [data-source-index]").map(row => row.getAttribute("data-source-index"))).toEqual(["7", "3"]);
-    await browser.$(row(3) + ' [role="gridcell"]:nth-child(5)').click();
+    await browser.$(row(3) + ' [role="gridcell"]:nth-child(3)').click();
     await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum" && call.args.index === 3));
-    await browser.$(row(7) + ' [role="gridcell"]:nth-child(8)').click();
+    await browser.$(row(7) + ' [role="gridcell"]:nth-child(4)').click();
     await browser.waitUntil(async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").length === 2);
     await browser.keys("End");
     expect(await browser.execute(() => document.activeElement?.getAttribute("data-source-index"))).toBe("3");
@@ -198,10 +230,10 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.waitUntil(async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").length === 3);
     expect(before).toEqual([]);
     await browser.$(SCANS + ' input[type="search"]').setValue("raw-1");
-    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is outside these results");
-    expect(await browser.$("button=Next scan").isEnabled()).toBe(false);
+    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is hidden by the filters");
+    expect(await browser.$('button[aria-label="Next scan"]').getAttribute("aria-disabled")).toBe("true");
     await capture("hidden-selection");
-    await browser.$("button=Clear filters and reveal").click(); await browser.$("button=Next scan").click();
+    await browser.$("button=Clear filters and reveal").click(); await browser.$('button[aria-label="Next scan"]').click();
     await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum" && call.args.index === 2));
     expect(await consoleEntries()).toEqual([]);
   });
@@ -246,9 +278,9 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
       expect(label.font).toBe("12px");
     }
   });
-  it("windows the 100000 loaded rows, reaches End without a read and aligns horizontally scrolled headers", async () => {
+  it("windows the 100000 loaded rows, reaches End without a read and keeps the compact headers over their values", async () => {
     await open("complete", { width: 1200, height: 800, dpr: 1.25 }, 100000);
-    await browser.$(SCANS).scrollIntoView({ block: "start" });
+    await revealScans();
     await browser.$(row(0) + ' [role="gridcell"]:nth-child(4)').click();
     await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum"));
     const before = await scientificCalls();
@@ -266,7 +298,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
       const toggle = browser.$('[aria-controls="' + id + '"]');
       if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
     }
-    await browser.$(SCANS).scrollIntoView({ block: "start" });
+    await revealScans();
     await browser.execute(() => { document.querySelector(".spectrum-table-viewport")!.scrollLeft = 220; });
     const columns = await browser.execute(() => {
       const box = (node: Element) => { const r = node.getBoundingClientRect(); return { x: r.x, width: r.width }; };
@@ -276,8 +308,9 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
         scrollLeft: document.querySelector('.spectrum-table-viewport')!.scrollLeft };
     });
     evidence.push({ kind: "100000 loaded rows", columns });
-    expect(columns.scrollLeft).toBeGreaterThan(0);
-    expect(columns.headers.length).toBe(9);
+    // The compact four columns give ground instead of overflowing, so there is nothing to scroll sideways.
+    expect(columns.scrollLeft).toBe(0);
+    expect(columns.headers.length).toBe(4);
     columns.headers.forEach((header, index) => {
       expect(Math.abs(header.x - columns.values[index].x)).toBeLessThanOrEqual(1);
       expect(Math.abs(header.width - columns.values[index].width)).toBeLessThanOrEqual(1);
@@ -297,9 +330,9 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.$(RT).scrollIntoView({ block: "center" });
     await clickPlot(RT, 3 / 7);
     await browser.$(MZ).waitForDisplayed();
-    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is outside these results");
+    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is hidden by the filters");
     expect(await browser.$(SCANS + " select").getValue()).toBe("1");
-    expect(await browser.$("button=Next scan").isEnabled()).toBe(false);
+    expect(await browser.$('button[aria-label="Next scan"]').getAttribute("aria-disabled")).toBe("true");
     await capture("plot-hidden-by-ms-filter");
   });
   it("distinguishes empty, refused, loading and failed projection, then actually retries", async () => {
@@ -307,38 +340,44 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
       await open(kind, { width: 1920, height: 1080, dpr: 1 });
       await clickPlot(RT, .3);
       await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum"));
-      await browser.$(".spectrum-source-details").waitForExist();
-      if (kind === "empty") expect(await browser.$(".spectrum-panel").getText()).toContain("zero points");
+      await browser.$("#selected-spectrum-summary").waitForExist();
+      // Zero points is said by the summary; the empty state says no extent is inferred.
+      if (kind === "empty") {
+        expect(await browser.$(".spectrum-panel").getText()).toContain(", 0 points.");
+        expect(await browser.$(".spectrum-panel .empty-state").getText()).toContain("No base peak or m/z range is inferred.");
+      }
       else { expect(await browser.$(MZ).getAttribute("tabindex")).toBe("-1"); expect(await browser.$("#spectrum-viewport-status").getText()).not.toBe(""); }
       await capture("spectrum-" + kind);
     }
     await open("complete", { width: 1920, height: 1080, dpr: 1 });
     await clickPlot(RT, .3); await browser.$(MZ).waitForDisplayed();
     await holdInvoke("project_selected_spectrum");
-    await browser.$("button=Zoom in m/z").click();
+    await browser.$('button[aria-label="Zoom in m/z"]').click();
     await browser.waitUntil(async () => await heldCallers("project_selected_spectrum") === 1);
-    expect(await browser.$("#spectrum-viewport-status").getText()).toContain("Nothing is drawn here until it arrives");
+    expect(await browser.$("#spectrum-viewport-status").getText()).toContain("Drawing m/z");
     await capture("projection-loading");
     await releaseInvokeHold("project_selected_spectrum");
     await browser.waitUntil(async () => await browser.$("#spectrum-viewport-status").getText() === "");
     await setInvokeRejection("project_selected_spectrum", { kind: "spectrum_projection_failed",
       summary: "Controlled retained-source refusal.", detail: "M7.3 retry fixture.", retryable: true });
-    await browser.$("button=Zoom in m/z").click();
-    await browser.$("button=Draw this m/z range again").waitForDisplayed();
+    await browser.$('button[aria-label="Zoom in m/z"]').click();
+    await browser.$("button=Redraw").waitForDisplayed();
     expect(await browser.$("#spectrum-viewport-status").getText()).toContain("Controlled retained-source refusal.");
     await capture("projection-failed");
     const count = (await scientificCalls()).length;
     await setInvokeResult("project_selected_spectrum", null);
-    await browser.$("button=Draw this m/z range again").click();
+    await browser.$("button=Redraw").click();
     await browser.waitUntil(async () => (await scientificCalls()).length === count + 1);
-    await browser.$("button=Draw this m/z range again").waitForExist({ reverse: true });
-    expect(await browser.$(".spectrum-caption").getText()).toMatch(/sticks? ·/u);
+    await browser.$("button=Redraw").waitForExist({ reverse: true });
+    // The drawing's caption is the plot's description (Details shows it to the eye).
+    expect(await browser.$(".spectrum-caption").getProperty("textContent")).toMatch(/sticks? ·/u);
   });
   it("keeps numeric raw text, IME and host keys separate and supports wheel and pan with reduced motion", async () => {
     await open("complete", { width: 1920, height: 1080, dpr: 1 });
     await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
     await clickPlot(RT, .4); await browser.$(MZ).waitForDisplayed();
-    await browser.$(".spectrum-panel .plot-range-editor summary").click();
+    // Set range… is the spectrum's ⋯ menu's first item (direction A).
+    await choosePlotMenuItem(".spectrum-panel", "Set range…");
     const low = browser.$("#plot-range-mz-low"), high = browser.$("#plot-range-mz-high");
     await low.setValue("1,00"); await browser.$(".spectrum-panel .plot-range-form button[type=submit]").click();
     expect(await low.getAttribute("aria-invalid")).toBe("true");
@@ -364,38 +403,48 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.keys(["Control", "+"]); await browser.keys(["Control", "0"]);
     expect(await scientificCalls()).toEqual(host);
     await browser.keys("Tab"); expect(await browser.execute(css => document.activeElement?.matches(css), MZ)).not.toBe(true);
-    await browser.$(".spectrum-panel .plot-range-editor summary").click(); await low.setValue("0200."); await browser.keys("Escape");
-    expect(await browser.$(".spectrum-panel .plot-range-editor").getAttribute("open")).toBeNull();
+    await choosePlotMenuItem(".spectrum-panel", "Set range…"); await low.setValue("0200."); await browser.keys("Escape");
+    // Closed, and the keyboard is back on the ⋯ it came from.
+    expect(await browser.$("#plot-range-mz-editor").isExisting()).toBe(false);
+    expect(await browser.execute(() => document.activeElement?.getAttribute("aria-haspopup"))).toBe("menu");
     expect(await scientificCalls()).toEqual(host);
     await capture("numeric-wheel-pan-reduced-motion");
     await cdp("Emulation.setEmulatedMedia", { features: [] });
   });
   for (const axis of ["rt", "mz"] as const) for (const format of ["csv", "tsv"] as const) {
-    it(`preserves ${axis} ${format} data-export focus without admitting duplicate activation`, async () => {
+    it(`runs one ${axis} ${format} data export from the plot menu and keeps focus where the reader is`, async () => {
       await open("complete", { width: 1366, height: 768, dpr: 1.5 });
       await clickPlot(RT, .4); await browser.$(MZ).waitForDisplayed();
       const panel = axis === "rt" ? ".chromatogram-panel" : ".spectrum-panel";
-      await browser.$(axis === "rt" ? "#chromatogram-export-toggle" : ".spectrum-export-disclosure summary").click();
+      const plot = axis === "rt" ? RT : MZ;
       const command = axis === "rt" ? "save_chromatogram_export" : "save_selected_spectrum_export";
       const begin = axis === "rt" ? "begin_chromatogram_export" : "begin_selected_spectrum_export";
       await holdInvoke(command); await setInvokeResult(command, { status: "cancelled" });
-      const initiator = browser.$(panel).$("button=Export " + format.toUpperCase() + "…");
-      await initiator.click(); await browser.waitUntil(async () => await heldCallers(command) === 1);
-      expect(await initiator.isFocused()).toBe(true);
-      expect(await initiator.getAttribute("aria-disabled")).toBe("true");
-      expect(await initiator.isEnabled()).toBe(true);
+      const more = browser.$(panel).$('button[aria-label="More export options"]');
+      const item = (name: string) => browser.$(`//*[@role="menuitem"][starts-with(normalize-space(), "${name}")]`);
+      const label = "Export " + format.toUpperCase() + "…", other = "Export " + (format === "csv" ? "TSV" : "CSV") + "…";
+      await more.click(); await item(label).click();
+      await browser.waitUntil(async () => await heldCallers(command) === 1);
+      // The menu closes and hands focus back to its trigger.
+      await browser.waitUntil(async () => await more.isFocused());
       const count = (await ipcCalls()).filter(call => call.command === begin).length;
-      await browser.keys("Enter");
+      // Reopened while the one export lane is held, both data items are refused and do nothing.
+      await browser.keys("Enter"); await item(label).waitForDisplayed();
+      expect(await item(label).getAttribute("aria-disabled")).toBe("true");
+      expect(await item(other).getAttribute("aria-disabled")).toBe("true");
+      await item(label).click();
       expect((await ipcCalls()).filter(call => call.command === begin)).toHaveLength(count);
-      expect(await browser.$(panel).$("button=Export " + (format === "csv" ? "TSV" : "CSV") + "…").isEnabled()).toBe(false);
       await capture(axis + "-" + format + "-export-busy");
+      await browser.keys("Escape"); await browser.waitUntil(async () => await more.isFocused());
       // TSV also proves that settling does not take focus from a later choice.
-      const later = browser.$(panel + ' input[value="current"]');
-      if (format === "tsv") await later.click();
+      if (format === "tsv") await browser.execute(css => document.querySelector<SVGElement>(css)?.focus(), plot);
       await releaseInvokeHold(command);
-      await browser.waitUntil(async () => await initiator.getText() === "Export " + format.toUpperCase() + "…");
-      expect(await (format === "tsv" ? later : initiator).isFocused()).toBe(true);
-      expect(await initiator.getAttribute("aria-disabled")).toBeNull();
+      await browser.waitUntil(async () => (await browser.$(panel + " .plot-status").getText()).includes("Export cancelled"));
+      expect(await browser.execute(css => document.activeElement?.matches(css) ?? false,
+        format === "tsv" ? plot : panel + ' button[aria-label="More export options"]')).toBe(true);
+      await more.click();
+      await browser.waitUntil(async () => await item(label).getAttribute("aria-disabled") === null);
+      await browser.keys("Escape");
       await capture(axis + "-" + format + "-export-cancelled");
     });
   }
@@ -431,5 +480,110 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     expect(trace).toContain("pointercancel");
     await capture("touch-vertical-and-multitouch-cancel");
     await cdp("Emulation.setTouchEmulationEnabled", { enabled: false });
+  });
+
+  // ADR 0056 slice 2's webview: what the file declares, drawn and said as it declares it.
+  const UNITS = { mzUnit: { state: "declared", accession: "MS:1000040" }, intensityUnit: { state: "declared", accession: "MS:1000131" } };
+  const axisTitles = () => browser.execute(() =>
+    [...document.querySelectorAll(".spectrum-panel .plot-axis-title")].map(node => node.textContent));
+  const lineStartX = () => browser.execute(() =>
+    Number(/^M(-?[\d.]+)/u.exec(document.querySelector(".spectrum-panel .spectrum-line")?.getAttribute("d") ?? "")?.[1]));
+
+  it("draws a declared profile spectrum as one joined line, cut at a zoomed window's edges (P175)", async () => {
+    await open("complete", { width: 1366, height: 768, dpr: 1 }, undefined, { representation: "profile", ...UNITS });
+    await clickPlot(RT, .4);
+    await browser.$(MZ + '[data-drawn-as="line"]').waitForExist();
+    expect(await browser.$(".spectrum-panel .spectrum-sticks").isExisting()).toBe(false);
+    expect(await browser.$(".spectrum-head-facts").getText()).toContain("Profile");
+    expect(await axisTitles()).toEqual(["Intensity (MS:1000131)", "m/z (MS:1000040)"]);
+    await capture("profile-line");
+    // Zoomed in from the keyboard, the line runs in from the sample beyond the
+    // low edge and the band's clip cuts it there, as the export cuts it.
+    await browser.execute((css: string) => document.querySelector<SVGSVGElement>(css)?.focus(), MZ);
+    await browser.keys("+");
+    await browser.waitUntil(async () => await lineStartX() < 8, { timeoutMsg: "the zoomed line never started beyond the band" });
+    expect(await browser.$(MZ).getAttribute("data-drawn-as")).toBe("line");
+    await capture("profile-line-zoomed");
+    // And from the button, the same.
+    const line = () => browser.$(".spectrum-panel .spectrum-line").getAttribute("d");
+    const before = await line();
+    await browser.$('.spectrum-panel button[aria-label="Zoom in m/z"]').click();
+    await browser.waitUntil(async () => await line() !== before && await lineStartX() < 8,
+      { timeoutMsg: "the button's zoom never redrew the cut line" });
+    expect(await browser.$(MZ).getAttribute("data-drawn-as")).toBe("line");
+    expect(await consoleEntries()).toEqual([]);
+  });
+
+  it("keeps a declared centroid spectrum as sticks", async () => {
+    await open("complete", { width: 1366, height: 768, dpr: 1 }, undefined, { representation: "centroid", ...UNITS });
+    await clickPlot(RT, .4);
+    await browser.$(MZ + '[data-drawn-as="sticks"]').waitForExist();
+    await browser.$(".spectrum-panel .spectrum-sticks").waitForExist();
+    expect(await browser.$(".spectrum-panel .spectrum-line").isExisting()).toBe(false);
+    expect(await browser.$(".spectrum-head-facts").getText()).toContain("Centroid");
+    await capture("centroid-sticks");
+  });
+
+  it("refuses a chromatogram over scans in mixed retention-time units, and converts nothing", async () => {
+    await open("mixed", { width: 1366, height: 768, dpr: 1 });
+    await browser.$(".chromatogram-panel .empty-state").waitForDisplayed();
+    expect(await browser.$(".chromatogram-panel .empty-state").getText()).toContain("different units");
+    expect(await browser.$(RT).isExisting()).toBe(false);
+    // The header claims no one unit, and each value keeps its own.
+    expect(await browser.$(SCANS + " .scan-sort-unit").getText()).toBe("(mixed units)");
+    // Heard as well as seen: the unit is in the sort button's name.
+    expect(await browser.$(SCANS + ' [role="columnheader"]:nth-child(2) button').getAttribute("aria-label")).toBe("RT (Retention time) (mixed units)");
+    expect(await browser.$(row(0)).getText()).toContain("0.0000 min");
+    expect(await browser.$(row(1)).getText()).toContain("1.0000 s");
+    await capture("mixed-unit-refusal");
+  });
+
+  it("states a run's declared minutes wherever it prints a retention time, and converts nothing", async () => {
+    await open("minutes", { width: 1366, height: 768, dpr: 1 });
+    await browser.$(RT).waitForDisplayed();
+    expect(await browser.$(".chromatogram-panel .plot-axis-title-x").getText()).toBe("Retention time (min)");
+    expect(await browser.$(".chromatogram-range").getText()).toContain("7.0000 min");
+    expect(await browser.$(SCANS + " .scan-sort-unit").getText()).toBe("(min)");
+    // The range editor's fields and the range it commits.
+    await choosePlotMenuItem(".chromatogram-panel", "Set range…");
+    expect(await browser.$("#plot-range-rt-low-label").getText()).toBe("From (min)");
+    expect(await browser.$("#plot-range-rt-high-label").getText()).toBe("To (min)");
+    await browser.$("#plot-range-rt-low").setValue("2"); await browser.$("#plot-range-rt-high").setValue("5");
+    await browser.$(".chromatogram-panel .plot-range-form button[type=submit]").click();
+    await browser.waitUntil(async () => String(await browser.$(".chromatogram-panel .plot-committed-range").getProperty("textContent"))
+      .includes("2.0000 to 5.0000 min"), { timeoutMsg: "the committed range never stated its unit" });
+    await capture("minutes-range");
+    // The figure dialog names the run's window in the same unit.
+    await openFigureDialog(".chromatogram-panel");
+    expect(await browser.$(FIGURE_DIALOG).getText()).toContain("RT 2.0000–5.0000 min");
+    await capture("minutes-figure-dialog");
+    expect(await consoleEntries()).toEqual([]);
+  });
+
+  it("states a truncated spectrum's prefix and its total", async () => {
+    await open("complete", { width: 1366, height: 768, dpr: 1 }, undefined, { truncated: true, pointCount: 900_000 });
+    await clickPlot(RT, .4);
+    await browser.$(".spectrum-panel .notice-warning").waitForDisplayed();
+    expect(await browser.$(".spectrum-panel .notice-warning").getText()).toContain("12 of 900,000 points transferred");
+    await capture("truncated-spectrum");
+  });
+
+  it("keeps a superseded open's reason on screen beside a button that reads the file again", async () => {
+    const table = answers("complete");
+    await installIpcBoundary({ ...table, open_mzml_preview: { __reject: { kind: "selection_superseded",
+      summary: "A newer request for that file arrived before this one finished, so its result was not used.", detail: null, retryable: false } } });
+    await metrics(1366, 768, 1);
+    await browser.url("/");
+    await revealRosterRow(selectedFile.handle);
+    await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').click();
+    const failed = browser.$('#workbench-evidence[data-evidence="failed"]');
+    await failed.waitForDisplayed();
+    expect(await failed.getText()).toContain("A newer request for that file arrived before this one finished");
+    // Nothing was wrong with the file: neither its row nor the announcement calls it unreadable.
+    expect(await browser.execute(() => document.body.textContent ?? "")).not.toMatch(/could not be read/iu);
+    await capture("superseded-open");
+    await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
+    await failed.$("button").click();
+    await browser.$(SCANS).waitForExist();
   });
 });

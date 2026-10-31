@@ -21,6 +21,34 @@ All notable changes will be documented here once versioned releases begin.
   representation and unit fields now state what the mzML file declares and
   retention times stay in the file's own unit
   ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
+- **The viewer shows what the mzML file declares.** A spectrum the file
+  declares profile is drawn as one joined line, on screen as in export; a
+  centroid or undeclared one stays sticks. Retention times carry the file's
+  `s` or `min`, never converted, including in the range editor, the figure
+  dialog and the linked figure's result, and scans in mixed units give no
+  chromatogram. Each axis names a declared unit by its accession. A spectrum
+  whose preview is gone, or whose file changed, offers **Open the file again**
+  ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
+- **Beta-1 projects open, and are upgraded when you save a change.** A project
+  saved by beta 1 opens as it is. Opening it writes nothing, and Save with
+  nothing unsaved writes nothing. The first Save after a change writes the new
+  project format (schema 5), and so does Save As onto the project's own file.
+  Beta 1 cannot open a project in the new format, and reinstalling beta 1 does
+  not undo that
+  ([ADR 0055](docs/architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+  risks).
+
+  **To be able to go back to beta 1, keep a copy of the `.mscanvas` file
+  before you save it in this version.** Beta 1's roll back reinstalls the
+  program; it does not convert a project back.
+
+### Known limitations
+
+- **A beta-1 project close to the 4 MiB size limit opens but cannot be
+  saved.** The new format adds 37 bytes per referenced file, so a beta-1
+  project whose size plus 37 bytes per file exceeds 4 MiB is refused as too
+  large on every Save after a change and on every Save As. The original file
+  is left untouched, and nothing in it is lost.
 
 ## 0.1.0-beta.1 — 2026-10-28 (prerelease)
 

@@ -364,6 +364,12 @@ disposition; none is dropped because the ledger above has four rows.
 
 ### S1 — the vendor picker, reached at last, and what it changed
 
+*2026-10-30: what the vendor algorithm does is answered for Thermo RAW
+([Thermo vendor centroiding evidence](THERMO_VENDOR_CENTROIDING_EVIDENCE.md)),
+and `peakPicking vendor msLevel=1-` and, later that day,
+`peakPicking vendor msLevel=2-` are verified rows there
+([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).*
+
 M6.2 named the missing input as *a lawful vendor acquisition of an admitted
 family, plus authorization to exercise the vendor DLL path*. The first half
 exists: the Thermo acquisition ADR 0010 admitted, on the Apache-2.0 basis M3.0.3

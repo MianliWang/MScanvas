@@ -8,6 +8,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { SelectedFile } from "../mzml-preview/contracts";
 import { SOURCE_KIND_LABEL } from "../mzml-preview/contracts";
 import { formatByteLength } from "../mzml-preview/format";
+import { notVerifiedText } from "../mzml-preview/NotVerifiedTag";
 import { rowPresentation, type RosterAction, type RosterState } from "../mzml-preview/rosterSelection";
 import type { RosterProjection } from "../mzml-preview/rosterView";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
@@ -15,6 +16,7 @@ import type { MessageKey } from "../preferences/i18n";
 import { captureOrganizationPayload, UNGROUPED, type AcquisitionGroup, type OrganizationPayload, type OrganizationTarget, type OrganizationNotice } from "./organization";
 import { GroupNameDialog } from "./GroupNameDialog";
 import { useRosterWindow } from "./useRosterWindow";
+import { Icon, MiddleEllipsis } from "../../components/ui";
 
 interface Props {
   readonly state: RosterState; readonly projection: RosterProjection;
@@ -25,6 +27,12 @@ interface Props {
   readonly onKeyDown: KeyboardEventHandler<HTMLDivElement>;
   readonly onRowPress: (event: MouseEvent<HTMLElement>, handle: string) => void;
   readonly empty: ReactNode;
+  /**
+   * The roster footer, given the two organization actions this list owns: `New
+   * group` (with where its dialog returns the keyboard) and moving a row's
+   * payload -- the highlighted rows when it is one of them -- into a group.
+   */
+  readonly footer: (newGroup: (returnTo: HTMLElement | null) => void, moveTo: (source: string, groupId: string) => void) => ReactNode;
 }
 const noticeKeys = {
   changed: "organizationChanged", undone: "organizationUndone", cancelled: "organizationCancelled",
@@ -140,12 +148,15 @@ export function GroupedRosterList(props: Props) {
     latest.current.onRowPress(event, handle);
   }, []);
   const items = useMemo<WindowItem[]>(() => {
+    // An empty list has no groups to show: "Ungrouped 0" under "No
+    // acquisitions yet" would be a heading over nothing.
+    if (state.datasets.length === 0) return [];
     const visible = new Map(projection.datasets.map(row => [row.handle, row]));
     return state.organization.groups.flatMap(group => [
       { key: `group:${group.id}`, group, row: null, estimate: 40 },
       ...group.handles.flatMap(handle => { const row = visible.get(handle); return row === undefined ? [] : [{ key: handle, group, row, estimate: preferences.effective.density === "compact" ? 32 : 44 }]; }),
     ]);
-  }, [state.organization.groups, projection.datasets, preferences.effective.density]);
+  }, [state.datasets.length, state.organization.groups, projection.datasets, preferences.effective.density]);
   const retained = useMemo(() => new Set([state.focused, dragSource].filter((id): id is string => id !== null)), [state.focused, dragSource]);
   const windowing = useRosterWindow(items, retained, dragSource !== null, state.focused);
   const rootRef = useCallback((node: HTMLDivElement | null) => { props.listRef.current = node; windowing.root.current = node; }, [props.listRef, windowing.root]);
@@ -158,22 +169,9 @@ export function GroupedRosterList(props: Props) {
         <AcquisitionRow row={item.row} group={item.group} state={state} projection={projection} dispatch={dispatch} onPress={onPress} moveTo={moveTo} measure={windowing.measure} reduced={!!reduced} />}
     </div>;
   });
-  const selectedHidden = [...state.selected].filter(handle => !projection.handles.has(handle)).length;
   const notice = state.organization.notice;
   const groupName = (id: string) => id === UNGROUPED ? t("ungrouped") : state.organization.groups.find(group => group.id === id)?.name ?? t("ungrouped");
   return <DragDropProvider manager={manager} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
-    {/* Organizing is the roster's less frequent work, so it shares one quiet
-        band with the selection count rather than taking two bands above the
-        first row (PM9 L9). Where the 280 px roster cannot hold both on one
-        line -- the English count, or Undo beside New group -- the count takes
-        the band's second line, whole (PM9 UI-15). New group stays this row's
-        first button: a row or group menu whose own trigger has left the
-        document returns focus to it. */}
-    <div className="organization-toolbar">
-      <button type="button" className="secondary-button" onClick={event => setEditing({ id: null, name: "", returnTo: event.currentTarget })}>{t("newGroup")}</button>
-      {state.organization.history.length ? <button type="button" className="link-button" onClick={() => dispatch({ type: "organization", action: { type: "undo" } })}>{t("undoOrganization")}</button> : null}
-      <p className="roster-selection-context" aria-live="polite">{t("selectionContext", { total: state.selected.size, hidden: selectedHidden, checked: state.conversionMembership.size })}</p>
-    </div>
     <p id="roster-drag-instructions" className="visually-hidden">{t("dragInstructions")}</p>
     <div aria-labelledby="dataset-roster-heading" aria-multiselectable="true" aria-describedby="roster-keyboard-help" role="treegrid" className="dataset-roster-list grouped-roster" ref={rootRef}
       data-windowed={windowing.windowed} data-drag-active={dragSource !== null}
@@ -206,6 +204,9 @@ export function GroupedRosterList(props: Props) {
       {announcement?.kind === "pickup" ? t("dragPicked", { count: announcement.count }) : announcement?.kind === "unchanged" ? t("dragUnchanged") :
         announcement?.kind === "target" ? t("dragTarget", { count: announcement.count, name: groupName(announcement.groupId), position: announcement.position, total: announcement.total }) : notice === null ? "" : t(noticeKeys[notice])}
     </p>
+    {/* A row or group menu whose own trigger has left the document returns
+        focus to the footer's list menu (`data-roster-list-menu`). */}
+    {props.footer(returnTo => setEditing({ id: null, name: "", returnTo }), moveTo)}
     <DragOverlay dropAnimation={null} style={{ pointerEvents: "none", display: "flex", justifyContent: "flex-end", alignItems: "center" }}><span className="roster-drag-overlay" aria-hidden="true">{t("dragCount", { count: payload.current?.handles.length ?? 0 })}</span></DragOverlay>
     {editing !== null ? <GroupNameDialog name={editing.name} rename={editing.id !== null} returnTo={editing.returnTo} onClose={() => setEditing(null)} onSave={name => {
       dispatch({ type: "organization", action: editing.id === null ? { type: "create", name } : { type: "rename", groupId: editing.id, name } }); setEditing(null);
@@ -230,14 +231,16 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
   const name = group.id === UNGROUPED ? t("ungrouped") : group.name;
   const checked = group.handles.filter(handle => state.conversionMembership.has(handle)).length;
   const index = state.organization.groups.findIndex(item => item.id === group.id);
+  const menuId = `group-menu-${index}`;
   return <div role="row" aria-level={1} aria-expanded={!group.collapsed} className={`roster-group-header${isDropTarget ? " is-drop-target" : ""}`} data-group-id={group.id} ref={setRef}>
+    {/* v5.11 group label: the name leads, its count, checkbox and menu sit on the right. */}
+    <div role="gridcell" className="group-disclosure-cell"><button type="button" className="group-disclosure" aria-expanded={!group.collapsed} aria-label={t("groupDisclosure", { name, count: group.handles.length })} onClick={() => dispatch({ type: "organization", action: { type: "disclose", groupId: group.id } })}>
+      <motion.span aria-hidden="true" animate={{ rotate: group.collapsed ? -90 : 0 }} transition={{ duration: reduced ? 0 : 0.14 }}><Icon name="chevronDown" size={14} /></motion.span><span>{name}</span><span className="group-count">{group.handles.length}</span></button></div>
     <div role="gridcell"><MembershipCheckbox label={t("checkGroup", { name, count: group.handles.length })} checked={group.handles.length > 0 && checked === group.handles.length} mixed={checked > 0 && checked < group.handles.length}
       onChange={checked => dispatch({ type: "membershipChanged", handles: group.handles, checked })} /></div>
-    <div role="gridcell" className="group-disclosure-cell"><button type="button" className="group-disclosure" aria-expanded={!group.collapsed} aria-label={t("groupDisclosure", { name, count: group.handles.length })} onClick={() => dispatch({ type: "organization", action: { type: "disclose", groupId: group.id } })}>
-      <motion.span aria-hidden="true" animate={{ rotate: group.collapsed ? -90 : 0 }} transition={{ duration: reduced ? 0 : 0.14 }}>⌄</motion.span><span>{name}</span><span className="group-count">{group.handles.length}</span></button></div>
     {group.id !== UNGROUPED ? <div role="gridcell"><Menu.Root onOpenChange={open => {
-      if (open) menuReturnFallback.current = menuTrigger.current?.closest(".dataset-roster-panel")?.querySelector<HTMLButtonElement>(".organization-toolbar button") ?? null;
-    }}><Menu.Trigger asChild><button ref={menuTrigger} type="button" className="row-menu-trigger" aria-label={t("groupActions", { name })}>⋯</button></Menu.Trigger>
+      if (open) menuReturnFallback.current = menuTrigger.current?.closest(".dataset-roster-panel")?.querySelector<HTMLButtonElement>("[data-roster-list-menu]") ?? null;
+    }}><Menu.Trigger asChild><button ref={menuTrigger} type="button" className="row-menu-trigger" aria-label={t("groupActions", { name })}><Icon name="more" /></button></Menu.Trigger>
       <Menu.Portal><Menu.Content className="roster-menu" sideOffset={4} onCloseAutoFocus={event => {
         const fallback = menuReturnFallback.current;
         menuReturnFallback.current = null;
@@ -245,8 +248,13 @@ const GroupHeader = memo(function GroupHeader({ group, state, dispatch, onRename
         else if (!menuTrigger.current?.isConnected && fallback?.isConnected) { event.preventDefault(); fallback.focus(); }
       }}>
         <Menu.Item onSelect={() => { openingDialog.current = true; onRename({ id: group.id, name: group.name, returnTo: menuTrigger.current }); }}>{t("renameGroup")}</Menu.Item>
-        <Menu.Item disabled={index <= 1} onSelect={() => { const targetId = state.organization.groups[index - 1]?.id; if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } }); }}>{t("moveGroupUp")}</Menu.Item>
-        <Menu.Item disabled={index === state.organization.groups.length - 1} onSelect={() => { const targetId = state.organization.groups[index + 1]?.id; if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } }); }}>{t("moveGroupDown")}</Menu.Item>
+        {/* Refused, not disabled: each stays reachable and says why (spec 1.4). */}
+        {([["moveGroupUp", index <= 1, -1, "moveGroupFirst"], ["moveGroupDown", index === state.organization.groups.length - 1, 1, "moveGroupLast"]] as const).map(([label, refused, step, reason]) =>
+          <Menu.Item key={label} aria-disabled={refused || undefined} aria-describedby={refused ? `${menuId}-${label}-reason` : undefined} onSelect={event => {
+            if (refused) { event.preventDefault(); return; }
+            const targetId = state.organization.groups[index + step]?.id;
+            if (targetId) dispatch({ type: "organization", action: { type: "reorderGroup", groupId: group.id, targetId } });
+          }}>{t(label)}{refused ? <span aria-hidden="true" className="plot-menu-reason" id={`${menuId}-${label}-reason`}>{t(reason)}</span> : null}</Menu.Item>)}
         <Menu.Separator /><Menu.Item onSelect={() => dispatch({ type: "organization", action: { type: "dissolve", groupId: group.id } })}>{t("dissolveGroup")}</Menu.Item>
       </Menu.Content></Menu.Portal></Menu.Root></div> : null}
   </div>;
@@ -266,15 +274,20 @@ const AcquisitionRow = memo(function AcquisitionRow({ row, group, state, project
   const viewed = state.active === row.handle && presentation === "loaded";
   const status = presentation === "opening" ? t("rowReading") : presentation === "replaced" ? t("rowReplaced") : presentation === "missing" ? t("rowMissing") : presentation === "failed" ? t("rowFailed") : pin === "converting" ? t("rowConverting") : pin === "queued" ? t("rowQueued") : pin === "kept" ? t("rowKept") : "";
   const tabIndex = state.focused === row.handle ? 0 : -1;
-  const label = [row.fileName, row.relativeContext, SOURCE_KIND_LABEL[row.sourceKind], formatByteLength(row.byteLength, t), viewed ? t("showingRow") : null, status, pin ? t("outsideSearch") : null].filter(Boolean).join(", ");
+  // ADR 0055 decision 2: an output adopted from a labelled conversion keeps
+  // the label on its row, said and spoken.
+  const notVerified = row.notVerifiedByMscanvas == null ? null : notVerifiedText(row.notVerifiedByMscanvas, t);
+  const label = [row.fileName, row.relativeContext, SOURCE_KIND_LABEL[row.sourceKind], formatByteLength(row.byteLength, t), notVerified, viewed ? t("showingRow") : null, status, pin ? t("outsideSearch") : null].filter(Boolean).join(", ");
   return <div role="row" aria-level={2} aria-selected={highlighted} aria-label={label} tabIndex={tabIndex} data-handle={row.handle} data-group={group.id} data-drag-source={isDragSource}
     className={`dataset-row${highlighted ? " is-selected" : ""}${viewed ? " is-active" : ""}${isDropTarget ? " is-drop-target" : ""}`} ref={setRef} onClick={event => onPress(event, row.handle)}>
     <div role="gridcell"><MembershipCheckbox tabIndex={tabIndex} label={t("checkAcquisition", { name: row.fileName })} checked={state.conversionMembership.has(row.handle)} onChange={checked => dispatch({ type: "membershipChanged", handles: [row.handle], checked })} /></div>
-    <div role="gridcell" className="dataset-row-label"><span className="dataset-row-name" title={row.fileName}>{row.fileName}</span>
+    {/* One line, losing its middle (the extension stays). "Viewed" stays a
+        word as well as the highlight: status is never colour alone (V7). */}
+    <div role="gridcell" className="dataset-row-label"><MiddleEllipsis className="dataset-row-name" text={row.fileName} />
       {row.relativeContext !== null ? <span className="dataset-row-context" title={row.relativeContext}>{row.relativeContext}</span> : null}
-      <span className="dataset-row-facts"><span>{SOURCE_KIND_LABEL[row.sourceKind]}</span><span>{formatByteLength(row.byteLength, t)}</span>{viewed ? <span>{t("showingRow")}</span> : null}{status ? <span>{status}</span> : null}{pin ? <span>{t("outsideSearch")}</span> : null}</span></div>
+      <span className="dataset-row-facts"><span>{SOURCE_KIND_LABEL[row.sourceKind]}</span><span>{formatByteLength(row.byteLength, t)}</span>{notVerified === null ? null : <span className="not-verified-tag" data-not-verified="">{notVerified}</span>}{viewed ? <span>{t("showingRow")}</span> : null}{status ? <span>{status}</span> : null}{pin ? <span>{t("outsideSearch")}</span> : null}</span></div>
     <div role="gridcell" className="roster-row-controls"><button ref={handleRef} tabIndex={tabIndex} type="button" data-drag-handle aria-describedby="roster-drag-instructions" aria-label={t("moveHandle", { name: row.fileName })} className="row-drag-handle">⠿</button>
-      <Menu.Root><Menu.Trigger asChild><button ref={menuTrigger} tabIndex={tabIndex} type="button" className="row-menu-trigger" aria-label={t("rowActions", { name: row.fileName })}>⋯</button></Menu.Trigger><Menu.Portal><Menu.Content className="roster-menu" sideOffset={4}
+      <Menu.Root><Menu.Trigger asChild><button ref={menuTrigger} tabIndex={tabIndex} type="button" className="row-menu-trigger" aria-label={t("rowActions", { name: row.fileName })}><Icon name="more" /></button></Menu.Trigger><Menu.Portal><Menu.Content className="roster-menu" sideOffset={4}
         onCloseAutoFocus={event => {
           const destination = menuReturnTarget.current?.isConnected ? menuReturnTarget.current : menuReturnFallback.current;
           menuReturnTarget.current = null;
@@ -292,7 +305,7 @@ const AcquisitionRow = memo(function AcquisitionRow({ row, group, state, project
           const header = Array.from(panel?.querySelectorAll<HTMLElement>(".roster-group-header") ?? [])
             .find(element => element.dataset.groupId === destination.id);
           menuReturnTarget.current = header?.querySelector<HTMLButtonElement>(".group-disclosure") ?? null;
-          menuReturnFallback.current = panel?.querySelector<HTMLButtonElement>(".organization-toolbar button") ?? null;
+          menuReturnFallback.current = panel?.querySelector<HTMLButtonElement>("[data-roster-list-menu]") ?? null;
           moveTo(row.handle, destination.id);
         }}>{destination.id === UNGROUPED ? t("ungrouped") : destination.name}</Menu.Item>)}
       </Menu.Content></Menu.Portal></Menu.Root></div>

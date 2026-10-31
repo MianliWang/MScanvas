@@ -1,4 +1,5 @@
 import { wholeCount, validateFigureDraft, describeFigureProblem, type FigureSettingsValidation } from "./figureSettingsValidation";
+import { formatCount } from "./format";
 
 import {
   useCallback,
@@ -112,17 +113,28 @@ import { useViewerInteraction } from "./viewer/useViewerInteraction";
  * Every typed failure that means the backend is not the one that read what is
  * on screen.
  *
- * `installation_changed_since_preview` is the service noticing before it
- * launches; `backend_changed_after_check` is the crate noticing between the
- * check and the spawn; `backend_not_found_at_launch` is the executable being
- * gone by the time it was run. Three routes, one meaning to a reader -- what is
- * on screen was read by something that is no longer there -- and all three are
- * non-retryable, so all three get the same recovery.
+ * `backend_changed_after_check` is the crate noticing between the check and the
+ * spawn; `backend_not_found_at_launch` is the executable being gone by the time
+ * it was run. Two routes, one meaning to a reader -- what is on screen was read
+ * by something that is no longer there -- and both are non-retryable, so both
+ * get the same recovery.
  */
 const BACKEND_CHANGED_KINDS = new Set([
-  "installation_changed_since_preview",
   "backend_changed_after_check",
   "backend_not_found_at_launch",
+]);
+
+/**
+ * The project-owned reader's refusals of one spectrum (ADR 0056). A selected
+ * spectrum is read natively, with no process, so these say something about the
+ * file and nothing about the installation: no backend check follows them.
+ */
+const READER_SPECTRUM_REFUSALS = new Set([
+  "preview_not_open",
+  "spectrum_not_as_recorded",
+  "spectrum_value_not_exact",
+  "spectrum_encoding_unsupported",
+  "spectrum_refused",
 ]);
 
 export type BackendState =
@@ -2641,9 +2653,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
             // backend is still what the banner says. A replacement that keeps a
             // file's metadata but no longer answers its help probe fails inside
             // the provider's own resolution, so it never reaches the comparison
-            // that would name it a change.
+            // that would name it a change. The native reader's own refusals are
+            // about the file, not the installation, and are not such a reason.
             const definitelyChanged = BACKEND_CHANGED_KINDS.has(failure.kind);
-            if (definitelyChanged || !failure.retryable) {
+            if (definitelyChanged || (!failure.retryable && !READER_SPECTRUM_REFUSALS.has(failure.kind))) {
               if (definitelyChanged) {
                 discardBackendDerivedState();
               }
@@ -2717,7 +2730,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         // A resource key and its parameters rather than a sentence. This hook
         // has no message binding -- and should not: the tooltip is rendered in
         // the inspector, which does.
-        { key: "measureOpenDetail", rows: formatRows(openPending.rowCount) },
+        { key: "measureOpenDetail", rows: formatCount(openPending.rowCount) },
       );
     }
     const spectrumPending = pendingSpectrumRender.current;
@@ -4382,8 +4395,4 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     conversionScope,
     setConversionScope,
   };
-}
-
-function formatRows(count: number): string {
-  return count === 1 ? "1 spectrum row" : `${String(count)} spectrum rows`;
 }

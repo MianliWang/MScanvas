@@ -34,6 +34,10 @@
  * The data was already here.
  */
 
+import { useLayoutEffect, useRef } from "react";
+
+import { Button, Icon, IconButton } from "../../components/ui";
+import { NotVerifiedTag } from "../mzml-preview/NotVerifiedTag";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import {
   artifactKey,
@@ -94,20 +98,54 @@ export interface ProvenanceDetailsProps {
   readonly liveDatasetHandles?: ReadonlySet<string>;
   /** Takes the reader to one row that is in the Workbench. Navigation only. */
   readonly onShowInWorkbench?: (handle: string) => void;
+  /**
+   * Folds Details where it is a drawer over the project (rebuild review 11).
+   * The keyboard then goes back to the row whose inspection opened it.
+   */
+  readonly onClose?: () => void;
 }
+
+/** The project control that put the current object into Details. */
+const INSPECTING_ROW = '#workbench-project [aria-controls="workbench-inspector"][aria-current="true"]';
 
 export function ProvenanceDetails({
   provenance,
   onSelect,
   liveDatasetHandles,
   onShowInWorkbench,
+  onClose,
 }: ProvenanceDetailsProps) {
   const t = useUiMessages();
   const locale = document.documentElement.lang || "en";
+  // Spent in the commit that folds the drawer, which is the one that lifts
+  // `inert` from the project: before it, the row cannot take focus.
+  const returning = useRef(false);
+  useLayoutEffect(() => {
+    if (!returning.current) return;
+    returning.current = false;
+    (document.querySelector<HTMLElement>(INSPECTING_ROW) ??
+      document.querySelector<HTMLElement>("[data-project-inspect-hint] button"))?.focus();
+  });
+  // Shown only while Details is a drawer (project.css); as a column it has
+  // the header's own toggle beside it.
+  const close = onClose === undefined ? null : (
+    <IconButton
+      size="sm"
+      className="provenance-close"
+      icon={<Icon name="close" />}
+      label={t("provenanceCloseDetails")}
+      data-provenance-close=""
+      onClick={() => {
+        returning.current = true;
+        onClose();
+      }}
+    />
+  );
 
   if (provenance === null) {
     return (
       <section className="panel provenance" aria-label={t("provenanceRegion")}>
+        {close}
         <p className="provenance-empty">{t("provenanceNothingSelected")}</p>
       </section>
     );
@@ -137,15 +175,16 @@ export function ProvenanceDetails({
     const name = label(record);
     return (
       <li key={related.id} className="provenance-link">
-        <button
-          type="button"
-          className="link-button"
+        <Button
+          variant="quiet"
+          size="sm"
+          className="provenance-related"
           aria-label={accessible(record)}
           data-provenance-link={related.id}
           onClick={() => onSelect({ kind, id: related.id })}
         >
           <span className="provenance-link-name" title={name}>{name}</span>
-        </button>
+        </Button>
         {trailing?.(record)}
       </li>
     );
@@ -168,6 +207,20 @@ export function ProvenanceDetails({
       >
         <span className="visually-hidden">{t("provenanceCurrentFile")}: </span>
         {t(currentStateKey(input))}
+      </span>
+    );
+  }
+
+  /**
+   * What follows a link to a reference: its current state, then the label a
+   * conversion MSCanvas did not verify left on it (ADR 0055, decision 2), in
+   * one span so the list's indent is not padding inside the tag's border.
+   */
+  function inputFacts(input: ProjectInput) {
+    return (
+      <span className="provenance-current-row">
+        {currentState(input)}
+        <NotVerifiedTag label={input.notVerifiedByMscanvas} />
       </span>
     );
   }
@@ -222,6 +275,7 @@ export function ProvenanceDetails({
 
   return (
     <section className="panel provenance" aria-label={t("provenanceRegion")}>
+      {close}
       {provenance.kind === "gone" ? (
         <>
           <p className="provenance-kind">{t("provenanceSelected")}</p>
@@ -233,6 +287,9 @@ export function ProvenanceDetails({
         <div data-provenance="input">
           <p className="provenance-kind">{t("provenanceKindInput")}</p>
           <h3 className="provenance-name" title={provenance.input.label}>{provenance.input.label}</h3>
+          {/* Recorded with the reference, beside the heading, so the heading's
+              name stays the file's. */}
+          <NotVerifiedTag label={provenance.input.notVerifiedByMscanvas} />
           {/* Current, and labelled as current. The section below is history. */}
           <p className="provenance-section-label">{t("provenanceCurrentFile")}</p>
           <p className="provenance-current-row">{currentState(provenance.input)}</p>
@@ -269,22 +326,20 @@ export function ProvenanceDetails({
               {t(layerHandle === null ? "projectLayerDetached" : "projectLayerAttached")}
             </span>
             {layerHandle === null ? null : (
-              <button
-                type="button"
-                className="link-button"
+              <Button
+                variant="secondary"
+                size="sm"
                 aria-label={t("projectShowInWorkbenchNamed", { name: layerName })}
                 data-provenance-layer-show-in-workbench=""
                 onClick={() => onShowInWorkbench?.(layerHandle)}
               >
                 {t("projectShowInWorkbench")}
-              </button>
+              </Button>
             )}
           </p>
           <p className="provenance-section-label">{t("provenanceLayerSource")}</p>
           <ul className="provenance-list">
-            {link(provenance.source, "input", inputName, inspectInput, (input) =>
-              currentState(input),
-            )}
+            {link(provenance.source, "input", inputName, inspectInput, inputFacts)}
           </ul>
           {/* The layer's own history: the QC captures that consumed it. */}
           <p className="provenance-section-label">{t("provenanceLayerUsedBy")}</p>
@@ -307,7 +362,7 @@ export function ProvenanceDetails({
           <p className="provenance-section-label">{t("provenanceConsumed")}</p>
           <ul className="provenance-list">
             {provenance.inputs.map((related) =>
-              link(related, "input", inputName, inspectInput, (input) => currentState(input)),
+              link(related, "input", inputName, inspectInput, inputFacts),
             )}
             {provenance.layers.map((related, index) => {
               const name = provenance.layerSources[index]?.label ?? t("provenanceRelatedGone");
@@ -403,9 +458,7 @@ export function ProvenanceDetails({
               ) : (
                 <ul className="provenance-list">
                   {provenance.sources.map((related) =>
-                    link(related, "input", inputName, inspectInput, (input) =>
-                      currentState(input),
-                    ),
+                    link(related, "input", inputName, inspectInput, inputFacts),
                   )}
                 </ul>
               )}
@@ -430,7 +483,7 @@ export function ProvenanceDetails({
               <p className="provenance-section-label">{t("provenanceLayerSource")}</p>
               <ul className="provenance-list">
                 {provenance.layerSources.map((related) =>
-                  link(related, "input", inputName, inspectInput, (input) => currentState(input)),
+                  link(related, "input", inputName, inspectInput, inputFacts),
                 )}
               </ul>
               {provenance.artifact.qcSnapshot === null ? null : (

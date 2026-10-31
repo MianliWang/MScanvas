@@ -5,6 +5,7 @@
 //! actually emit. Unknown facts stay explicitly unknown rather than being
 //! defaulted into something that looks measured.
 
+use mscanvas_proteowizard::StructuredIntent;
 use serde::{Deserialize, Serialize};
 
 /// The largest spectrum-table payload one open operation may transfer.
@@ -196,6 +197,11 @@ pub struct SelectedFileDto {
     /// which is the only reason ADR 0006 permits saying anything at all. It is
     /// display only -- not searched, not sorted by, and not part of identity.
     pub relative_context: Option<String>,
+    /// The "not verified by MSCanvas" label of the conversion this session
+    /// adopted this row's object from, or `null` (ADR 0055; owner decision 2
+    /// of 2026-10-29). `null` is the answer for every row not adopted from a
+    /// labelled conversion, and never itself a claim of verification.
+    pub not_verified_by_mscanvas: Option<crate::project::record::NotVerifiedByMscanvas>,
 }
 
 /// The complete family vocabulary a roster row can carry.
@@ -1111,35 +1117,32 @@ pub enum ConversionConflictPolicyDto {
     Skip,
 }
 
-/// The most items one queue may hold.
+/// The most items one queue may hold: the roster's own capacity, so one
+/// checked roster converts as one queue (ADR 0057, decision 3; owner,
+/// 2026-10-29).
 ///
-/// Far below the workspace's own capacity, and deliberately so.
+/// **The bound is structural.** A queue is built from roster rows, and the
+/// roster holds at most `MAX_WORKSPACE_DATASETS`. The sixteen this replaced
+/// made a user split one batch into several queues by hand, each with its own
+/// destination prompt and Run, and protected nothing the stop controls do not:
+/// a queue can be stopped whole, by the item converting, or by a waiting item,
+/// at any point (ADR 0015).
 ///
-/// **Re-decided after cancellation was understood, and the number is
-/// unchanged.** The premise it used to be defended on is not: it said the queue
-/// had "no cancellation", and a queue-level stop has existed since ADR 0015.
-/// A user can now also end the file being converted and leave the rest running,
-/// or settle a waiting item without running it.
-///
-/// What that changes is the cost of getting the size wrong, not the size. Items
-/// run serially, so a queue is still something a user commits to: at a
-/// realistic minute or three per acquisition, sixteen is something like half an
-/// hour, and a queue sized to the roster would be an afternoon. What is no
-/// longer true is that a wrong decision has to be waited out -- it can be ended
-/// at any point, in whichever of the three scopes fits.
-///
-/// **It remains a judgement about how long a person should be asked to commit
-/// to, and not a fact about the machine.** Nothing in this repository measures
-/// memory, throughput or scaling against the number of queue items, and this
-/// number must not be described as though something did. Deriving one from the
-/// largest fixture that happened to pass would be the same invention wearing a
-/// measurement's clothes.
+/// **It is a judgement, not a machine fact.** Items stay serial: at one to
+/// three minutes per acquisition, a full queue is roughly 17 to 51 hours.
+/// Nothing in this repository measures memory, throughput or scaling against
+/// the number of queue items, and this number must not be described as though
+/// something did. What a full queue retains is stated from the constants:
+/// at most one diagnostic per item (two 32 KiB excerpts each), one adoption
+/// ticket per finalized item holding one handle per output, and at most
+/// `MAX_CONVERSION_QUEUE_ITEMS × MAX_CONVERSION_OUTPUTS_PER_SOURCE` = 24,576
+/// claimed names and retained handles (`ConversionQueue::max_output_names`).
 ///
 /// Bounded is the part that is not a judgement. Rust is the only authority for
 /// it: the limit is enforced before a queue is committed, delivered to the
 /// interface through `ConversionQueuePlanDto.capacity`, and never restated as a
-/// frontend constant.
-pub const MAX_CONVERSION_QUEUE_ITEMS: usize = 16;
+/// frontend constant. Every interface list of queue items must be windowed.
+pub const MAX_CONVERSION_QUEUE_ITEMS: usize = MAX_WORKSPACE_DATASETS;
 
 /// One bounded, path-free read of the session's conversion slot.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1340,6 +1343,9 @@ pub struct ConversionQueueItemDto {
     /// discovered here. A backend-named set carries no name, because none
     /// exists until the run has finished.
     pub output: ConversionOutputPlanDto,
+    /// The "not verified by MSCanvas" label this row runs under, as its plan
+    /// row stated it (ADR 0055), or `null` for a verified conversion.
+    pub not_verified_by_mscanvas: Option<crate::project::record::NotVerifiedByMscanvas>,
     pub state: ConversionQueueItemStateDto,
     /// How many times this item has been attempted. One after the first pass.
     pub attempts: u64,
@@ -1400,6 +1406,9 @@ pub struct ConversionQueueItemDto {
     /// the queue is read again on every poll and every remount. A judgement
     /// that lived only in the reply would disappear from the row the moment the
     /// document was re-read, which is exactly when a user goes looking for it.
+    ///
+    /// The latest adoption's answer, not a running total (ADR 0052): a
+    /// per-output adoption replaces it with an answer about that one output.
     pub adoption: ConversionItemAdoptionDto,
 }
 
@@ -1428,6 +1437,13 @@ pub enum ConversionItemAdoptionDto {
     /// incomplete. It is the item's own state that explains which.
     NothingToAdopt,
     /// An adoption ran, and this is what it did to this item's outputs.
+    ///
+    /// Only the outputs that latest adoption touched are counted. After a
+    /// per-output adoption of one set member (ADR 0052) the counts sum to one,
+    /// which can be less than the item's adoptable outputs, and an earlier
+    /// answer about the other members -- a refusal included -- is gone without
+    /// their being checked again. Which members are in the workspace is the
+    /// roster's answer.
     ///
     /// The three counts are different answers, not degrees of one. A duplicate
     /// is not a newly added output, and a refusal erases neither the
@@ -1464,18 +1480,20 @@ pub enum ConversionQueueItemStateDto {
     /// confirmed tree would claim one for a run that never started a process.
     Cancelled,
     /// The queue never began this item. Not a failure: no process was launched
-    /// and nothing was created.
+    /// and no output was written. A destination folder the queue prepared
+    /// follows the queue's reclamation rule, as for `SkippedByRequest`.
     ///
-    /// A stop is one way that happens and not the only one — a session that
-    /// loses track of a process it started refuses the rest of the queue on its
-    /// own, and that queue is `completed`.
+    /// A stop is one way that happens and not the only one: any queue-level
+    /// refusal settles the rest of the queue this way, and that queue is
+    /// `completed`. A retry does not rerun such an item in place; converting it
+    /// is a new queue.
     NotRun,
     /// The user settled this item without running it, and the queue carried on.
     ///
     /// Its own state rather than either neighbour. `Skipped` is the conflict
     /// policy leaving an existing file alone -- a decision about a destination,
-    /// which this is not. `NotRun` is a stopped queue never reaching the item --
-    /// a consequence of ending the batch, which this is not either.
+    /// which this is not. `NotRun` is a stopped or refused queue never reaching
+    /// the item -- a consequence of ending the batch, which this is not either.
     ///
     /// No conversion ran and no output was written. It does **not** say that
     /// nothing was created: a destination folder the queue prepared is bound to
@@ -1562,13 +1580,37 @@ pub struct ConversionPlanRequestDto {
     /// A caller-supplied string and never more than that: it is looked up in
     /// `ConversionIntent::ADMITTED`, and an identity that table does not hold
     /// never becomes an intent.
-    pub intent_id: String,
+    ///
+    /// Exactly one of this and [`Self::intent`] (ADR 0044 as amended by ADR
+    /// 0055); both or neither is refused as `conversion_intent_ambiguous`.
+    #[serde(default)]
+    pub intent_id: Option<String>,
+    /// The structured intent (ADR 0055 decision 4), which Rust rebuilds and
+    /// validates. One equal to a row is that row.
+    #[serde(default)]
+    pub intent: Option<ConversionIntentWireDto>,
     pub conflict_policy: ConversionConflictPolicyDto,
     /// The binding the caller is rendering, which Rust compares with its own.
     pub expected_receipt: BackendBindingReceiptDto,
     /// The same closed vocabulary BEGIN validates; omission preserves custom.
     #[serde(default)]
     pub destination_policy: Option<DestinationPolicyDto>,
+}
+
+/// A structured conversion intent as the webview sent it, not yet read.
+///
+/// Held as JSON and read by `resolve_requested_intent`, so a value of the
+/// wrong shape is a typed refusal (`conversion_intent_rejected`) rather than an
+/// invoke that fails before any authority answers. Opaque in `Debug`: its text
+/// fields are the user's own.
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct ConversionIntentWireDto(pub serde_json::Value);
+
+impl std::fmt::Debug for ConversionIntentWireDto {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("<conversion-intent>")
+    }
 }
 
 /// What the interface shows before a queue is started.
@@ -1589,7 +1631,15 @@ pub struct ConversionQueuePlanDto {
     /// Rust reconstructs it through the admitted table and returns what it
     /// resolved, so what the panel renders is the semantic the queue would be
     /// bound with rather than the identity the panel happened to send.
-    pub intent: ConversionIntentDto,
+    ///
+    /// `null` for an advanced intent, which no row describes.
+    pub intent: Option<ConversionIntentDto>,
+    /// The structured intent this plan is bound to, in Rust's canonical form:
+    /// a row's own structured form, or the advanced intent rebuilt and
+    /// canonicalized (integer sets merged, switches ordered). A plan whose
+    /// canonical intent differs from what the webview would send now is not
+    /// current (ADR 0044 decision 9, amended by ADR 0055).
+    pub canonical_intent: StructuredIntent,
     /// The conflict policy this plan was asked under, answered back for the
     /// same reason: the summary a reader acts on states the plan's own facts,
     /// not the controls' current values.
@@ -1653,7 +1703,11 @@ pub enum ConversionPlanOutcomeDto {
 #[serde(rename_all = "camelCase")]
 pub struct ConversionBeginRequestDto {
     pub handles: Vec<String>,
-    pub intent_id: String,
+    /// As in [`ConversionPlanRequestDto`]: exactly one of the two.
+    #[serde(default)]
+    pub intent_id: Option<String>,
+    #[serde(default)]
+    pub intent: Option<ConversionIntentWireDto>,
     pub conflict_policy: ConversionConflictPolicyDto,
     /// The binding the plan on screen was authored under.
     pub expected_receipt: BackendBindingReceiptDto,
@@ -1754,6 +1808,17 @@ pub struct ConversionQueuePlanItemDto {
     pub source_kind: DatasetSourceKindDto,
     /// What this row will produce, in the cardinality it will produce it.
     pub output: ConversionOutputPlanDto,
+    /// Present exactly when this row would run on a build with no measured row
+    /// for its family: the interface shows the "unverified build" label with
+    /// this release (ADR 0055's relaxed gate). `null` on a measured build, and
+    /// on a row the build refuses, which `BEGIN` reports instead.
+    pub unverified_build_release: Option<String>,
+    /// Whether this row's settings are "not verified by MSCanvas" (ADR 0055
+    /// decision 1): an advanced intent always, and a verified row wherever one
+    /// of decision 1's four conditions fails for this row's source -- on any
+    /// build but the measured one, for instance. The interface labels every
+    /// such row.
+    pub unverified_settings: bool,
 }
 
 /// What one conversion did, in facts that name no location.
@@ -1795,6 +1860,13 @@ pub struct ConversionReportDto {
     /// the session is on once the installation has changed -- so it is read as
     /// provenance rather than judged for currency.
     pub receipt: Option<BackendBindingReceiptDto>,
+    /// Present exactly when this result ran on a build with no measured row
+    /// for its family: the interface shows the "unverified build" label with
+    /// this release (ADR 0055's relaxed gate). `null` on a measured build.
+    pub unverified_build_release: Option<String>,
+    /// Whether this result ran under settings "not verified by MSCanvas", as
+    /// the plan row stated (ADR 0055 decision 1).
+    pub unverified_settings: bool,
 }
 
 /// What one attempt established about its private staging area.
@@ -2229,6 +2301,11 @@ pub fn queue_output_name_collision(names: &[String]) -> PreviewErrorDto {
         false,
     )
     .with_detail(names.join(", "))
+    // Whole, as a list: the detail above is bounded and a name may hold a
+    // comma, so the interface lists these (ADR 0057 decision 3).
+    .with_context(PreviewErrorContextDto::OutputNameCollision {
+        names: names.to_vec(),
+    })
 }
 
 /// What a retry answers with when the folder it would write into is no longer
@@ -2273,6 +2350,67 @@ pub fn conversion_intent_not_admitted() -> PreviewErrorDto {
 ///
 /// A different sentence from the one above, because a reader can act on this
 /// one: the row exists, and another ProteoWizard build offers it.
+/// A plan or `BEGIN` request naming the intent twice or not at all: exactly
+/// one of `intentId` and `intent` is required.
+pub fn conversion_intent_ambiguous() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_ambiguous",
+        "The conversion request must name its settings exactly once.",
+        false,
+    )
+}
+
+/// A structured intent Rust could not build, with the rule that refused it as
+/// the context's `reason`: a decision 4 refusal's stable id, `malformed` for a
+/// value of the wrong shape, or `too_large`.
+pub fn conversion_intent_rejected(reason: &str) -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_rejected",
+        "MSCanvas could not use those conversion settings.",
+        false,
+    )
+    .with_context(PreviewErrorContextDto::ConversionIntent {
+        reason: reason.to_owned(),
+    })
+}
+
+/// ADR 0055 ground rule 1: no output checks exist for these settings on this
+/// kind of acquisition, so they are refused rather than run unchecked.
+pub fn conversion_intent_not_checkable() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_not_checkable",
+        "MSCanvas cannot yet check the output of those conversion settings for this kind of \
+         acquisition.",
+        false,
+    )
+}
+
+/// ADR 0055 decision 7: a step the acquisition's family refuses, named by the
+/// context's `reason`.
+pub fn conversion_step_blocked_for_source(reason: &str) -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_step_blocked_for_source",
+        "One of those conversion steps is not allowed for this kind of acquisition.",
+        false,
+    )
+    .with_context(PreviewErrorContextDto::ConversionIntent {
+        reason: reason.to_owned(),
+    })
+}
+
+/// The installed build lacks an option or filter an advanced intent needs,
+/// named by the context's `reason`.
+pub fn conversion_intent_unsupported(missing: &str) -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "conversion_intent_unsupported",
+        "The installed ProteoWizard does not offer one of those conversion settings.",
+        false,
+    )
+    .with_context(PreviewErrorContextDto::ConversionIntent {
+        reason: missing.to_owned(),
+    })
+}
+
 pub fn conversion_intent_unavailable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "conversion_intent_unavailable",
@@ -2949,6 +3087,20 @@ pub struct SpectrumProjectionDto {
     pub source_points: usize,
     /// Whether fewer points are drawn than the window measured.
     pub reduced: bool,
+    /// For a declared profile spectrum, the measured sample just below and
+    /// just above the window, which the joined line crosses each edge from.
+    /// Not counted in `source_points`. `None` for a centroid or unreported
+    /// spectrum, and where the window reaches the source's own end.
+    pub outside_low: Option<ProjectionSampleDto>,
+    pub outside_high: Option<ProjectionSampleDto>,
+}
+
+/// One measured sample, as a projection carries it beside its window.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionSampleDto {
+    pub mz: f64,
+    pub intensity: f64,
 }
 
 /// How much of a spectrum one export covers.
@@ -3413,6 +3565,15 @@ pub enum PreviewErrorContextDto {
     },
     TemporaryExportLeftBehind,
     ClipboardBusy,
+    /// Which rule refused a conversion intent, by stable id.
+    ConversionIntent {
+        reason: String,
+    },
+    /// Every planned output name two queued items would both write, once
+    /// each: display names, never locations.
+    OutputNameCollision {
+        names: Vec<String>,
+    },
 }
 
 impl PreviewErrorDto {

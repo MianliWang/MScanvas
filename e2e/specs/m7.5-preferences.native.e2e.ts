@@ -55,7 +55,7 @@ const DIALOG = "[data-settings-dialog]", ENTRY = "[data-settings-entry]";
 const ROSTER = '[aria-controls="workbench-roster"]', SHELL = ".workbench-shell";
 const ROW = '.dataset-roster-list [role="row"][data-handle]';
 const BANNER = "[data-backend-status]", HELP = "[data-backend-help]";
-const PANEL = ".conversion-panel", CONVERT = PANEL + " .conversion-plan button.primary-button";
+const PANEL = ".conversion-panel", CONVERT = PANEL + " button.conversion-start";
 const input = process.env.MSCANVAS_M75_INPUT_ROOT;
 const root = requireOwnedPreferenceRoot(process.env[PREFERENCE_ROOT_VARIABLE]);
 /** The real per-user record, read only to show this campaign never made one. */
@@ -178,10 +178,16 @@ async function capture(label: string, validate = true) {
       backendReading: box(document.querySelector(".backend-status-reading")),
       backendCollapsed: document.querySelector("[data-backend-collapsed]") !== null,
       backendActions: [...document.querySelectorAll("[data-backend-action]")].map(node => node.getAttribute("data-backend-action")),
-      help: box(document.querySelector("[data-backend-help]")),
-      helpOpen: document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open ?? null,
+      // The region the help button opens; on the one-line notice its wrapper
+      // has no box of its own (display: contents).
+      help: box(document.querySelector(".backend-setup-help-body")),
+      helpOpen: (() => {
+        const button = document.querySelector("[data-backend-help]");
+        return button === null ? null : button.getAttribute("aria-expanded") === "true";
+      })(),
       helpFitsWithoutScrolling: (() => {
-        const help = document.querySelector("[data-backend-help]"), port = help?.closest(".shell-notices") ?? null;
+        const help = document.querySelector(".backend-setup-help-body");
+        const port = help?.closest('#backend-status[data-backend-mode="popover"]') ?? help?.closest(".shell-notices") ?? null;
         if (help === null || port === null) return null;
         return help.getBoundingClientRect().bottom <= port.getBoundingClientRect().bottom + 1;
       })(),
@@ -195,7 +201,7 @@ async function capture(label: string, validate = true) {
       preferenceRegion: (document.querySelector("[data-live-region='preferences']")?.textContent ?? "").trim(),
       inspector: box(document.querySelector(".inspector-panel")),
       dialog: dialog === null ? null : { ...box(dialog), scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth,
-        primary: box(dialog.querySelector(".settings-dialog-actions .primary-button")) },
+        primary: box(dialog.querySelector("[data-settings-close]")) },
       bodyText: document.body.innerText, horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
       mockKeys: Object.keys(Reflect.get(window, "__mscanvasIpcTable__") as object), applicationOrigin: location.origin,
       resourceUrls: performance.getEntriesByType("resource").map(entry => entry.name),
@@ -270,7 +276,7 @@ async function openSettings() {
   await browser.$(ENTRY).click();
   await browser.$(DIALOG).waitForDisplayed();
 }
-async function choose(value: string) { await browser.$(`${DIALOG} input[value="${value}"]`).click(); }
+async function choose(value: string) { await browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click(); }
 async function press(label: string) { await browser.$(DIALOG).$(`button=${label}`).click(); }
 /** The dialog closed and the keyboard came back to the control that opened it. */
 async function returned() {
@@ -415,7 +421,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await choose("zh-CN");
     await choose("compact");
     await capture("02-settings-draft-zh-compact");
-    await press(zh.apply);
+    await press(zh.close);
     await returned();
     const applied = await capture("03-applied-zh-compact");
     expect(applied.locale).toBe("zh-CN");
@@ -504,7 +510,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await choose("en");
     const draft = await capture("07-draft-previewed-not-saved");
     expect(draft.locale).toBe("en");
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     expect(untouched(before, noted("after Cancel"))).toEqual({ bytes: true, entries: true, temporaries: [] });
     expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
@@ -513,7 +519,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await openSettings();
     await press(zh.reset);
     await capture("08-reset-draft-only");
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     expect(untouched(before, noted("after Reset then Cancel"))).toEqual({ bytes: true, entries: true, temporaries: [] });
     // A draft is a draft: neither Cancel dispatched a write of any kind.
@@ -525,7 +531,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     try {
       await openSettings();
       await choose("comfortable");
-      await press(zh.apply);
+      await press(zh.close);
       await browser.$("[data-save='failed']").waitForDisplayed({ timeout: 30_000 });
       refused = await capture("09-real-write-refusal");
       // The exact refusal, named: written, but unable to take the saved name.
@@ -559,7 +565,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
 
     // Released, and the same apply now lands. The refusal was the filesystem.
     await openSettings();
-    await press(zh.apply);
+    await press(zh.close);
     await returned();
     const persisted = noted("after the refusal was released");
     expect(replaced(before, persisted)).toBe(true);
@@ -585,7 +591,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     const alerted = await capture("14-unusable-record-explained");
     expect(alerted.storedRecordAlert?.text).toContain(en.storedUnsupportedVersion);
     expect(alerted.storageNote?.text).toBe(en.storageNotSaving);
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     // Reading it, starting on it and cancelling out of it all left it alone.
     expect(untouched(seeded, noted("after a startup that could not use it"))).toEqual({ bytes: true, entries: true, temporaries: [] });
@@ -616,12 +622,12 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
 
     // And Settings no longer has anything to recover from: the alert is gone,
     // and the note -- which is always there, and has to agree with whatever is
-    // above it -- now says the preferences are saved.
+    // above it -- now says nothing, which is the normal saved state.
     await openSettings();
     const settled = await capture("16-recovered-state-cleared");
     expect(settled.storedRecordAlert).toBeNull();
-    expect(settled.storageNote?.text).toBe(en.storageSaved);
-    await press(en.cancel);
+    expect(settled.storageNote?.text).toBe("");
+    await press(en.close);
     await returned();
     expect(sameBytes(replacement, noted("after confirming the recovery cleared"))).toBe(true);
   });
@@ -639,8 +645,8 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     // host's installation is usable the banner is folded, and its help and
     // actions are one press away (PM9.2 L10); it stays open from here on.
     await showBackendBanner();
-    await browser.$(`${HELP} summary`).click();
-    await browser.waitUntil(() => browser.execute(help => document.querySelector<HTMLDetailsElement>(help)?.open === true, HELP));
+    await browser.$(HELP).click();
+    await browser.waitUntil(() => browser.execute(help => document.querySelector(help)?.getAttribute("aria-expanded") === "true", HELP));
     const english = await capture("18-offline-help-en");
     expect(english.helpOpen).toBe(true);
     expect(english.helpFitsWithoutScrolling).toBe(true);
@@ -653,7 +659,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     const beforeLocale = await probes();
     await openSettings();
     await choose("zh-CN");
-    await press(zh.apply);
+    await press(zh.close);
     await returned();
     const chinese = await capture("19-offline-help-zh");
     expect(chinese.locale).toBe("zh-CN");
@@ -727,7 +733,8 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
 
     await browser.$(`button=${zh.conversionTask}`).click();
     await browser.$(PANEL).waitForDisplayed();
-    await browser.$(CONVERT).waitForEnabled();
+    // Refused rather than disabled until a plan is reviewed (spec 1.4).
+    await browser.waitUntil(async () => (await browser.$(CONVERT).getAttribute("aria-disabled")) !== "true");
     const into = join(output, "converted"); mkdirSync(into, { recursive: true });
     const [destination] = await Promise.all([
       helper("choose-conversion-folder", ["-Action", "choose", "-Path", into, "-TimeoutSeconds", "35"]),
@@ -748,18 +755,15 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     if (produced === undefined) throw Error("The adopted provider output is not in the roster.");
     record({ kind: "adopted provider output", fileName: produced.fileName });
     // Back to the workbench, because the preview renders where the conversion
-    // panel currently is, and then the roster's own way of opening a row: focus
-    // it, and use the action that names what it will do. A double-click on the
-    // row does not open a preview from here, which is how this chain first
-    // failed -- it waited two minutes for a table that nothing had asked for.
+    // panel currently is, and then the roster's own way of opening a row: one
+    // plain click. A double-click on the row is not a separate route, which is
+    // how this chain first failed -- it waited two minutes for a table that
+    // nothing had asked for.
     await browser.$(".workbench-navigation").$(`button=${zh.workbench}`).click();
     const producedRow = `.dataset-roster-list [role="row"][data-handle="${produced.handle}"]`;
     await browser.$(producedRow).waitForDisplayed({ timeout: 60_000 });
     await reveal(producedRow);
     await browser.$(producedRow).click();
-    const openPreview = browser.$(`button=${zh.previewFocused}`);
-    await openPreview.waitForEnabled({ timeout: 30_000 });
-    await openPreview.click();
     await browser.$('div.spectrum-table-row[data-row-position="0"]')
       .waitForDisplayed({ timeout: 120_000, timeoutMsg: "The converted mzML never opened." });
     await reveal('div.spectrum-table-row[data-row-position="0"]');
@@ -768,21 +772,18 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(opened.locale).toBe("zh-CN");
     expect(opened.bodyText).toContain(zh.viewerData);
 
-    // The data exports are behind the panel's own disclosure, so they have to
-    // be opened before they can be used -- in the DOM but `hidden` is exactly
-    // the state a driver refuses to click.
-    const disclosure = "section.spectrum-panel details.spectrum-export-disclosure";
-    await browser.$(`${disclosure} summary`).click();
-    await browser.waitUntil(() => browser.execute(css => document.querySelector<HTMLDetailsElement>(css)?.open === true, disclosure),
-      { timeout: 15_000, timeoutMsg: "The spectrum export disclosure did not open." });
+    // The data exports are the spectrum figure dialog's Data group since the
+    // rebuild (spec 3.4): the plot head's Export… opens it.
+    const dialog = ".figure-export-dialog";
+    await browser.$("section.spectrum-panel .figure-quick-actions > button:first-child").click();
+    await browser.$(dialog).waitForDisplayed({ timeout: 15_000, timeoutMsg: "The spectrum figure dialog did not open." });
 
     const csv = join(output, "M75-spectrum.csv");
     const label = zh.viewerExportFormat.replace("{{name}}", "CSV");
-    // The spectrum's own data export. Scoped, because the chromatogram panel
-    // labels its exports from the same resource.
+    // The spectrum's own data export, from the dialog the spectrum opened.
     const [exported] = await Promise.all([
       helper("save-dialog", ["-Title", "Export spectrum data", "-Action", "save", "-Path", csv, "-TimeoutSeconds", "35"]),
-      browser.$("section.spectrum-panel").$(`button=${label}`).click(),
+      browser.$(dialog).$(`button=${label}`).click(),
     ]);
     expect(exported.found).toBe(true); expect(exported.invoked).toBe(true);
     await browser.waitUntil(() => existsSync(csv), { timeout: 60_000 });

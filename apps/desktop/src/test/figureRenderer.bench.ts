@@ -12,11 +12,10 @@
  * pnpm --filter @mscanvas/desktop exec vitest bench --run
  * ```
  *
- * **What these scenes are.** `StickSpectrum` is the only screen renderer this
- * product has, and it draws sticks for every input -- it takes no plot kind and
- * no representation, only a `representationKnown` boolean that changes the
- * caption. So the scenes below are *point-shape stress inputs to the stick
- * renderer*, not four different screen rendering modes. `chromatogram-100k`
+ * **What these scenes are.** `StickSpectrum` draws sticks unless a declared
+ * profile spectrum is drawn over a viewport (P175), and these scenes pass no
+ * representation. So the scenes below are *point-shape stress inputs to the
+ * stick renderer*, not four different screen rendering modes. `chromatogram-100k`
  * measures what 100,000 ordered points cost that renderer; it does **not**
  * measure a chromatogram screen path, because no continuous-trace screen
  * renderer exists yet. Building one is M4.1's slice, not this harness's.
@@ -119,14 +118,7 @@ const SCENES: readonly Scene[] = [
   profileSpectrum(500_000, "transfer-bound-500k"),
 ];
 
-/**
- * Renders the real component to markup, which is what the screen path costs.
- *
- * `representationKnown: false` throughout, and it changes nothing measured here
- * -- the component draws sticks either way and the flag only selects a caption
- * sentence. It is set to the honest value for synthetic data: nothing reported
- * what these points are.
- */
+/** Renders the real component to markup, which is what the screen path costs. */
 function renderScene(scene: Scene): string {
   return renderToStaticMarkup(
     createElement(StickSpectrum, {
@@ -137,7 +129,6 @@ function renderScene(scene: Scene): string {
         reportedMzLow: scene.mz[0] ?? 0,
         reportedMzHigh: scene.mz[scene.mz.length - 1] ?? 1,
       },
-      representationKnown: false,
       labelledBy: "bench-heading",
       surface: { kind: "static" },
     }),

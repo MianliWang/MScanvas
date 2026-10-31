@@ -38,7 +38,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PreviewError, SpectrumProjection, SpectrumViewportDomain } from "./contracts";
 import { formatMz } from "./format";
-import { SpectrumViewport } from "./SpectrumViewport";
+import { SpectrumViewport, SpectrumZoomControls } from "./SpectrumViewport";
 import {
   SPECTRUM_PLOT_DRAWN_WIDTH,
   SPECTRUM_PLOT_PADDING_LEFT,
@@ -81,10 +81,10 @@ const PLOT_PIXELS = SPECTRUM_PLOT_VIEWBOX_WIDTH;
 const CENTRE_X = SPECTRUM_PLOT_PADDING_LEFT + SPECTRUM_PLOT_DRAWN_WIDTH / 2;
 
 const HEADING_ID = "selected-spectrum-heading";
-const HEADING = "Selected spectrum";
+const HEADING = "Spectrum";
 
-const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Reset m/z range"] as const;
-const RETRY = "Draw this m/z range again";
+const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Fit all, m/z"] as const;
+const RETRY = UI_RESOURCES.en.viewerMzRetry;
 
 /** One wheel notch inward and one outward, in the unit nearly every device uses. */
 const IN = -240;
@@ -107,6 +107,8 @@ const DRAWN: SpectrumProjection = {
   intensity: [10, 40, 25],
   sourcePoints: 3,
   reduced: false,
+  outsideLow: null,
+  outsideHigh: null,
 };
 
 /** The same window, truthfully holding no reported point. */
@@ -117,6 +119,8 @@ const NO_POINT_IN_WINDOW: SpectrumProjection = {
   intensity: [],
   sourcePoints: 0,
   reduced: false,
+  outsideLow: null,
+  outsideHigh: null,
 };
 
 const PROJECTION_ERROR: PreviewError = {
@@ -149,12 +153,15 @@ function Harness({
   mz,
   onRetryProjection,
   projectionError,
+  rangeEditing = false,
 }: {
   readonly domain: SpectrumViewportDomain | null;
   readonly intensity: readonly number[];
   readonly mz: readonly number[];
   readonly onRetryProjection: () => void;
   readonly projectionError: PreviewError | null;
+  /** The range editor open, as the spectrum's ⋯ menu opens it. */
+  readonly rangeEditing?: boolean;
 }) {
   const viewport = useSpectrumViewport();
   controller = viewport;
@@ -180,9 +187,11 @@ function Harness({
         readState={viewport.current}
         reportedMzHigh={500}
         reportedMzLow={100}
-        representationKnown
         state={viewport.state}
+        rangeEditing={rangeEditing}
       />
+      {/* The head's m/z controls, as the spectrum box renders them. */}
+      <SpectrumZoomControls dispatch={viewport.dispatch} readState={viewport.current} state={viewport.state} />
     </>
   );
 }
@@ -191,11 +200,13 @@ function renderViewport(
   options: {
     readonly domain?: SpectrumViewportDomain | null;
     readonly projectionError?: PreviewError | null;
+    readonly rangeEditing?: boolean;
   } = {},
 ): { readonly onRetryProjection: ReturnType<typeof vi.fn> } {
   const onRetryProjection = vi.fn();
   render(
     <Harness
+      rangeEditing={options.rangeEditing}
       domain={options.domain === undefined ? FULL : options.domain}
       intensity={TRANSFERRED_INTENSITY}
       mz={TRANSFERRED_MZ}
@@ -257,6 +268,11 @@ function pointerSurface(): HTMLElement {
 
 function control(label: (typeof CONTROLS)[number]): HTMLButtonElement {
   return screen.getByRole("button", { name: label }) as HTMLButtonElement;
+}
+
+/** A refused control stays focusable, as `aria-disabled` (UI-24). */
+function refused(label: (typeof CONTROLS)[number]): boolean {
+  return control(label).getAttribute("aria-disabled") === "true";
 }
 
 function state(): SpectrumViewportState {
@@ -483,9 +499,16 @@ function messages(locale: "en" | "zh-CN"): UiMessage {
   const bundle = UI_RESOURCES[locale] as Record<string, string>;
   return bindUiMessages(((key: string, values?: Record<string, unknown>) =>
     Object.entries(values ?? {}).reduce<string>(
-      (text, [name, value]) => text.replaceAll(`{{${name}}}`, String(value)),
+      (text, [name, value]) => text.replace(new RegExp(`\\{\\{${name}(?:, number)?\\}\\}`, "gu"), String(value)),
       bundle[key],
     )) as never);
+}
+
+const en = messages("en");
+
+/** The caption's own line, without the details disclosure beside it. */
+function captionLine(): string {
+  return document.querySelector("figcaption.spectrum-caption > p")?.textContent ?? "";
 }
 
 describe("the committed m/z line (PM9 UI-34)", () => {
@@ -498,19 +521,28 @@ describe("the committed m/z line (PM9 UI-34)", () => {
     return regions[0]!;
   }
 
-  /** The committed row is true of what the reducer holds now, a held gesture included. */
+  /**
+   * The committed row is true of what the reducer holds now, a held gesture
+   * included. With nothing narrower than the full range committed it is
+   * announced and not printed: the range line below the plot already says
+   * "full range". A committed part is printed, without the caption's numbers.
+   */
   function expectTruthfulLine(): void {
     const now = live();
     if (now.status !== "ready") throw new Error(`expected an admitted viewport, got ${now.status}`);
     expect(now.rangeSelection).toBeNull();
     const displayed = fixed(liveShown());
     const committed = now.committed === null ? null : fixed(now.committed);
-    const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
-    expect(untrue(visible, "m/z", { committed, shown: displayed })).toBeNull();
+    if (committed === null) expect(liveLine()).toHaveClass("visually-hidden");
+    else expect(liveLine()).not.toHaveClass("visually-hidden");
+    const sentence = textOutside(liveLine(), "span.visually-hidden");
+    expect(untrue(sentence, "m/z", { committed, shown: displayed })).toBeNull();
+    const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, .plot-range-toggle, .plot-range-editor");
+    expect(visible).toBe(committed === null ? "" : sentence);
+    if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
     expect(rangeText()).toContain(displayed);
     const spoken = (liveLine().textContent ?? "").replace(/\s+/gu, " ").trim();
     if (committed !== null) expect(spoken.endsWith(committed), `"${spoken}" does not end with ${committed}`).toBe(true);
-    if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
   }
 
   it("stays true through a held pan, says the commit once, and keeps nothing for another spectrum", () => {
@@ -557,20 +589,20 @@ describe("what each m/z control would do", () => {
       domain: FULL,
       reach: () => undefined,
       // Nothing wider to show, and nothing to go back to.
-      expected: { "Zoom in m/z": true, "Zoom out m/z": false, "Reset m/z range": false },
+      expected: { "Zoom in m/z": true, "Zoom out m/z": false, "Fit all, m/z": false },
     },
     {
       name: "an ordinary subrange",
       domain: FULL,
       reach: commitSubrange,
-      expected: { "Zoom in m/z": true, "Zoom out m/z": true, "Reset m/z range": true },
+      expected: { "Zoom in m/z": true, "Zoom out m/z": true, "Fit all, m/z": true },
     },
     {
       name: "the narrowest window this spectrum allows",
       domain: FULL,
       reach: commitNarrowest,
       // Nothing narrower to show, but plenty wider.
-      expected: { "Zoom in m/z": false, "Zoom out m/z": true, "Reset m/z range": true },
+      expected: { "Zoom in m/z": false, "Zoom out m/z": true, "Fit all, m/z": true },
     },
     {
       name: "a spectrum whose points all report one m/z",
@@ -579,13 +611,13 @@ describe("what each m/z control would do", () => {
       // A zero-width domain has no subrange and no superrange. The points are
       // still drawn -- there is nothing to zoom, which is not the same as
       // nothing to see.
-      expected: { "Zoom in m/z": false, "Zoom out m/z": false, "Reset m/z range": false },
+      expected: { "Zoom in m/z": false, "Zoom out m/z": false, "Fit all, m/z": false },
     },
     {
       name: "a spectrum whose m/z range Rust refused",
       domain: REFUSED,
       reach: () => undefined,
-      expected: { "Zoom in m/z": false, "Zoom out m/z": false, "Reset m/z range": false },
+      expected: { "Zoom in m/z": false, "Zoom out m/z": false, "Fit all, m/z": false },
     },
   ];
 
@@ -596,9 +628,9 @@ describe("what each m/z control would do", () => {
 
       for (const label of CONTROLS) {
         if (scenario.expected[label]) {
-          expect(control(label), label).toBeEnabled();
+          expect(refused(label), label).toBe(false);
         } else {
-          expect(control(label), label).toBeDisabled();
+          expect(refused(label), label).toBe(true);
         }
       }
     });
@@ -615,7 +647,7 @@ describe("what each m/z control would do", () => {
 
       for (const label of CONTROLS) {
         const before = state();
-        if (control(label).disabled) {
+        if (refused(label)) {
           /*
            * Two refusals, and only one of them is the adapter's.
            *
@@ -663,13 +695,15 @@ describe("what each m/z control would do", () => {
     // accessible name, and the list is the contract's rather than this file's so
     // the render and the keyboard cannot drift apart about which controls exist.
     renderViewport();
+    // Icon buttons, so each is named by its label; v5.11's order is out, in, reset.
+    // The foot's Set range… is a text button and not one of them.
+    const named = screen.getAllByRole("button").filter((button) => !button.classList.contains("plot-range-toggle"))
+      .flatMap((button) => button.getAttribute("aria-label") ?? []);
 
-    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      ...VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map((entry) => messages("en")(entry.messageKey)),
-    ]);
-    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      ...CONTROLS,
-    ]);
+    expect([...named].sort()).toEqual(
+      VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map((entry) => messages("en")(entry.messageKey)).sort(),
+    );
+    expect(named).toEqual([CONTROLS[1], CONTROLS[0], CONTROLS[2]]);
   });
 });
 
@@ -687,17 +721,17 @@ describe("pressing a control", () => {
      */
     renderViewport();
     commitSubrange();
-    expect(control("Reset m/z range")).toBeEnabled();
+    expect(refused("Fit all, m/z")).toBe(false);
 
     let afterReset: SpectrumViewportState | null = null;
     act(() => {
       afterReset = dispatchNow({ type: "viewport-reset" });
-      control("Reset m/z range").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      control("Fit all, m/z").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(afterReset).not.toBeNull();
     expect(state()).toBe(afterReset);
-    expect(control("Reset m/z range")).toBeDisabled();
+    expect(refused("Fit all, m/z")).toBe(true);
   });
 
   it("zooms the window the live state holds, not the one the render drew", () => {
@@ -739,7 +773,7 @@ describe("pressing a control", () => {
     renderViewport();
     commitSubrange();
 
-    fireEvent.click(control("Reset m/z range"));
+    fireEvent.click(control("Fit all, m/z"));
 
     expect(ready().committed).toBeNull();
     expect(rangeText()).toBe("Showing m/z 100.0000 to 500.0000 (full range)");
@@ -1535,7 +1569,7 @@ describe("panning the spectrum with a press", () => {
     expect(shown()).toEqual(published);
     expect(liveShown()).toEqual(live);
     expect(layer()?.getAttribute("transform")).toBe(transform);
-    expect(plot().querySelector("text.spectrum-axis-low")?.textContent).toBe(formatMz(live.low));
+    expect(plot()).toHaveAttribute("data-mz-low", formatMz(live.low));
     expect(ready().committed).toEqual(mzDomain(200, 300));
     releasePointer(CENTRE_X - 200);
     expect(liveShown()).toEqual(live);
@@ -1556,7 +1590,8 @@ describe("panning the spectrum with a press", () => {
     drawProjection({ ...DRAWN, low: 200, high: 300 });
 
     const layer = () => plot().querySelector("g.spectrum-sticks-layer");
-    const axisLow = () => plot().querySelector("text.spectrum-axis-low")?.textContent ?? "";
+    const axisLow = () => plot().getAttribute("data-mz-low") ?? "";
+    const ticks = () => [...document.querySelectorAll(".spectrum-frame .plot-x-ticks .plot-tick")].map((node) => Number(node.textContent));
     expect(layer()?.getAttribute("transform"), "at rest").toBeNull();
 
     pressPointer(CENTRE_X);
@@ -1571,6 +1606,12 @@ describe("panning the spectrum with a press", () => {
     expect(layer()?.getAttribute("transform"), "the sticks moved").toMatch(/translate/u);
     expect(rangeText(), "the range line moved").not.toBe(startedAt);
     expect(axisLow(), "the axis moved").toBe(formatMz(liveShown().low));
+    // And its ticks with it: every one inside the range on screen now.
+    expect(ticks().length, "ticks painted").toBeGreaterThan(1);
+    for (const tick of ticks()) {
+      expect(tick).toBeGreaterThanOrEqual(liveShown().low);
+      expect(tick).toBeLessThanOrEqual(liveShown().high);
+    }
 
     // Settling hands the drawing back to React, which redraws it at the range it
     // committed to -- so the transform left over from the gesture is gone.
@@ -1674,9 +1715,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
     drawProjection(DRAWN);
 
     expect(sticks()).not.toBeNull();
-    expect(captionText()).toMatch(
-      /Drawn as 3 sticks of the 3 observations this spectrum has between m\/z 200\.0000 and 300\.0000/u,
-    );
+    expect(captionLine()).toBe(`${en("plotCaption", { count: 3, total: 3 })}`);
     // Nothing left to say, so the region says nothing: a live region whose text
     // is added and removed as a sibling node is not reliably announced.
     expect(statusText()).toBe("");
@@ -1699,13 +1738,11 @@ describe("what the plot draws, and what it says it is drawing", () => {
 
     expect(sticks()).toBeNull();
     expect(rangeText()).toBe("Showing m/z 220.0000 to 260.0000");
-    expect(statusText()).toMatch(
-      /Drawing m\/z 220\.0000 to 260\.0000 from the retained spectrum\. Nothing is drawn here until it arrives\./u,
-    );
-    // The caption speaks for the range beneath it and does not name a window:
-    // the status region above already named the one being drawn, and during a
-    // gesture the two are different ranges.
-    expect(captionText()).toMatch(/Waiting for the drawing of this range\. Nothing is drawn here yet\./u);
+    expect(statusText()).toBe(en("viewerMzLoading", { low: "220.0000", high: "260.0000" }));
+    // The caption names no drawing: the status region already says one is on
+    // its way, and saying it twice is what this caption used to do.
+    expect(captionLine()).toBe("");
+    expect(captionText()).not.toMatch(/Waiting for the drawing/u);
   });
 
   it("draws nothing for an answer to a window the viewport has already left", () => {
@@ -1736,9 +1773,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
     expect(sticks()).toBeNull();
     // Not a failure, so nothing offers to try again.
     expect(screen.queryByRole("button", { name: RETRY })).toBeNull();
-    expect(statusText()).toMatch(
-      /This spectrum reports no measured point between m\/z 200\.0000 and 300\.0000\./u,
-    );
+    expect(statusText()).toBe(en("viewerMzEmpty", { low: "200.0000", high: "300.0000" }));
   });
 
   it("tells an empty window, a drawing not yet arrived, a failure and a refusal apart", () => {
@@ -1777,9 +1812,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
       expect(text.length, name).toBeGreaterThan(0);
     }
     expect(new Set(said.values()).size).toBe(said.size);
-    const empty = said.get("a window with no point in it") ?? "";
-    expect(empty).toMatch(/reports no measured point between m\/z 200\.0000 and 300\.0000/u);
-    expect(empty).toMatch(/The range is empty; the drawing did not fail/u);
+    expect(said.get("a window with no point in it")).toBe(en("viewerMzEmpty", { low: "200.0000", high: "300.0000" }));
   });
 
   it("draws a gesture over the gesture's range, not the range its points answer", () => {
@@ -1803,17 +1836,20 @@ describe("what the plot draws, and what it says it is drawing", () => {
       intensity: [10, 40, 25],
       sourcePoints: 3,
       reduced: false,
+      outsideLow: null,
+      outsideHigh: null,
     });
     send({ type: "gesture-started", domain: mzDomain(200, 300) });
 
-    const labels = [...plot().querySelectorAll("text.axis-label")].map(
+    const labels = [...document.querySelectorAll(".spectrum-frame .plot-x-ticks .plot-tick")].map(
       (node) => node.textContent ?? "",
     );
-    expect(labels).toContain("200.0000");
-    expect(labels).toContain("300.0000");
+    expect(plot()).toHaveAttribute("data-mz-low", "200.0000");
+    expect(plot()).toHaveAttribute("data-mz-high", "300.0000");
+    expect(labels).toEqual(["200", "220", "240", "260", "280", "300"]);
     // The window the points answer is nowhere on the axis.
-    expect(labels).not.toContain("100.0000");
-    expect(labels).not.toContain("500.0000");
+    expect(labels).not.toContain("100");
+    expect(labels).not.toContain("500");
   });
 
   it("keeps the drawing in hand while a gesture is in flight, and says it is not the answer", () => {
@@ -1829,12 +1865,7 @@ describe("what the plot draws, and what it says it is drawing", () => {
 
     expect(ready().gesture).not.toBeNull();
     expect(sticks()).not.toBeNull();
-    expect(captionText()).toMatch(
-      /Showing the drawing already in hand while the range changes\./u,
-    );
-    expect(captionText()).toMatch(
-      /The retained spectrum is projected when the interaction settles\./u,
-    );
+    expect(captionLine()).toContain(en("plotTransient"));
   });
 
   it("offers to draw the range again for a failure that can be retried", () => {
@@ -1868,7 +1899,9 @@ describe("what the plot draws, and what it says it is drawing", () => {
 
     failProjection(true);
 
-    expect(statusText()).toBe("This m/z range could not be drawn.");
+    expect(statusText()).toBe(en("viewerMzFailed"));
+    // Said once, there: the caption beneath the blank plot does not repeat it.
+    expect(captionLine()).toBe("");
   });
 
   it("asks Rust for nothing at all while a press is dragging the plot", () => {
@@ -1933,16 +1966,14 @@ describe("a spectrum with no m/z range to navigate", () => {
     renderViewport({ domain: REFUSED });
 
     expect(sticks()).not.toBeNull();
-    expect(captionText()).toMatch(/Drawn as 3 sticks, one per point\./u);
+    expect(captionLine()).toBe(`${en("plotTransferCaption", { count: 3, total: 3 })}`);
   });
 
   it("names what happened rather than saying the spectrum is unusable", () => {
     renderViewport({ domain: REFUSED });
 
-    expect(statusText()).toMatch(/^The m\/z range of this spectrum cannot be navigated\./u);
-    expect(statusText()).toMatch(/source m\/z values are not increasing/u);
-    expect(statusText()).toMatch(/Points remain in the reported order/u);
-    expect(rangeText()).toBe("No m/z range to navigate.");
+    expect(statusText()).toBe(`${en("viewerMzRefused")} ${en("viewerMzUnordered")}`);
+    expect(rangeText()).toBe(en("viewerMzNoRange"));
   });
 
   it("leaves the drawing out of the tab order and offers nothing to drag", () => {
@@ -1961,7 +1992,7 @@ describe("a spectrum with no m/z range to navigate", () => {
     expect(rangeText()).toBe("No m/z range to navigate.");
     expect(statusText()).toBe("");
     for (const label of CONTROLS) {
-      expect(control(label), label).toBeDisabled();
+      expect(refused(label), label).toBe(true);
     }
   });
 });
@@ -2003,7 +2034,7 @@ describe("a viewport that is admitted and has nothing to do", () => {
     }
     expect(hasProductiveSpectrumViewportAction(state())).toBe(false);
     for (const label of CONTROLS) {
-      expect(control(label), label).toBeDisabled();
+      expect(refused(label), label).toBe(true);
     }
   });
 
@@ -2018,14 +2049,27 @@ describe("a viewport that is admitted and has nothing to do", () => {
     expect(plot()).toHaveAttribute("tabindex", "-1");
     expect(plot()).toHaveAttribute(
       "aria-describedby",
-      "spectrum-viewport-range spectrum-viewport-status",
+      "spectrum-viewport-range spectrum-viewport-status plot-range-mz-gestures",
     );
     expect(plot()).toHaveAttribute("role", "img");
     // And no fake enabled control was invented to give the keyboard something
     // to land on: the buttons are still honestly disabled.
     for (const label of CONTROLS) {
-      expect(control(label), label).toBeDisabled();
+      expect(refused(label), label).toBe(true);
     }
+  });
+
+  it("says why Apply is refused in its range editor, which takes the keyboard when it opens", () => {
+    renderViewport({ domain: FLAT, rangeEditing: true });
+
+    // Opened from the spectrum's ⋯ menu; it is over the plot and holds From first.
+    expect(screen.getByRole("form", { name: UI_RESOURCES.en.rangeSet })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "From" })).toHaveFocus();
+    const apply = screen.getByRole("button", { name: "Apply range" });
+    expect(apply).toHaveAttribute("aria-disabled", "true");
+    expect(apply).not.toBeDisabled();
+    // The reason, not the number grammar: nothing typed would make this work.
+    expect(apply).toHaveAccessibleDescription(UI_RESOURCES.en.rangeNoWidth);
   });
 
   it("changes nothing and claims nothing for any viewport key", () => {
@@ -2096,6 +2140,8 @@ describe("a viewport that is admitted and has nothing to do", () => {
       intensity: [70],
       sourcePoints: 1,
       reduced: false,
+      outsideLow: null,
+      outsideHigh: null,
     });
 
     expect(sticks()).not.toBeNull();
@@ -2187,7 +2233,7 @@ describe("what the panel says is on screen", () => {
 
     expect(plot()).toHaveAttribute(
       "aria-describedby",
-      "spectrum-viewport-range spectrum-viewport-status",
+      "spectrum-viewport-range spectrum-viewport-status plot-range-mz-gestures",
     );
     expect(plot()).toHaveAttribute("tabindex", "0");
   });
