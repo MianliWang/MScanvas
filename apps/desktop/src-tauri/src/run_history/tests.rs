@@ -402,15 +402,22 @@ fn the_oldest_ended_runs_are_pruned_and_a_run_in_progress_never_is() {
             .count(),
         4
     );
+}
 
-    // Started first and ended last, so a run that ended before it goes.
-    other.update(1, progress(RunState::Completed, &["finalized"]));
+#[test]
+fn the_run_that_ended_longest_ago_is_pruned_first_whenever_it_started() {
+    let scratch = Scratch::new("history-prune-by-end");
+    fs::create_dir_all(history_directory(&scratch)).expect("the history directory");
+    let long = write_stored(&scratch, 1, RunState::Completed, Some(10_000));
+    let ended_first = write_stored(&scratch, 2, RunState::Completed, Some(3));
+    for started in 3..=MAX_RUNS as u64 + 1 {
+        write_stored(&scratch, started, RunState::Completed, Some(started + 1));
+    }
+    let _ = open(&scratch);
     let kept = run_files(&scratch);
-    assert_eq!(kept.len(), MAX_RUNS + 1);
-    assert!(
-        kept.contains(&file_name_of(&in_progress)),
-        "the run that ended last is kept"
-    );
+    assert_eq!(kept.len(), MAX_RUNS);
+    assert!(kept.contains(&long), "started first, ended last, and kept");
+    assert!(!kept.contains(&ended_first));
 }
 
 #[test]
@@ -690,16 +697,15 @@ fn off_in_another_instance_forgets_a_live_run_and_on_again_does_not_bring_it_bac
     assert_eq!(run_files(&scratch).len(), 1);
 }
 
-/// A running run of an instance with no owner lock left, as a write that was
-/// under way when Off removed the files leaves it.
-fn late_write(scratch: &Scratch, index: u64) {
+/// A run of an instance with no owner lock left, written as it left it.
+fn write_stored(scratch: &Scratch, started: u64, state: RunState, ended: Option<u64>) -> String {
     let record = RunRecord {
         schema_version: SCHEMA_VERSION,
-        run_id: format!("{index:013}-{}", "e".repeat(32)),
+        run_id: format!("{started:013}-{}", "e".repeat(32)),
         owner: "e".repeat(32),
-        state: RunState::Running,
-        started_at_ms: index,
-        ended_at_ms: None,
+        state,
+        started_at_ms: started,
+        ended_at_ms: ended,
         interrupted_at_ms: None,
         passes: 1,
         settings: start(0).settings,
@@ -709,7 +715,14 @@ fn late_write(scratch: &Scratch, index: u64) {
         omitted: None,
         items: Vec::new(),
     };
-    publish(&history_directory(scratch), &record).expect("write the late run");
+    publish(&history_directory(scratch), &record).expect("write the run");
+    file_name_of(&record.run_id)
+}
+
+/// A running run as a write that was under way when Off removed the files
+/// leaves it.
+fn late_write(scratch: &Scratch, started: u64) {
+    write_stored(scratch, started, RunState::Running, None);
 }
 
 #[test]
