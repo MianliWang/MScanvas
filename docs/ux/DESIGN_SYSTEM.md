@@ -87,7 +87,7 @@ underline and one logo/name Home target. Workbench and Conversion & results are
 real mounted surfaces. Existing export controls stay with their scientific panel;
 no future navigation target is exposed. Wide workbench regions are 240px / flex /
 245px in one card, the reference's own (FE-2 draft, pending the owner's verdict;
-it was 280px / flex / 245px, flat). Below 1050px, auxiliary panels
+the record said a 280px roster, main rendered 264px, flat). Below 1050px, auxiliary panels
 fold into reachable header actions before displacing evidence. Header actions do
 not scroll; the roster owns its scroll, and the evidence region owns the retained
 plots/table/export flow. Hidden surfaces expose no tab stops.
@@ -223,7 +223,7 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
 - **Shell insets.** The header, the notices and the content share one left
   edge (UI-01): 24 px, and 16 px at 1050 px and below, the content being one
   card inset by that edge (FE-2 draft, pending the owner's verdict; it was
-  16 px at every width, with no card).
+  16 px at every width, and the content ran edge to edge, with no card).
 - **Page tabs (G4).** Room for two more page tabs at 960 px: each new English
   label is at most 80 px at 13 px ("Features", "Statistics"; not "Features and
   annotation"). The header has no fallback, so a longer label scrolls the page
@@ -235,7 +235,8 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   unsaved changes, which leads with that fact ("Unsaved changes: …", UI-03).
 - **Roster width.** 240 px at every width that shows the roster beside the
   evidence, v5.11's measured column at 1366 (FE-2 draft, pending the owner's
-  verdict; it was 280 px against the reference's 285 px at 1920, UI-14). One
+  verdict; the record said 280 px, against the reference's 285 px at 1920,
+  UI-14, and main rendered 264 px). One
   fixed width across 1051–2560 px keeps the viewer column's measured floors.
 - **Refused primaries.** A refused primary action (`aria-disabled`) gives up
   the accent: subtle surface, secondary text, strong border and a not-allowed
