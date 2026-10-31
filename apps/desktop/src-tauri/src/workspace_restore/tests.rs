@@ -80,11 +80,16 @@ fn states(groups: &[RestoredGroupDto]) -> Vec<(String, RowState)> {
         .collect()
 }
 
+/// A member recorded on the volume its path is on, as admission would record
+/// it, so a missing one reads missing, not unreachable.
 fn member(path: &Path) -> StoredMember {
     StoredMember {
         path: path.to_str().expect("a Unicode path").to_owned(),
         byte_length: 1,
-        volume_serial: 7,
+        volume_serial: path
+            .ancestors()
+            .find_map(local_document::directory_volume)
+            .unwrap_or(7),
         file_id: "0123456789abcdef0123456789abcdef".to_owned(),
     }
 }
@@ -416,16 +421,21 @@ fn a_path_on_a_drive_that_does_not_answer_is_unreachable_not_missing() {
         .expect("an unassigned drive letter");
     let away = PathBuf::from(&absent).join("data").join("a.mzML");
     let gone = scratch.join("gone").join("b.mzML");
+    // Recorded on another volume than the one now answering at its place: the
+    // disk that held it is gone and its letter leads elsewhere.
+    let reused = scratch.join("data").join("c.mzML");
+    let mut elsewhere = row_at(&reused);
+    elsewhere.members[0].volume_serial = elsewhere.members[0].volume_serial.wrapping_add(1);
     let document = RestoreDocument {
         groups: vec![StoredGroup {
             name: None,
-            rows: vec![row_at(&away), row_at(&gone)],
+            rows: vec![row_at(&away), row_at(&gone), elsewhere],
         }],
         ..RestoreDocument::empty(true)
     };
     write_stored(&scratch, &write_document(&document));
-    // Three starts, each saving without putting anything back: neither row
-    // could be taken, so neither ages out.
+    // Three starts, each saving without putting anything back: no row could
+    // be taken, so none ages out.
     for start in 0..3 {
         let store = reopen(&scratch);
         assert_eq!(
@@ -433,6 +443,7 @@ fn a_path_on_a_drive_that_does_not_answer_is_unreachable_not_missing() {
             vec![
                 ("a.mzML".to_owned(), RowState::Unreachable),
                 ("b.mzML".to_owned(), RowState::Missing),
+                ("c.mzML".to_owned(), RowState::Unreachable),
             ],
             "a removed disk is not a deleted file; a removed folder on a drive that answers is"
         );
@@ -444,11 +455,19 @@ fn a_path_on_a_drive_that_does_not_answer_is_unreachable_not_missing() {
             "start {start}"
         );
         assert_eq!(
-            store.save(&ungrouped(&["restored-0", "restored-1"]), Vec::new()),
+            store.save(
+                &ungrouped(&["restored-0", "restored-1", "restored-2"]),
+                Vec::new()
+            ),
             WorkspaceRestoreWriteDto::Saved
         );
     }
     assert_eq!(stored(&scratch), document);
+    assert_eq!(
+        super::absent(7, None),
+        RowState::Missing,
+        "a volume not read"
+    );
 }
 
 #[test]
@@ -726,6 +745,23 @@ fn a_clear_never_undoes_another_windows_off() {
 }
 
 #[test]
+fn a_clear_over_another_windows_on_says_it_turned_restore_off() {
+    let scratch = Scratch::new("restore-clear-over-on");
+    write_stored(&scratch, &write_document(&RestoreDocument::empty(false)));
+    let first = reopen(&scratch);
+    let second = reopen(&scratch);
+    assert_eq!(second.set_enabled(true), WorkspaceRestoreWriteDto::Saved);
+    // The first was off itself, but the name held the second's on.
+    assert_eq!(
+        first.clear(),
+        WorkspaceRestoreWriteDto::TurnedOff {
+            problem: "changedElsewhere"
+        }
+    );
+    assert_eq!(stored(&scratch), RestoreDocument::empty(false));
+}
+
+#[test]
 fn a_retry_after_a_failed_turn_on_keeps_one_copy_aside() {
     let scratch = Scratch::new("restore-aside-once");
     write_stored(&scratch, b"{ not a document");
@@ -781,6 +817,9 @@ fn a_restored_row_that_is_back_in_the_workbench_is_recorded_once() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].members[0].path, b.to_str().expect("Unicode"));
     assert_eq!(rows[1].members[0].path, a.to_str().expect("Unicode"));
+    // Saved without a read, so nothing was offered and nothing is counted.
+    assert_eq!(rows[0].offered, 0);
+    assert_eq!(rows[1].offered, 0);
 }
 
 #[test]
@@ -838,13 +877,18 @@ fn a_row_not_put_back_is_offered_once_more_then_reported_and_never_accumulates()
     let offer = |store: &WorkspaceRestoreStore| match store.read() {
         WorkspaceRestoreReadDto::Restored {
             groups, expired, ..
-        } => (
-            states(&groups)
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect::<Vec<_>>(),
-            expired,
-        ),
+        } => {
+            let rows: Vec<&RestoredRowDto> = groups.iter().flat_map(|g| &g.rows).collect();
+            (
+                rows.iter()
+                    .map(|row| row.display_name.clone())
+                    .collect::<Vec<_>>(),
+                expired,
+                rows.iter()
+                    .map(|row| row.handle.clone())
+                    .collect::<Vec<_>>(),
+            )
+        }
         other => panic!("expected restored rows, got {other:?}"),
     };
     assert_eq!(
@@ -855,13 +899,18 @@ fn a_row_not_put_back_is_offered_once_more_then_reported_and_never_accumulates()
     // Each session leaves the offer untaken and works on another file.
     for (session, file) in files.iter().enumerate().skip(1) {
         let store = reopen(&scratch);
-        let (names, expired) = offer(&store);
+        let (names, expired, handles) = offer(&store);
         let previous = files[session - 1].file_name().and_then(OsStr::to_str);
         assert_eq!(names, vec![previous.expect("a name").to_owned()]);
         assert_eq!(expired, u32::from(session > 1), "session {session}");
+        // The expired row keeps its slot, so the offer's handle skips it.
+        assert_eq!(
+            handles,
+            vec![format!("restored-{}", u32::from(session > 1))]
+        );
         assert_eq!(
             store.save(
-                &ungrouped(&["restored-0", "file-0"]),
+                &ungrouped(&[handles[0].as_str(), "file-0"]),
                 vec![live("file-0", file)]
             ),
             WorkspaceRestoreWriteDto::Saved
@@ -874,9 +923,99 @@ fn a_row_not_put_back_is_offered_once_more_then_reported_and_never_accumulates()
     }
 
     // A start that saves nothing ages nothing: the same offer, the same notice.
-    let expected = (vec!["c.mzML".to_owned()], 1);
+    let expected = (vec!["c.mzML".to_owned()], 1, vec!["restored-1".to_owned()]);
     assert_eq!(offer(&reopen(&scratch)), expected);
     assert_eq!(offer(&reopen(&scratch)), expected);
+}
+
+#[test]
+fn a_row_declined_while_matching_and_then_gone_is_marked_not_aged_out() {
+    let scratch = Scratch::new("restore-declined-gone");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    assert_eq!(
+        reopen(&scratch).save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    // Seen matching and saved without being taken: declined once.
+    let store = reopen(&scratch);
+    assert_eq!(
+        states(&restored(&store)),
+        vec![("a.mzML".to_owned(), RowState::Matching)]
+    );
+    assert_eq!(
+        store.save(&ungrouped(&["restored-0"]), Vec::new()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(stored(&scratch).groups[0].rows[0].offered, MAX_OFFERS);
+
+    // Gone before the next start: shown as missing, not retired.
+    fs::remove_file(&a).expect("remove a");
+    let store = reopen(&scratch);
+    assert_eq!(
+        store.read(),
+        WorkspaceRestoreReadDto::Restored {
+            groups: vec![RestoredGroupDto {
+                name: None,
+                rows: vec![RestoredRowDto {
+                    handle: "restored-0".to_owned(),
+                    source_kind: Family::Mzml,
+                    display_name: "a.mzML".to_owned(),
+                    checked: false,
+                    state: RowState::Missing,
+                }],
+            }],
+            expired: 0,
+            leftover_copies: 0,
+        }
+    );
+    assert_eq!(
+        store.save(&ungrouped(&["restored-0"]), Vec::new()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(stored(&scratch).groups[0].rows.len(), 1, "still recorded");
+}
+
+#[test]
+fn a_row_no_longer_offered_leaves_the_document_only_after_a_read_reported_it() {
+    let scratch = Scratch::new("restore-expired-reported");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let b = scratch.write("b.mzML", b"<mzML/>");
+    assert_eq!(
+        reopen(&scratch).save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let store = reopen(&scratch);
+    assert_eq!(restored(&store)[0].rows.len(), 1);
+    assert_eq!(
+        store.save(&ungrouped(&["restored-0"]), Vec::new()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+
+    // Before any read nothing is expired, so a save that places only the
+    // live rows would drop a row nobody was told about, and is refused.
+    let before = stored_bytes(&scratch);
+    let store = reopen(&scratch);
+    assert_eq!(
+        store.save(&ungrouped(&["file-0"]), vec![live("file-0", &b)]),
+        WorkspaceRestoreWriteDto::Refused {
+            problem: "staleArrangement"
+        }
+    );
+    assert_eq!(stored_bytes(&scratch), before);
+
+    // Once a read has reported it, a save leaves it out.
+    assert!(matches!(
+        store.read(),
+        WorkspaceRestoreReadDto::Restored { ref groups, expired: 1, .. }
+            if groups[0].rows.is_empty()
+    ));
+    assert_eq!(
+        store.save(&ungrouped(&["file-0"]), vec![live("file-0", &b)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let rows = &stored(&scratch).groups[0].rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].members[0].path, b.to_str().expect("Unicode"));
 }
 
 #[cfg(windows)]

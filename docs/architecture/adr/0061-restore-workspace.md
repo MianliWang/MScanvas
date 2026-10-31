@@ -17,7 +17,7 @@ Questions 2 to 4 match this record. Question 1 was put as "automatic,
 recommended", from an earlier draft; this record now recommends the explicit
 action because of the start-up costs in decision 4, so the answer to question
 1 is to be confirmed with those costs before decision 4 or the interface slice
-changes. Questions 5 to 9 are not answered yet. The status stays Proposed
+changes. Questions 5 to 10 are not answered yet. The status stays Proposed
 until they are.
 
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the workspace
@@ -130,11 +130,16 @@ Turning restore on is refused the same way. Once refused, the process records
 nothing more until it restarts, and none of its own later writes lifts that.
 A document that is there but cannot be identified just now (another program
 holds it without sharing read) refuses the save or the turn-on with
-`identityUnknown` instead; that latches nothing, and the next write looks again.
-The one exception is this process's own write: if its identity cannot be read
-just after the replacement (another program opened the new document without
-sharing read in that instant), this process remembers nothing there, so its
-next guarded write finds an object it cannot call its own and is refused
+`identityUnknown` instead, while this process remembers an identity at the
+name; that latches nothing, and the next write looks again. Where it remembers
+none (nothing was at the name at start, or its own last write could not be
+identified), an unidentifiable document looks exactly as this process left the
+name, as on a volume without file IDs, and the write goes ahead.
+This process's own write is the one case where it remembers none on purpose:
+if its identity cannot be read just after the replacement (another program
+opened the new document without sharing read in that instant), this process
+remembers nothing there, so its next guarded write that can identify the
+document finds an object it cannot call its own and is refused
 `changedElsewhere`, latched as above. That fails closed rather than guessing
 the document is its own.
 
@@ -143,7 +148,8 @@ forgetting. Like every write, they are refused while an unreadable document or
 an unsafe name is kept (decision 6). Off
 writes off. Clear keeps the switch only while the name still holds what this
 process last saw; otherwise it cannot know which switch the document holds, so
-it writes off and answers `turnedOff` with the reason (`changedElsewhere`, after
+it writes off and answers `turnedOff`, whichever switch this process held, with
+the reason (`changedElsewhere`, after
 which this process is refused as above, or `identityUnknown`), rather than the
 `saved` of an ordinary clear. A clear therefore never undoes another window's
 off, and a refused window cannot record its paths again over it.
@@ -178,14 +184,25 @@ nothing is hashed, so a RAW file is never read whole. The answer per row is one
 of:
 
 - `matching`: the same file ID and volume serial, at the same length. This is
-  not a content claim: a same-length rewrite in place matches, and so does a
-  file ID the filesystem gave to a new file after the recorded one was deleted.
-  Admission and the ordinary revalidation decide that when the row is used.
+  not a content claim, and no later step makes it one: the document records no
+  digest and no write time, so a same-length rewrite in place matches, and so
+  does a file ID the filesystem gave to a new file after the recorded one was
+  deleted. Putting the row back admits the bytes there at that moment as a new
+  baseline, exactly as adding the file does; nothing compares them with the
+  last session's. That is unlike PRJ-004, whose put-back follows a matched
+  check against the SHA-256 the project recorded (open question 10).
 - `changed`: another object at the path, or the same object at another length.
-- `missing`: nothing at the recorded path, on a drive or share that answers.
+- `missing`: nothing at the recorded path, on a drive or share that answers,
+  and the nearest folder above it that can be opened is on the recorded volume
+  (or no volume could be read).
 - `unreachable`: the drive or share the path is on does not answer now (a
-  removed disk, an offline share, a dropped VPN). It says nothing about the
-  file, so the interface does not present it as gone.
+  removed disk, an offline share, a dropped VPN), or nothing is at the path and
+  the nearest folder above it is on another volume than the one recorded (a
+  removed disk whose drive letter another disk or card now has). It says
+  nothing about the file, so the interface does not present it as gone. A file
+  that sat directly at a folder mount point is judged by the mount folder, on
+  the host volume, so its deletion reads `unreachable`: the error is toward
+  never calling a file gone.
 - `unreadable`: there, and its identity could not be established.
 - `unsafe`: a link, a directory or a device.
 
@@ -220,7 +237,8 @@ does not:
 - a second window would put the same rows back again.
 
 The explicit route pays the same admission cost, hashing included, but only
-when the user asks, as a project reference does (PRJ-004). Its own cost is that
+when the user asks. The comparison with PRJ-004 is of cost only: that hash is
+a new baseline, not a check against anything recorded. Its own cost is that
 an offer the user does not take has to end somewhere, or the document grows
 into a history of every session; decision 10 bounds it.
 
@@ -232,10 +250,11 @@ Prerequisites of the interface slice, whichever the owner chooses:
 - **A put-back command.** `add_files` is a Rust service method, not a webview
   command. The webview commands that admit files are the picker, the folder
   import, a drop, conversion-output adoption and `add_project_input_to_workspace`
-  (PRJ-004); none of them takes a restored row. PRJ-004 is the pattern to
-  follow: the webview names the row, and Rust resolves the stored paths,
-  admits them through the ordinary admission boundary (which hashes the file),
-  and retires the row's restored slot under the same lock.
+  (PRJ-004); none of them takes a restored row. PRJ-004 is the pattern for the
+  command's shape: the webview names the row, and Rust resolves the stored
+  paths, admits them through the ordinary admission boundary (which hashes the
+  file as a new baseline; there is no recorded digest to compare it with), and
+  retires the row's restored slot under the same lock.
 - **A dismiss command**, so one marked row can be removed without clearing
   every other.
 - **A context for same-named rows.** A restored row carries only its final
@@ -357,21 +376,36 @@ that declined it since it was last a Workbench row (`offered`; a live row is
 saved with 0): a session declines a row when one of its reads presented the
 row as `matching` and it then saved without putting the row back. A row a
 read presented in any other state (changed, missing, unreachable, unreadable,
-unsafe) could not be put back as itself, so it is not counted and stays
-offered, as a marked row, until it is put back, dismissed or cleared; so is a
-row in a session that saved without reading. At start, a row whose count has
-reached `MAX_OFFERS` is not offered, and the read answer says how many such
-rows there were (`expired`). Nothing is written at start, so those rows leave
-the document at this session's first save, clear or off; a session that saves
-nothing ages nothing and reports the same rows again at the next start.
+unsafe) could not be put back as itself, so it is not counted; nor is a row in
+a session that saved without reading.
 
-*Recommendation:* `MAX_OFFERS` = 1. The next start offers the last session's
-Workbench; a session that saw a row matching and saved without taking it has
-declined it, and the start after that no longer offers it and says so. The
-document is then the last session's Workbench, at most that session's untaken
-matching offer, and the marked rows still waiting, never a history of every
-session's offers. The value is one constant, so another answer is a one-line
-change.
+Which rows are no longer offered is decided once per session, by its first
+read, from what that read finds, never at load: a row whose count has reached
+`MAX_OFFERS` and that the read finds `matching` is no longer offered, and every
+read of the session says how many such rows there are (`expired`). A row that
+read finds in any other state is shown as a marked row whatever its count, so a
+marked row is never aged out: a file declined once and then deleted, or on a
+disk removed since, is shown as such. A marked row's count is left as it is, so
+a later start whose first read finds it matching no longer offers it. Restored
+handles are numbered by place in the stored document, expired rows included,
+so a row no longer offered leaves a gap and no handle changes meaning within a
+session.
+
+A row no longer offered leaves the document only at a save after that read, or
+at a clear or off. Before the session's first read nothing is expired, so a
+save has to place every stored row, and only a read names them; a save that
+does not is refused (`staleArrangement`). Nothing therefore leaves the document
+without a read having reported it, and the interface shows the `expired` count
+of the read it saves after. Nothing is written at start, so a session that
+saves nothing ages nothing and the next start reports the same rows again.
+
+*Recommendation:* `MAX_OFFERS` = 1. A restored row is offered at the next start
+only: if that session presents it as matching and saves without taking it, the
+start after that no longer offers it (when its first read finds it matching)
+and says so. The document is then the last session's Workbench, at most that
+session's untaken matching offer, and the marked rows still waiting, never a
+history of every session's offers. The value is one constant, so another
+answer is a one-line change.
 
 *Alternatives:*
 
@@ -409,7 +443,7 @@ change.
   session is not recorded, and it is told so rather than writing over the
   first. A write that races the check is not excluded (decision 3). A clear in
   either window after the other one wrote turns restore off for both, and
-  answers `turnedOff`.
+  answers `turnedOff`, whichever switch the clearing window held.
 - A document this build cannot use keeps restore off until the user turns it on.
   A user whose document was damaged has to turn restore on again.
 - The re-check is one probe per distinct drive or share root and one
@@ -419,11 +453,16 @@ change.
   answers slowly still costs one open per member, and there is no per-row
   timeout. The read answers only after every check, so its worst case is one
   timeout per unreachable root plus one slow open per member.
-- A restored row a session saw matching and did not put back is offered once
-  more and then reported as no longer offered (decision 10); a user who wants
-  it back adds the file again. A marked row is never aged out, so marked rows
+- A restored row is offered at the next start only: if that session presents
+  it as matching and saves without taking it, the start after reports it as no
+  longer offered when it finds it matching (decision 10); a user who wants it
+  back adds the file again. A marked row is never aged out, so marked rows
   wait until put back, dismissed or cleared, and can build up toward
   `tooManyRows` (decision 5).
+- A restored row that matches is the same object at the same length, not the
+  same content: a rewrite in place at the same length comes back with its
+  group and checked state, and put-back admits what is there then (decision 4,
+  open question 10).
 - The interface slice cannot start before stable per-row slots and the
   put-back and dismiss commands exist (decision 4).
 
@@ -456,9 +495,11 @@ change.
    live roster does for rows added directly?
 8. How long is a row that is not put back offered (decision 10)? Recommended:
    a row a read presented as matching is declined by one session that saves
-   without taking it, and the next start says how many rows are no longer
-   offered; a marked row (changed, missing, unreachable, unreadable, unsafe) is
-   never aged out and waits until put back, dismissed or cleared.
+   without taking it; the next start whose first read finds it matching no
+   longer offers it and says how many rows are no longer offered, and only a
+   save after that read removes them. A marked row (changed, missing,
+   unreachable, unreadable, unsafe) is never aged out and waits until put back,
+   dismissed or cleared.
    Alternatives: more sessions; until put back or dismissed (the document then
    grows with every session); until the user's first Restore or Start fresh,
    plus a bound; or age marked rows too.
@@ -467,3 +508,13 @@ change.
    Start fresh (recommended, as implemented: fail closed, nothing dropped
    without the user), or record the live rows and retire untaken matching
    offers, then marked rows, to make room, reporting how many?
+10. Should `matching` mean unchanged content as well as the same object
+    (decision 4)? Recommended: no, as implemented. A restored row is a locator
+    and an arrangement; putting it back admits the bytes there then, as Add
+    files does, and the interface says the row is added again, not verified
+    against the last session. Alternative: record each member's last-write time
+    and compare it in the re-check (the attribute-only open already reads it),
+    so a rewrite in place reads `changed`; admission does not record that time
+    today, so it is taken at admission or by one attribute open per member at
+    save. A bundle's member digests, which admission already holds, could be
+    recorded and compared at put-back as well.

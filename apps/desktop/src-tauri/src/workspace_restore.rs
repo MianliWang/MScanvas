@@ -28,11 +28,14 @@
 //! once, then the object at the path is opened for its attributes only,
 //! without data access or a link followed, and its file ID, volume serial and
 //! length are compared with what was recorded. No byte is read and nothing is
-//! hashed. A changed, missing or unreachable file stays a marked row; it is
-//! never dropped and never relinked. Only an offer the user could take ages a
-//! row: one a read presented as matching, in a session that then saved without
-//! putting it back, is offered at [`MAX_OFFERS`] such sessions, then no longer,
-//! and the start says how many such rows there were.
+//! hashed, so a match says nothing about the content. A changed, missing or
+//! unreachable file stays a marked row; it is never dropped, never relinked
+//! and never aged out. Only an offer the user could take ages a row: one a read
+//! presented as matching, in a session that then saved without putting it back,
+//! was declined. A row [`MAX_OFFERS`] sessions declined is no longer offered by
+//! a session whose first read finds it matching, and every read of that
+//! session says how many such rows there are; it leaves the document only at a
+//! save after that read.
 //!
 //! ## When it is written
 //!
@@ -93,9 +96,10 @@ const MAX_PATH_UTF16: usize = 32_767;
 const RESTORED_PREFIX: &str = "restored-";
 
 /// How many sessions may decline a row that a read presented as matching
-/// (ADR 0061, decision 10, Proposed). Such a row a session saved without
-/// putting back is offered no more, so untaken offers never become a growing
-/// history. A marked row could not be taken and is never counted.
+/// (ADR 0061, decision 10, Proposed). A row declined this often is no longer
+/// offered by a session whose first read finds it matching, so untaken offers
+/// never become a growing history. A marked row could not be taken: it is
+/// never counted, and one that reaches this count while marked is still shown.
 pub const MAX_OFFERS: u32 = 1;
 
 // ------------------------------------------------------------------ document
@@ -331,17 +335,24 @@ pub fn write_document(document: &RestoreDocument) -> Vec<u8> {
 #[serde(rename_all = "camelCase")]
 pub enum RowState {
     /// The same file ID and volume serial, at the same length. Not a claim
-    /// about the bytes: a same-length rewrite in place, or a file ID the
-    /// filesystem reused after the recorded file was deleted, also matches.
-    /// Admission and the ordinary revalidation decide that when it is used.
+    /// about the bytes, and nothing later makes it one: a same-length rewrite
+    /// in place, or a file ID the filesystem reused after the recorded file
+    /// was deleted, also matches. Putting the row back admits the bytes there
+    /// then as a new baseline, as adding the file does; no step compares them
+    /// with the last session's, unlike PRJ-004's matched check.
     Matching,
     /// Something is there and it is not the object recorded, or it is the
     /// object at another length.
     Changed,
-    /// Nothing at the recorded path, on a drive or share that answers.
+    /// Nothing at the recorded path, on a drive or share that answers, and the
+    /// nearest folder above it is on the recorded volume (or its volume could
+    /// not be read).
     Missing,
-    /// The drive or share the recorded path is on does not answer now: a
-    /// removed disk, an offline share. Says nothing about the file.
+    /// The drive or share the recorded path is on does not answer now (a
+    /// removed disk, an offline share), or nothing is at the path and the
+    /// nearest folder above it is on another volume than the one recorded (a
+    /// removed disk whose drive letter another disk now has). Says nothing
+    /// about the file.
     Unreachable,
     /// There, and this process could not open it or establish its identity.
     Unreadable,
@@ -401,7 +412,13 @@ fn check_member(member: &StoredMember, roots: &mut Roots) -> RowState {
     }
     let file = match open_for_attributes(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return RowState::Missing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let above = path
+                .ancestors()
+                .skip(1)
+                .find_map(local_document::directory_volume);
+            return absent(member.volume_serial, above);
+        }
         Err(_) => {
             return match std::fs::symlink_metadata(path) {
                 Ok(metadata)
@@ -428,6 +445,21 @@ fn check_member(member: &StoredMember, roots: &mut Roots) -> RowState {
         }
         Some(_) => RowState::Changed,
         None => RowState::Unreadable,
+    }
+}
+
+/// Nothing at a recorded path. Gone, unless the nearest folder above it is on
+/// another volume than the one recorded: then the recorded disk is not there,
+/// and its drive letter or folder now leads to another one. A volume that
+/// cannot be read leaves the answer missing.
+///
+/// ponytail: a file that sat directly at a folder mount point is judged by the
+/// mount folder, which is on the host volume, so its deletion reads
+/// unreachable; that errs toward never calling a file gone.
+fn absent(recorded_volume: u64, volume_above: Option<u64>) -> RowState {
+    match volume_above {
+        Some(volume) if volume != recorded_volume => RowState::Unreachable,
+        _ => RowState::Missing,
     }
 }
 
@@ -469,11 +501,13 @@ pub struct RestoredGroupDto {
 pub enum WorkspaceRestoreReadDto {
     /// The rows still waiting to be put back, in their stored groups and
     /// order, each re-checked now. Empty on a first run or after a clear.
-    /// `expired`: stored rows this start no longer offers, because
+    /// `expired`: stored rows this session no longer offers, because
     /// [`MAX_OFFERS`] earlier sessions presented them as matching and saved
-    /// without putting them back; a marked row never expires. They stay in
-    /// the document until this session first saves, clears or turns restore
-    /// off, so a start that saves nothing reports them again.
+    /// without putting them back, and this session's first read found them
+    /// matching; a row that read found marked is shown instead, so a marked
+    /// row never expires. Their handles are skipped, not reused. They stay in
+    /// the document until a save after that read, a clear or off, so a start
+    /// that saves nothing reports them again.
     Restored {
         groups: Vec<RestoredGroupDto>,
         expired: u32,
@@ -519,11 +553,15 @@ pub enum WorkspaceRestoreWriteDto {
     /// `changedElsewhere`: another MSCanvas process wrote it since this one
     /// last read or wrote it, or this process could not identify its own
     /// write just after making it (another program held the new document
-    /// without sharing read), which is refused the same way rather than
-    /// guessed to be its own; this session records nothing more until it
-    /// restarts. Off and clear still work, and both leave restore off.
+    /// without sharing read) and a later write can, which is refused the same
+    /// way rather than guessed to be its own; this session records nothing
+    /// more until it restarts. Off and clear still work, and both leave restore off.
     /// `identityUnknown`: the document is there and could not be identified
-    /// just now (another program holds it); retryable, nothing is latched.
+    /// just now (another program holds it), while this process remembers an
+    /// identity at the name; retryable, nothing is latched. Where it remembers
+    /// none (nothing was there at start, or its own last write could not be
+    /// identified), such a document looks as this process left the name, as
+    /// on a volume without file IDs, and the write goes ahead.
     Refused {
         problem: &'static str,
     },
@@ -581,8 +619,9 @@ struct Lane {
     /// The refused start-up document is already kept aside, so a retried turn
     /// on does not keep a second copy.
     kept_aside: bool,
-    /// The start-up rows not yet back in the Workbench, in their stored
-    /// groups. The Nth row in order is `restored-N`.
+    /// Every stored row, in its stored group, until a clear or off. The Nth
+    /// row in order is `restored-N`, expired or not, so no handle changes
+    /// meaning within a session.
     ///
     /// ponytail: only ever emptied whole (clear, off); putting one row back
     /// or dismissing one needs stable per-row slots, which the interface
@@ -592,8 +631,11 @@ struct Lane {
     /// offers the user could take, which a save counts in `offered`. Never
     /// refilled within a session, so positions stay meaningful.
     presented: HashSet<usize>,
-    /// The stored rows this start no longer offers (decision 10).
-    expired: u32,
+    /// The restored rows this session no longer offers (decision 10), decided
+    /// once, by this session's first read: `None` before it, when nothing is
+    /// expired and a save must place every stored row, so nothing leaves the
+    /// document before a read has reported it.
+    expired: Option<HashSet<usize>>,
 }
 
 /// What the document's name holds, against what this session last saw there.
@@ -651,7 +693,7 @@ impl WorkspaceRestoreStore {
                     kept_aside: false,
                     restored: Vec::new(),
                     presented: HashSet::new(),
-                    expired: 0,
+                    expired: None,
                 },
             ),
         };
@@ -665,7 +707,7 @@ impl WorkspaceRestoreStore {
     /// The start-up restore, each waiting row re-checked now.
     #[must_use]
     pub fn read(&self) -> WorkspaceRestoreReadDto {
-        let (startup, enabled, restored, expired, leftover_copies) = {
+        let (startup, enabled, restored, leftover_copies) = {
             let lane = self.locked();
             // Counted under the lane, so this process's own write in progress
             // is never taken for a leftover.
@@ -674,7 +716,6 @@ impl WorkspaceRestoreStore {
                 lane.startup,
                 lane.enabled,
                 lane.restored.clone(),
-                lane.expired,
                 leftover_copies,
             )
         };
@@ -687,32 +728,50 @@ impl WorkspaceRestoreStore {
             },
             Startup::Loaded if !enabled => WorkspaceRestoreReadDto::Off { leftover_copies },
             Startup::Loaded => {
-                let mut index = 0;
                 let mut roots = Roots::new();
-                let mut matching = Vec::new();
+                let rows: Vec<&StoredRow> = restored.iter().flat_map(|g| &g.rows).collect();
+                let states: Vec<RowState> =
+                    rows.iter().map(|row| check_row(row, &mut roots)).collect();
+                let matching = |index: &usize| states[*index] == RowState::Matching;
+                let expired = {
+                    let mut lane = self.locked();
+                    // Only a row this read finds matching ages out, so a
+                    // marked row is shown whatever its count.
+                    let expired = lane
+                        .expired
+                        .get_or_insert_with(|| {
+                            (0..rows.len())
+                                .filter(|index| {
+                                    matching(index) && rows[*index].offered >= MAX_OFFERS
+                                })
+                                .collect()
+                        })
+                        .clone();
+                    // Matching at any read of this session is an offer made.
+                    let offers = (0..rows.len()).filter(|i| matching(i) && !expired.contains(i));
+                    lane.presented.extend(offers);
+                    expired
+                };
+                let mut index = 0;
                 let groups = restored
-                    .into_iter()
+                    .iter()
                     .map(|group| RestoredGroupDto {
-                        name: group.name,
+                        name: group.name.clone(),
                         rows: group
                             .rows
                             .iter()
-                            .map(|row| {
-                                let dto = restored_row_dto(index, row, &mut roots);
-                                if dto.state == RowState::Matching {
-                                    matching.push(index);
-                                }
+                            .filter_map(|row| {
+                                let at = index;
                                 index += 1;
-                                dto
+                                (!expired.contains(&at))
+                                    .then(|| restored_row_dto(at, row, states[at]))
                             })
                             .collect(),
                     })
                     .collect();
-                // Matching at any read of this session is an offer made.
-                self.locked().presented.extend(matching);
                 WorkspaceRestoreReadDto::Restored {
                     groups,
-                    expired,
+                    expired: u32::try_from(expired.len()).unwrap_or(u32::MAX),
                     leftover_copies,
                 }
             }
@@ -764,6 +823,10 @@ impl WorkspaceRestoreStore {
             rows.insert(row.handle, stored);
         }
         for (index, row) in lane.restored.iter().flat_map(|g| &g.rows).enumerate() {
+            // A read of this session reported it as no longer offered.
+            if lane.expired.as_ref().is_some_and(|e| e.contains(&index)) {
+                continue;
+            }
             let declined = u32::from(lane.presented.contains(&index));
             let row = StoredRow {
                 offered: row.offered.saturating_add(declined),
@@ -799,9 +862,12 @@ impl WorkspaceRestoreStore {
         if outcome != WorkspaceRestoreWriteDto::Saved {
             return outcome;
         }
-        let turned_off = lane.enabled && !enabled;
+        // Whatever this process held: the name may have held another
+        // window's on, and off is what it holds now.
+        let turned_off = seen != Seen::Same;
         lane.enabled = enabled;
         lane.restored.clear();
+        lane.expired = Some(HashSet::new());
         if turned_off {
             WorkspaceRestoreWriteDto::TurnedOff {
                 problem: seen.problem(),
@@ -844,6 +910,7 @@ impl WorkspaceRestoreStore {
         if outcome == WorkspaceRestoreWriteDto::Saved {
             lane.enabled = enabled;
             lane.restored.clear();
+            lane.expired = Some(HashSet::new());
         }
         outcome
     }
@@ -876,7 +943,7 @@ const fn refused(problem: &'static str) -> WorkspaceRestoreWriteDto {
     WorkspaceRestoreWriteDto::Refused { problem }
 }
 
-fn restored_row_dto(index: usize, row: &StoredRow, roots: &mut Roots) -> RestoredRowDto {
+fn restored_row_dto(index: usize, row: &StoredRow, state: RowState) -> RestoredRowDto {
     let primary = row
         .members
         .first()
@@ -890,7 +957,7 @@ fn restored_row_dto(index: usize, row: &StoredRow, roots: &mut Roots) -> Restore
             .unwrap_or_default()
             .to_owned(),
         checked: row.checked,
-        state: check_row(row, roots),
+        state,
     }
 }
 
@@ -1001,12 +1068,15 @@ fn arrange(
 /// and always has. Once it did not, the answer stays `Elsewhere` for the
 /// session: a later write of this process's own does not make it a recorder
 /// again. A document that is there but cannot be identified just now (another
-/// program holds it without sharing read) is `Unknown`, which latches nothing.
+/// program holds it without sharing read) is `Unknown`, which latches nothing,
+/// while this session remembers an identity there.
 ///
 /// ponytail: checked and then replaced, so another process's write landing
 /// between the two is still lost; a lock beside the document closes that if
-/// two windows are ever seen racing. A volume with no file ID answers `None`
-/// both times and is not guarded.
+/// two windows are ever seen racing. Where this session remembers no identity
+/// (nothing there at start, its own write unidentified, or a volume with no
+/// file ID), an unidentifiable document answers `None` as the name did and is
+/// not guarded.
 fn seen(directory: &Path, lane: &mut Lane) -> Seen {
     let name = directory.join(FILE_NAME);
     let now = local_document::object_identity(&name);
@@ -1052,9 +1122,9 @@ fn publish(
         Ok(()) => {
             // ponytail: read after the rename, so a write by another process
             // in between is taken for this one's; and an identity that cannot
-            // be read just now makes the next guarded write answer
-            // `changedElsewhere`, which stops recording for the session rather
-            // than writing over anything.
+            // be read just now makes the next guarded write that can read it
+            // answer `changedElsewhere`, which stops recording for the session
+            // rather than writing over anything.
             lane.published = local_document::object_identity(&target);
             lane.startup = Startup::Loaded;
             WorkspaceRestoreWriteDto::Saved
@@ -1077,7 +1147,7 @@ fn load(directory: &Path) -> Lane {
     // Taken before the read, so a document replaced in between is one this
     // session's first save refuses rather than writes over.
     let published = local_document::object_identity(&file);
-    let lane = |startup, enabled, restored, expired| Lane {
+    let lane = |startup, enabled, restored| Lane {
         startup,
         enabled,
         published,
@@ -1085,39 +1155,22 @@ fn load(directory: &Path) -> Lane {
         kept_aside: false,
         restored,
         presented: HashSet::new(),
-        expired,
+        expired: None,
     };
     // Off: a refused document may be one the user had switched off.
-    let refusal = |problem| lane(Startup::Refused(problem), false, Vec::new(), 0);
+    let refusal = |problem| lane(Startup::Refused(problem), false, Vec::new());
     match local_document::read_bounded(&file, MAX_DOCUMENT_BYTES) {
-        Ok(None) => lane(Startup::Loaded, true, Vec::new(), 0),
+        Ok(None) => lane(Startup::Loaded, true, Vec::new()),
+        // Nothing is aged here: which rows expire is for the first read to
+        // decide, from what it finds (decision 10).
         Ok(Some(bytes)) => match read_document(&bytes) {
-            Ok(document) => {
-                let (groups, expired) = still_offered(document.groups);
-                lane(Startup::Loaded, document.enabled, groups, expired)
-            }
+            Ok(document) => lane(Startup::Loaded, document.enabled, document.groups),
             Err(problem) => refusal(problem),
         },
         Err(ReadRefusal::UnsafeTarget) => refusal(DocumentProblem::UnsafeTarget),
         Err(ReadRefusal::Oversized) => refusal(DocumentProblem::Oversized),
         Err(ReadRefusal::Unreadable) => refusal(DocumentProblem::Unreadable),
     }
-}
-
-/// Keeps back the rows [`MAX_OFFERS`] sessions have already declined, counting
-/// them. Nothing is counted here: the start-up read has not checked anything
-/// yet, and only an offer a read presents as matching ages a row. Groups stay,
-/// even one left empty: an empty group is part of an arrangement.
-fn still_offered(mut groups: Vec<StoredGroup>) -> (Vec<StoredGroup>, u32) {
-    let mut expired = 0_u32;
-    for group in &mut groups {
-        group.rows.retain(|row| {
-            let kept = row.offered < MAX_OFFERS;
-            expired += u32::from(!kept);
-            kept
-        });
-    }
-    (groups, expired)
 }
 
 /// Keeps the refused document under a name nothing else uses, before turning
