@@ -47,6 +47,12 @@ pub(super) struct RawViewSettings {
     /// Called once the work has ended and before the operation settles.
     #[cfg(test)]
     settle_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    /// Called just before each attempt to enter Storing.
+    #[cfg(test)]
+    storing_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    /// Called in `open_raw_view` between the slot's look and the pin's take.
+    #[cfg(test)]
+    open_hook: Option<Arc<dyn Fn(u64) + Send + Sync>>,
 }
 
 impl Default for RawViewSettings {
@@ -58,6 +64,10 @@ impl Default for RawViewSettings {
             phase_hook: None,
             #[cfg(test)]
             settle_hook: None,
+            #[cfg(test)]
+            storing_hook: None,
+            #[cfg(test)]
+            open_hook: None,
         }
     }
 }
@@ -153,6 +163,22 @@ impl PreviewService {
         hook: impl Fn(u64) + Send + Sync + 'static,
     ) {
         self.raw_view_settings().settle_hook = Some(Arc::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(in crate::preview) fn set_raw_view_storing_hook(
+        &self,
+        hook: impl Fn(u64) + Send + Sync + 'static,
+    ) {
+        self.raw_view_settings().storing_hook = Some(Arc::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(in crate::preview) fn set_raw_view_open_hook(
+        &self,
+        hook: impl Fn(u64) + Send + Sync + 'static,
+    ) {
+        self.raw_view_settings().open_hook = Some(Arc::new(hook));
     }
 
     #[cfg(test)]
@@ -347,6 +373,34 @@ impl PreviewService {
         }
     }
 
+    /// Storing begins only where no Cancel was accepted before it, asked in
+    /// the slot lock that sets the phase; an operation the slot no longer
+    /// holds is not stored either.
+    fn view_enter_storing(&self, operation: u64) -> Result<(), Stop> {
+        #[cfg(test)]
+        {
+            let hook = self.raw_view_settings().storing_hook.clone();
+            if let Some(hook) = hook {
+                hook(operation);
+            }
+        }
+        let entered = self
+            .conversion_slot()
+            .view_mut(operation)
+            .is_some_and(RawView::enter_storing);
+        if !entered {
+            return Err(cancelled(false));
+        }
+        #[cfg(test)]
+        {
+            let hook = self.raw_view_settings().phase_hook.clone();
+            if let Some(hook) = hook {
+                hook(operation, RawViewPhaseDto::Storing);
+            }
+        }
+        Ok(())
+    }
+
     /// The `keep_going` of one of MSCanvas's own reads: stops at the next
     /// chunk once Cancel was pressed, and otherwise records the bytes read,
     /// `offset` into `overall` where one bar spans two reads.
@@ -459,7 +513,7 @@ impl PreviewService {
                 }
             }
             // Neither a miss nor damage, so nothing is converted (dated note
-            // of 2026-10-30, recommended and pending the owner).
+            // of 2026-10-30, accepted by the owner).
             Lookup::Damaged { removed: false } | Lookup::Unreadable => {
                 return Err(view_cache_entry_unavailable().into());
             }
@@ -579,7 +633,7 @@ impl PreviewService {
 
         // Storing: eviction and the publishing rename. Not cancellable; a
         // Cancel pressed now is read once it is done.
-        self.view_enter(operation, RawViewPhaseDto::Storing);
+        self.view_enter_storing(operation)?;
         let mut attempt = attempt;
         let mut published_again = false;
         loop {
@@ -604,7 +658,7 @@ impl PreviewService {
                         Lookup::Miss | Lookup::Damaged { removed: true } if !published_again => {
                             published_again = true;
                             attempt = back;
-                            self.view_enter(operation, RawViewPhaseDto::Storing);
+                            self.view_enter_storing(operation)?;
                         }
                         Lookup::Miss | Lookup::Damaged { removed: true } => {
                             return Err(view_cache_not_stored().into());
@@ -714,6 +768,13 @@ impl PreviewService {
                 _ => return Err(raw_view_not_ready()),
             }
         };
+        #[cfg(test)]
+        {
+            let hook = self.raw_view_settings().open_hook.clone();
+            if let Some(hook) = hook {
+                hook(request.operation);
+            }
+        }
         // Only this operation's pin: a newer View of the row can have replaced
         // the slot and pinned its own entry since the look above.
         let (_, entry) = self

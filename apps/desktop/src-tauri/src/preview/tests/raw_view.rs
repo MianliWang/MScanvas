@@ -238,6 +238,17 @@ fn hold_exclusively(path: &Path) -> fs::File {
         .expect("hold the path exclusively")
 }
 
+/// Every name in an entry, with its bytes.
+fn entry_bytes(entry: &Path) -> Vec<(String, Vec<u8>)> {
+    entry_names(entry)
+        .into_iter()
+        .map(|name| {
+            let bytes = fs::read(entry.join(&name)).expect("read the entry");
+            (name, bytes)
+        })
+        .collect()
+}
+
 fn corrupt_output(entry: &Path) {
     let output = entry.join("view.mzML");
     let mut bytes = fs::read(&output).expect("read the cached copy");
@@ -1361,6 +1372,56 @@ fn a_place_another_process_filled_first_is_never_overwritten() {
     assert!(ready(&session.view()).1, "what it published verifies");
     assert_eq!(session.launches.load(Ordering::SeqCst), 1);
 
+    // A sound one that cannot be checked just now, and a damaged one that
+    // cannot be removed just now, are each left as they are: this attempt is
+    // dropped and the operation ends retryable.
+    for damaged in [false, true] {
+        let session = viewing(&format!("raw-view-occupied-held-{damaged}"));
+        let app_data = session.app_data.directory.clone();
+        let place = session.cache().join("entries").join(&key);
+        let held = Arc::new(Mutex::new(None));
+        let holder = Arc::clone(&held);
+        let found = Arc::new(Mutex::new(Vec::new()));
+        let snapshot = Arc::clone(&found);
+        let other_label = format!("raw-view-occupied-held-{damaged}-other");
+        let theirs = place.clone();
+        when_storing(&session, move || {
+            {
+                let other = viewing(&other_label);
+                other.service.bind_view_cache(Some(app_data.clone()));
+                ready(&other.view());
+            }
+            if damaged {
+                corrupt_output(&theirs);
+            }
+            *snapshot.lock().expect("snapshot") = entry_bytes(&theirs);
+            // The damaged copy held as another process's pin holds it, so its
+            // removal is refused before anything goes.
+            *holder.lock().expect("held") = Some(if damaged {
+                fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(0x1)
+                    .open(theirs.join("view.mzML"))
+                    .expect("hold the cached copy without delete sharing")
+            } else {
+                hold_exclusively(&theirs)
+            });
+        });
+        assert_eq!(
+            failed(&session.view()),
+            ("view_cache_entry_unavailable", true),
+            "damaged: {damaged}"
+        );
+        drop(held.lock().expect("held").take());
+        assert_eq!(
+            entry_bytes(&place),
+            *found.lock().expect("snapshot"),
+            "damaged: {damaged}: the entry there is left as it was"
+        );
+        assert_eq!(session.staging(), Vec::<String>::new());
+        assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+    }
+
     // Something MSCanvas did not make is left exactly as found.
     let session = viewing("raw-view-occupied-foreign");
     let foreign = session.cache().join("entries").join(&key);
@@ -1460,6 +1521,123 @@ fn a_viewed_preview_reads_nothing_of_the_raw() {
         "{sources:?}"
     );
     fs::rename(&moved, &session.raw).expect("put the RAW back");
+}
+
+#[test]
+fn a_cancel_accepted_after_checking_outputs_last_chunk_publishes_nothing() {
+    // Decision 10: a Cancel before Storing publishes nothing, also one that
+    // lands after Checking output's last read and before Storing begins.
+    // Eviction runs inside the publish this stops; at the 10 GiB cap this
+    // fixture never shows one.
+    let session = viewing("raw-view-cancel-before-storing");
+    let before = session.raw_facts();
+    let service = Arc::downgrade(&session.service);
+    session.service.set_raw_view_storing_hook(move |operation| {
+        if let Some(service) = service.upgrade() {
+            service.cancel_raw_view(RawViewOperationRequestDto { operation });
+        }
+    });
+    let state = session.view();
+    assert!(!cancelled_stored(&state));
+    assert_eq!(session.entries(), Vec::<String>::new(), "nothing published");
+    assert_eq!(session.staging(), Vec::<String>::new(), "no attempt left");
+    assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+    assert_eq!(session.raw_facts(), before);
+}
+
+#[test]
+fn something_put_in_the_new_entrys_place_fails_unrecognized_and_is_left_alone() {
+    let session = viewing("raw-view-new-unrecognized");
+    let entries = session.cache().join("entries");
+    let seen = AtomicUsize::new(0);
+    session.service.set_raw_view_phase_hook(move |_, phase| {
+        // The second check is of the entry just published; another process
+        // removes it and puts a file of its own in its place.
+        if phase == RawViewPhaseDto::CheckingCachedCopy && seen.fetch_add(1, Ordering::SeqCst) == 1
+        {
+            for name in entry_names(&entries) {
+                let place = entries.join(name);
+                fs::remove_dir_all(&place).expect("removed elsewhere");
+                fs::write(&place, b"not MSCanvas's").expect("a file in the entry's place");
+            }
+        }
+    });
+    assert_eq!(
+        failed(&session.view()),
+        ("view_cache_entry_unrecognized", false)
+    );
+    let names = session.entries();
+    assert_eq!(names.len(), 1, "{names:?}");
+    assert_eq!(
+        fs::read(session.cache().join("entries").join(&names[0])).expect("left as found"),
+        b"not MSCanvas's"
+    );
+    assert_eq!(session.staging(), Vec::<String>::new());
+    assert_eq!(session.launches.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn removing_the_row_or_clearing_the_workspace_ends_its_pin_and_deletes_nothing() {
+    // A ready view never opened, released by Clear workspace; an opened one,
+    // released by removing its row and by Clear workspace (decision 8).
+    for (opened, clear) in [(false, true), (true, false), (true, true)] {
+        let case = format!("opened: {opened}, clear: {clear}");
+        let session = viewing(&format!("raw-view-release-{opened}-{clear}"));
+        let before = session.raw_facts();
+        let (operation, _) = ready(&session.view());
+        if opened {
+            session.open(operation).expect("open");
+        }
+        assert_eq!(summary(&session.service), (1, 1), "{case}: pinned");
+        if clear {
+            session.service.clear_workspace_now();
+        } else {
+            session
+                .service
+                .remove_datasets_now(std::slice::from_ref(&session.handle));
+        }
+        assert_eq!(summary(&session.service), (1, 0), "{case}: released");
+        assert_eq!(session.entries().len(), 1, "{case}: the entry stays");
+        assert_eq!(session.raw_facts(), before, "{case}: the RAW is untouched");
+        assert!(!openable(&session.service.raw_view_state()), "{case}");
+    }
+}
+
+#[test]
+fn an_open_of_an_older_operation_never_takes_a_newer_views_pin() {
+    // A newer View of the row ends between the older open's look at the slot
+    // and its take of the pin: the older open finds no pin of its own, and the
+    // newer View keeps its pin (decision 12).
+    let session = viewing("raw-view-older-open");
+    let (older, _) = ready(&session.view());
+    let fired = AtomicBool::new(false);
+    let service = Arc::downgrade(&session.service);
+    let handle = session.handle.clone();
+    session.service.set_raw_view_open_hook(move |_| {
+        if fired.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        if let Some(service) = service.upgrade() {
+            let begun = service
+                .begin_raw_view(&RawViewBeginRequestDto {
+                    handle: handle.clone(),
+                })
+                .expect("View again");
+            service.run_raw_view(operation_of(&begun));
+        }
+    });
+    assert_eq!(
+        session.open(older).expect_err("not its pin").kind,
+        "raw_view_not_ready"
+    );
+    let state = session.service.raw_view_state();
+    let (newer, cache_hit) = ready(&state);
+    assert_ne!(newer, older);
+    assert!(cache_hit);
+    assert!(openable(&state), "the newer View keeps its pin");
+    assert_eq!(summary(&session.service), (1, 1));
+    session.open(newer).expect("the newer view opens");
+    assert_eq!(session.launches.load(Ordering::SeqCst), 1);
 }
 
 fn operation_of(state: &RawViewStateDto) -> u64 {

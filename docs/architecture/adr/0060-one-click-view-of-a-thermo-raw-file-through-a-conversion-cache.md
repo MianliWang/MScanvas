@@ -1148,7 +1148,7 @@ it says so; the decisions stand otherwise.
    Progress is read by polling `get_raw_view_state`, as decision 12 says; there
    is no event channel. The commands are registered, and no webview calls them
    until slice 3.
-2. **Two cases slice 1 left open. Recommended, pending owner confirmation.**
+2. **Two cases slice 1 left open. Accepted by the owner, 2026-10-30 (A0060).**
    - A check that could not be made (`Lookup::Unreadable`), and a damaged
      entry that could not be removed (`Lookup::Damaged { removed: false }`),
      end the operation `failed` with `view_cache_entry_unavailable`, retryable,
@@ -1172,7 +1172,8 @@ it says so; the decisions stand otherwise.
    `conversion_not_plannable`. Follow-up: a plan with a fixed output name, once
    `be/integrate` (PR #161) has reshaped `ConversionPlan`. That PR also makes
    `plan_conversion` take a bound intent, so the view's call to it, with
-   `SHIPPED`, is adapted when the second of the two merges.
+   `SHIPPED`, is adapted when the second of the two merges. Accepted by the
+   owner, 2026-10-30 (A0060).
 4. **Hashing. A miss reads the RAW in full four times.** Checking file is the
    conversion crate's own admission
    (`ConversionSource::open_thermo_raw_file_reporting`), read in chunks with
@@ -1259,7 +1260,10 @@ it says so; the decisions stand otherwise.
      a pinned entry, the operation settles under the slot lock. A Cancel
      accepted before that ends it `cancelled`, with its `stored`, and
      releases the pin. A Cancel after it is a late press, and the operation
-     ends `ready`.
+     ends `ready`. Storing, too, is entered under the slot lock Cancel takes,
+     so a Cancel accepted before it, also one after Checking output's last
+     chunk, ends `cancelled` with `stored: false` and publishes and evicts
+     nothing, as decision 10 says.
    - **An unconfirmed end of `msconvert`,** a cancellation that could not be
      confirmed or a run that leaves its process unaccounted for, quarantines
      the backend and keeps the attempt, marker and all, for a later

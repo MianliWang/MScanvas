@@ -280,6 +280,17 @@ impl RawView {
         }
     }
 
+    /// Enters Storing unless a Cancel was accepted first, asked under the slot
+    /// lock that Cancel takes: a Cancel before Storing, also one after Checking
+    /// output's last chunk, publishes nothing (decision 10).
+    pub(super) fn enter_storing(&mut self) -> bool {
+        if self.cancel.load(Ordering::Acquire) {
+            return false;
+        }
+        self.enter(RawViewPhaseDto::Storing);
+        true
+    }
+
     pub(super) fn note_bytes(&mut self, read: u64, total: u64) {
         if let Progress::Running { bytes, .. } = &mut self.progress {
             *bytes = Some((read, total));
@@ -504,7 +515,7 @@ pub(super) fn run_failure_error(
 }
 
 /// The two cases slice 1 left open, ended before any conversion (dated note
-/// of 2026-10-30 in ADR 0060, recommended and pending the owner): the cached
+/// of 2026-10-30 in ADR 0060, accepted by the owner): the cached
 /// copy could not be checked, or a damaged one could not be removed. Neither
 /// is a miss and neither is damage, so nothing is converted.
 pub(super) fn view_cache_entry_unavailable() -> PreviewErrorDto {
