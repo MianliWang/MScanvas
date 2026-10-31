@@ -215,6 +215,13 @@ describe("profile line (P175)", () => {
     expect(plot()).toHaveAttribute("data-value-high", "75.00");
   });
 
+  it("names the line's own reduction rule when Rust reduced the window", () => {
+    render(<Plot drawing={window([null, null], 4_000)} intensity={[80, 60]} mz={[200, 220]} representation="profile" />);
+
+    expect(details()).toHaveTextContent(en.plotLineReduced);
+    expect(details()).not.toHaveTextContent(en.plotReduced);
+  });
+
   it("keeps centroid and undeclared spectra as sticks", () => {
     for (const representation of ["centroid", "notReported"] as const) {
       const { unmount } = render(<Plot drawing={window([null, null])} intensity={[80]} mz={[200]} representation={representation} />);

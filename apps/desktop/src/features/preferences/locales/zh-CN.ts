@@ -375,6 +375,7 @@ export const zhCN = {
   plotTransferReduced: "每个屏幕列仅保留最大的非负值和最小的负值，因此相邻的点可能合并为一条棒线。",
   plotTransient: "范围稳定前为近似显示。",
   plotReduced: "每个屏幕列仅保留最大的非负测量值和最小的负测量值。",
+  plotLineReduced: "每个屏幕列仅保留最大和最小的测量值，折线依次连接它们。",
   plotNegativeBelow: "每列最小的负值绘制在零线下方。",
   plotNegativeFlat: "在当前尺寸下，负值落在零线上，没有可见长度。",
   plotNegativeMixed: "{{count, number}} 列的最小负值绘制在零线下方；其余负值在当前尺寸下无法与零区分。",

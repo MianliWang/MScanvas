@@ -375,6 +375,7 @@ export const en = {
   plotTransferReduced: "Each screen column keeps only its greatest non-negative and its deepest negative value, so nearby points can merge into one stick.",
   plotTransient: "Approximate until the range settles.",
   plotReduced: "Each screen column keeps only its greatest non-negative and its deepest negative observation.",
+  plotLineReduced: "Each screen column keeps only its greatest and its least observation, and the line joins them.",
   plotNegativeBelow: "The deepest negative in each column is drawn below the zero line.",
   plotNegativeFlat: "At this size the negative values sit on the zero line with no visible length.",
   plotNegativeMixed: "The deepest negative in {{count, number}} columns is drawn below zero; the rest cannot be distinguished from zero at this size.",

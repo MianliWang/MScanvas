@@ -567,7 +567,7 @@ export function describeSpectrumSource(
 ): string {
   const { reduction, line } = drawingGeometry(mz, intensity, drawing, representation);
   return joinSentences(t, [
-    line !== null ? (drawing.kind === "viewport" && reduction.drawnFrom < drawing.sourcePoints ? t("plotReduced") : "")
+    line !== null ? (drawing.kind === "viewport" && reduction.drawnFrom < drawing.sourcePoints ? t("plotLineReduced") : "")
       : drawing.kind === "viewport" || drawing.kind === "transfer" ? describeDrawing(reduction, drawing, t) : "",
     line === null && reduction.negativeCount > 0 ? describeNegativeDrawing(reduction, t) : "",
     representation === "notReported" ? t("plotUnknownRepresentation")

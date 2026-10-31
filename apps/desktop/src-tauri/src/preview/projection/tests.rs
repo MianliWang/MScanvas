@@ -277,6 +277,43 @@ fn a_profile_window_carries_the_samples_its_line_crosses_the_edges_from() {
     assert_eq!(window(&centroid, 150.0, 250.0).outside(), [None, None]);
 }
 
+/// A reduced profile window keeps each column's greatest and least value, so
+/// the joined line keeps its valleys; a discrete spectrum keeps the per-sign
+/// rule, under which an all-positive column keeps only its top.
+#[test]
+fn a_reduced_profile_window_keeps_each_column_s_valley() {
+    use super::super::mzml_fixture::native_spectrum;
+    // Twice the budget, alternating 1 and 100: every column holds both.
+    let points: Vec<(f64, f64)> = (0..MAX_PROJECTION_POINTS * 2)
+        .map(|step| {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "test sizes are far below the f64 integer bound"
+            )]
+            let at = step as f64;
+            (100.0 + at, if step % 2 == 0 { 1.0 } else { 100.0 })
+        })
+        .collect();
+    let reduced = |representation| {
+        let spectrum = native_spectrum(representation, (None, None), &points);
+        let (low, high) = admitted(&spectrum);
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source")
+    };
+
+    let profile = reduced("MS:1000128");
+    assert!(profile.reduced());
+    assert!(profile.mz().len() <= MAX_PROJECTION_POINTS);
+    assert!(profile.intensity().contains(&1.0), "the valleys survive");
+    assert!(profile.intensity().contains(&100.0));
+    assert!(profile.mz().is_sorted(), "a line is drawn in m/z order");
+
+    let centroid = reduced("MS:1000127");
+    assert!(
+        centroid.intensity().iter().all(|value| *value == 100.0),
+        "sticks keep only each column's top"
+    );
+}
+
 #[test]
 fn a_window_over_the_budget_is_reduced_within_the_bound() {
     let spectrum = ascending(MAX_PROJECTION_POINTS * 4);

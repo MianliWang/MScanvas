@@ -306,10 +306,11 @@ pub(super) fn project(
     // A joined profile line crosses each edge from the sample beyond it, so the
     // screen is handed that measured sample and cuts the line at the edge, as
     // the export does (P175). A discrete spectrum has nothing between samples.
-    let outside = if matches!(
+    let joined = matches!(
         spectrum.representation(),
         SpectrumRepresentationState::Profile
-    ) {
+    );
+    let outside = if joined {
         let sample = |at: usize| Some((mz[at], intensity[at]));
         [
             start.checked_sub(1).and_then(sample),
@@ -339,6 +340,7 @@ pub(super) fn project(
             &mz[start..end],
             &intensity[start..end],
             source_points,
+            joined,
         )
     })
 }
@@ -355,7 +357,18 @@ pub(super) fn project(
 ///
 /// Points are emitted in ascending m/z so the result is a series the same
 /// ordering rule admits.
-fn reduce(window: Domain, mz: &[f64], intensity: &[f64], source_points: usize) -> ScreenProjection {
+///
+/// **A joined profile line keeps each column's greatest and least value**, of
+/// either sign (the figure contract's `MinMaxPerColumn`), because the line is
+/// drawn through them: the per-sign rule above would keep only an all-positive
+/// column's top and draw a profile's valleys as a flat line at its peaks.
+fn reduce(
+    window: Domain,
+    mz: &[f64],
+    intensity: &[f64],
+    source_points: usize,
+    joined: bool,
+) -> ScreenProjection {
     let span = window.high() - window.low();
     let columns = MAX_PROJECTION_COLUMNS;
     // Two candidates per column, held by the m/z they were measured at.
@@ -376,6 +389,15 @@ fn reduce(window: Domain, mz: &[f64], intensity: &[f64], source_points: usize) -
             reason = "the fraction is clamped into [0, 1] and columns is small"
         )]
         let column = ((fraction.clamp(0.0, 1.0) * columns as f64) as usize).min(columns - 1);
+        if joined {
+            if highest[column].is_none_or(|(_, kept)| height > kept) {
+                highest[column] = Some((value, height));
+            }
+            if lowest[column].is_none_or(|(_, kept)| height < kept) {
+                lowest[column] = Some((value, height));
+            }
+            continue;
+        }
         let slot = if height >= 0.0 {
             &mut highest[column]
         } else {
@@ -398,8 +420,10 @@ fn reduce(window: Domain, mz: &[f64], intensity: &[f64], source_points: usize) -
 
     let mut points: Vec<(f64, f64)> = Vec::with_capacity(MAX_PROJECTION_POINTS);
     for column in 0..columns {
-        for kept in [highest[column], lowest[column]].into_iter().flatten() {
-            points.push(kept);
+        points.extend(highest[column]);
+        // A joined column of one observation kept it as both; it is drawn once.
+        if lowest[column] != highest[column] {
+            points.extend(lowest[column]);
         }
     }
     // By measured m/z, so a column that kept both signs emits them in the order
