@@ -289,6 +289,8 @@ own inputs while a review is out.
 - Filesystem and network confinement are not enforced.
 - A run whose result would make the document larger than a save can publish is
   refused `oversized` after the worker ran, and nothing is recorded.
+  *2026-10-30: a run whose new plan alone would is refused before its worker
+  starts.*
 - The time budget and a cancel can still race by one monitor tick in either
   direction; the recorded reason follows whichever the supervisor saw first.
 - The runtime exists only in a development checkout; there is no installer

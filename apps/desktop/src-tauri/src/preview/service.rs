@@ -161,8 +161,8 @@ use super::figure::{
 use super::installation::{InstallationIdentity, PreviewProducerFacts};
 use super::operation::{
     AdmittedDestination, AttemptFacts, CancellationFacts, ConversionQueue, ConversionSlot,
-    ItemOutcome, PendingDisposition, QueueItem, QueueItemAttempt, SettledItemAdoption,
-    StopAccepted, TerminalReason, folded_output_name, item_output_topology, item_state_of,
+    ItemOutcome, QueueItem, QueueItemAttempt, SettledItemAdoption, StopAccepted, TerminalReason,
+    folded_output_name, item_output_topology, item_state_of,
 };
 use super::operation::{ItemOutputTopology, SetStopFacts};
 use super::projection::{self, ProjectionRefusal};
@@ -1745,11 +1745,11 @@ impl PreviewService {
         // that start work, and that position is the whole of it. A discovery
         // happens inside other operations, so a probe that lost a process is
         // learned about halfway through one -- and the reader that has to know
-        // is not only the next launch. `refuse_queue` decides whether a waiting
-        // item is still waiting by asking this: with the latch read only on the
-        // way into new work, a queue refused by that very probe left its rows
-        // `Pending` in a terminal queue, offered no retry, and quarantined the
-        // next operation instead. One place, and it cannot be forgotten.
+        // is not only the next launch. `refuse_queue` reports the quarantine by
+        // asking this: with the latch read only on the way into new work, a
+        // queue refused by that very probe was described as recoverable, and
+        // the quarantine fell on the next operation instead. One place, and it
+        // cannot be forgotten.
         if self.provider.discovery_lost_a_process() {
             self.quarantine_backend();
         }
@@ -5395,16 +5395,11 @@ impl PreviewService {
     }
 
     fn refuse_queue(&self, operation: u64, error: PreviewErrorDto) -> WorkspaceConversionUpdateDto {
-        // Whether a waiting item is still waiting depends on whether anything
-        // of this session's can still run, and a quarantined backend is the one
-        // state where nothing can.
-        let pending = if self.backend_is_quarantined() {
-            PendingDisposition::Strand
-        } else {
-            PendingDisposition::Keep
-        };
+        // What the refusal kept from starting is settled as not run either
+        // way; whether a retry may reach it again is the retry's question, and
+        // a quarantined session refuses every retry.
         let mut slot = self.conversion_slot();
-        slot.refuse(operation, error, pending);
+        slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
         slot.read(
             self.backend_is_quarantined(),
