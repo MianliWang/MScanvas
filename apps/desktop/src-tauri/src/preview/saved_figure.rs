@@ -42,9 +42,9 @@ use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
 use mscanvas_plot_spec::spec::{
-    DOUBLE_COLUMN_WIDTH_MM, DataScope, Domain, FigureSize, FigureSpec, FigureTheme, Label,
-    PlotKind, PrintSize, ReductionRule, SINGLE_COLUMN_WIDTH_MM, SpecError, SpectrumRepresentation,
-    StyleRole, UnitState,
+    DOUBLE_COLUMN_WIDTH_MM, DataScope, Domain, FigureSize, FigureSpec, FigureTheme, IntervalRole,
+    Label, PlotKind, PrintSize, ReductionRule, SINGLE_COLUMN_WIDTH_MM, SpecError,
+    SpectrumRepresentation, StyleRole, UnitState,
 };
 use mscanvas_proteowizard::{SelectedSpectrumResult, Sha256Digest};
 use serde::{Deserialize, Serialize};
@@ -730,16 +730,18 @@ fn seal(mut wire: WireDocument) -> Option<Vec<u8>> {
 /// The digest of the data a figure draws and of what the source said about it,
 /// panel by panel, in order: each panel's kind (for a spectrum, the
 /// representation the file stated) and the unit state of both axes; each
-/// series' name, role, scope, sample marks and coordinates; and each marker's
-/// position.
+/// series' name, role, scope, sample marks and coordinates; each marker's
+/// position; and each interval's ends and role.
 ///
 /// What the figure is *of*, and nothing about how it is presented: the size,
-/// the theme, the titles and the wording of the caption are not in it. Two
-/// regenerations from the same bytes by the same reader agree on it; a reader
-/// or builder that came to read the same bytes differently -- other values,
-/// another representation, a unit it now declares -- does not, and that is the
-/// difference reopening refuses. Every length is written before what it counts,
-/// so no two figures share one byte sequence.
+/// the theme, the titles, the marker and interval labels and the wording of the
+/// caption are not in it. Two regenerations from the same bytes by the same
+/// reader agree on it; a reader or builder that came to read the same bytes
+/// differently -- other values, another representation, a unit it now declares
+/// -- does not, and that is the difference reopening refuses. Every length is
+/// written before what it counts, so two figures that differ in any of the
+/// fields above never share one byte sequence; a field not listed here is not
+/// compared.
 ///
 /// The kind, unit states, roles and scopes are written as this module's own
 /// fixed tokens, not as the plot specification's serialized form, so a change
@@ -819,6 +821,19 @@ fn data_digest(figure: &FigureSpec) -> Option<Sha256Digest> {
         count(&mut bytes, panel.markers().len());
         for marker in panel.markers() {
             bytes.extend_from_slice(&marker.at().to_bits().to_le_bytes());
+        }
+        count(&mut bytes, panel.intervals().len());
+        for interval in panel.intervals() {
+            bytes.extend_from_slice(&interval.low().to_bits().to_le_bytes());
+            bytes.extend_from_slice(&interval.high().to_bits().to_le_bytes());
+            framed(
+                &mut bytes,
+                match interval.role() {
+                    IntervalRole::Window => b"window",
+                    IntervalRole::Selected => b"selected",
+                    IntervalRole::Considered => b"considered",
+                },
+            );
         }
     }
     Sha256Digest::calculate(&bytes).ok()
@@ -1164,9 +1179,9 @@ impl SaveRefusal {
 /// held, the figure is regenerated from it, and the document is written only
 /// if what was regenerated is exactly `shown`: a document is never written
 /// that would reopen as a figure other than the one it was saved from.
-/// `view_cache` is the view cache's root (ADR 0060), where this application
-/// has one; a source under it is refused. Answers the file name the document
-/// was given.
+/// `view_cache` is the view cache's root (ADR 0060); a source under it is
+/// refused. Required, so a caller cannot skip the check: a root that does not
+/// exist yet holds nothing. Answers the file name the document was given.
 ///
 /// # Errors
 ///
@@ -1180,7 +1195,7 @@ pub(super) fn save(
     shown: &FigureSpec,
     reader: &dyn FigureSourceReader,
     destination: &Path,
-    view_cache: Option<&Path>,
+    view_cache: &Path,
 ) -> Result<String, SaveRefusal> {
     PreviewService::require_named_document(destination, SAVED_FIGURE_DIALOG)
         .map_err(SaveRefusal::Write)?;
@@ -1204,10 +1219,7 @@ pub(super) fn save(
     validate_locator(&locator).map_err(|_| SaveRefusal::SourceNotReferencable)?;
     // A cache that cannot be resolved does not exist yet, and nothing is in it.
     // Compared by whole components, so `view-cache-old` is not inside it.
-    if view_cache
-        .and_then(canonical_user_form)
-        .is_some_and(|cache| named.starts_with(cache))
-    {
+    if canonical_user_form(view_cache).is_some_and(|cache| named.starts_with(cache)) {
         return Err(SaveRefusal::SourceInViewCache);
     }
     let figure =
@@ -1244,9 +1256,11 @@ fn canonical_user_form(path: &Path) -> Option<PathBuf> {
 
 /// A verbatim drive path, `\\?\C:\data\run.mzML`, as `C:\data\run.mzML`.
 ///
-/// Every other path is returned unchanged -- a verbatim network path among
-/// them, which the locator rule then refuses, because a saved figure names a
-/// local file.
+/// Every other path is returned unchanged, a verbatim network path among them.
+/// A mapped network drive canonicalizes to one (`\\?\UNC\server\share\...`),
+/// so a source there is named only relative to a document in the same share,
+/// where both sides have that spelling; as an absolute locator the project's
+/// rule refuses it.
 fn user_form(path: &Path) -> PathBuf {
     let mut components = path.components();
     if let Some(Component::Prefix(prefix)) = components.next()

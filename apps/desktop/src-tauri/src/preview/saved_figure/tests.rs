@@ -88,6 +88,15 @@ impl Drop for Folder {
     }
 }
 
+/// A view-cache root that does not exist, and so holds nothing: what every
+/// save outside the view-cache test is given.
+fn no_view_cache() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "mscanvas-saved-figure-no-view-cache-{}",
+        std::process::id()
+    ))
+}
+
 /// One retained table row: index, scan number, retention time, TIC, BPC.
 ///
 /// The one place a test builds a row, so a change to the row's test
@@ -306,7 +315,7 @@ fn save_case(
         &case.shown,
         reader,
         &destination,
-        None,
+        &no_view_cache(),
     )
     .map(|_| destination)
 }
@@ -401,7 +410,7 @@ fn a_printed_figure_with_edited_words_reopens_byte_identical() {
         &shown,
         &reader,
         &destination,
-        None,
+        &no_view_cache(),
     )
     .expect("saved");
     let reopened = reopen(&destination, &reader).expect("reopened");
@@ -475,7 +484,7 @@ fn a_printed_linked_figure_reopens_and_an_ambiguous_axis_title_is_refused() {
         &shown,
         &reader,
         &destination,
-        None,
+        &no_view_cache(),
     )
     .expect("saved");
     assert_eq!(
@@ -501,7 +510,7 @@ fn a_printed_linked_figure_reopens_and_an_ambiguous_axis_title_is_refused() {
             &shown,
             &reader,
             &refused,
-            None,
+            &no_view_cache(),
         ),
         Err(SaveRefusal::Regeneration(RegenerationRefusal::Spec(
             SpecError::AxisTitleAmbiguous
@@ -662,7 +671,7 @@ fn a_source_elsewhere_is_named_absolutely() {
         &case.shown,
         &reader,
         &destination,
-        None,
+        &no_view_cache(),
     )
     .expect("saved");
     let reopened = reopen(&destination, &reader).expect("reopened");
@@ -694,7 +703,7 @@ fn a_verbatim_source_path_is_recorded_as_a_person_writes_it() {
         &case.shown,
         &reader,
         &destination,
-        None,
+        &no_view_cache(),
     )
     .expect("saved");
     let reopened = reopen(&destination, &reader).expect("reopened");
@@ -727,6 +736,29 @@ fn a_verbatim_drive_path_is_written_without_its_prefix() {
             "{given}"
         );
     }
+}
+
+/// A mapped network drive canonicalizes to a verbatim network path. A source
+/// there is named relative to a document in the same share and refused as an
+/// absolute locator, so where the document is saved decides which.
+#[cfg(windows)]
+#[test]
+fn a_source_on_a_share_is_named_only_beside_its_document() {
+    let source = user_form(Path::new(r"\\?\UNC\server\share\data\run.mzML"));
+    let locator = |folder: &str| locator_for(&source, &user_form(Path::new(folder)));
+
+    let beside = locator(r"\\?\UNC\server\share\data");
+    assert_eq!(
+        beside,
+        Locator::ProjectRelative {
+            path: SOURCE_NAME.to_owned()
+        },
+    );
+    assert!(validate_locator(&beside).is_ok());
+
+    let elsewhere = locator(r"\\?\C:\figures");
+    assert!(matches!(elsewhere, Locator::LocalAbsolute { .. }));
+    assert!(validate_locator(&elsewhere).is_err());
 }
 
 /// The reader is handed the held handle, at its first byte for every call: a
@@ -906,7 +938,7 @@ fn a_value_outside_its_bounds_is_refused_even_when_resealed() {
         &shown,
         &reader,
         &printed_document,
-        None,
+        &no_view_cache(),
     )
     .expect("saved");
     let (linked, printed) = (linked_document.as_path(), printed_document.as_path());
@@ -1089,7 +1121,7 @@ fn a_misnamed_destination_is_refused_first() {
             &case.shown,
             &reader,
             &folder.path(name),
-            None,
+            &no_view_cache(),
         )
         .expect_err("refused");
         assert_eq!(
@@ -1132,7 +1164,7 @@ fn a_figure_the_source_does_not_regenerate_is_not_saved() {
             &case.shown,
             &reader,
             &destination,
-            None,
+            &no_view_cache(),
         ),
         Err(SaveRefusal::NotTheShownFigure),
     );
@@ -1160,7 +1192,7 @@ fn a_linked_figure_keeps_the_linked_export_s_rules() {
             &case.shown,
             &reader,
             &folder.path("outside.msfigure"),
-            None,
+            &no_view_cache(),
         ),
         Err(SaveRefusal::Regeneration(
             RegenerationRefusal::SelectedScanOutsideRange
@@ -1187,7 +1219,7 @@ fn a_linked_figure_keeps_the_linked_export_s_rules() {
             &case.shown,
             &stranger,
             &folder.path("unknown.msfigure"),
-            None,
+            &no_view_cache(),
         ),
         Err(SaveRefusal::Regeneration(
             RegenerationRefusal::SelectedScanNotInTable
@@ -1230,7 +1262,7 @@ fn a_linked_figure_over_a_current_range_reopens_with_its_scan_on_an_edge() {
             &shown,
             &reader,
             &document,
-            None,
+            &no_view_cache(),
         )
         .unwrap_or_else(|refusal| panic!("{low}..{high} was not saved: {refusal:?}"));
         let reopened = reopen(&document, &reader)
@@ -1394,7 +1426,7 @@ fn a_source_in_the_view_cache_is_not_saved() {
             &case.shown,
             &reader,
             &destination,
-            Some(&cache),
+            &cache,
         )
     };
 

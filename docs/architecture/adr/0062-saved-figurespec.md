@@ -1,12 +1,12 @@
 # ADR 0062 — Saved figure specification (FIG-007)
 
 Status: **Accepted (2026-10-30)**, as implemented, with one change to question
-5, recorded under [Owner decision](#owner-decision-2026-10-30). Proposed
-2026-10-30. The Rust side is implemented, with no interface. The owner asked on
-2026-10-30 for every backend item that can be done now to start in parallel;
-where this feature needed a decision the owner had not made, the recommendation
-below is what was implemented, and each one is listed under
-[Open questions](#open-questions).
+5, recorded under [Owner decision](#owner-decision-2026-10-30). Question 8,
+added by a later review, is Proposed. Proposed 2026-10-30. The Rust side is
+implemented, with no interface. The owner asked on 2026-10-30 for every
+backend item that can be done now to start in parallel; where this feature
+needed a decision the owner had not made, the recommendation below is what was
+implemented, and each one is listed under [Open questions](#open-questions).
 Related: [0028](0028-figure-renderer-and-semantic-specification.md) (the
 renderer and the semantic specification),
 [0030](0030-png-copy-plot-and-figure-settings.md) (PNG and figure settings),
@@ -112,7 +112,12 @@ In order, and nothing is written anywhere:
    the source does not hold is refused rather than clamped or drawn as the
    full source. The linked scan is bound by identity (`row_for_spectrum`) and
    refused outside its range by the linked export's own rule
-   (`scan_outside_range`, edges inside).
+   (`scan_outside_range`, edges inside). A printed size or edited words go
+   through `publication_figure` over the figure built at the default size,
+   which is how the export's own tests build one. The export's publication
+   path is not wired yet; if it builds the shown figure another way, every
+   printed or retitled save is refused as `saved_figure_not_the_shown_figure`
+   until the two agree.
 7. The digest of the regenerated data must equal `dataSha256`.
 
 A changed or missing source is refused with its reason. It is never
@@ -129,8 +134,8 @@ interface lands, ADR 0030 gets a dated note saying so.
 | No file at the document's name | `saved_figure_document_missing` |
 | The name holds something that is not a readable file | `saved_figure_document_unreadable` |
 | Larger than 64 KiB | `saved_figure_document_too_large` |
-| Not JSON, a missing field, a wrong type, or an unknown field | `saved_figure_document_malformed` |
-| JSON, and not a saved figure | `saved_figure_not_a_saved_figure` |
+| Not JSON, a missing field, a wrong type, or an unknown field (JSON with no `format` or no `formatVersion` among them) | `saved_figure_document_malformed` |
+| JSON with a `format` and a `formatVersion`, and another format | `saved_figure_not_a_saved_figure` |
 | A later `formatVersion` | `saved_figure_newer_version` |
 | A version this build never wrote | `saved_figure_unsupported_version` |
 | A value outside its bounds | `saved_figure_out_of_bounds` |
@@ -150,9 +155,10 @@ slice maps them to `PreviewErrorDto` codes and gives each its localized words.
 `dataSha256` is SHA-256 over, panel by panel: the panel's kind (for a
 spectrum, the representation the file stated) and both axes' unit states; each
 series' name, role, scope, sample marks and coordinates (the `f64` bit
-patterns); and each marker's position. Every length is written before what it
-counts. It is what the figure is *of*; the size, theme, titles and caption
-wording are not in it.
+patterns); each marker's position; and each interval's ends and role. Every
+length is written before what it counts. It is what the figure is *of*; the
+size, theme, titles, marker and interval labels and caption wording are not in
+it, and neither is any field this list does not name.
 
 The kind, unit states, roles and scopes are written as fixed tokens this module
 owns (`spectrum/profile`, `unreported`, `measurement`, `full_source`, ...),
@@ -184,8 +190,11 @@ that is the intended trade.
    source under the folder is relative to it; any other is absolute. A locator
    that does not validate — a network path, or a component that is not an
    ordinary name — is refused (`saved_figure_source_not_referencable`),
-   because a document naming one could never be reopened. A source under the
-   view cache's root (ADR 0060), which the caller injects, is refused
+   because a document naming one could never be reopened. A mapped network
+   drive canonicalizes to a network path (`\\?\UNC\server\share\...`), so a
+   source there is saved only relative to a document in the same share and is
+   refused when the document is saved anywhere else (question 8). A source
+   under the view cache's root (ADR 0060), which every caller passes, is refused
    (`saved_figure_source_in_view_cache`): it is a converted copy under this
    machine's application data that the cache may remove, and a document naming
    it would carry a user's local folder and lose the RAW file it came from.
@@ -303,6 +312,9 @@ artifact and a target; that belongs with decision 8.
 - **Thermo RAW viewed through the conversion cache (ADR 0060).** The locator
   names an mzML file, and a source in the view cache is refused on saving.
   What a saved figure of a cached RAW view should name is an open question.
+- **Cancellation.** `save` and `reopen` hold and hash the whole source with no
+  way to stop them. The interface passes its command's `Cancellation` to both
+  when it wires them.
 
 ## Consequences
 
@@ -344,8 +356,10 @@ source file and a real document in its own temporary folder:
   figure's two reads, and reads the measured bytes;
 - a relative locator survives moving the folder; an outside source is named
   absolutely; a canonical, verbatim source path is recorded in the typed form,
-  relative where it can be; a source in the view cache is not saved, and one in
-  a folder whose name only begins like the cache's is;
+  relative where it can be; a source on a mapped network drive is named
+  relative beside its document and refused as an absolute locator (Windows);
+  a source in the view cache is not saved, and one in a folder whose name only
+  begins like the cache's is;
 - edits to the theme, the spectrum index, the traces or the digest are refused;
   a newer, older, foreign or non-JSON document is refused as what it is; an
   unknown field at five depths and a missing field are refused; eighteen
@@ -386,10 +400,28 @@ Still open: what a saved figure of a cached RAW view should name (question 7's
 alternatives). The decision keeps the refusal until that is decided and does
 not choose one.
 
+## Note, 2026-10-30: review round 1, after A0062
+
+A review of PR #180 after the owner's decision changed three things and
+recorded three more. None changes an answer above; question 8 is new and not
+yet answered.
+
+- The data digest also covers each panel's intervals, their ends and role
+  (decision 4). Every figure gains an empty interval count, so the pinned
+  document's `dataSha256` and `documentSha256` moved and nothing else did. No
+  interface has shipped, so the version stays 1.
+- `save` takes the view cache's root as a required path rather than an
+  optional one, so a caller cannot skip the refusal (decision 5).
+- The refusal table now says which documents are malformed rather than not a
+  saved figure: one with no `format` or no `formatVersion` is malformed.
+- Recorded, not changed: a source on a mapped network drive (question 8),
+  printed regeneration's dependence on the unwired publication path
+  (decision 3), and the missing cancellation (What this does not claim).
+
 ## Open questions
 
-Each was implemented as recommended; the owner's answers are under
-[Owner decision](#owner-decision-2026-10-30).
+Questions 1 to 7 were implemented as recommended; the owner's answers are
+under [Owner decision](#owner-decision-2026-10-30). Question 8 is Proposed.
 
 1. **File and extension.** Recommended: standalone `.msfigure` JSON, written
    once. Alternatives: `.json`, or only inside a project document.
@@ -411,3 +443,9 @@ Each was implemented as recommended; the owner's answers are under
    is decided; the interface only shows the refusal. Alternatives: name the
    cache entry anyway, or name the original RAW file and regenerate through
    the cache.
+8. **A source on a mapped network drive.** Proposed, as implemented: keep the
+   project's locator rule, so such a source is saved relative to a document in
+   the same share and refused (`saved_figure_source_not_referencable`) when the
+   document is saved elsewhere. Alternatives: refuse every network source
+   wherever the document is, or accept a network path as an absolute locator,
+   which changes the project document's rule too.
