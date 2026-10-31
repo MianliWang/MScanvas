@@ -81,6 +81,14 @@ rows are future capability or someone else's decision.
 | R11 | 7 | Focus continuity. When the control a keyboard user pressed leaves the document, focus goes to the queue's status line, a stable `tabIndex=-1` target, never into the roster or the plan. This covers Convert, Retry, Stop queue and a queue settling. A control left mounted while its own request runs uses `aria-disabled` and its activation guard rather than native `disabled`, which Chromium's focus fix-up drops: Stop this file, Skip, Add converted outputs, Stop queue. `ConversionStop.test.tsx`'s body-focus assertion is replaced by the stronger one, recorded as such | `ConversionPanel.tsx` | Vitest; PM9.4-P3, P4 and P6 with real key presses in Chrome |
 | R12 | 7 | Rendered at the anchors, en and zh-CN. At 960×640 the review and Convert are reached by a real wheel inside the surface's scroll owner and by Tab, with Convert on screen when focused. The conversion surface's link buttons and disclosure summaries meet the 32 px compact-control minimum (DESIGN_SYSTEM), or are fixed in CSS | `app.css` (only if a measured target fails) | PM9.4-P8 |
 
+*Changed by the self-explaining copy pass (2026-10-28, R8; owner direction in
+[AFTER_BETA1_PLAN §2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+R8 still holds, in shorter words. A failed row's marker reads "Retryable"
+(可重试) or "Not retryable: the same settings would fail again." (不可重试：以相同设置重试仍会失败。). The visible scope sentence now says only
+that Retry uses the queue's original folder, conflict setting and order; which
+rows rerun is the markers' to say. The sentence saying why nothing can be
+retried appears only for a quarantined session.
+
 ### Verified, not defects
 
 | ID | Checked | Result |
@@ -104,6 +112,11 @@ rows are future capability or someone else's decision.
   because Rust hardcodes it.
 - **O8.** Add, Diagnostics and staging cleanup are refused without a reason
   while another lane action runs.
+
+*Changed by the self-explaining copy pass (2026-10-28, O3, O6; owner direction
+in [AFTER_BETA1_PLAN §2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+Both were taken up on 2026-10-27 and then shortened further; see the
+[post-PM9 ledger](../../development/POST_PM9_DEFERRED_WORK.md#pm94-optional-presentation-ledger).
 
 ### Future, or another owner's
 

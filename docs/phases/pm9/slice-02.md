@@ -475,3 +475,24 @@ The limits it recorded were reworked before PM9.4, in the bounded rework of
   agree (UI-01).
 
 L9 was not reopened (UI-18). The results, per item, are in §12's table.
+
+## Self-explaining copy pass (2026-10-28)
+
+*Changed by the self-explaining copy pass (2026-10-28, L9, L14–L16; owner
+direction in [AFTER_BETA1_PLAN §2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+Appended; the closure above stays the record of `b81fc78`. No rendered rerun
+of these rows is claimed here.
+
+- **L9.** The organizing row's count is neither shown nor announced while
+  nothing is highlighted or checked, and stays mounted as its live region.
+  The roster's actions, their three tiers and the count's wording with a
+  selection are unchanged.
+- **L14–L16.** With no project open the line has no project item ("Project:
+  none open" is gone), and the scope item leaves the line while nothing is
+  eligible. The drop hint is shown only when file drop is unavailable ("File
+  drop unavailable; use Add files"); the idle and connecting hints are gone.
+  The empty roster's "Add files… or drop them here." and the empty
+  Workbench's drop route are shown only while file drop is available.
+  The bar keeps a 32 px minimum height when it has nothing to show. The ranks,
+  the floors and the owner's "Conversion: {{scope}} · {{eligible}} eligible"
+  wording are unchanged.

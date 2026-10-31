@@ -364,13 +364,8 @@ async function metrics(width: number, height: number) {
 /** Goes to the Project surface, by the header's third destination. */
 async function toProject() {
   await browser.$(".workbench-header").waitForDisplayed();
-  await browser.execute(
-    (names: readonly string[]) => {
-      const buttons = [...document.querySelectorAll<HTMLButtonElement>(".workbench-header button")];
-      buttons.find((button) => names.includes(button.textContent ?? ""))?.click();
-    },
-    [en.projectSurface, zh.projectSurface],
-  );
+  // Project is the header's third tab (direction A).
+  await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
   await browser.$(`[data-project-targeted="${LAYER}"]`).waitForDisplayed();
 }
 
@@ -818,10 +813,6 @@ describe("M9.3 a source from another drive, prepared and read through a verified
     await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
     await toProject();
     await review();
-    // The read path is folded since PM9.5 O1, and innerText skips a closed
-    // disclosure: open it so the capture still reads the verified-copy sentence.
-    // Opened before Run, so Run stays the last press the run's ending answers.
-    await browser.$("[data-targeted-read-path] summary").click();
     await holdInvoke("run_targeted_ms1");
     await browser.$("[data-targeted-run]").click();
     await browser.$("[data-project-busy-phase]").waitForDisplayed();
@@ -830,8 +821,7 @@ describe("M9.3 a source from another drive, prepared and read through a verified
     expect(preparing.busy).toContain(zh.targetedPhasePreparingInput);
     expect(preparing.busy).not.toContain(en.targetedPhasePreparingInput);
     expect(preparing.setup?.text).toContain(zh.targetedDomain);
-    expect(preparing.setup?.text).toContain(zh.targetedReadPath);
-    expect(preparing.setup?.text).not.toContain(en.targetedReadPath);
+    expect(preparing.setup?.text).not.toContain(en.targetedDomain);
     await setInvokeResult("run_targeted_ms1", {
       project: project({ run: "completed", view: "verifiedSnapshotInWorkArea" }),
       runId: RUN,
@@ -877,14 +867,22 @@ async function openStoredResult() {
   );
 }
 
-/** Opens one export disclosure by keyboard, as a reader without a pointer would. */
+/**
+ * Opens one export disclosure by keyboard, as a reader without a pointer would:
+ * its toggle button, then Enter. A region that is always shown (the table's
+ * output) is left as it is.
+ */
 async function openDisclosure(selector: string) {
-  await browser.execute((target: string) => {
-    document.querySelector<HTMLElement>(`${target} > summary`)?.focus();
+  const focused = await browser.execute((target: string) => {
+    const region = document.querySelector<HTMLElement>(target);
+    if (region === null || !region.hidden) return false;
+    const toggle = document.querySelector<HTMLElement>(`[aria-controls="${region.id}"]`);
+    toggle?.focus();
+    return toggle !== null && document.activeElement === toggle;
   }, selector);
-  await browser.keys("Enter");
+  if (focused) await browser.keys("Enter");
   await browser.waitUntil(() =>
-    browser.execute((target: string) => document.querySelector<HTMLDetailsElement>(target)?.open === true, selector),
+    browser.execute((target: string) => document.querySelector<HTMLElement>(target)?.hidden === false, selector),
   );
 }
 
@@ -937,8 +935,9 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
         .replace("{{outcome}}", en.targetedOutcomeDetected)
         .replace("{{drawn}}", en.targetedFigureDrawnFeature),
     );
-    // No SVG markup is placed in the page: the drawing is an image.
-    expect(await browser.execute(() => document.querySelector("[data-targeted-plot] svg") === null)).toBe(true);
+    // No SVG markup is placed in the page: the drawing is an image. The only
+    // inline SVG is the points disclosure's own chevron icon.
+    expect(await browser.execute(() => document.querySelector("[data-targeted-plot] svg:not(.ui-icon)") === null)).toBe(true);
     const preview = (await ipcCalls()).find((call) => call.command === "preview_targeted_ms1_figure");
     expect(preview?.args).toEqual({
       artifactId: ARTIFACT,
@@ -946,8 +945,11 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
       settings: { widthPx: 1200, heightPx: 640, pngDpi: 300, theme: "light" },
     });
 
-    // The table, by keyboard: open the disclosure, move to CSV, press it.
-    await openDisclosure("[data-targeted-table-export]");
+    // The table, by keyboard: its output is always offered, the first stop
+    // after the report's heading. Move to CSV and press it.
+    await browser.execute(() => {
+      document.querySelector<HTMLElement>("[data-targeted-report] h3")?.focus();
+    });
     await browser.keys("Tab");
     expect(
       await browser.execute(() => document.activeElement?.getAttribute("data-targeted-export") ?? null),
@@ -1084,9 +1086,7 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
     for (const key of [
       "targetedReuseNote",
       "targetedTableExports",
-      "targetedTableExportHelp",
       "targetedFigureExports",
-      "targetedFigureExportHelp",
       "targetedStateSource",
     ] as const) {
       expect(narrow.report?.text).toContain(zh[key]);

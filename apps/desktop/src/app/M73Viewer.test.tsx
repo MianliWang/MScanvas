@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
@@ -27,19 +27,19 @@ async function mount() {
   render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
     <PreviewApiProvider value={api}><App /></PreviewApiProvider>
   </WorkspaceDropTransportProvider>);
-  fireEvent.click(await screen.findByRole("button", { name: "Preview focused" }));
-  await screen.findByRole("grid", { name: "Spectra" });
+  fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
+  await screen.findByRole("grid", { name: UI_RESOURCES.en.scansTitle });
   return { api, preview };
 }
 const grid = () => screen.getByRole("grid");
 const rows = () => within(grid()).getAllByRole("row").filter(row => row.hasAttribute("data-row-position"));
-function rowIndex(row: HTMLElement): number { return Number(within(row).getAllByRole("gridcell")[0].textContent); }
+function rowIndex(row: HTMLElement): number { return Number(row.getAttribute("data-source-index")); }
 function selectRow(index: number, cell = 2) {
   const row = rows().find(row => rowIndex(row) === index);
   if (!row) throw new Error(`Source row ${index} is not displayed`);
   fireEvent.click(within(row).getAllByRole("gridcell")[cell]);
 }
-const spectrumPanel = () => screen.getByRole("region", { name: "Selected spectrum" });
+const spectrumPanel = () => screen.getByRole("region", { name: UI_RESOURCES.en.viewerSpectrum });
 const chromatogramPanel = () => screen.getByRole("region", { name: "Chromatogram" });
 function plotIn(panel: HTMLElement) {
   const plot = within(panel).getByRole("img");
@@ -57,21 +57,51 @@ function startBand(plot: HTMLElement, axis: "rt" | "mz") {
 function releaseBand(plot: HTMLElement, axis: "rt" | "mz") {
   pointer(plot, "pointerUp", point(axis, .5)); fireEvent.click(plot, { detail: 1 });
 }
-function editRange(panel: HTMLElement, low: string, high: string) {
-  fireEvent.click(within(panel).getByText(/^Edit .* range$/u));
+/** The RT header shows its short label first and its full name after it. */
+const RT_HEADER = "RT (Retention time)";
+/** Each plot's Set range… is the first item of its own ⋯ menu (direction A). */
+async function openRangeEditor(panel: HTMLElement, locale: "en" | "zh-CN" = "en") {
+  fireEvent.keyDown(within(panel).getByRole("button", { name: UI_RESOURCES[locale].plotMoreExports }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: UI_RESOURCES[locale].rangeSet }));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+}
+async function editRange(panel: HTMLElement, low: string, high: string) {
+  await openRangeEditor(panel);
   fireEvent.change(within(panel).getByRole("textbox", { name: "From" }), { target: { value: low } });
   fireEvent.change(within(panel).getByRole("textbox", { name: "To" }), { target: { value: high } });
   fireEvent.click(within(panel).getByRole("button", { name: "Apply range" }));
 }
-afterEach(() => { vi.restoreAllMocks(); });
+/** A plot's export scope lives in its figure dialog. */
+async function chooseScope(panel: HTMLElement, name: string) {
+  fireEvent.click(within(panel).getByRole("button", { name: "Export figure" }));
+  const dialog = screen.getByRole("dialog");
+  // A current range names its window after the words (rebuild spec 6).
+  fireEvent.click(within(dialog).getByRole("radio", { name: new RegExp(`^${name}`, "u") }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Return to viewer" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+}
+/** Exports a plot's CSV from its ⋯ menu once the one lane is free. */
+async function exportCsv(panel: HTMLElement) {
+  fireEvent.keyDown(within(panel).getByRole("button", { name: UI_RESOURCES.en.plotMoreExports }), { key: "Enter" });
+  const item = await screen.findByRole("menuitem", { name: "Export CSV…" });
+  await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled", "true"));
+  fireEvent.click(item);
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+}
+const NativeUrl = URL;
+beforeEach(() => {
+  // The figure dialog draws its preview from an object URL, which jsdom lacks.
+  vi.stubGlobal("URL", class extends NativeUrl { static createObjectURL = () => "blob:mock-figure"; static revokeObjectURL = vi.fn(); });
+});
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("M7.3 through the delivered application", () => {
   it("sorts and searches loaded facts and activates source indices from row bodies or keys", async () => {
     const { api, preview } = await mount(); const sourceRows = [...preview.spectrumTable.rows];
     const search = screen.getByRole("searchbox", { name: "Search loaded scans" });
-    fireEvent.click(within(grid()).getByRole("button", { name: "Total ion current" }));
-    fireEvent.click(within(grid()).getByRole("button", { name: "Total ion current" }));
-    expect(within(grid()).getByRole("columnheader", { name: "Total ion current" })).toHaveAttribute("aria-sort", "descending");
+    fireEvent.click(within(grid()).getByRole("button", { name: RT_HEADER }));
+    fireEvent.click(within(grid()).getByRole("button", { name: RT_HEADER }));
+    expect(within(grid()).getByRole("columnheader", { name: /^RT(?: |$)/u })).toHaveAttribute("aria-sort", "descending");
     expect(rows().map(rowIndex)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
     fireEvent.change(search, { target: { value: "rare" } });
     expect(rows().map(rowIndex)).toEqual([7, 3]);
@@ -85,7 +115,7 @@ describe("M7.3 through the delivered application", () => {
     selectRow(7, 3);
     await screen.findByRole("img", { name: /^Spectrum 7,/u });
     expect(api.requestedSpectra).toEqual([3, 7]);
-    selectRow(3, 5);
+    selectRow(3, 3);
     await screen.findByRole("img", { name: /^Spectrum 3,/u });
     expect(api.requestedSpectra).toEqual([3, 7, 3]);
     expect(preview.spectrumTable.rows).toEqual(sourceRows);
@@ -93,17 +123,17 @@ describe("M7.3 through the delivered application", () => {
 
   it("preserves a hidden selection and resumes navigation in the displayed sort order", async () => {
     const { api, preview } = await mount(); const sourceRows = [...preview.spectrumTable.rows];
-    fireEvent.click(within(grid()).getByRole("button", { name: "Total ion current" }));
-    fireEvent.click(within(grid()).getByRole("button", { name: "Total ion current" }));
+    fireEvent.click(within(grid()).getByRole("button", { name: RT_HEADER }));
+    fireEvent.click(within(grid()).getByRole("button", { name: RT_HEADER }));
     expect(rows().map(rowIndex)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
-    selectRow(3, 5);
+    selectRow(3, 3);
     await screen.findByRole("img", { name: /^Spectrum 3,/u });
     expect(api.requestedSpectra).toEqual([3]);
     const search = screen.getByRole("searchbox", { name: "Search loaded scans" });
     search.focus(); fireEvent.change(search, { target: { value: "raw-1" } });
-    expect(screen.getByText(/Selected scan 3 is outside these results/u)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Previous scan" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next scan" })).toBeDisabled();
+    expect(screen.getByText(/Selected scan 3 is hidden by the filters/u)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Previous scan" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Next scan" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("img", { name: /^Spectrum 3,/u })).toBeInTheDocument();
     expect(document.activeElement).toBe(search);
     fireEvent.click(screen.getByRole("button", { name: "Clear filters and reveal" }));
@@ -119,54 +149,58 @@ describe("M7.3 through the delivered application", () => {
     await screen.findByRole("img", { name: /^Spectrum 4,/u });
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(1));
     const mzPanel = spectrumPanel(); const rtPanel = chromatogramPanel();
-    editRange(mzPanel, "2e2", "800"); editRange(rtPanel, "1", "6");
+    await editRange(mzPanel, "2e2", "800"); await editRange(rtPanel, "1", "6");
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(2));
     expect(api.spectrumProjectionRequests[1]).toEqual({ exportToken: "token-4", low: 200, high: 800 });
-    fireEvent.click(within(mzPanel).getByText("Export spectrum"));
-    fireEvent.click(within(mzPanel).getByRole("radio", { name: "Current range" }));
-    fireEvent.click(document.getElementById("chromatogram-export-toggle")!);
-    fireEvent.click(within(rtPanel).getByRole("radio", { name: "Current range" }));
+    await chooseScope(mzPanel, "Current range");
+    await chooseScope(rtPanel, "Current range");
     // The table hides the selected row; the scientific source and export pair remain unchanged.
     fireEvent.change(screen.getByRole("searchbox", { name: "Search loaded scans" }), { target: { value: "rare" } });
     const mzPlot = plotIn(mzPanel); const rtPlot = plotIn(rtPanel);
     startBand(mzPlot, "mz");
-    fireEvent.click(within(mzPanel).getByRole("button", { name: "Export CSV…" }));
+    await exportCsv(mzPanel);
     await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(1));
     expect(api.spectrumExportRequests[0].range).toEqual({ scope: "current", low: 200, high: 800 });
-    releaseBand(mzPlot, "mz");
+    // The menu took focus from the plot, which abandons a drawing (never a
+    // settled band), so the band is drawn again before it can pend.
+    startBand(mzPlot, "mz"); releaseBand(mzPlot, "mz");
     expect(api.spectrumProjectionRequests).toHaveLength(2);
     const confirmMz = within(mzPanel).getByRole("button", { name: "Zoom to selection — m/z 350.0000 to 500.0000" });
     expect(confirmMz).toBeVisible();
-    await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
-    fireEvent.click(within(mzPanel).getByRole("button", { name: "Export CSV…" }));
+    await exportCsv(mzPanel);
     await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(2));
     expect(api.spectrumExportRequests[1].range).toEqual({ scope: "current", low: 200, high: 800 });
     fireEvent.click(confirmMz);
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(3));
     expect(api.spectrumProjectionRequests[2]).toEqual({ exportToken: "token-4", low: 350, high: 500 });
-    await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
-    fireEvent.click(within(mzPanel).getByRole("button", { name: "Export CSV…" }));
+    await exportCsv(mzPanel);
     await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(3));
     expect(api.spectrumExportRequests[2]).toMatchObject({ exportToken: "token-4", range: { scope: "current", low: 350, high: 500 } });
     startBand(rtPlot, "rt"); releaseBand(rtPlot, "rt");
-    await waitFor(() => expect(within(rtPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
-    fireEvent.click(within(rtPanel).getByRole("button", { name: "Export CSV…" }));
+    await exportCsv(rtPanel);
     await waitFor(() => expect(api.chromatogramExportRequests).toHaveLength(1));
     expect(api.chromatogramExportRequests[0].range).toEqual({ scope: "current", low: 1, high: 6 });
-    fireEvent.keyDown(rtPlot, { key: "Enter" });
-    await waitFor(() => expect(within(rtPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
-    fireEvent.click(within(rtPanel).getByRole("button", { name: "Export CSV…" }));
+    // The menu returned focus to its trigger; the band confirms from the plot.
+    rtPlot.focus(); fireEvent.keyDown(rtPlot, { key: "Enter" });
+    await exportCsv(rtPanel);
     await waitFor(() => expect(api.chromatogramExportRequests).toHaveLength(2));
     expect(api.chromatogramExportRequests[1].range).toEqual({ scope: "current", low: 2.25, high: 3.5 });
-    fireEvent.click(within(rtPanel).getByRole("radio", { name: "Full run" }));
-    await waitFor(() => expect(within(rtPanel).getByRole("button", { name: "Export linked SVG…" })).toBeEnabled());
-    fireEvent.click(within(rtPanel).getByRole("button", { name: "Export linked SVG…" }));
+    // The linked figure, from the chromatogram's ⋯ menu, over the full run.
+    fireEvent.keyDown(within(rtPanel).getByRole("button", { name: UI_RESOURCES.en.plotMoreExports }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: new RegExp("^" + UI_RESOURCES.en.figurePreviewLinked, "u") }));
+    const linked = screen.getByRole("dialog");
+    fireEvent.click(within(linked).getByRole("radio", { name: "Full run" }));
+    await within(linked).findByRole("img");
+    const svg = within(linked).getByRole("button", { name: "Export SVG…" });
+    await waitFor(() => expect(svg).not.toHaveAttribute("aria-disabled", "true"));
+    fireEvent.click(svg);
     await waitFor(() => expect(api.linkedFigureRequests).toHaveLength(1));
     expect(api.linkedFigureRequests[0]).toMatchObject({ spectrumToken: "token-4", range: { scope: "full", low: null, high: null } });
+    fireEvent.click(within(linked).getByRole("button", { name: "Return to viewer" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // Full export still delegates complete retained source; neither filtered rows nor vertices supply its data.
-    fireEvent.click(within(mzPanel).getByRole("radio", { name: "Full spectrum" }));
-    await waitFor(() => expect(within(mzPanel).getByRole("button", { name: "Export CSV…" })).not.toHaveAttribute("aria-disabled", "true"));
-    fireEvent.click(within(mzPanel).getByRole("button", { name: "Export CSV…" }));
+    await chooseScope(mzPanel, "Full spectrum");
+    await exportCsv(mzPanel);
     await waitFor(() => expect(api.spectrumExportRequests).toHaveLength(4));
     expect(api.spectrumExportRequests[3].range).toEqual({ scope: "full", low: null, high: null });
     expect(api.requestedSpectra).toEqual([4]);
@@ -180,17 +214,17 @@ describe("M7.3 through the delivered application", () => {
     await waitFor(() => expect(api.spectrumProjectionRequests).toHaveLength(1));
     const panel = spectrumPanel(); const plot = plotIn(panel);
     startBand(plot, "mz"); releaseBand(plot, "mz");
-    fireEvent.click(within(panel).getByText("Edit m/z range"));
+    await openRangeEditor(panel);
     const from = within(panel).getByRole("textbox", { name: "From" }) as HTMLInputElement;
     from.focus(); fireEvent.change(from, { target: { value: "2e" } }); from.setSelectionRange(1, 1);
     fireEvent.compositionStart(from); fireEvent.keyDown(from, { key: "Enter", isComposing: true });
     expect(api.spectrumProjectionRequests).toHaveLength(1); fireEvent.compositionEnd(from);
-    const entry = screen.getByRole("button", { name: "Settings" }); entry.focus(); fireEvent.click(entry);
+    const entry = screen.getByRole("button", { name: "Settings…" }); entry.focus(); fireEvent.click(entry);
     const dialog = screen.getByRole("dialog");
     fireEvent.keyDown(plot, { key: "Enter" });
     fireEvent.click(within(dialog).getByRole("radio", { name: UI_RESOURCES.en.simplifiedChinese }));
     fireEvent.click(within(dialog).getByRole("radio", { name: UI_RESOURCES["zh-CN"].compact }));
-    fireEvent.click(within(dialog).getByRole("button", { name: UI_RESOURCES["zh-CN"].apply }));
+    fireEvent.click(within(dialog).getByRole("button", { name: UI_RESOURCES["zh-CN"].close }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByRole("textbox", { name: "起点" })).toBe(from);
     expect(from.value).toBe("2e"); expect(from.selectionStart).toBe(1);
@@ -200,7 +234,8 @@ describe("M7.3 through the delivered application", () => {
     expect(screen.getByText(UI_RESOURCES["zh-CN"].rangeInvalid)).toBeVisible();
     from.focus(); fireEvent.keyDown(from, { key: "Escape" });
     expect(from).not.toBeInTheDocument();
-    expect(screen.getByText("编辑 m/z 范围")).toHaveFocus();
+    // Closing gives the keyboard back to the ⋯ trigger the editor came from.
+    expect(within(panel).getByRole("button", { name: UI_RESOURCES["zh-CN"].plotMoreExports })).toHaveFocus();
     expect(api.spectrumProjectionRequests).toHaveLength(1);
   });
 });

@@ -10,7 +10,7 @@ const HERE = dirname(fileURLToPath(import.meta.url)), REPO = resolve(HERE, "../.
 const INPUTS = resolve(REPO, ".tmp/m72-evidence/native-inputs");
 const MZML_SHA = "a1228c104790670515f948f523dfe43caa7085cedb7d57d19ed07cbca5775ea7";
 const RAW_SHA = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
-const ROW = ".grouped-roster [data-handle]", ADD = ".dataset-roster-actions [data-add-files]";
+const ROW = ".grouped-roster [data-handle]", ADD = ".roster-head [data-add-files]";
 const evidence: unknown[] = [];
 const digest = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 let output = "", processId = 0, dpi = 0, firstHandle = "", secondHandle = "", rawHandle = "";
@@ -43,7 +43,7 @@ function helper(script: string, args: string[]) {
 async function capture(label: string, validate = true) {
   const owned = metrics();
   const state = await browser.execute(() => ({ css: { width: innerWidth, height: innerHeight }, dpr: devicePixelRatio, cssZoom: getComputedStyle(document.documentElement).zoom,
-    locale: document.documentElement.lang, density: document.querySelector("[data-density]")?.getAttribute("data-density"), focus: { hasFocus: document.hasFocus(), tag: document.activeElement?.tagName, text: document.activeElement?.textContent, add: document.activeElement?.matches(".dataset-roster-actions [data-add-files]") },
+    locale: document.documentElement.lang, density: document.querySelector("[data-density]")?.getAttribute("data-density"), focus: { hasFocus: document.hasFocus(), tag: document.activeElement?.tagName, text: document.activeElement?.textContent, add: document.activeElement?.matches(".roster-head [data-add-files]") },
     rows: [...document.querySelectorAll<HTMLElement>(".grouped-roster [data-handle]")].map(row => ({ handle: row.dataset.handle, group: row.dataset.group, name: row.textContent, selected: row.getAttribute("aria-selected"), checked: row.querySelector<HTMLInputElement>("input")?.checked })),
     groupCounts: [...document.querySelectorAll(".roster-group-header")].map(group => ({ id: group.getAttribute("data-group-id"), text: group.textContent })),
     source: document.querySelector(".dataset-row.is-active")?.getAttribute("data-handle"),
@@ -69,9 +69,30 @@ async function point(selector: string) {
   return browser.execute(selector => { const box = document.querySelector(selector)!.getBoundingClientRect(); return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) }; }, selector);
 }
 const row = (handle: string) => `${ROW}[data-handle="${handle}"]`;
+/** Refused controls stay enabled with aria-disabled (spec 1.4): offered means that attribute is gone. */
+async function waitUntilOffered(selector: string) {
+  await browser.$(selector).waitForExist();
+  await browser.waitUntil(async () => (await browser.$(selector).getAttribute("aria-disabled")) !== "true", { timeoutMsg: `${selector} was never offered` });
+}
+/** New group is the roster footer's list-menu item (direction A 2.1). */
+async function newGroup(name: string) {
+  await browser.$("[data-roster-list-menu]").click(); await browser.$("[data-roster-new-group]").click();
+  await browser.$("#organization-group-name").setValue(name); await browser.$("button=Save group").click();
+  await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+}
+/** The spectrum's figure settings live in the figure dialog; its drafts are the workspace's, so they outlive it. */
+const SPECTRUM_WIDTH = '.figure-export-dialog input[id$="-widthPx"]';
+async function inSpectrumFigure<T>(act: () => Promise<T>): Promise<T> {
+  await browser.$('.spectrum-panel .figure-quick-actions button[aria-label="Export figure"]').click();
+  await browser.$(SPECTRUM_WIDTH).waitForDisplayed({ timeout: 60_000 });
+  try { return await act(); } finally {
+    await browser.$('.figure-export-dialog button[aria-label="Return to viewer"]').click();
+    await browser.$(".figure-export-dialog").waitForExist({ reverse: true });
+  }
+}
 async function add(file: string) {
   const before = await browser.$$(ROW).map(row => row.getAttribute("data-handle"));
-  await browser.$(ADD).waitForEnabled();
+  await waitUntilOffered(ADD);
   const [result] = await Promise.all([helper("choose-workspace-files", ["-Action", "choose", "-Path", file, "-TimeoutSeconds", "35"]), browser.$(ADD).click()]);
   expect(result.closed).toBe(true); expect(result.entered).toBe(true);
   await browser.waitUntil(async () => (await browser.$$(ROW).length) === before.length + 1);
@@ -80,9 +101,9 @@ async function add(file: string) {
 }
 async function settings(locale: "en" | "zh-CN", density: "comfortable" | "compact") {
   await browser.$("[data-settings-entry]").click();
-  await browser.$(`[data-settings-dialog] input[value="${locale}"]`).click();
-  await browser.$(`[data-settings-dialog] input[value="${density}"]`).click();
-  await browser.$("[data-settings-dialog]").$(locale === "en" ? "button=Apply" : "button=应用").click();
+  await browser.$(`[data-settings-dialog] [role="radio"]:has([data-setting-value="${locale}"])`).click();
+  await browser.$(`[data-settings-dialog] [role="radio"]:has([data-setting-value="${density}"])`).click();
+  await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
   await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches("[data-settings-entry]") === true));
 }
@@ -125,7 +146,8 @@ describe("M7.2 affected final native workbench paths", function () {
     viewport = { width: 960, height: 640 };
     await helper("m7.1-size-window", ["-ExpectedDpi", String(dpi), "-CssWidth", "960", "-CssHeight", "640"]);
     await browser.waitUntil(() => browser.execute(() => innerWidth === 960 && innerHeight === 640));
-    expect(await browser.$('[aria-controls="workbench-inspector"]').getAttribute("aria-disabled")).toBe("true");
+    // Details always opens; with nothing read it says so in one line (GOALS S3).
+    expect(await browser.$('[aria-controls="workbench-inspector"]').getAttribute("aria-disabled")).toBe(null);
     expect(await browser.$("#workbench-evidence .empty-state").isDisplayed()).toBe(true);
     await capture("review-native-narrow-empty");
     viewport = normalViewport;
@@ -172,15 +194,15 @@ describe("M7.2 affected final native workbench paths", function () {
     expect(trace.some(item => item.phase === "surface" && item.surface === "conversion" && item.time >= read.startTime && item.time < read.responseEnd && item.conversionBadge === false)).toBe(true);
     await browser.$(".workbench-home").click();
     await browser.$('.spectrum-table [role="row"][aria-rowindex="2"]').click();
-    await browser.$('.spectrum-panel input[id$="-widthPx"]').waitForDisplayed({ timeout: 60_000 });
-    await browser.$('.spectrum-panel input[id$="-widthPx"]').setValue("0640");
+    await inSpectrumFigure(() => browser.$(SPECTRUM_WIDTH).setValue("0640"));
     const before = await calls();
     await settings("zh-CN", "compact"); await capture("02-native-zh-retained-evidence");
     await browser.$(".workbench-navigation button:nth-child(2)").click(); await browser.$(".workbench-home").click();
-    expect(await browser.$('.spectrum-panel input[id$="-widthPx"]').getValue()).toBe("0640");
     expect(await browser.$(`${row(firstHandle)}.is-active`).isExisting()).toBe(true);
     expect(await calls()).toEqual(before);
+    // Read after the call check: reopening the dialog asks for a preview.
     await settings("en", "comfortable");
+    expect(await inSpectrumFigure(() => browser.$(SPECTRUM_WIDTH).getValue())).toBe("0640");
   });
   it("review regression: exposes loaded details and announces real in-group keyboard targets", async () => {
     const normalViewport = viewport;
@@ -213,19 +235,20 @@ describe("M7.2 affected final native workbench paths", function () {
       await browser.keys("Enter");
       await browser.$('.grouped-roster[data-drag-active="true"]').waitForExist({ reverse: true });
       expect(await browser.$$(ROW).map(node => node.getAttribute("data-handle"))).toEqual([secondHandle, firstHandle]);
-      await browser.$(language === "en" ? "button=Undo organization" : "button=撤销组织操作").click();
+      // Undo is an icon button in the roster footer, named by its label.
+      await browser.$(`button[aria-label="${language === "en" ? "Undo organization" : "撤销组织操作"}"]`).click();
       expect(await browser.$$(ROW).map(node => node.getAttribute("data-handle"))).toEqual([firstHandle, secondHandle]);
     }
     await settings("en", "comfortable");
     expect(await calls()).toEqual(before);
     expect(await browser.$(`${row(firstHandle)}.is-active`).isExisting()).toBe(true);
-    expect(await browser.$('.spectrum-panel input[id$="-widthPx"]').getValue()).toBe("0640");
+    expect(await inSpectrumFigure(() => browser.$(SPECTRUM_WIDTH).getValue())).toBe("0640");
   });
   it("moves two real native acquisitions locally and accepts an actual Explorer file/folder drop into ungrouped", async () => {
     rawHandle = await add(join(INPUTS, "retained/M72-retained.raw"));
     await browser.performActions([{ type: "key", id: "native-selection", actions: [{ type: "keyDown", value: "\uE009" }] }]);
     await browser.$(row(firstHandle)).click(); await browser.releaseActions();
-    await browser.$("button=New group").click(); await browser.$("#organization-group-name").setValue("Native group"); await browser.$("button=Save group").click();
+    await newGroup("Native group");
     const before = await calls(), source = await point(`${row(firstHandle)} .row-drag-handle`);
     await browser.performActions([{ type: "pointer", id: "native-organization", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerMove", ...source, origin: "viewport", duration: 0 }, { type: "pointerDown", button: 0 }, { type: "pointerMove", x: source.x + 12, y: source.y + 8, origin: "viewport", duration: 180 }] }]);
     await browser.$('.grouped-roster[data-drag-active="true"]').waitForExist(); await capture("03-native-drag-pickup");
@@ -259,18 +282,15 @@ describe("M7.2 affected final native workbench paths", function () {
     const before = await calls();
     const [result] = await Promise.all([helper("choose-workspace-files", ["-Action", "escape", "-TimeoutSeconds", "35"]), browser.$(ADD).click()]);
     expect(result.closed).toBe(true);
-    await browser.$(ADD).waitForEnabled();
+    await waitUntilOffered(ADD);
     // No click, focus() or foreground helper after cancellation.
-    await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches(".dataset-roster-actions [data-add-files]") === true));
+    await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.activeElement?.matches(".roster-head [data-add-files]") === true));
     expect(metrics().foregroundProcessId).toBe(processId);
     const state = await capture("07-native-picker-cancel-natural-return"); expect(state.rows).toHaveLength(6);
     expect((await calls()).slice(before.length).filter(call => call.command === "open_mzml_preview")).toEqual([]);
   });
   it("restores native menu focus after moving a real acquisition into a collapsed group", async () => {
-    await browser.$("button=New group").click();
-    await browser.$("#organization-group-name").setValue("Native menu target");
-    await browser.$("button=Save group").click();
-    await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+    await newGroup("Native menu target");
     const groupId = await browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>(".roster-group-header"))
       .find(element => element.querySelector(".group-disclosure")?.textContent?.includes("Native menu target"))?.dataset.groupId);
     if (groupId === undefined) throw Error("Native menu destination was not created.");
@@ -291,10 +311,7 @@ describe("M7.2 affected final native workbench paths", function () {
     await capture("review-native-collapsed-menu-recovered");
   });
   it("restores native group-menu focus after dissolving a populated group", async () => {
-    await browser.$("button=New group").click();
-    await browser.$("#organization-group-name").setValue("Native dissolve target");
-    await browser.$("button=Save group").click();
-    await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+    await newGroup("Native dissolve target");
     const groupId = await browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>(".roster-group-header"))
       .find(element => element.querySelector(".group-disclosure")?.textContent?.includes("Native dissolve target"))?.dataset.groupId);
     if (groupId === undefined) throw Error("Native dissolve target was not created.");
@@ -306,7 +323,8 @@ describe("M7.2 affected final native workbench paths", function () {
     await capture("review-native-group-dissolve-before");
     await browser.$(`${group} .row-menu-trigger`).click(); await browser.keys(["End", "Enter"]);
     await browser.$(group).waitForExist({ reverse: true });
-    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches(".organization-toolbar button:first-child") === true));
+    // Dissolving hands the keyboard to the list menu that holds New group (direction A 2.1).
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true));
     expect(await browser.$(row(firstHandle)).getAttribute("data-group")).toBe("ungrouped");
     expect(await browser.$(`${row(firstHandle)} input[type="checkbox"]`).isSelected()).toBe(membership);
     expect(await calls()).toEqual(before); expect(await previewReads()).toEqual(beforeReads);
@@ -326,7 +344,7 @@ describe("M7.2 affected final native workbench paths", function () {
     await browser.$(".workbench-navigation button:nth-child(2)").click();
     await browser.$('[aria-controls="workbench-roster"]').click();
     const before = (await previewReads()).length;
-    await browser.$(".dataset-roster-actions button:nth-child(3)").click();
+    await browser.$(row(secondHandle)).click();
     await browser.$("#workbench-evidence").waitForDisplayed();
     expect(await browser.$("#workbench-roster").isDisplayed()).toBe(false);
     expect(await browser.execute(() => document.activeElement?.id)).toBe("workbench-evidence");

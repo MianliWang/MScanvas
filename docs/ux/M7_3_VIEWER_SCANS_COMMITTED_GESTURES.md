@@ -40,6 +40,9 @@ selection remains selected and offers filter recovery instead of replacement.
    Existing export/help/source sections are reachable disclosures. Text remains
    12 CSS pixels without a second scientific transform owner; headers have
    32-pixel targets. Ten visible table rows plus overscan bound the allocation.
+   Amended 2026-10-28 by the v5.11 rebuild (spec 3.1): the chromatogram stays
+   full width on top, and the scan list now sits left of the selected spectrum,
+   as in the v5.11 reference, instead of below it.
 
 Affected paths: `apps/desktop/src/features/mzml-preview/`, existing preferences
 locale bundles, shared styles, `e2e/`, affected ADR/product/design/status records.

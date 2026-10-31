@@ -119,14 +119,7 @@ const SCENES: readonly Scene[] = [
   profileSpectrum(500_000, "transfer-bound-500k"),
 ];
 
-/**
- * Renders the real component to markup, which is what the screen path costs.
- *
- * `representationKnown: false` throughout, and it changes nothing measured here
- * -- the component draws sticks either way and the flag only selects a caption
- * sentence. It is set to the honest value for synthetic data: nothing reported
- * what these points are.
- */
+/** Renders the real component to markup, which is what the screen path costs. */
 function renderScene(scene: Scene): string {
   return renderToStaticMarkup(
     createElement(StickSpectrum, {
@@ -137,7 +130,6 @@ function renderScene(scene: Scene): string {
         reportedMzLow: scene.mz[0] ?? 0,
         reportedMzHigh: scene.mz[scene.mz.length - 1] ?? 1,
       },
-      representationKnown: false,
       labelledBy: "bench-heading",
       surface: { kind: "static" },
     }),

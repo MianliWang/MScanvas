@@ -338,6 +338,47 @@ Decided by the owner at PM9.7's freeze ([slice-07 §9](../phases/pm9/slice-07.md
     scrolling then brings the ring into view, not only the control: the
     spectrum plot at the foot of the evidence column, for one.
 
+## Self-explaining copy pass (2026-10-28)
+
+*Changed by the self-explaining copy pass (2026-10-28; owner direction in
+[AFTER_BETA1_PLAN §2](../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+The rules above stand except where this list says otherwise.
+
+- **The header's second line.** The drop hint is shown only when file drop is
+  unavailable. With no project open there is no project item, and the scope
+  item leaves while nothing is eligible. The bar keeps a 32 px minimum height.
+  The other drop routes are the opposite way round: the empty roster's "Add
+  files… or drop them here." and the empty Workbench's drop route are shown
+  only while file drop is available.
+- **Ranges and units.** The committed line's wording and timing are unchanged.
+  It is visually hidden, and only announced, only while nothing is pending and
+  the committed range is the full range. It is printed while a band is pending
+  and while a part of the range is committed, because a current-range export
+  takes that part.
+- **Counts.** The organizing count is neither shown nor announced while
+  nothing is highlighted or checked.
+- **Refused secondaries (PM9.7 F1).** With no project open, Save, Save As…
+  and Close carry no tooltip. Add to Workbench has one only for "check it
+  first" and a busy Workbench; its other reasons are the row's state text.
+- **Settings (the M7.1 row).** Setting rows carry a label without a help line,
+  and the save status is empty in the ordinary saved case.
+- **The empty Workbench (PM9.7 F3).** Its line follows the roster: nothing
+  while the roster is read; the Add files… route, with dropping when file drop
+  is available, while it is empty; "Select an mzML file in Acquisitions." once
+  an mzML row is listed; and "Vendor acquisitions can be converted but are not
+  previewed." when only vendor rows are. Control names stay nested (`$t()`).
+- **Conversion settings.** A refused value's reason is said once per settings
+  group, and every refused value in the group is described by it. Every lossy
+  note stays beside its value.
+- **Project history.** The note reads "Records hold facts only. Opening one
+  runs nothing. Recorded work cannot be removed yet."; each targeted run's row
+  already says how it ended and what it stored. "Tick at least one reference to
+  capture." sits beside Capture file facts.
+- **Export figure.** The preview's status line keeps one line's height when it
+  says nothing visible ("up to date" is announced only), and the last preview
+  stays on screen while the next one for the same source is drawn, so Export
+  does not move.
+
 ## M6.6 destination and conflict surface
 
 This is a focused continuation of the accepted v5.11 organization using the

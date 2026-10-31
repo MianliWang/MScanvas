@@ -330,6 +330,14 @@ append-only. Sharing one target list between plans (deduplication or reference
 normalization) is a future storage-model optimization (§13); closure did not
 add a shared target-list entity.
 
+*2026-10-30:* a member whose new plan alone no longer fits is now refused
+`oversized` before its worker starts; in the measurement above that is the
+fifth batch's thirteenth member (`halted_batch_attempts=12`,
+[evidence §4](../spikes/M9_CLOSURE_EVIDENCE.md#4-document-growth)). A member
+whose plan fits but whose run and result records do not is still refused after
+its worker ran, as described above
+([plan section 7.2](../development/AFTER_BETA1_PLAN.md#72-polish-and-limits)).
+
 ## 9. What is persisted, and what is not
 
 Checked in code and by a scan of a real run's saved documents and stores
@@ -389,6 +397,18 @@ undelivered item out of M9 rather than leaving it implied:
 | Runtime packaging | M7.6-style release work on the new product (§15) |
 | CLI, skills, MCP | M10, not started |
 
+*2026-10-30 (owner decision G1 in
+[OWNER_DECISIONS_V511.md](../development/OWNER_DECISIONS_V511.md)):* the
+owner's direction of that day is the future decision this table names for
+analysis. A second recipe, multi-layer comparison and overlay, alignment,
+cross-acquisition comparison, merged tables, heatmaps, PCA and the XIC are
+planned under milestone M11 of
+[`PROJECT_PROPOSAL.md`](../../PROJECT_PROPOSAL.md) section 18, each with its
+own record and behind the promotion gate of the
+[analysis capability map](ANALYSIS_CAPABILITY_MAP.md); none is designed or
+validated yet. Normalization still needs its own admission (S-3), and drift
+and batch correction stay later (S-4); both decisions are open.
+
 ## 13. Remaining limits
 
 | Limit | Consequence now | Correctness or safety affected? | Prerequisite / owner | Earliest stage |
@@ -402,7 +422,7 @@ undelivered item out of M9 rather than leaving it implied:
 | Filesystem and network confinement of the worker not enforced | the fixed adapter makes no network call; nothing prevents one | no by code review; not enforced | an enforced sandbox, if required | release security review |
 | Retained hard-link scratch has no user cleanup | a retained link keeps a file's clusters allocated if the user deletes their own name | no (resource leakage) | an explicit recovery UX or tool | UI/UX cleanup or later |
 | M9.1-era unmarked attempt directories are never swept | they stay | no | a person, or a future tool | same |
-| Payload `.staging/` and Save As pending stores left by a crash are not collected; a Save As whose document publish fails leaves its whole store published beside a destination with no document, and a retry to that name is refused `destinationStoreExists` | disk space beside the document; the user chooses another name or removes the folder | no (reported, never undone silently) | payload GC and store-recovery design | later |
+| Payload `.staging/` and Save As pending stores left by a crash are not collected; a Save As whose document publish fails leaves its whole store published beside a destination with no document, and a retry to that name is refused `destinationStoreExists` | disk space beside the document; the user chooses another name or removes the folder. *2026-10-30: a Save As with no result now publishes an empty store first too, which reserves the name, so this also applies to it* | no (reported, never undone silently) | payload GC and store-recovery design | later |
 | Unreferenced results (published, never saved) are counted and not shown | invisible disk use | no | UI decision | UI/UX cleanup |
 | No clipboard copy of a stored result | use SVG/PNG export | no | a native harness with a stored-result project | UI/UX cleanup or release |
 | Native save dialogs for stored-result exports not natively qualified | write path tested in Rust; dialog mocked in the browser | no known defect | native harness run | installed qualification |
@@ -411,7 +431,7 @@ undelivered item out of M9 rather than leaving it implied:
 | Spreadsheet formula interpretation of exported text | a spreadsheet may evaluate a label such as `=…` | **security/interoperability decision open** | release security review: keep raw, add a separate spreadsheet-safe export, or document | before public release |
 | History is append-only | nothing can be pruned; a full project stays full | no | history pruning design | later |
 | Every plan stores its whole target list | ≈ 0.84 MiB per 16 × 200 batch with short labels (four fit), up to ≈ 3.1 MB with 200-character CJK labels (one fits) | no | shared target-list storage | future storage-model revision |
-| The 4 MiB bound is met after the member's worker ran | up to 10 minutes of work discarded; the sentence says the project is too large, not what to do | no (nothing corrupted) | a size check before the attempt; clearer wording | UI/UX cleanup |
+| The 4 MiB bound is met after the member's worker ran | up to 10 minutes of work discarded; the sentence says the project is too large, not what to do | no (nothing corrupted) | a size check before the attempt; clearer wording. *2026-10-30: a run whose new plan alone does not fit is refused before its worker starts; one that fits with its plan is still measured after its attempt, and the wording is unchanged* | UI/UX cleanup |
 | Batch state is session-only | after restart, which members a batch never started is unknown; the history shows only runs | no | only if users need batch history | later |
 | A failed member's reason appears only once the batch ends | mid-batch it reads *Failed* | no | UI | UI/UX cleanup |
 | Source availability is known only after **Check links** | a reopened result reads *Not checked* | no | UI | UI/UX cleanup |

@@ -326,7 +326,7 @@ export async function boxOf(selector: string): Promise<Box> {
 export async function boxOfButton(name: string): Promise<Box> {
   return browser.execute((label: string) => {
     const node = [...document.querySelectorAll("button")].find(
-      (candidate) => candidate.textContent?.trim() === label,
+      (candidate) => candidate.textContent?.trim() === label || candidate.getAttribute("aria-label") === label,
     );
     if (node === undefined) {
       throw new Error(`no button labelled ${label}`);
@@ -366,7 +366,8 @@ export async function focusedName(): Promise<string> {
     if (active === null) {
       return "";
     }
-    return (active.textContent ?? "").trim();
+    // An icon button has no text; its accessible name is its label.
+    return (active.textContent ?? "").trim() || (active.getAttribute("aria-label") ?? "");
   }) as Promise<string>;
 }
 
