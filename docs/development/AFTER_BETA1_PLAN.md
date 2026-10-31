@@ -650,7 +650,7 @@ preview is refused too.*
 ### 7.4 Future capabilities
 
 - P1: WSP-010 restore workspace; FIG-007 saved FigureSpec; ENV-004 copy
-  diagnostics.
+  diagnostics (*2026-10-30:* Rust side implemented, no interface yet; [ADR 0063](../architecture/adr/0063-copy-diagnostics.md), Accepted 2026-10-30).
   - *2026-10-30: FIG-007's Rust side is implemented with no interface, its
     decisions accepted by the owner on 2026-10-30 (A0062) in
     [ADR 0062](../architecture/adr/0062-saved-figurespec.md): a `.msfigure`

@@ -1,3 +1,6 @@
+/// ENV-004's copied environment summary and the recent-error ring it reports
+/// (ADR 0063). Reads session state; writes and sends nothing.
+mod environment_diagnostics;
 /// Reading and replacing one small local document. Shared by the preference
 /// store and the project store so that the same-directory replacement sequence
 /// exists once.
@@ -1308,6 +1311,22 @@ fn get_bootstrap_status() -> BootstrapStatus {
     )
 }
 
+/// The redacted environment summary a user copies into a support request
+/// (ENV-004, ADR 0063).
+///
+/// Reads what the session already holds: no backend probe, no process, no
+/// file written and nothing sent. The text comes back to the caller only.
+#[tauri::command]
+async fn read_environment_diagnostics(
+    service: State<'_, SharedService>,
+    preferences: State<'_, SharedPreferences>,
+) -> Result<String, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    let preferences = Arc::clone(&preferences);
+    // The saved language is read from the profile volume, which can be slow.
+    off_the_async_runtime(move || environment_diagnostics::summary(&service, &preferences)).await
+}
+
 /// Reports whether a user-installed ProteoWizard is usable. MSCanvas never
 /// bundles, downloads or installs one.
 #[tauri::command]
@@ -2607,6 +2626,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_status,
+            read_environment_diagnostics,
             load_ui_preferences,
             save_ui_preferences,
             get_project_state,

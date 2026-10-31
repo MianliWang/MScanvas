@@ -854,6 +854,50 @@ impl PreviewService {
         self.remembered_lock().facts.clone()
     }
 
+    /// What the copied environment summary says about the backend (ADR 0063).
+    ///
+    /// The last reading and the identity it bound, as this session already
+    /// holds them. Unlike `inspect_backend`, nothing is probed or launched, so
+    /// the summary can be taken while the backend is busy or quarantined.
+    pub(crate) fn backend_environment(&self) -> crate::environment_diagnostics::Backend {
+        let quarantined = self.backend_is_quarantined();
+        let observed = self
+            .resolved
+            .lock()
+            .expect("the installation lock is never poisoned by user code");
+        let Some(reading) = observed.last.as_ref() else {
+            return crate::environment_diagnostics::Backend {
+                quarantined,
+                ..Default::default()
+            };
+        };
+        // The bound identity describes this reading only while the binding the
+        // reading was taken under is still current: a configuration read or a
+        // conversion can bind another build without taking a new reading.
+        let current = observed.authority.projection().to_dto().receipt();
+        let facts = (reading.authority.receipt() == current)
+            .then(|| observed.authority.bound_identity())
+            .flatten()
+            .map(InstallationIdentity::diagnostic_facts)
+            .unwrap_or_default();
+        crate::environment_diagnostics::Backend {
+            checked: true,
+            quarantined,
+            state: Some(reading.availability.state.clone()),
+            origin: Some(reading.availability.origin.clone()),
+            release: reading.availability.release.clone(),
+            build_date: reading.availability.build_date.clone(),
+            source_revision: facts.source_revision,
+            msconvert_sha256: facts.executable_sha256,
+            folder: reading.location.clone(),
+            failure: reading
+                .availability
+                .failure
+                .as_ref()
+                .map(|failure| failure.kind.clone()),
+        }
+    }
+
     /// Whether the reading just taken was the one judging the remembered
     /// folder. True once, for the first reading after startup seeded it.
     fn remembered_folder_judged(&self) -> bool {

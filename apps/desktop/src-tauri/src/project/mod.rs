@@ -3661,7 +3661,7 @@ pub(crate) fn now_rfc3339() -> String {
 /// Hand-rolled because the alternative is a date dependency for one timestamp
 /// in one document. The civil-date conversion is the standard days-from-epoch
 /// algorithm and is exercised by its own test.
-fn format_rfc3339(seconds: u64) -> String {
+pub(crate) fn format_rfc3339(seconds: u64) -> String {
     let days = (seconds / 86_400) as i64;
     let time_of_day = seconds % 86_400;
     let (year, month, day) = civil_from_days(days);

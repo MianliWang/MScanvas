@@ -1,0 +1,682 @@
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use mscanvas_proteowizard::{PreviewOperation, Sha256Digest};
+
+use super::{
+    Backend, Facts, KnownRoots, RECENT_ERROR_CAPACITY, RecentError, RecentErrors, account_names,
+    recent_errors, render, summary, summary_with,
+};
+use crate::preferences::UiPreferenceStore;
+use crate::preview::InstallationIdentity;
+use crate::preview::backend::{OperationAttempt, PreviewProvider};
+use crate::preview::dto::{BackendAvailabilityDto, PreviewErrorDto};
+use crate::preview::idle_provider::NoProcess;
+use crate::preview::service::PreviewService;
+
+/// What the whole summary may never exceed (ADR 0063). Bounded by
+/// construction: every value has a maximum length, and so does the ring.
+const MAX_SUMMARY_BYTES: usize = 8 * 1024;
+
+const PROFILE: &str = r"C:\Users\Planted Person";
+const USER: &str = "plantedperson";
+const DATA: &str = "PlantedSample_042.raw";
+const ENV: &str = "PLANTED_ENV=planted-env-value-7f3a";
+
+/// Lower-cased fragments of the planted values, any one of which in the text
+/// is a leak.
+const SENTINELS: [&str; 6] = [
+    "planted person",
+    "plantedperson",
+    "plantedsample",
+    "planted_env",
+    "planted-env-value",
+    r"c:\users",
+];
+
+/// 2026-10-30T08:00:00Z.
+const NOW: u64 = 1_793_347_200;
+
+fn roots() -> KnownRoots {
+    KnownRoots {
+        program_files: Some(r"C:\Program Files".to_owned()),
+        program_files_x86: Some(r"C:\Program Files (x86)".to_owned()),
+        local_app_data: Some(format!(r"{PROFILE}\AppData\Local")),
+        user_profile: Some(PROFILE.to_owned()),
+    }
+}
+
+/// The account names the production lookup finds when `USERNAME` holds
+/// `account`, as on Windows.
+fn accounts_of(account: &str) -> Vec<String> {
+    account_names(|name: &str| (name == "USERNAME").then(|| OsString::from(account)))
+}
+
+fn accounts() -> Vec<String> {
+    accounts_of(USER)
+}
+
+fn ordinary() -> Facts {
+    Facts {
+        created_at: NOW,
+        app_version: "0.1.0".to_owned(),
+        build_profile: "release".to_owned(),
+        build_commit: Some("0123456789abcdef0123456789abcdef01234567".to_owned()),
+        saved_ui_language: Some("zh-CN".to_owned()),
+        ui_preferences: "loaded".to_owned(),
+        ui_preferences_problem: None,
+        windows_version: Some("25H2".to_owned()),
+        windows_build: Some("26200.6899".to_owned()),
+        windows_edition: Some("Core".to_owned()),
+        webview2: Some("141.0.3537.71".to_owned()),
+        backend: Backend {
+            checked: true,
+            quarantined: false,
+            state: Some("available".to_owned()),
+            origin: Some("automatic".to_owned()),
+            release: Some("3.0.26013".to_owned()),
+            build_date: Some("Jan 13 2026".to_owned()),
+            source_revision: Some("47b13cf".to_owned()),
+            msconvert_sha256: Some("A1".repeat(32)),
+            folder: Some(
+                r"C:\Program Files\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit".to_owned(),
+            ),
+            failure: None,
+        },
+        remembered_folder: true,
+        remembered_refused_at_startup: None,
+        remembered_not_saved: Some("rootUnresolved".to_owned()),
+        recent_errors: vec![
+            RecentError {
+                code: "conversion_destination_refused".to_owned(),
+                first: NOW - 600,
+                last: NOW - 600,
+                repeated: false,
+            },
+            RecentError {
+                code: "preview_worker_unavailable".to_owned(),
+                first: NOW - 300,
+                last: NOW - 210,
+                repeated: true,
+            },
+        ],
+        dropped_errors: 3,
+    }
+}
+
+#[test]
+fn the_summary_has_stable_headings_english_keys_and_values_as_they_are() {
+    let expected = r"MSCanvas diagnostics
+Format: 1
+Created: 2026-10-30T08:00:00Z
+
+[Application]
+Version: 0.1.0
+Build profile: release
+Build commit: 0123456789abcdef0123456789abcdef01234567
+Saved UI language: zh-CN
+UI preferences: loaded
+UI preferences problem: none
+
+[System]
+Windows version: 25H2
+Windows build: 26200.6899
+Windows edition: Core
+WebView2 Runtime: 141.0.3537.71
+
+[ProteoWizard]
+Checked this session: yes
+Quarantined: no
+State: available
+Origin: automatic
+Release: 3.0.26013
+Build date: Jan 13 2026
+Source revision: 47b13cf
+msconvert SHA-256: A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1
+Folder: <program-files>
+Failure: none
+Remembered folder: yes
+Remembered folder refused at startup: none
+Remembered folder not saved: rootUnresolved
+
+[View cache]
+Usage: not in this build
+
+[Recent errors]
+Held: 2 (at most 32; older dropped: 3)
+- 2026-10-30T07:50:00Z conversion_destination_refused
+- 2026-10-30T07:55:00Z preview_worker_unavailable (repeated until 2026-10-30T07:56:30Z)
+";
+    assert_eq!(render(&ordinary(), &roots(), &accounts()), expected);
+}
+
+/// The real collection path, over a provider that fails the test if anything
+/// probes the backend, points it somewhere or starts a process.
+#[test]
+fn the_session_summary_neither_probes_nor_launches_anything() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let text = summary(&service, &UiPreferenceStore::unavailable());
+    for line in [
+        "Checked this session: no",
+        "Failure: unknown",
+        "Saved UI language: unknown",
+        "UI preferences: unavailable",
+        "UI preferences problem: rootUnresolved",
+        "Remembered folder: no",
+    ] {
+        assert!(
+            text.contains(&format!("{line}\n")),
+            "{line} is missing:\n{text}"
+        );
+    }
+}
+
+/// The real collection path reads the account name it checks against: an
+/// account named like a value it writes withholds that value.
+#[test]
+fn the_session_summary_checks_the_account_name_it_reads() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let text = summary_with(&service, &UiPreferenceStore::unavailable(), |name| {
+        (name == "USERNAME").then(|| OsString::from("unavailable"))
+    });
+    assert!(
+        text.contains("UI preferences: <withheld>\n"),
+        "the account name was not checked:\n{text}"
+    );
+}
+
+/// The known roots are read from the variables Windows sets.
+#[cfg(windows)]
+#[test]
+fn the_known_roots_come_from_the_variables_windows_sets() {
+    let roots = KnownRoots::of(std::env::var_os);
+    assert!(roots.program_files.is_some(), "{roots:?}");
+    assert!(roots.local_app_data.is_some(), "{roots:?}");
+    assert!(roots.user_profile.is_some(), "{roots:?}");
+}
+
+#[test]
+fn an_unchecked_backend_says_so_rather_than_guessing() {
+    let facts = Facts {
+        backend: Backend {
+            quarantined: true,
+            ..Backend::default()
+        },
+        ..ordinary()
+    };
+    let text = render(&facts, &roots(), &accounts());
+    for line in [
+        "Checked this session: no",
+        "Quarantined: yes",
+        "State: unknown",
+        "Release: unknown",
+        "Folder: unknown",
+        "Failure: unknown",
+    ] {
+        assert!(text.contains(&format!("{line}\n")), "{line} is missing");
+    }
+}
+
+#[test]
+fn a_saved_language_is_none_only_when_nothing_is_saved() {
+    for (outcome, expected) in [("absent", "none"), ("unusable", "unknown")] {
+        let facts = Facts {
+            saved_ui_language: None,
+            ui_preferences: outcome.to_owned(),
+            ..ordinary()
+        };
+        let text = render(&facts, &roots(), &accounts());
+        assert!(
+            text.contains(&format!("Saved UI language: {expected}\n")),
+            "{outcome} should read {expected}:\n{text}"
+        );
+    }
+}
+
+/// Every string field, every optional field, every error code and the folder
+/// carry a planted profile path, user name, data file name or environment
+/// variable, alone and combined, and none of them reaches the text.
+#[test]
+fn planted_identifiers_never_appear_whatever_field_they_are_planted_in() {
+    // A value here that is code-shaped carries the user name as a token, which
+    // the account check finds through the production lookup. A code field
+    // would show a code-shaped name nothing knows, such as
+    // `PlantedSample042`: code fields rely on their
+    // source, a stable id the repository defines, and shape and redaction are
+    // only the second line. The folder is never written, so it also gets
+    // code-shaped and installer-looking names.
+    let hostile = [
+        PROFILE.to_owned(),
+        USER.to_owned(),
+        USER.to_uppercase(),
+        DATA.to_owned(),
+        ENV.to_owned(),
+        "%PLANTED_ENV%".to_owned(),
+        format!(r"{PROFILE}\Documents\{DATA}"),
+        format!("3.0.26013 {DATA}"),
+        format!("{USER}_code"),
+        format!("ProteoWizard {USER}"),
+        format!("0.1.0-{USER}"),
+    ];
+    let mut folders: Vec<String> = hostile.to_vec();
+    folders.extend([
+        format!(r"{PROFILE}\AppData\Local\Apps\ProteoWizard {USER}"),
+        format!(r"{PROFILE}\AppData\Local\{DATA}"),
+        format!(r"{PROFILE}\{DATA}\ProteoWizard"),
+        format!(r"\\?\{PROFILE}\AppData\Local\Apps\PLANTED_ENV"),
+        format!(r"D:\{USER}\{DATA}\ProteoWizard"),
+        format!(r"C:\Program Files\{DATA}\ProteoWizard 3.0"),
+        format!(r"C:\Program Files\ProteoWizard\ProteoWizard {DATA}"),
+        format!(r"C:\Program Files\ProteoWizard 3.0 {DATA}"),
+        format!(r"C:\Program Files\pwiz-bin-windows-{DATA}"),
+        r"C:\Program Files\PlantedSample042".to_owned(),
+        r"C:\Program Files\pwiz-bin-windows-plantedsample-copy".to_owned(),
+        r"C:\Program Files\ProteoWizard\ProteoWizard 3.0 64-bit\PlantedSample042".to_owned(),
+        format!(r"{PROFILE}\AppData\Local\Apps\pwiz-bin-windows-plantedsample"),
+    ]);
+
+    for value in &hostile {
+        for folder in &folders {
+            let planted = Some(value.clone());
+            let facts = Facts {
+                created_at: NOW,
+                app_version: value.clone(),
+                build_profile: value.clone(),
+                build_commit: planted.clone(),
+                saved_ui_language: planted.clone(),
+                ui_preferences: value.clone(),
+                ui_preferences_problem: planted.clone(),
+                windows_version: planted.clone(),
+                windows_build: planted.clone(),
+                windows_edition: planted.clone(),
+                webview2: planted.clone(),
+                backend: Backend {
+                    checked: true,
+                    quarantined: false,
+                    state: planted.clone(),
+                    origin: planted.clone(),
+                    release: planted.clone(),
+                    build_date: planted.clone(),
+                    source_revision: planted.clone(),
+                    msconvert_sha256: planted.clone(),
+                    folder: Some(folder.clone()),
+                    failure: planted.clone(),
+                },
+                remembered_folder: true,
+                remembered_refused_at_startup: planted.clone(),
+                remembered_not_saved: planted,
+                recent_errors: vec![RecentError {
+                    code: value.clone(),
+                    first: NOW,
+                    last: NOW + 1,
+                    repeated: true,
+                }],
+                dropped_errors: 0,
+            };
+            let text = render(&facts, &roots(), &accounts()).to_lowercase();
+            for sentinel in SENTINELS {
+                assert!(
+                    !text.contains(sentinel),
+                    "{sentinel} leaked from {value} / {folder}:\n{text}"
+                );
+            }
+        }
+    }
+}
+
+/// The account name withholds a value only where it is a whole token. As a
+/// substring, a shared workstation's `lab` would withhold `available`, and
+/// which lines were withheld would spell the name out (ADR 0063, decision 3).
+#[test]
+fn an_account_name_withholds_only_a_value_it_is_a_whole_token_of() {
+    assert_eq!(
+        account_names(|name: &str| Some(OsString::from(name.to_lowercase()))),
+        ["username", "user"],
+        "both variables that name the account are read"
+    );
+    let state = |value: &str| Facts {
+        backend: Backend {
+            state: Some(value.to_owned()),
+            ..ordinary().backend
+        },
+        ..ordinary()
+    };
+    let cases = [
+        // Inside a word: kept.
+        ("lab", state("available"), "State: available"),
+        ("lab", state("unavailable"), "State: unavailable"),
+        (
+            "LAB",
+            Facts {
+                ui_preferences: "unavailable".to_owned(),
+                ..ordinary()
+            },
+            "UI preferences: unavailable",
+        ),
+        (
+            "lab",
+            Facts {
+                recent_errors: vec![RecentError {
+                    code: "preview_worker_unavailable".to_owned(),
+                    first: NOW,
+                    last: NOW,
+                    repeated: false,
+                }],
+                ..ordinary()
+            },
+            "- 2026-10-30T08:00:00Z preview_worker_unavailable",
+        ),
+        (
+            "en",
+            Facts {
+                backend: Backend {
+                    origin: Some("chosen".to_owned()),
+                    ..ordinary().backend
+                },
+                ..ordinary()
+            },
+            "Origin: chosen",
+        ),
+        (
+            "en",
+            Facts {
+                saved_ui_language: None,
+                ui_preferences: "absent".to_owned(),
+                ..ordinary()
+            },
+            "UI preferences: absent",
+        ),
+        // A shape that admits no free word is not checked: the name could only
+        // match it by chance, and withholding it would point at the name.
+        (
+            "en",
+            Facts {
+                saved_ui_language: Some("en".to_owned()),
+                ..ordinary()
+            },
+            "Saved UI language: en",
+        ),
+        ("cn", ordinary(), "Saved UI language: zh-CN"),
+        ("jan", ordinary(), "Build date: Jan 13 2026"),
+        ("26200", ordinary(), "Windows build: 26200.6899"),
+        // Where the shape admits a word, the whole value, or a token between
+        // delimiters, even when the name holds a delimiter itself: withheld.
+        ("lab", state("lab_unavailable"), "State: <withheld>"),
+        ("core", ordinary(), "Windows edition: <withheld>"),
+        (
+            "wang.lab",
+            Facts {
+                app_version: "0.1.0-wang.lab".to_owned(),
+                ..ordinary()
+            },
+            "Version: <withheld>",
+        ),
+        (
+            "wang",
+            Facts {
+                app_version: "0.1.0+wang".to_owned(),
+                ..ordinary()
+            },
+            "Version: <withheld>",
+        ),
+    ];
+    for (account, facts, line) in cases {
+        let text = render(&facts, &roots(), &accounts_of(account));
+        assert!(
+            text.contains(&format!("{line}\n")),
+            "{account}: {line} is missing:\n{text}"
+        );
+    }
+}
+
+/// ADR 0005 keeps the installation path out of diagnostics, so nothing below
+/// the root is written, however much it looks like an installer's naming.
+#[test]
+fn a_folder_is_named_only_by_the_known_root_it_sits_under() {
+    let cases = [
+        (
+            r"C:\Program Files\ProteoWizard\ProteoWizard 3.0.26013.47b13cf 64-bit".to_owned(),
+            "<program-files>",
+        ),
+        // Windows compares without case, and a canonical path keeps its
+        // verbatim prefix.
+        (
+            r"\\?\C:\PROGRAM FILES\ProteoWizard".to_owned(),
+            "<program-files>",
+        ),
+        // Compared by component, not by prefix: this is not under the first.
+        (
+            r"C:\Program Files (x86)\ProteoWizard".to_owned(),
+            "<program-files-x86>",
+        ),
+        (
+            format!(r"{PROFILE}\AppData\Local\Apps\ProteoWizard 3.0.26013 64-bit"),
+            "<local-app-data>",
+        ),
+        (format!(r"{PROFILE}\Desktop\pwiz"), "<user-profile>"),
+        // Names a person chose that an installer could also have written.
+        (
+            r"C:\Program Files\pwiz-bin-windows-mouse-liver-cohort-2026".to_owned(),
+            "<program-files>",
+        ),
+        (
+            r"C:\Program Files\pwiz-bin-windows-wang-lab-copy".to_owned(),
+            "<program-files>",
+        ),
+        (
+            r"C:\Program Files\ProteoWizard 2026.10.30".to_owned(),
+            "<program-files>",
+        ),
+        (
+            r"C:\Program Files\ProteoWizard 3.0.dead.beef".to_owned(),
+            "<program-files>",
+        ),
+        (r"C:\Program Files".to_owned(), "<program-files>"),
+        (r"D:\Tools\ProteoWizard".to_owned(), "<other-folder>"),
+        (r"\\server\share\ProteoWizard".to_owned(), "<other-folder>"),
+    ];
+    for (folder, expected) in cases {
+        let facts = Facts {
+            backend: Backend {
+                folder: Some(folder.clone()),
+                ..ordinary().backend
+            },
+            ..ordinary()
+        };
+        let text = render(&facts, &roots(), &accounts());
+        assert!(
+            text.contains(&format!("Folder: {expected}\n")),
+            "{folder} should read {expected}:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn the_largest_summary_every_shape_admits_stays_within_its_bound() {
+    let code = |index: usize| format!("{}{index:02}", "c".repeat(62));
+    let facts = Facts {
+        created_at: u64::from(u32::MAX),
+        app_version: "1".repeat(32),
+        build_profile: code(0),
+        build_commit: Some("f".repeat(40)),
+        saved_ui_language: Some("zh-CN".to_owned()),
+        ui_preferences: code(1),
+        ui_preferences_problem: Some(code(2)),
+        windows_version: Some("9".repeat(8)),
+        windows_build: Some("9".repeat(32)),
+        windows_edition: Some("W".repeat(32)),
+        webview2: Some("9".repeat(32)),
+        backend: Backend {
+            checked: true,
+            quarantined: true,
+            state: Some(code(3)),
+            origin: Some(code(4)),
+            release: Some("9".repeat(32)),
+            build_date: Some("Dec 31 9999".to_owned()),
+            source_revision: Some("f".repeat(40)),
+            msconvert_sha256: Some("F".repeat(64)),
+            folder: Some(r"C:\Program Files (x86)\ProteoWizard".to_owned()),
+            failure: Some(code(5)),
+        },
+        remembered_folder: true,
+        remembered_refused_at_startup: Some(code(6)),
+        remembered_not_saved: Some(code(7)),
+        recent_errors: (0..RECENT_ERROR_CAPACITY)
+            .map(|index| RecentError {
+                code: code(index + 10),
+                first: u64::from(u32::MAX) - 1,
+                last: u64::from(u32::MAX),
+                repeated: true,
+            })
+            .collect(),
+        dropped_errors: u64::MAX,
+    };
+    let text = render(&facts, &roots(), &[]);
+    assert!(
+        !text.contains("<withheld>"),
+        "every value here is admitted, so the bound is measured at its largest:\n{text}"
+    );
+    assert!(
+        text.len() <= MAX_SUMMARY_BYTES,
+        "{} bytes exceeds {MAX_SUMMARY_BYTES}",
+        text.len()
+    );
+}
+
+#[test]
+fn the_ring_keeps_codes_coalesces_repeats_and_counts_what_it_dropped() {
+    let mut ring = RecentErrors::default();
+    ring.note("a_code", 10);
+    ring.note("a_code", 20);
+    ring.note("b_code", 30);
+    ring.note("a_code", 40);
+    ring.note(DATA, 50);
+    // A repeat within the same second still says it repeated.
+    ring.note("c_code", 60);
+    ring.note("c_code", 60);
+    let (entries, dropped) = ring.snapshot();
+    let seen: Vec<(&str, u64, u64, bool)> = entries
+        .iter()
+        .map(|entry| (entry.code.as_str(), entry.first, entry.last, entry.repeated))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("a_code", 10, 20, true),
+            ("b_code", 30, 30, false),
+            ("a_code", 40, 40, false),
+            ("unrecognized_code", 50, 50, false),
+            ("c_code", 60, 60, true),
+        ]
+    );
+    assert_eq!(dropped, 0);
+    let facts = Facts {
+        recent_errors: entries.clone(),
+        ..ordinary()
+    };
+    assert!(
+        render(&facts, &roots(), &accounts())
+            .contains("- 1970-01-01T00:01:00Z c_code (repeated until 1970-01-01T00:01:00Z)\n")
+    );
+
+    for index in 0..40_u64 {
+        ring.note(&format!("code_{index}"), 100 + index);
+    }
+    let (entries, dropped) = ring.snapshot();
+    assert_eq!(entries.len(), RECENT_ERROR_CAPACITY);
+    assert_eq!(dropped, 5 + 40 - RECENT_ERROR_CAPACITY as u64);
+    assert_eq!(
+        entries.last().map(|entry| entry.code.as_str()),
+        Some("code_39")
+    );
+}
+
+#[test]
+fn a_boundary_error_joins_the_ring_by_its_code_alone() {
+    // Not written as a literal after `new(`: the repository check would read
+    // it as a code the boundary sends to the webview.
+    const PROBE: &str = "environment_diagnostics_ring_probe";
+    // The ring is process-wide and the rest of the suite builds errors in
+    // parallel, so 32 other codes could push the probe out before it is read.
+    // Building it again and reading at once settles that without weakening
+    // what is asserted.
+    let joined = (0..1_000).any(|_| {
+        let error = PreviewErrorDto::new(PROBE, format!("{DATA} could not be read"), false)
+            .with_detail(format!(r"{PROFILE}\{DATA}"));
+        error.kind == PROBE && recent_errors().0.iter().any(|entry| entry.code == PROBE)
+    });
+    assert!(joined, "the probe's code never reached the ring");
+    let (entries, _) = recent_errors();
+    assert!(
+        entries
+            .iter()
+            .all(|entry| !entry.code.to_lowercase().contains("plantedsample"))
+    );
+}
+
+/// A usable backend that is whichever build the test last pointed it at.
+struct Swappable(Arc<Mutex<InstallationIdentity>>);
+
+fn build(revision: &str) -> InstallationIdentity {
+    InstallationIdentity::for_test_probed(
+        &PathBuf::from(format!(r"C:\fake\{revision}")),
+        "3.0.26013",
+        None,
+        Some(revision),
+        Sha256Digest::from_bytes([0xAB; 32]),
+    )
+}
+
+impl PreviewProvider for Swappable {
+    fn use_installation(&self, _home: Option<PathBuf>) {}
+
+    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
+        let verdict = BackendAvailabilityDto {
+            state: "available".to_owned(),
+            origin: "automatic".to_owned(),
+            release: Some("3.0.26013".to_owned()),
+            build_date: None,
+            same_installation: true,
+            failure: None,
+        };
+        (verdict, Some(self.0.lock().expect("test lock").clone()))
+    }
+
+    fn run(
+        &self,
+        _source: &Path,
+        _operation: &PreviewOperation,
+    ) -> Result<OperationAttempt, PreviewErrorDto> {
+        panic!("the summary's tests run no preview");
+    }
+}
+
+/// A configuration read or a conversion can bind another build without a new
+/// reading. The summary then says nothing about that build beside the reading
+/// it did not take, rather than mixing the two.
+#[test]
+fn backend_facts_all_describe_the_one_reading_the_session_holds() {
+    let current = Arc::new(Mutex::new(build("aaaaaaa")));
+    let service = PreviewService::new(Box::new(Swappable(Arc::clone(&current))));
+    service.inspect_backend();
+    assert_eq!(
+        service.backend_environment().source_revision.as_deref(),
+        Some("aaaaaaa")
+    );
+
+    *current.lock().expect("test lock") = build("bbbbbbb");
+    service
+        .read_conversion_configuration()
+        .expect("the configuration read answers");
+    let backend = service.backend_environment();
+    assert!(backend.checked);
+    assert_eq!(backend.source_revision, None, "{backend:?}");
+    assert_eq!(backend.msconvert_sha256, None, "{backend:?}");
+
+    service.inspect_backend();
+    assert_eq!(
+        service.backend_environment().source_revision.as_deref(),
+        Some("bbbbbbb")
+    );
+}
