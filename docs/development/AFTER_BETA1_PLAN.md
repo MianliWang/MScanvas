@@ -532,7 +532,9 @@ M10.0 route decision.
 [ADR 0064](../architecture/adr/0064-m10-automation-route.md): a small CLI
 package, `mscanvas`, over the desktop library, driving the same operations
 (inspect, intents, plan, run an approved plan, validate), then one skill, then
-an MCP adapter in the same binary; the plan and run slices wait for PR #161.*
+an MCP adapter in the same binary; the plan and run slices wait for PR #161.
+Accepted by the owner on 2026-10-30, all eight questions as recommended
+(decision A0064).*
 
 ### 7.4 Future capabilities
 
@@ -617,5 +619,6 @@ None can be delivered by engineering alone; each waits for one input.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted. *Drafted 2026-10-30 as
-  [ADR 0064](../architecture/adr/0064-m10-automation-route.md), proposed; its
-  eight open questions are the owner's.*
+  [ADR 0064](../architecture/adr/0064-m10-automation-route.md). Answered
+  2026-10-30: the owner accepted it with its eight questions as recommended
+  (decision A0064).*

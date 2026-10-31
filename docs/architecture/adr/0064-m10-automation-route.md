@@ -1,8 +1,10 @@
 # ADR 0064 — M10 automation route: one CLI over the desktop's own operations, then skills, then a narrow MCP adapter
 
-Status: **Proposed** 2026-10-30, for the owner's decision. Nothing here is
-implemented. Each decision below is the maintainer's recommendation; what the
-owner has to answer is listed [at the end](#open-questions-for-the-owner).
+Status: **Accepted (2026-10-30)**, by the owner's decision A0064 recorded
+under [Owner decision, 2026-10-30](#owner-decision-2026-10-30). Proposed
+2026-10-30. Nothing here is implemented. Each decision below was the
+maintainer's recommendation; the owner accepted all eight
+[open questions](#open-questions-for-the-owner) as recommended.
 Plan: [after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md), section 5
 (phase 1, item 4) and section 7.3; feature catalog AUT-001, AUT-002 and
 AUT-003.
@@ -962,8 +964,14 @@ owner's answers and the hold-release window more than by implementation.
     slice 2).
 - [ADR 0005](0005-mzml-preview-boundary.md) is not amended: no webview
   command is added.
+- [ADR 0058](0058-user-saved-conversion-presets.md), decision 2: a method can
+  leave the app as a plan file (owner decision A0064), by a dated note (done
+  with this record).
 
 ## Open questions for the owner
+
+*Answered by the owner on 2026-10-30, each as recommended; see
+[Owner decision, 2026-10-30](#owner-decision-2026-10-30).*
 
 1. **The route.** A1, a small CLI package over the desktop library, now, and
    A2 only on a measured need, in decision 9's order? Recommended: yes.
@@ -1009,3 +1017,40 @@ owner's answers and the hold-release window more than by implementation.
    refuses (`planStoreFull`), and its location documented. The alternative is
    automatic removal of the oldest entries, which deletes a file the person
    may still want to read and is not proposed.
+
+## Owner decision, 2026-10-30
+
+**Decision A0064.** Shown the open owner decisions, the owner replied
+verbatim "全部按推荐，继续" ("all as recommended, continue"). That accepts
+this ADR and answers its eight questions as recommended:
+
+1. **The route:** A1, a small CLI package over the desktop library, now; A2
+   only on a measured need, in decision 9's order.
+2. **MCP approval:** elicitation. The adapter writes the approval text and no
+   tool call can satisfy it; it does not prove that a person answered.
+   Clients without elicitation are refused (`approvalUnavailable`).
+3. **The cross-process run lock:** while a CLI run holds it, the desktop
+   refuses operations that would start ProteoWizard and names the holder.
+   Viewing an mzML is not refused once #175's reader is the preview's.
+4. **Distribution:** the installer carries `mscanvas.exe` beside
+   `mscanvas-desktop.exe`, documents where it is, and does not change PATH.
+   This is a release change.
+5. **Roots for the CLI:** required for every subcommand that names a file.
+6. **A staging directory a killed run left behind:** `run --reclaim-staging`
+   removes it only for its own plan's items, only while it holds the run lock,
+   only when it carries MSCanvas's marker, and reports each removal. Without
+   the flag the item refuses (`StagingTargetExists`) and the result names the
+   folder.
+7. **Detaching the backend from the console:** the shared crate's spawn adds
+   `CREATE_NO_WINDOW` for every backend process, the desktop's included,
+   confirmed by CLI slice 4's controlled-child test, with ADR 0014's
+   cancellation evidence taken again under the qualification's hold release.
+8. **The MCP adapter's store:** never deleted by the adapter; a fixed cap on
+   its files, set in MCP slice 1, beyond which `plan` refuses
+   (`planStoreFull`); its location documented.
+
+The same decision amends [ADR 0058](0058-user-saved-conversion-presets.md) so
+that a method can leave the app as a plan file (export and import of a method
+as JSON). An imported plan is validated by the same constructor as a preset and
+never runs without review. The amendment is a dated note in ADR 0058's
+decision 2.
