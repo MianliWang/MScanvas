@@ -58,7 +58,7 @@ tauri.workspace = true
 # Copy plot writes an image to the clipboard from Rust. The official plugin's
 # Rust API is used directly; its generic commands stay denied to the webview,
 # which never receives the pixels and has no clipboard capability of its own.
-tauri-plugin-clipboard-manager = "=2.3.3"
+tauri-plugin-clipboard-manager = "=2.5.0"
 # TIFF output for figures, the raster format many journals still ask for. The
 # package is already in the locked graph through `image`, at this version, and
 # only LZW -- whose `weezl` is locked too -- is turned on: a figure is opaque
