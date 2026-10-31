@@ -1,4 +1,5 @@
 import { wholeCount, validateFigureDraft, describeFigureProblem, type FigureSettingsValidation } from "./figureSettingsValidation";
+import { formatCount } from "./format";
 
 import {
   useCallback,
@@ -2717,7 +2718,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         // A resource key and its parameters rather than a sentence. This hook
         // has no message binding -- and should not: the tooltip is rendered in
         // the inspector, which does.
-        { key: "measureOpenDetail", rows: formatRows(openPending.rowCount) },
+        { key: "measureOpenDetail", rows: formatCount(openPending.rowCount) },
       );
     }
     const spectrumPending = pendingSpectrumRender.current;
@@ -4382,8 +4383,4 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     conversionScope,
     setConversionScope,
   };
-}
-
-function formatRows(count: number): string {
-  return count === 1 ? "1 spectrum row" : `${String(count)} spectrum rows`;
 }

@@ -3,9 +3,14 @@
  *
  * The unit suite pins the schema, the range arithmetic and the value window.
  * What only a browser can answer is whether the surface is reachable, whether
- * opening it costs the measured three-panel layout anything, and whether what
- * the shipped bundle actually sends across the boundary is the committed range
- * and the traces on screen.
+ * opening it costs the measured viewer layout anything, and whether what the
+ * shipped bundle actually sends across the boundary is the committed range and
+ * the traces on screen.
+ *
+ * Since the rebuild (spec 3.4, 6) that surface is the Export figure dialog,
+ * opened from the chromatogram head's Export…; the head itself keeps PNG, Copy
+ * and a ⋯ menu with the data documents. The dialog is modal and portaled to the
+ * body, so it adds no row to the viewer and is looked up under its own root.
  *
  * The Tauri backend is mocked at `invoke` and nothing else is, so every claim
  * about which command was called with which argument is a claim about the
@@ -16,6 +21,7 @@ import { ALLOWED_CONSOLE_SUBSTRINGS, boxOf, consoleEntries, ipcCalls } from "../
 import { VENDOR_ROW } from "../support/fixtures";
 import {
   CHROMATOGRAM,
+  type OpenViewerOptions,
   PLOT,
   openTheViewer,
   pointAt,
@@ -24,14 +30,30 @@ import {
   revealThePlot,
   visibleSpan,
 } from "../support/viewer";
+import {
+  FIGURE_DIALOG,
+  answerFigurePreviews,
+  choosePlotMenuItem,
+  closeFigureDialog,
+  figureActions,
+  openFigureDialog,
+  openPlotMenu,
+  plotMenuItem,
+  plotMenuTrigger,
+} from "../support/figure";
 
 /** Enough scans that a range can hold some of them and not others. */
 const SCANS = 200;
 
-const TOGGLE = "button#chromatogram-export-toggle";
-const PANEL = "#chromatogram-export-panel";
+/** The chromatogram head's Export…, which opens the dialog. */
+const ENTRY = `${figureActions(CHROMATOGRAM)} > button:first-child`;
+const PANEL = FIGURE_DIALOG;
 /** The evidence column, the viewer's scroll owner since M7.2/M7.3. */
 const EVIDENCE = "#workbench-evidence";
+/** The dialog's "Current range" option, which names the window it covers. */
+const CURRENT_OPTION = `${PANEL} .figure-export-range [role="radio"]:first-child`;
+/** The window that option names, at four decimals. */
+const RT_WINDOW = /RT (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)/u;
 
 async function unexpectedConsole(): Promise<string[]> {
   return (await consoleEntries())
@@ -39,14 +61,25 @@ async function unexpectedConsole(): Promise<string[]> {
     .map((entry) => `${entry.level}: ${entry.text}`);
 }
 
-/** Opens the export surface, which every viewer opens closed. */
+/**
+ * A viewer of a long enough run, with the dialog's preview answered.
+ *
+ * The dialog's Copy, SVG and PNG wait for a drawn preview, answered here with a
+ * labelled mock: the arguments these tests watch are the export commands'.
+ * In-page, so installed once the page has loaded.
+ */
+async function openViewer(options: OpenViewerOptions = {}): Promise<void> {
+  await openTheViewer({ width: 1_366, height: 768, ...options, scans: SCANS });
+  await answerFigurePreviews();
+}
+
+/** Opens the export surface: the chromatogram head's Export…. */
 async function openExport(): Promise<void> {
-  await browser.$(TOGGLE).click();
-  await browser.$(PANEL).waitForDisplayed({ timeout: 10_000 });
+  await openFigureDialog(CHROMATOGRAM);
 }
 
 /**
- * One of this panel's controls, found by its own text.
+ * One of the dialog's controls, found by its own text.
  *
  * Chained rather than written as one selector string: WebdriverIO's text
  * pseudo-selector is not CSS and cannot be combined with a CSS prefix, and the
@@ -56,13 +89,35 @@ function control(label: string) {
   return browser.$(PANEL).$(`button=${label}`);
 }
 
+/**
+ * Whether an action is offered: neither disabled nor refused. A refused action
+ * is `aria-disabled` and keeps its Tab stop, so `isEnabled` alone says nothing.
+ */
+async function offered(label: string): Promise<boolean> {
+  const button = control(label);
+  return (await button.isEnabled()) && (await button.getAttribute("aria-disabled")) !== "true";
+}
+
+/**
+ * Presses a dialog action once it is offered. The figure actions wait for the
+ * preview of the current question, so a press before it is drawn is refused --
+ * which is the product working, not something to race.
+ */
+async function press(label: string): Promise<void> {
+  await browser.waitUntil(() => offered(label), {
+    timeout: 15_000,
+    timeoutMsg: `${label} was never offered`,
+  });
+  await control(label).click();
+}
+
 /** Every action the export surface offers, in the order they are laid out. */
 const EXPORT_ACTIONS = [
-  "Export SVG\u2026",
-  "Export PNG\u2026",
+  "Export CSV…",
+  "Export TSV…",
   "Copy plot",
-  "Export CSV\u2026",
-  "Export TSV\u2026",
+  "Export SVG…",
+  "Export PNG…",
 ] as const;
 
 /**
@@ -84,16 +139,6 @@ async function scrollTo(selector: string, top: number): Promise<void> {
     selector,
     top,
   );
-}
-
-/** How far one scroll owner can be scrolled, and how tall it thinks it is. */
-async function scrollExtent(selector: string): Promise<{ height: number; extent: number }> {
-  return browser.execute((css: string) => {
-    const owner = document.querySelector(css);
-    return owner === null
-      ? { height: 0, extent: 0 }
-      : { height: owner.clientHeight, extent: owner.scrollHeight };
-  }, selector);
 }
 
 /**
@@ -156,10 +201,10 @@ async function reachability(label: string): Promise<{
 }
 
 /**
- * Scrolls the viewer column until one control is genuinely reachable.
+ * Scrolls the dialog until one control is genuinely reachable.
  *
  * The offset is computed rather than stepped towards: the control's position
- * within the scrolling column is known, so one scroll puts it in the middle of
+ * within its scrolling column is known, so one scroll puts it in the middle of
  * the visible band. Answers the measurement taken afterwards, so a failure
  * reports what was actually on screen rather than only that a search gave up.
  */
@@ -198,44 +243,67 @@ async function bringIntoView(label: string): Promise<Awaited<ReturnType<typeof r
   return reachability(label);
 }
 
-/** Where one panel sits, for the assertions about panels not covering others. */
-async function panelBox(selector: string): Promise<{ top: number; bottom: number }> {
-  return browser.execute((css: string) => {
-    const found = document.querySelector(css);
-    if (found === null) {
-      return { top: 0, bottom: 0 };
-    }
-    const rect = found.getBoundingClientRect();
-    return { top: Math.round(rect.top), bottom: Math.round(rect.bottom) };
-  }, selector);
+interface Band {
+  readonly top: number;
+  readonly bottom: number;
+  readonly left: number;
+  readonly right: number;
+}
+
+/** Where the viewer's three panels sit, for the assertions about them staying apart. */
+async function viewerPanels(): Promise<{ chromatogram: Band; table: Band; spectrum: Band }> {
+  return browser.execute((chromatogram: string) => {
+    const band = (css: string) => {
+      const rect = document.querySelector(css)?.getBoundingClientRect();
+      return rect === undefined
+        ? { top: 0, bottom: 0, left: 0, right: 0 }
+        : {
+            top: Math.round(rect.top),
+            bottom: Math.round(rect.bottom),
+            left: Math.round(rect.left),
+            right: Math.round(rect.right),
+          };
+    };
+    return {
+      chromatogram: band(chromatogram),
+      table: band("section.spectrum-table-panel"),
+      spectrum: band("section.spectrum-panel"),
+    };
+  }, CHROMATOGRAM);
 }
 
 /** Chooses a range scope by its visible label. */
 async function chooseScope(label: string): Promise<void> {
-  await browser.$(PANEL).$(`label*=${label}`).click();
+  await browser.$(PANEL).$(`button*=${label}`).click();
 }
 
 /**
- * What the panel says the current range is.
+ * What the dialog says the current range is: the "Current range" option, with
+ * the committed window it covers when one narrower than the run is committed.
  *
  * Read from the document rather than through `getText`, which answers only for
- * text inside the viewport. The viewer column scrolls, so a panel opened at the
- * bottom of it is present, correct and partly below the fold -- and a helper
- * that returned an empty string for it would fail a test about what the product
- * says.
+ * text inside the viewport, and the options column scrolls on its own.
  */
 async function rangeNote(): Promise<string> {
   return browser.execute(
     (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
-    `${PANEL} .chromatogram-export-note`,
+    CURRENT_OPTION,
   );
 }
 
-/** What this panel's live region says, read the same way and for the same reason. */
+/** What the dialog's result line says, read the same way and for the same reason. */
 async function exportStatus(): Promise<string> {
   return browser.execute(
     (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
-    `${PANEL} .spectrum-export-status`,
+    `${PANEL} .figure-export-result [role="status"]`,
+  );
+}
+
+/** What the chromatogram's own result line under the plot says. */
+async function plotStatus(): Promise<string> {
+  return browser.execute(
+    (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
+    `${CHROMATOGRAM} .spectrum-export-status:not(.linked-figure-status)`,
   );
 }
 
@@ -246,34 +314,54 @@ async function lastExportRequest(): Promise<Record<string, unknown> | null> {
   return (began.at(-1)?.args ?? null) as Record<string, unknown> | null;
 }
 
+/** Whether the plot draws a range band, the trace of a range drag. */
+async function bandVisibility(): Promise<string | null> {
+  return browser.execute(
+    (css: string) => document.querySelector(`${css} .plot-range-band`)?.getAttribute("visibility") ?? null,
+    PLOT,
+  );
+}
+
+/** Narrows the run with a wheel over the plot, and waits for it to settle. */
+async function narrowTheRun(): Promise<void> {
+  const at = await pointAt(0.5);
+  const full = await visibleSpan();
+  await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -500 }).perform();
+  await browser.waitUntil(async () => (await visibleSpan()) < full, {
+    timeout: 10_000,
+    timeoutMsg: "the wheel never changed the visible range",
+  });
+}
+
 describe("exporting the chromatogram, rendered", () => {
   it("adds nothing to the viewer's height while it is closed", async () => {
     /*
-     * The three-panel column has measured floors and its panels clip, so a
-     * disclosure that added a row to the body would push a control out of the
-     * panel rather than make it taller. The control that opens this one lives
-     * in the header row that already exists.
+     * The viewer's column has measured floors and its panels clip, so a surface
+     * that added a row to the body would push a control out of the panel rather
+     * than make it taller. The control that opens this one lives in the head
+     * row that already exists, and what it opens is a dialog over the viewer.
      */
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openViewer();
 
     const closed = await boxOf(CHROMATOGRAM);
     expect(await browser.$(PANEL).isExisting()).toBe(false);
-    expect(await browser.$(TOGGLE).getAttribute("aria-expanded")).toBe("false");
-    // The plot is still drawn at its own size, with the toggle beside the other
-    // header controls rather than above or below them.
+    // The plot is still drawn at its own size, with the entry beside the other
+    // head controls rather than above or below them.
     const plot = await boxOf(PLOT);
     expect(plot.height).toBeGreaterThan(40);
-    const toggle = await boxOf(TOGGLE);
-    expect(toggle.top).toBeLessThan(plot.top);
+    const entry = await boxOf(ENTRY);
+    expect(entry.top).toBeLessThan(plot.top);
+    expect(await browser.$(ENTRY).getAttribute("aria-label")).toBe("Export figure");
 
     await openExport();
 
-    // Open, it is inside the panel and nothing it added is off the page.
+    // Open, it has a box of its own, and the chromatogram's did not change.
     const panel = await boxOf(PANEL);
     expect(panel.width).toBeGreaterThan(0);
     expect(panel.height).toBeGreaterThan(0);
     const opened = await boxOf(CHROMATOGRAM);
-    expect(opened.height).toBeGreaterThanOrEqual(closed.height);
+    expect(Math.abs(opened.height - closed.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(opened.top - closed.top)).toBeLessThanOrEqual(1);
     expect(await unexpectedConsole()).toEqual([]);
   });
 
@@ -283,11 +371,11 @@ describe("exporting the chromatogram, rendered", () => {
     { name: "960x640", width: 960, height: 640 },
   ] as const) {
     it(`keeps every export control inside the panel at ${viewport.name}`, async () => {
-      await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
+      await openViewer({ width: viewport.width, height: viewport.height });
       await openExport();
 
       const panel = await boxOf(PANEL);
-      for (const label of ["Export SVG…", "Export PNG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
+      for (const label of EXPORT_ACTIONS) {
         const found = control(label);
         expect(await found.isDisplayed()).toBe(true);
         const at = await found.getLocation();
@@ -313,19 +401,12 @@ describe("exporting the chromatogram, rendered", () => {
        *
        * What is asserted here is reachability rather than position: the whole
        * rectangle inside everything that clips, and `elementFromPoint` landing
-       * on the control. Getting there uses the application's own scroll owner,
-       * because a control only the WebDriver can reveal is not reachable.
+       * on the control. Getting there uses the dialog's own scroll owner (its
+       * options column scrolls at a small window), because a control only the
+       * WebDriver can reveal is not reachable.
        */
-      await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
-      const closed = await scrollExtent(EVIDENCE);
+      await openViewer({ width: viewport.width, height: viewport.height });
       await openExport();
-
-      // Opening puts the surface into a scrollable layout rather than into a
-      // clipped area: the column that scrolls the evidence has more to scroll
-      // through. Since M7.2/M7.3 that owner is the evidence column, not the
-      // chromatogram panel of the three-row grid this first measured (PM9.3).
-      const opened = await scrollExtent(EVIDENCE);
-      expect(opened.extent).toBeGreaterThan(closed.extent);
 
       for (const label of EXPORT_ACTIONS) {
         const reach = await bringIntoView(label);
@@ -337,62 +418,23 @@ describe("exporting the chromatogram, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it(`keeps the linked panels reachable and apart at ${viewport.name}`, async () => {
-      // Opening the surface must not buy its room by covering the views beside
-      // it. Each panel keeps its own band, and each is still scrollable to.
-      await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
-      await openExport();
+    it(`keeps the viewer's panels where they were, and apart, at ${viewport.name}`, async () => {
+      // Opening the surface must not buy its room by moving the views beneath
+      // it. Each panel keeps its own band, and each keeps it while the dialog
+      // is open.
+      await openViewer({ width: viewport.width, height: viewport.height });
       await scrollTo(EVIDENCE, 0);
+      const closed = await viewerPanels();
+      await openExport();
+      const opened = await viewerPanels();
+      expect(opened).toEqual(closed);
 
-      // M7.3's order: chromatogram, selected spectrum, then scans (this was
-      // written for the earlier chromatogram, scans, spectrum; PM9.3).
-      const chromatogram = await panelBox(CHROMATOGRAM);
-      const table = await panelBox("section.spectrum-table-panel");
-      const spectrum = await panelBox("section.spectrum-panel");
-      expect(chromatogram.bottom).toBeLessThanOrEqual(spectrum.top + 1);
-      expect(spectrum.bottom).toBeLessThanOrEqual(table.top + 1);
-
-      // And nothing the surface draws reaches into the panel below it. The
-      // boxes not overlapping is not the same claim: a panel that spills its
-      // content keeps its own bounds and paints over its neighbour anyway,
-      // which is buying room rather than making it.
-      const intruding = await browser.execute((labels: readonly string[]) => {
-        const below = document.querySelector("section.spectrum-panel");
-        if (below === null) {
-          return ["the selected spectrum is not on screen"];
-        }
-        const bounds = below.getBoundingClientRect();
-        // Only what is actually painted there. A control scrolled out of its
-        // own panel still reports the position it would occupy, and clipped
-        // away is not the same as drawn over the neighbour.
-        const clipped = (node: Element): boolean => {
-          const rect = node.getBoundingClientRect();
-          for (
-            let up: HTMLElement | null = (node as HTMLElement).parentElement;
-            up !== null && up !== document.body;
-            up = up.parentElement
-          ) {
-            const style = getComputedStyle(up);
-            if (style.overflowX === "visible" && style.overflowY === "visible") {
-              continue;
-            }
-            const box = up.getBoundingClientRect();
-            if (rect.top < box.top - 1 || rect.bottom > box.bottom + 1) {
-              return true;
-            }
-          }
-          return false;
-        };
-        return Array.from(document.querySelectorAll("button"))
-          .filter((node) => labels.includes((node.textContent ?? "").trim()))
-          .filter((node) => !clipped(node))
-          .filter((node) => {
-            const rect = node.getBoundingClientRect();
-            return rect.bottom > bounds.top + 1 && rect.top < bounds.bottom - 1;
-          })
-          .map((node) => (node.textContent ?? "").trim());
-      }, EXPORT_ACTIONS);
-      expect(intruding).toEqual([]);
+      // The rebuild's order (spec 3.1): the chromatogram across the top, then
+      // the scan list beside the spectrum it selects.
+      expect(closed.chromatogram.bottom).toBeLessThanOrEqual(
+        Math.min(closed.table.top, closed.spectrum.top) + 1,
+      );
+      expect(closed.table.right).toBeLessThanOrEqual(closed.spectrum.left + 1);
 
       // And the plot itself did not pay for the surface by disappearing.
       const plot = await boxOf(PLOT);
@@ -403,17 +445,16 @@ describe("exporting the chromatogram, rendered", () => {
 
   it("keeps the export actions reachable while the settings are unusable", async () => {
     // The surface is taller in its error state: two live problem sentences
-    // appear above the actions. A layout that fits only the shortest successful
+    // appear among the options. A layout that fits only the shortest successful
     // state is a layout that clips exactly when a user is trying to correct
     // something.
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openViewer();
     await openExport();
 
-    // By id: since M7.1 a SettingField's label sits beside its input rather than
-    // around it, so `label*=… input` finds nothing (PM9.7; slice-03 §5 (b)).
-    // Emptied by keys, as m7.4-conversion-figures does, so React sees the edit.
-    for (const field of ["#chromatogram-widthPx", "#chromatogram-pngDpi"]) {
-      await browser.$(field).click();
+    // By id suffix: the dialog's ids come from `useId`. Emptied by keys, as
+    // m7.4-conversion-figures does, so React sees the edit.
+    for (const field of ["-widthPx", "-pngDpi"]) {
+      await browser.$(`${PANEL} input[id$="${field}"]`).click();
       await browser.keys(["Control", "a"]);
       await browser.keys("Backspace");
     }
@@ -425,7 +466,7 @@ describe("exporting the chromatogram, rendered", () => {
     }, `${PANEL} .spectrum-figure-problem`);
     expect(problems.length).toBeGreaterThan(0);
 
-    for (const label of ["Export CSV\u2026", "Export TSV\u2026"]) {
+    for (const label of ["Export CSV…", "Export TSV…"]) {
       const reach = await bringIntoView(label);
       expect(reach.clippedBy).toEqual([]);
       expect(reach.hitTestReachesIt).toBe(true);
@@ -437,12 +478,12 @@ describe("exporting the chromatogram, rendered", () => {
     // Reachability that stops at geometry proves less than it looks. This one
     // scrolls the real column, clicks the real control, and asserts the request
     // crossed the boundary.
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openViewer();
     await openExport();
 
-    const reach = await bringIntoView("Export CSV\u2026");
+    const reach = await bringIntoView("Export CSV…");
     expect(reach.hitTestReachesIt).toBe(true);
-    await control("Export CSV\u2026").click();
+    await control("Export CSV…").click();
 
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, {
       timeout: 10_000,
@@ -453,7 +494,7 @@ describe("exporting the chromatogram, rendered", () => {
   });
 
   it("exports the whole run until a range is chosen", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openViewer();
     await openExport();
 
     await control("Export CSV…").click();
@@ -470,12 +511,14 @@ describe("exporting the chromatogram, rendered", () => {
   });
 
   it("says a current range is the whole run until the viewport is committed", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openViewer();
     await openExport();
     await chooseScope("Current range");
 
-    // M7.3's sentence; the copy this first expected predates it (PM9.3).
-    expect(await rangeNote()).toContain("whole run until a range is committed");
+    // Chosen, and naming no window: nothing narrower than the run is
+    // committed, and the option does not invent one to look different.
+    expect(await browser.$(CURRENT_OPTION).getAttribute("aria-checked")).toBe("true");
+    expect(await rangeNote()).toBe("Current range");
 
     await control("Export CSV…").click();
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
@@ -490,34 +533,25 @@ describe("exporting the chromatogram, rendered", () => {
   });
 
   it("sends the committed range once the viewport has been moved", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
-    const at = await pointAt(0.5);
-    const full = await visibleSpan();
-    await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -500 }).perform();
-    await browser.waitUntil(async () => (await visibleSpan()) < full, {
-      timeout: 10_000,
-      timeoutMsg: "the wheel never changed the visible range",
-    });
+    await openViewer();
+    await narrowTheRun();
     await openExport();
     await chooseScope("Current range");
-    // The gesture settles a moment after the last event, and the panel says
+    // The gesture settles a moment after the last event, and the option says
     // which range it settled on.
-    await browser.waitUntil(async () => /Current range is [\d.]/u.test(await rangeNote()), {
+    await browser.waitUntil(async () => RT_WINDOW.test(await rangeNote()), {
       timeout: 10_000,
-      timeoutMsg: "the committed range never reached the panel",
+      timeoutMsg: "the committed range never reached the dialog",
     });
 
     await control("Export CSV…").click();
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
 
     const range = (await lastExportRequest())?.["range"] as Record<string, number | null>;
-    // Compared against what the panel offered rather than against the axis
-    // caption: both are drawn from the committed domain, and the panel is the
+    // Compared against what the dialog offered rather than against the axis
+    // caption: both are drawn from the committed domain, and the dialog is the
     // one this surface promised to export.
-    // The sentence ends in a full stop, and a greedy `[\d.]+` swallows it -- so
-    // the second number is matched as a number rather than as digits-and-dots.
-    const [, low, high] =
-      /Current range is (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)/u.exec(await rangeNote()) ?? [];
+    const [, low, high] = RT_WINDOW.exec(await rangeNote()) ?? [];
     expect(range["scope"]).toBe("current");
     expect(Number(range["low"])).toBeCloseTo(Number(low), 3);
     expect(Number(range["high"])).toBeCloseTo(Number(high), 3);
@@ -527,43 +561,32 @@ describe("exporting the chromatogram, rendered", () => {
   it("does not export the range a gesture is still holding", async () => {
     /*
      * A transient range is a drawing, not a decision. An export invoked while a
-     * wheel or a drag is in flight writes the last range the user settled on --
-     * and the panel goes on saying that one, so what is offered and what is
-     * sent agree.
+     * wheel or a drag is in flight writes the last range the user settled on.
      */
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
-    const at = await pointAt(0.5);
-    const full = await visibleSpan();
-    await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -500 }).perform();
-    await browser.waitUntil(async () => (await visibleSpan()) < full, { timeout: 10_000 });
+    await openViewer();
+    await narrowTheRun();
     await openExport();
     await chooseScope("Current range");
-    await browser.waitUntil(async () => /Current range is [\d.]/u.test(await rangeNote()), {
+    await browser.waitUntil(async () => RT_WINDOW.test(await rangeNote()), {
       timeout: 10_000,
     });
-    const committed = await rangeNote();
+    const [, low, high] = RT_WINDOW.exec(await rangeNote()) ?? [];
+    // The scope is the workspace's, so it outlives the dialog.
+    await closeFigureDialog();
 
     /*
      * A drag that has moved and has not been released.
      *
-     * Two things this needed before it was a drag at all, both found while M4.4
-     * was measuring the same surface.
-     *
-     * The plot is scrolled back onto the screen first. The export surface is
-     * taller than the three-panel column has room for, so opening it puts the
-     * plot below its panel's own fold -- and the panel clips. A pointer put at
-     * the centre of the plot's *layout* box therefore landed on whatever was
-     * painted at that screen point instead: measured at 1366x768 on the M4.3
-     * surface, a `<span>` of the panel below. The gesture this test is about
-     * never started, and every assertion held vacuously.
-     *
-     * And the release is skipped explicitly. `perform()` releases the pointer
-     * when the sequence ends, so "has not been released" was true only for the
-     * 120ms the settle debounce had left to run -- an assertion about
-     * scheduling. `perform(true)` leaves the button down, which is what the
-     * sentence above says.
+     * The plot is scrolled onto the screen first, through the product's scroll
+     * owners, so the pointer lands on the plot rather than on whatever is
+     * painted at its layout box's centre. And the release is skipped
+     * explicitly: `perform()` releases the pointer when the sequence ends, so
+     * "has not been released" would be true only for the settle debounce.
+     * `perform(true)` leaves the button down, which is what the sentence above
+     * says.
      */
     const plot = await revealThePlot();
+    const committed = await rangeCaption();
     const start = { x: Math.round(plot.left + plot.width * 0.6), y: Math.round(plot.top + plot.height / 2) };
     await browser
       .action("pointer")
@@ -571,28 +594,51 @@ describe("exporting the chromatogram, rendered", () => {
       .down()
       .move({ x: start.x - 80, y: start.y })
       .perform(true);
-    const transient = await rangeCaption();
-    expect(transient).not.toBe(committed);
+    // A primary-button drag draws a range band over the plot: a transient
+    // range, drawn and not yet decided, while the caption keeps the committed one.
+    expect(await bandVisibility()).toBe("visible");
+    expect(await rangeCaption()).toBe(committed);
 
-    // The panel still offers the committed range, not the one being drawn.
-    expect(await rangeNote()).toBe(committed);
+    // An export asked for now -- Copy plot from the ⋯ menu (direction A),
+    // chosen from the keyboard without moving the held pointer -- carries the
+    // committed range, not the one being drawn.
+    await browser.execute((css: string) => {
+      document.querySelector<HTMLElement>(css)?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    }, plotMenuTrigger(CHROMATOGRAM));
+    await browser.$('[role="menuitem"]').waitForExist({ timeout: 10_000 });
+    await browser.execute(() => {
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.startsWith("Copy plot"))?.click();
+    });
+    await browser.waitUntil(
+      async () => (await ipcCalls()).some((call) => call.command === "copy_chromatogram_plot"),
+      { timeout: 10_000, timeoutMsg: "the copy never reached the boundary" },
+    );
+    const copied = (await ipcCalls()).find((call) => call.command === "copy_chromatogram_plot");
+    const range = copied?.args["range"] as Record<string, number | null>;
+    expect(range["scope"]).toBe("current");
+    expect(Number(range["low"])).toBeCloseTo(Number(low), 3);
+    expect(Number(range["high"])).toBeCloseTo(Number(high), 3);
+
     await browser.action("pointer").up().perform();
-    // And the gesture was not settled or cancelled by being read: releasing it
-    // still commits what it was showing.
-    await browser.waitUntil(async () => (await rangeCaption()) === transient, { timeout: 10_000 });
+    // And neither the export nor the release committed the drawn range: what
+    // the viewer shows as committed is still the range the reader settled on.
+    expect(await rangeCaption()).toBe(committed);
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("sends the traces that are on screen with a figure", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openViewer();
     await openExport();
 
-    await control("Export SVG…").click();
+    await press("Export SVG…");
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
     expect((await lastExportRequest())?.["traces"]).toEqual({ tic: true, bpc: false });
 
-    await browser.$(CHROMATOGRAM).$("label*=BPC").click();
-    await control("Export SVG…").click();
+    // The traces are chosen on the plot, so the dialog is closed to choose one.
+    await closeFigureDialog();
+    await browser.$(CHROMATOGRAM).$("button=BPC").click();
+    await openExport();
+    await press("Export SVG…");
     await browser.waitUntil(
       async () => {
         const calls = await ipcCalls();
@@ -604,41 +650,52 @@ describe("exporting the chromatogram, rendered", () => {
   });
 
   it("closes the figure outputs with no trace on screen, and leaves the data", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
-    await browser.$(CHROMATOGRAM).$("label*=TIC").click();
-    await openExport();
+    await openViewer();
+    await browser.$(CHROMATOGRAM).$("button=TIC").click();
 
-    for (const label of ["Export SVG…", "Export PNG…", "Copy plot"]) {
-      expect(await control(label).isEnabled()).toBe(false);
+    // The figure actions under ⋯ (direction A) are refused, not disabled: each
+    // stays in the menu's order and says why inside itself.
+    await openPlotMenu(CHROMATOGRAM);
+    for (const name of ["Quick PNG", "Copy plot"]) {
+      const item = browser.$(plotMenuItem(name));
+      expect(await item.getAttribute("aria-disabled")).toBe("true");
+      expect(await item.getText()).toContain("Both traces are hidden.");
+      // Chosen anyway: the refusal is what reaches the boundary, which is nothing.
+      await item.click();
     }
-    for (const label of ["Export CSV…", "Export TSV…"]) {
-      expect(await control(label).isEnabled()).toBe(true);
-    }
-    expect(await browser.$(PANEL).$("*=Data exports always include both").isExisting()).toBe(
-      true,
+    const figureCalls = (await ipcCalls()).filter(
+      (call) => call.command === "begin_chromatogram_export" || call.command === "copy_chromatogram_plot",
     );
+    expect(figureCalls).toEqual([]);
 
-    await control("Export TSV…").click();
+    // The data documents stay offered in the same menu, and still work.
+    for (const name of ["Export CSV", "Export TSV"]) {
+      expect(await browser.$(plotMenuItem(name)).getAttribute("aria-disabled")).toBe(null);
+    }
+    await browser.$(plotMenuItem("Export TSV")).click();
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
     expect((await lastExportRequest())?.["format"]).toBe("tsv");
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("needs no selected spectrum, and keeps working once there is one", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openViewer();
     await openExport();
-    expect(await control("Export CSV…").isEnabled()).toBe(true);
+    expect(await offered("Export CSV…")).toBe(true);
+    await closeFigureDialog();
 
-    // Now with a spectrum read, which is when both export surfaces are on
-    // screen at once.
+    // Now with a spectrum read, which is when both plots carry export actions
+    // at once.
     await browser.$('div.spectrum-table-row[data-row-position="2"]').click();
     await browser.waitUntil(
       async () => (await ipcCalls()).some((call) => call.command === "load_selected_spectrum"),
       { timeout: 10_000 },
     );
+    await browser.$(figureActions("section.spectrum-panel")).waitForExist({ timeout: 10_000 });
 
-    expect(await control("Export CSV…").isEnabled()).toBe(true);
-    // Two panels, and no identifier collision between them.
+    await openExport();
+    expect(await offered("Export CSV…")).toBe(true);
+    // Two plots' actions and the dialog, and no identifier collision between them.
     const duplicated = await browser.execute(() => {
       const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
       return ids.length - new Set(ids).size;
@@ -648,16 +705,17 @@ describe("exporting the chromatogram, rendered", () => {
   });
 
   it("keeps the export surface through a vendor row's focus", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
-    await openExport();
+    await openViewer();
 
     // The M7.2 grouped roster's row, revealed where the window folds the roster
-    // (PM9.7; slice-03 §5 (b): `li.dataset-row` no longer exists).
+    // (PM9.7; slice-03 §5 (b): `li.dataset-row` no longer exists). A vendor row
+    // is selected, not opened; the dialog is modal, so this happens first.
     await revealRosterRow(VENDOR_ROW.handle);
     await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`).click();
 
     expect(await browser.$(PLOT).isDisplayed()).toBe(true);
-    expect(await control("Export CSV…").isEnabled()).toBe(true);
+    await openExport();
+    expect(await offered("Export CSV…")).toBe(true);
     await control("Export CSV…").click();
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
     // The run that is loaded, not the row that has focus.
@@ -666,7 +724,7 @@ describe("exporting the chromatogram, rendered", () => {
   });
 
   it("says what was saved", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openViewer();
     await openExport();
 
     await control("Export CSV…").click();
@@ -679,20 +737,23 @@ describe("exporting the chromatogram, rendered", () => {
     expect(said).toContain("mscanvas-chromatogram-full.csv");
     // The count Rust holds, not the rows this document received.
     expect(said).toContain("36,319");
+    // And the plot says it too, once the dialog has returned to the viewer.
+    await closeFigureDialog();
+    expect(await plotStatus()).toBe(said);
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("copies the plot without a dialog", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
-    await openExport();
+    await openViewer();
 
-    await control("Copy plot").click();
+    // Copy plot from the ⋯ menu: no figure dialog and no save dialog.
+    await choosePlotMenuItem(CHROMATOGRAM, "Copy plot");
 
     await browser.waitUntil(
       async () => (await ipcCalls()).some((call) => call.command === "copy_chromatogram_plot"),
       { timeout: 10_000, timeoutMsg: "the copy never reached the boundary" },
     );
-    await browser.waitUntil(async () => (await exportStatus()).includes("Copied"), {
+    await browser.waitUntil(async () => (await plotStatus()).includes("Copied"), {
       timeout: 10_000,
       timeoutMsg: "the copy never reported itself",
     });
@@ -700,18 +761,21 @@ describe("exporting the chromatogram, rendered", () => {
     expect(calls.some((call) => call.command === "copy_chromatogram_plot")).toBe(true);
     // No save dialog was involved: a copy chooses no destination.
     expect(calls.some((call) => call.command === "save_chromatogram_export")).toBe(false);
+    expect(await browser.$(PANEL).isExisting()).toBe(false);
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("leaves the console clean through a whole export session", async () => {
-    await openTheViewer({ width: 1_366, height: 768, scans: SCANS });
+    await openViewer();
     await openExport();
     await chooseScope("Current range");
     await chooseScope("Full run");
-    await browser.$(CHROMATOGRAM).$("label*=BPC").click();
-    await control("Export SVG…").click();
+    await closeFigureDialog();
+    await browser.$(CHROMATOGRAM).$("button=BPC").click();
+    await openExport();
+    await press("Export SVG…");
     await browser.waitUntil(async () => (await lastExportRequest()) !== null, { timeout: 10_000 });
-    await browser.$(TOGGLE).click();
+    await closeFigureDialog();
 
     expect(await browser.$(PANEL).isExisting()).toBe(false);
     expect(await unexpectedConsole()).toEqual([]);

@@ -17,8 +17,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath } from "node:url";
 
 import type { DestinationPolicy, WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
-import { waitUntilOffered } from "../support/conversion";
-import { revealTauriRoster } from "../support/tauriPanel";
+import { openNextConversion, waitUntilOffered } from "../support/conversion";
+import { clearRosterList, revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(HERE, "..", "..");
@@ -26,7 +26,7 @@ const FIXTURE = process.env["MSCANVAS_THERMO_FIXTURE"];
 const OUTPUT_ROOT = process.env["MSCANVAS_M67_NATIVE_OUTPUT_ROOT"];
 const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
 const PANEL = "section.conversion-panel";
-const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
+const CONVERT = `${PANEL} .conversion-start`;
 const ROWS = '.grouped-roster [role="row"][data-handle]';
 const runNative = FIXTURE !== undefined && OUTPUT_ROOT !== undefined ? describe : describe.skip;
 
@@ -116,12 +116,8 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
     scenario += 1;
     await browser.setWindowSize(1366, 768);
     await showRoster();
-    const clear = browser.$("button=Clear list");
-    if (await clear.isExisting()) {
-      await reveal("#workbench-roster .dataset-roster-actions");
-      await clear.click();
-      await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
-    }
+    // Clear list is the roster footer's list-menu item (direction A 2.1).
+    await clearRosterList();
   });
 
   afterEach(async () => {
@@ -152,7 +148,7 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
   async function add(path: string): Promise<void> {
     await showRoster();
     const before = await browser.$$(ROWS).length;
-    await browser.$("button=Add files…").waitForEnabled({ timeout: 60_000 });
+    await browser.waitUntil(async () => (await browser.$("button=Add files…").getAttribute("aria-disabled")) === null, { timeout: 60_000, timeoutMsg: "Add files… was never offered" });
     await reveal("#workbench-roster [data-add-files]");
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);
     const [handled] = await Promise.all([handler, browser.$("button=Add files…").click()]);
@@ -218,7 +214,11 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
       const [handled] = await Promise.all([handler, browser.$(CONVERT).click()]);
       evidence.push({ kind: "native-picker", scenario, result: handled });
     }
-    return terminal(previousId);
+    const finished = await terminal(previousId);
+    // The next conversion's form stays off screen under a finished queue
+    // until asked for (rebuild review 6); the steps after this one use it.
+    await openNextConversion(PANEL);
+    return finished;
   }
 
   function output(path: string): void {
@@ -262,7 +262,7 @@ runNative("M6.7 real native destination and conflict proof (requires authorized 
   }
 
   async function showConversion(): Promise<void> {
-    await browser.$("button=Conversion & results").click();
+    await browser.$("button=Conversion").click();
     await browser.$("#workbench-conversion").waitForDisplayed();
   }
 

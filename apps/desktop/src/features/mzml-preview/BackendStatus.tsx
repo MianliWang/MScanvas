@@ -1,39 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-import type { MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { Button, Disclosure, Icon } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { joinSentences } from "../preferences/i18n";
+import { STATUS_BACKEND_ID } from "../workbench/StatusBar";
 import { presentBackend, type BackendActionId } from "./backendPresentation";
 import type { BackendState } from "./usePreviewWorkspace";
 
-/**
- * The control that opened the native folder picker, and the action it named.
- *
- * The name is kept because surviving the request is not the same as still being
- * the same control. A new verdict re-renders the banner in place, and React
- * keeps the button node and relabels it -- `Search automatically` takes over
- * the slot `Choose folder…` was in. Focusing that node would hand the keyboard
- * to an action the user never reached for, one Enter away from undoing the
- * choice they just made.
- *
- * What identifies the action is its semantic id, not its label. The label is
- * not an identity at all once the interface has two languages: the same action
- * reads differently in each, and applying a language while a picker is open
- * would make every action look replaced. The id survives both, and it still
- * changes when the *meaning* does.
- */
-interface PickerTrigger {
-  readonly control: HTMLButtonElement;
-  readonly action: BackendActionId;
-  /**
-   * Whether the request this trigger belongs to has been seen outstanding.
-   *
-   * An effect carries the `busy` of the render that queued it, and React does
-   * not promise to have run it before the next event. One queued before the
-   * picker opened therefore says `false` about a request that has not started,
-   * which reads exactly like the request having finished.
-   */
-  outstanding: boolean;
-}
+/** The busy sentence's id: the reason a refused action points at. */
+const BUSY_ID = "backend-busy";
 
 export interface BackendStatusProps {
   readonly state: BackendState;
@@ -52,9 +27,9 @@ export interface BackendStatusProps {
    * A projection can arrive from an operation that produced no
    * `BackendAvailabilityDto` -- a refused `BEGIN`, a queue poll, a settings
    * read -- so the authority moves and the reading does not. Between that
-   * observation and the render that consumes it, this banner presents the
-   * reading as superseded rather than as fact: it names no build as current,
-   * and it loses none of the reason text it has (ledger row 110).
+   * observation and the render that consumes it, this presents the reading as
+   * superseded rather than as fact: it names no build as current, and it
+   * loses none of the reason text it has (ledger row 110).
    *
    * **Entire, not just the verdict.** The release, the build date and the
    * origin describe a build as much as "available" does, so marking only the
@@ -62,52 +37,69 @@ export interface BackendStatusProps {
    * the current one, which is exactly the half-fix that row exists for.
    */
   readonly readingSuperseded: boolean;
+  /** The conversion lane lost track of a process: nothing starts until a restart. */
+  readonly laneQuarantined?: boolean;
   readonly onRecheck: () => void;
   readonly onChooseInstallation: () => void;
   readonly onUseAutomaticDiscovery: () => void;
-  /**
-   * Folded to its reading alone, out of sight, because there is nothing to act
-   * on (PM9 L10). The reading stays the one live region, so a verdict is still
-   * announced; the actions and the help keep their nodes and are hidden, and
-   * the header's toggle shows them again. Never set while the banner has
-   * something to say.
-   */
-  readonly collapsed?: boolean;
-  /** Called when the reader uses the banner, so it stays open for the outcome. */
-  readonly onEngage?: () => void;
+  /** Opened from the status bar's ProteoWizard item: every detail and action. */
+  readonly open?: boolean;
+  /** Escape or a press outside. Escape also hands the keyboard back to the item. */
+  readonly onClose?: () => void;
 }
 
 /**
- * The installed-backend banner, and the offline setup help beside it.
+ * The installed backend's details, and the offline setup help beside them.
+ *
+ * One element in every state, so it is one live region and its actions and
+ * help keep their identity whatever the verdict (screen readers do not
+ * announce a region that arrives with its text in it). What changes is how it
+ * shows:
+ *
+ * - **hidden** while a usable backend leaves nothing to do: out of sight but
+ *   still read, so a verdict is heard. The status bar's item says "ready".
+ * - **notice** while no usable backend stands: one line in the main area with
+ *   the one action that fixes it and the setup help (S4, S7).
+ * - **popover** while opened from the status bar: the reading, the build, every
+ *   way out and the help, over the bar.
  *
  * MSCanvas never bundles, downloads or installs ProteoWizard, so "not
  * installed" is an ordinary state of the application rather than an error, and
- * it always says what the user can do about it.
- *
- * Every state offers a way back to automatic discovery, including the state
- * where the call itself failed. A chosen folder is the only place MSCanvas then
- * looks, so a banner without that offer can leave a session unable to reach an
- * installation it would have found on its own.
- *
- * The help is a disclosure in every state, closed to begin with, and it needs
- * no network, no dataset and no backend to read. It is deliberately not an
- * onboarding wizard: nothing here gates the workspace, and a session with no
- * usable backend can still add, group and organise acquisitions.
+ * nothing here gates the workspace: a session with no usable backend can still
+ * add, group and organise acquisitions.
  */
 export function BackendStatus({
   state,
   busy,
   readingSuperseded,
+  laneQuarantined = false,
   onRecheck,
   onChooseInstallation,
   onUseAutomaticDiscovery,
-  collapsed = false,
-  onEngage,
+  open = false,
+  onClose,
 }: BackendStatusProps) {
   const t = useUiMessages();
-  const pendingRestore = useRef<PickerTrigger | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
-  const banner = presentBackend(state, readingSuperseded, t);
+  const banner = presentBackend(state, readingSuperseded, t, laneQuarantined);
+
+  // A check, or a reading the session has left, is not a verdict: the surface
+  // keeps what the last verdict put there. So pressing Check again on the
+  // notice leaves the reader on the notice, refused with its reason, until the
+  // answer arrives. Derived during render, React's way to remember a previous
+  // value.
+  const verdict = banner.notice === "transient" ? null : { notice: banner.notice === "notice", primary: banner.primary };
+  const [last, setLast] = useState(verdict ?? { notice: false, primary: null as BackendActionId | null });
+  if (verdict !== null && (verdict.notice !== last.notice || verdict.primary !== last.primary)) setLast(verdict);
+  const shown = verdict ?? last;
+  const mode = open ? "popover" : shown.notice ? "notice" : "hidden";
+  // The notice offers its one fix, and keeps the action the reader last
+  // pressed on it beside that fix: a verdict that changes the fix must not
+  // take the keyboard's place away (the picker can fail, say).
+  const [held, setHeld] = useState<BackendActionId | null>(null);
+  if (mode !== "notice" && held !== null) setHeld(null);
+  const lastOf = (id: BackendActionId | null) => banner.actions.findLastIndex((entry) => entry.id === id);
+  const offered = mode === "notice" ? [lastOf(shown.primary), lastOf(held)] : null;
 
   const run: Record<BackendActionId, () => void> = {
     recheck: onRecheck,
@@ -115,160 +107,74 @@ export function BackendStatus({
     automatic: onUseAutomaticDiscovery,
   };
 
-  /**
-   * Remembers the control the picker was opened from, so the keyboard can be
-   * given back to it.
-   *
-   * Only what actually held the keyboard is remembered. A press that did not
-   * focus the button has no place to return to, and taking focus the user never
-   * put here would be a move of its own rather than a restoration.
-   */
-  const start = (id: BackendActionId) => (event: MouseEvent<HTMLButtonElement>) => {
-    const control = event.currentTarget;
-    pendingRestore.current =
-      id === "choose" && document.activeElement === control
-        ? { control, action: id, outstanding: false }
-        : null;
-    onEngage?.();
-    run[id]();
-  };
-
-  /**
-   * Returns the keyboard to the control that opened the picker.
-   *
-   * Every banner action is disabled for the whole request, the picker's modal
-   * lifetime included, and disabling the focused button is what blurs it. The
-   * browser does not put focus back when the button is enabled again, so
-   * cancelling the dialog left a keyboard user without their place in the tab
-   * order.
-   *
-   * Deliberately not keyed on `busy`: a request begins and ends with it false,
-   * so an effect comparing that value alone would not run again if the two
-   * renders were ever batched into one. Running after every commit costs a null
-   * check, and what makes a settle a settle is stated below rather than left to
-   * a dependency list.
-   */
+  const root = useRef<HTMLDivElement>(null);
+  const backToItem = () => document.getElementById(STATUS_BACKEND_ID)?.focus();
+  // Opened from the item at the window's foot, far from here in the document:
+  // the keyboard comes along, or the details would be one Tab away from nowhere.
+  useLayoutEffect(() => {
+    if (open) root.current?.focus({ preventScroll: true });
+  }, [open]);
+  // A verdict that hides what the reader was on -- a success removes the
+  // notice -- hands the keyboard to the item that now says it, never to the body.
+  useLayoutEffect(() => {
+    if (mode === "hidden" && root.current?.contains(document.activeElement)) backToItem();
+  }, [mode]);
+  // A press outside, or the keyboard moving on to something else, closes it,
+  // so it never floats over a drawer or a dialog opened after it. Never a
+  // blur: the native folder picker takes the window's focus while its request
+  // is still this popover's, and leaving the window moves focus nowhere inside.
   useEffect(() => {
-    const pending = pendingRestore.current;
-    if (pending === null) {
-      return;
-    }
-    if (busy) {
-      // Outstanding, so nothing is restored yet -- and having seen it is what
-      // tells the end of this request from an effect that was queued before it
-      // began. That effect carries the `busy` of an older render, which says
-      // `false` about a request that has not started and reads exactly like one
-      // that has finished; acting on it would consume the trigger between the
-      // press and the dialog, and nothing would ever give the keyboard back.
-      pending.outstanding = true;
-      return;
-    }
-    if (!pending.outstanding) {
-      return;
-    }
-    // Settled, whatever the outcome. Held any longer it could fire on a later
-    // request it says nothing about.
-    pendingRestore.current = null;
-    // Only a control that is still there, still usable and still the action the
-    // user pressed. A verdict can leave the button in place and give the slot
-    // to another action, and that node is a different control however unchanged
-    // the DOM looks -- while a folder that is chosen and turns out to be
-    // unusable leaves the same chooser exactly where it was, which is a place
-    // worth giving back.
-    //
-    // Compared on the semantic id the node carries, not on its text. A
-    // translation changes every label without changing a single action, and the
-    // reverse -- the same label over a different action -- is what this guard
-    // exists to catch.
-    //
-    // `isConnected` is redundant today, because React leaves a control it
-    // unmounts with the `disabled` this request gave it. It is stated anyway:
-    // what must never happen is reaching for a node that is gone, and that is
-    // not a thing to infer from how an unmount happens to leave an attribute.
-    if (
-      !pending.control.isConnected ||
-      pending.control.disabled ||
-      pending.control.dataset.backendAction !== pending.action
-    ) {
-      return;
-    }
-    // Never over a control the user has since chosen for themselves. Blurred by
-    // the disabling, focus is on the body until something else claims it.
-    const active = document.activeElement;
-    if (active !== null && active !== document.body) {
-      return;
-    }
-    // `preventScroll`, so returning the keyboard cannot also move the workspace
-    // under the user.
-    pending.control.focus({ preventScroll: true });
-  });
-
-  /**
-   * The offline setup help.
-   *
-   * Reachable in every state, including the states with no reading and no
-   * installation at all, and it explains the three things a reader actually
-   * needs: that ProteoWizard is theirs to install, that a folder they choose
-   * lasts for this session only, and which control does what.
-   */
-  const help = (
-    <details
-      className="backend-setup-help"
-      data-backend-help=""
-      open={helpOpen}
-      hidden={collapsed}
-      onToggle={(event) => {
-        const open = event.currentTarget.open;
-        setHelpOpen(open);
-        // Help opened while a check is running stays open when a quiet verdict
-        // arrives, instead of folding away under the reader.
-        if (open) onEngage?.();
-      }}
-    >
-      <summary>{t("backendHelpTitle")}</summary>
-      <p>{t("backendHelpProvider")}</p>
-      <p>{t("backendHelpSessionScope")}</p>
-      <ul>
-        <li>{t("backendHelpChoose")}</li>
-        <li>{t("backendHelpAutomatic")}</li>
-        <li>{t("backendHelpRecheck")}</li>
-      </ul>
-      <p>{t("backendHelpTarget")}</p>
-      <p>{t("backendHelpWithoutBackend")}</p>
-    </details>
-  );
+    if (!open || onClose === undefined) return;
+    const outside = (event: Event) => {
+      const target = event.target as Node;
+      if (root.current?.contains(target) || document.getElementById(STATUS_BACKEND_ID)?.contains(target)) return;
+      onClose();
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("focusin", outside);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("focusin", outside);
+    };
+  }, [open, onClose]);
 
   const named = banner.names;
-  // One banner element and one live region, for every state including
-  // `checking`. Two branches returning different element types put a *new*
-  // region in the document on each transition, already containing its text --
-  // which is the one mutation a screen reader does not announce. So pressing
-  // `Check again` used to be silent, and so was the verdict that followed it.
-  // The `<details>` help keeps its identity for the same reason: a verdict
-  // arriving on its own must not take a reader's place in the tab order. For
-  // the same reason, focus anywhere in the banner counts as engaging it: a
-  // quiet verdict does not fold a banner a reader is in. Focusable itself, but
-  // outside the tab order, so the header's toggle can hand its place here when
-  // the banner has something to say again.
-  return (
+  // Hidden from sight only in the one-line notice: the live region still reads
+  // the whole verdict, and the popover shows it.
+  const detail = mode === "notice" ? "visually-hidden" : undefined;
+  return (<>
+    {/* The notice's line, held while it is open as the popover, so nothing
+        under it moves when the status bar's item opens it. */}
+    {open && shown.notice ? <div aria-hidden="true" className="backend-status-placeholder" /> : null}
     <div
+      ref={root}
       id="backend-status"
       tabIndex={-1}
-      className={collapsed ? "visually-hidden" : `notice notice-${banner.tone}`}
+      className={mode === "hidden" ? "visually-hidden" : `backend-status notice notice-${banner.tone}`}
       data-backend-status={banner.kind}
+      data-backend-mode={mode}
       data-backend-reading={banner.kind === "staleReading" ? "superseded" : undefined}
-      data-backend-collapsed={collapsed ? "" : undefined}
-      onFocus={() => onEngage?.()}
+      data-backend-collapsed={mode === "hidden" ? "" : undefined}
+      onKeyDown={(event) => {
+        if (!open || event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        onClose?.();
+        backToItem();
+      }}
     >
-      {/* One live region for the whole banner, so a verdict, its reason and the
+      <span className="backend-status-icon" data-tone={banner.status.tone} aria-hidden="true">
+        <Icon name={banner.status.tone === "ready" ? "checkCircle" : banner.status.tone === "pending" ? "clock" : "alert"} />
+      </span>
+      {/* One live region for the reading, so a verdict, its reason and the
           build it names are announced as one thing rather than as three. */}
       <div role="status" className="backend-status-reading">
-        <strong>{banner.title}</strong>
-        {banner.body.map((sentence) => (
-          <span key={sentence}>{sentence}</span>
-        ))}
+        {/* A checking reading's title is already the reason its actions wait. */}
+        <strong id={busy && banner.kind === "checking" ? BUSY_ID : undefined}>{banner.title}</strong>
+        {/* One span, joined as the locale joins sentences: separate spans get
+            the flex gap, which reads as a double space between Chinese ones. */}
+        {banner.body.length === 0 ? null : <span className={detail}>{joinSentences(t, banner.body)}</span>}
         {named === null ? null : (
-          <span data-backend-build="">
+          <span className={detail} data-backend-build="">
             {[
               named.release,
               named.buildDate === null ? null : t("backendBuiltOn", { date: named.buildDate }),
@@ -279,35 +185,66 @@ export function BackendStatus({
               .join(" · ")}
           </span>
         )}
-        {/* Said in the banner rather than left to the disabled controls alone.
-            The picker's dialog closes before the probes run, and without this
-            the moment between reads as finished when it is not. */}
-        {busy ? <span data-backend-busy="">{t("backendCheckingInstallation")}</span> : null}
+        {/* Said beside the actions rather than left to the refused controls
+            alone. The picker's dialog closes before the probes run, and without
+            this the moment between reads as finished when it is not. It is the
+            reason every action points at. */}
+        {busy && banner.kind !== "checking" ? <span id={BUSY_ID} data-backend-busy="">{t("backendCheckingInstallation")}</span> : null}
         {/* Shown only where this build had no sentence of its own for the code,
             so it stays inspectable instead of being paraphrased away. */}
         {banner.code !== null && banner.kind === "requestFailed" ? (
-          <span data-backend-code="">{t("backendProblemCode", { code: banner.code })}</span>
+          <span className={detail} data-backend-code="">{t("backendProblemCode", { code: banner.code })}</span>
         ) : null}
       </div>
-      <div className="backend-status-actions" hidden={collapsed}>
+      <div className="backend-status-actions"
+        hidden={mode === "hidden" || banner.actions.length === 0 || offered?.every((at) => at < 0) === true}>
         {banner.actions.map((entry, position) => (
-          <button
+          // Refused rather than disabled while a request runs (UI-24): the
+          // keyboard stays on the action it pressed, through the native picker
+          // and after it, and the busy sentence says why it waits.
+          <Button
             // The semantic id, not the position: React must not carry one
             // action's node over to another when a verdict changes which ones
             // are offered. The suffix separates the two `choose` offers a
             // chosen-but-unusable folder shows.
             key={`${entry.id}-${position}`}
-            className="link-button"
+            variant="secondary"
+            size="sm"
             data-backend-action={entry.id}
-            disabled={busy}
-            onClick={start(entry.id)}
-            type="button"
+            hidden={offered !== null && !offered.includes(position)}
+            refused={busy}
+            reasonId={BUSY_ID}
+            onClick={() => {
+              if (mode === "notice") setHeld(entry.id);
+              run[entry.id]();
+            }}
           >
             {entry.label}
-          </button>
+          </Button>
         ))}
       </div>
-      {help}
+      {/* The offline setup help, reachable in every state, including the
+          states with no reading and no installation at all. It holds only
+          what no control says: that ProteoWizard is theirs to install, which
+          folder to choose, the support
+          target and what needs a backend. */}
+      {/* Only in the popover (S7): the notice stays one line. And not for a
+          quarantine, whose only way out is a restart. */}
+      <div className="backend-setup-help" hidden={mode !== "popover" || banner.kind === "quarantined"}>
+        <Disclosure
+          variant="secondary"
+          data-backend-help=""
+          label={t("backendHelpTitle")}
+          open={helpOpen}
+          onOpenChange={setHelpOpen}
+          regionProps={{ className: "backend-setup-help-body" }}
+        >
+          <p>{t("backendHelpProvider")}</p>
+          <p>{t("backendHelpSessionScope")}</p>
+          <p>{t("backendHelpTarget")}</p>
+          <p>{t("backendHelpWithoutBackend")}</p>
+        </Disclosure>
+      </div>
     </div>
-  );
+  </>);
 }

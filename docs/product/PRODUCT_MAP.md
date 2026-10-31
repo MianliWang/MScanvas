@@ -2,7 +2,7 @@
 
 ## Product promise
 
-MSCanvas is a local-first mass-spectrometry workbench that makes acquisition browsing, open-format conversion and scientific figure export substantially easier than legacy desktop workflows. Analysis can grow later through explicit modules backed by mature scientific packages.
+MSCanvas is a local-first mass-spectrometry workbench that makes acquisition browsing, open-format conversion and scientific figure export substantially easier than legacy desktop workflows. Since 2026-10-30 analysis is planned and built (milestone M11) through explicit modules backed by mature scientific packages or, under a written decision, project-owned code, without displacing those three jobs.
 
 ## Primary users
 
@@ -25,7 +25,7 @@ MSCanvas is a local-first mass-spectrometry workbench that makes acquisition bro
 |---|---|---|
 | Data foundation | Projects, datasets, artifacts, runs, linked selection, cache | Required from M1 |
 | Viewer / converter / figures | TIC/BPC, spectrum, scan table, conversion, queue, export | Primary product through M7 |
-| Modular analysis | QC, signal, features, spectra, statistics, recipes | Deferred; architecture allowed |
+| Modular analysis | QC, signal, features, spectra, statistics, recipes | Planned and built from 2026-10-30 (M11) on two tracks: Track A without a Python runtime, Track B (pyOpenMS) only through a released, verified runtime; each module passes the promotion gate in [ANALYSIS_CAPABILITY_MAP.md](ANALYSIS_CAPABILITY_MAP.md) |
 | Automation | CLI, skills, MCP, workflow integrations | Deferred until contracts stabilize |
 
 ## Early workspaces
@@ -36,7 +36,7 @@ MSCanvas is a local-first mass-spectrometry workbench that makes acquisition bro
 - **Figures** — export current views and later compose reusable figures.
 - **Runs** — conversion and analysis jobs, logs, retry and results.
 
-Only surfaces justified by an implemented workflow should appear in navigation. Empty future modes must not ship as dead UI.
+Only surfaces justified by an implemented workflow should appear in navigation. Empty future modes must not ship as dead UI. *2026-10-30 (owner decision G4):* each analysis page enters the navigation when its first working function ships, with no placeholder pages.
 
 ## Priority meanings
 

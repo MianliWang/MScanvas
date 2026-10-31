@@ -28,25 +28,28 @@ import {
 } from "../support/harness";
 import { COMPLETE_POINT_COUNT, MZML_ROW, VENDOR_ROW, ipcTable } from "../support/fixtures";
 import { openTheViewer, revealRosterRow } from "../support/viewer";
+import { FIGURE_DIALOG, answerFigurePreviews, figureActions, openFigureDialog, waitForFigurePreview } from "../support/figure";
 
 /**
- * Everything below is looked up inside the spectrum panel. Since M7.4 the
- * chromatogram's header carries figure actions of its own, a visible "Copy
- * plot" among them, earlier in the document (`PreviewWorkspace.tsx:950`), so a
- * document-wide lookup by label can land on the other plot's control.
+ * The spectrum's exports live in the Export figure dialog since the rebuild
+ * (spec 3.4, 6): the spectrum plot's Export… opens it, and it holds the
+ * figure (Copy, SVG, PNG) and the data (CSV, TSV) of the selected spectrum.
+ * So "the panel" this suite measures is that dialog. It is portaled to the
+ * body, which also keeps a lookup by label off the chromatogram's own head.
  */
-const PANEL = "section.spectrum-panel";
-const EXPORT_BLOCK = `${PANEL} .spectrum-export`;
-const STATUS = `${PANEL} > .spectrum-export-status`;
+const SPECTRUM = "section.spectrum-panel";
+const PANEL = FIGURE_DIALOG;
+const EXPORT_BLOCK = FIGURE_DIALOG;
+const STATUS = `${FIGURE_DIALOG} .figure-export-result [role="status"]`;
 const FORMATS = ["SVG", "CSV", "TSV"] as const;
 
-/** Every action the panel offers, in the order a reader meets them. */
+/** Every action the dialog offers, in the order a reader meets them. */
 const CONTROLS = [
-  "Export SVG…",
-  "Export PNG…",
-  "Copy plot",
   "Export CSV…",
   "Export TSV…",
+  "Copy plot",
+  "Export SVG…",
+  "Export PNG…",
 ] as const;
 
 const VIEWPORTS = [
@@ -94,21 +97,30 @@ async function chooseTheFirstScan(): Promise<void> {
 }
 
 /**
- * Selects one spectrum and opens its export, through the interface.
- *
- * The export sits in a disclosure in the spectrum's header, which exists only
- * once a spectrum has loaded and which every viewer opens closed
- * (`SelectedSpectrumPanel.tsx:45,58`; M7.3), opened as PM9.3's
- * `openSpectrumExport` opens it.
+ * Selects one spectrum, through the interface, and waits for its head's
+ * figure actions, which exist only once a spectrum has loaded.
+ */
+async function selectSpectrum(): Promise<void> {
+  await chooseTheFirstScan();
+  await browser.$(figureActions(SPECTRUM)).waitForExist({ timeout: 60_000 });
+}
+
+/**
+ * Selects one spectrum and opens its export, through the interface: Export…
+ * in the spectrum's head, then the dialog with its preview drawn, which is
+ * what offers Copy, SVG and PNG (the preview is a labelled mock).
  */
 async function loadSpectrum(): Promise<void> {
-  await chooseTheFirstScan();
-  const disclosure = browser.$(`${PANEL} .spectrum-export-disclosure`);
-  await disclosure.waitForExist({ timeout: 60_000 });
-  if ((await disclosure.getAttribute("open")) === null) {
-    await browser.$(`${PANEL} .spectrum-export-disclosure > summary`).click();
-  }
-  await browser.$(EXPORT_BLOCK).waitForDisplayed();
+  await selectSpectrum();
+  await answerFigurePreviews();
+  await openFigureDialog(SPECTRUM);
+  await waitForFigurePreview();
+}
+
+/** Offered: neither disabled nor refused (`aria-disabled`, which keeps a Tab stop). */
+async function offered(button: WebdriverIO.Element | undefined): Promise<boolean> {
+  if (button === undefined) return false;
+  return (await button.isEnabled()) && (await button.getAttribute("aria-disabled")) !== "true";
 }
 
 /**
@@ -141,9 +153,10 @@ async function exportButton(
  * would be demanding that a 640px-tall window show a plot and five actions at
  * once -- which it cannot, and which is why the panel scrolls.
  *
- * Since PM9.3 the scrolling is the evidence column's (`#workbench-evidence`)
- * and the panel is sized to its content (`workbench.css:157`), so its reach is
- * its own bottom edge -- which is still the edge a control must not pass.
+ * The panel is the dialog now: its own bottom edge, plus whatever it scrolls
+ * beyond it. Its box includes its 1px border and `scrollHeight` does not, so
+ * the box's edge is the floor -- top plus `scrollHeight` alone sits 2px above
+ * the dialog's own bottom.
  */
 async function panelReach(): Promise<number> {
   return browser.execute((css: string) => {
@@ -151,7 +164,8 @@ async function panelReach(): Promise<number> {
     if (node === null) {
       return 0;
     }
-    return node.getBoundingClientRect().top + node.scrollHeight;
+    const rect = node.getBoundingClientRect();
+    return Math.max(rect.bottom, rect.top + node.scrollHeight);
   }, PANEL);
 }
 
@@ -183,8 +197,15 @@ async function boxOfField(label: string): Promise<{
   );
 }
 
-/** One action's box, found by its label inside the spectrum panel. */
-async function boxOfControl(label: string): Promise<Box> {
+/**
+ * One action's box, found by its label inside the dialog, with the lowest
+ * point its own scroll owner can bring it to.
+ *
+ * The data actions sit in the dialog's options column, which scrolls on its
+ * own at a small window; the foot's actions are in no scroller, so theirs is
+ * the dialog's. `reach` is that owner's bottom plus what it scrolls beyond it.
+ */
+async function boxOfControl(label: string): Promise<Box & { readonly reach: number }> {
   return browser.execute(
     (panel: string, name: string) => {
       const node = [...document.querySelectorAll(`${panel} button`)].find(
@@ -193,6 +214,12 @@ async function boxOfControl(label: string): Promise<Box> {
       if (node === undefined) {
         throw new Error(`no button labelled ${name}`);
       }
+      let owner: Element | null = node.parentElement;
+      while (owner !== null && !owner.matches(panel) && !/auto|scroll/u.test(getComputedStyle(owner).overflowY)) {
+        owner = owner.parentElement;
+      }
+      const bounds = (owner ?? node).getBoundingClientRect();
+      const scrolled = owner === null ? 0 : owner.scrollHeight - owner.clientHeight;
       const rect = node.getBoundingClientRect();
       return {
         left: rect.left,
@@ -201,11 +228,12 @@ async function boxOfControl(label: string): Promise<Box> {
         bottom: rect.bottom,
         width: rect.width,
         height: rect.height,
+        reach: bounds.bottom + Math.max(0, scrolled) - (owner?.scrollTop ?? 0),
       };
     },
     PANEL,
     label,
-  ) as Promise<Box>;
+  ) as Promise<Box & { readonly reach: number }>;
 }
 
 /** Puts the keyboard on one control without activating it. */
@@ -280,7 +308,8 @@ describe("M4.1 selected-spectrum export, rendered", () => {
           expect(button.left).toBeGreaterThanOrEqual(panel.left - 0.5);
           expect(button.right).toBeLessThanOrEqual(panel.right + 0.5);
           expect(button.top).toBeGreaterThanOrEqual(panel.top - 0.5);
-          expect(button.bottom).toBeLessThanOrEqual(reach + 0.5);
+          // Within what its own scroll owner can bring into the dialog.
+          expect(button.bottom).toBeLessThanOrEqual(button.reach + 0.5);
           // A control with no area is a control nobody can press.
           expect(button.width).toBeGreaterThan(0);
           expect(button.height).toBeGreaterThan(0);
@@ -327,7 +356,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
 
       const svg = await boxOfControl("Export SVG…");
       const tsv = await boxOfControl("Export TSV…");
-      const heading = await boxOf("#selected-spectrum-heading");
+      const heading = await boxOf(`${FIGURE_DIALOG} .figure-export-head`);
       // Either the three sit on one row beside the heading, or the group has
       // wrapped below it. Both are fine; what is not fine is a control that
       // has been pushed outside the panel, which the assertions above already
@@ -346,14 +375,14 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       await loadSpectrum();
 
       // Focused rather than clicked, because a click would start an export and
-      // this test is about tab order. `Export SVG…` is the first action after
+      // this test is about tab order. `Export CSV…` is the first action after
       // the figure fields.
-      await focusButton("Export SVG…");
+      await focusButton("Export CSV…");
       expect(await focusedTag()).toBe("BUTTON");
 
-      // Document order through the whole group: the figure actions, then the
-      // data ones.
-      for (const next of ["Export PNG", "Copy plot", "Export CSV", "Export TSV"]) {
+      // Document order through the whole dialog: the data actions beside the
+      // fields, then the foot's figure actions, primary last.
+      for (const next of ["Export TSV", "Copy plot", "Export SVG", "Export PNG"]) {
         await browser.keys(["Tab"]);
         expect(await focusedName()).toContain(next);
         const treatment = await focusedTreatment();
@@ -369,7 +398,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
         const active = document.activeElement;
         return (
           active instanceof HTMLButtonElement &&
-          (active.textContent ?? "").trim() === "Export TSV…"
+          (active.textContent ?? "").trim() === "Export PNG…"
         );
       });
       expect(stillOnLastAction).toBe(false);
@@ -380,12 +409,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       await open();
       await loadSpectrum();
 
-      await browser.execute(() => {
-        const button = [...document.querySelectorAll("button")].find(
-          (candidate) => candidate.textContent?.trim() === "Export TSV…",
-        );
-        button?.focus();
-      });
+      await focusButton("Export TSV…");
       await browser.keys(["Enter"]);
       await browser.waitUntil(async () => (await statusText()).length > 0, { timeout: 15_000 });
 
@@ -450,6 +474,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
         expect(body).not.toContain("/Users/");
 
         // The preview and the spectrum are exactly as they were.
+        expect(await browser.$(SPECTRUM).isExisting()).toBe(true);
         expect(await browser.$(PANEL).isDisplayed()).toBe(true);
         expect(await browser.$('div.spectrum-table-row[data-row-position="0"]').isExisting()).toBe(
           true,
@@ -472,7 +497,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       expect(await statusText()).toBe("Export cancelled. Nothing was saved.");
       // Still offered, and the spectrum is untouched.
       for (const format of FORMATS) {
-        expect(await (await exportButton(format))?.isEnabled()).toBe(true);
+        expect(await offered(await exportButton(format))).toBe(true);
       }
       expect(await unexpectedConsole()).toEqual([]);
     });
@@ -501,7 +526,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       // Recoverable: choosing another name is the whole of the recovery, so the
       // actions stay live.
       for (const format of FORMATS) {
-        expect(await (await exportButton(format))?.isEnabled()).toBe(true);
+        expect(await offered(await exportButton(format))).toBe(true);
       }
       // A refusal rendered in the interface is not a console failure.
       expect(await unexpectedConsole()).toEqual([]);
@@ -525,25 +550,22 @@ describe("M4.1 selected-spectrum export, rendered", () => {
         timeout: 15_000,
       });
 
-      // The running control carries its own label while it runs, so it is
-      // found by that; the other two keep theirs and must be closed.
-      const running = await buttonLabelled("Exporting SVG…");
-      expect(await running?.isEnabled()).toBe(false);
-      for (const format of ["CSV", "TSV"] as const) {
-        const button = await exportButton(format);
+      // Every action in the dialog is refused while one runs -- refused, not
+      // disabled, so each stays a Tab stop with the status as its reason.
+      for (const label of CONTROLS) {
+        const button = await buttonLabelled(label);
         expect(button).toBeDefined();
-        expect(await button?.isEnabled()).toBe(false);
+        expect(await offered(button)).toBe(false);
       }
       // A second activation cannot start a second export.
       const before = (await ipcCalls()).filter(
         (call) => call.command === "begin_selected_spectrum_export",
       ).length;
-      await browser.execute(() => {
-        const button = [...document.querySelectorAll("button")].find((candidate) =>
-          candidate.textContent?.trim().startsWith("Export CSV"),
-        );
-        button?.click();
-      });
+      await browser.execute((dialog: string) => {
+        for (const button of document.querySelectorAll<HTMLButtonElement>(`${dialog} button`)) {
+          if ((button.textContent ?? "").trim().startsWith("Export")) button.click();
+        }
+      }, FIGURE_DIALOG);
       const after = (await ipcCalls()).filter(
         (call) => call.command === "begin_selected_spectrum_export",
       ).length;
@@ -555,7 +577,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
     it("exports the loaded spectrum while a vendor row holds focus", async () => {
       await browser.setWindowSize(1366, 768);
       await open();
-      await loadSpectrum();
+      await selectSpectrum();
 
       const boundToken = (await ipcCalls()).length;
       expect(boundToken).toBeGreaterThan(0);
@@ -563,6 +585,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       // Focus moves to the Shimadzu acquisition, which is an ordinary thing to
       // do while reading a spectrum. A vendor row is selected, not opened
       // (`DatasetRoster.tsx:748`; `aria-selected` from `GroupedRosterList.tsx:270`).
+      // The dialog is modal, so this happens before it opens.
       await revealRosterRow(VENDOR_ROW.handle);
       await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`).click();
       expect(
@@ -570,6 +593,9 @@ describe("M4.1 selected-spectrum export, rendered", () => {
           .$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`)
           .getAttribute("aria-selected"),
       ).toBe("true");
+      await answerFigurePreviews();
+      await openFigureDialog(SPECTRUM);
+      await waitForFigurePreview();
 
       await (await exportButton("SVG"))?.click();
       await browser.waitUntil(async () => (await statusText()).startsWith("Saved"), {
@@ -595,15 +621,16 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       await browser.url("/");
       await revealRosterRow(MZML_ROW.handle);
       // No preview, so no spectrum panel at all -- and therefore no export.
-      expect(await browser.$(PANEL).isExisting()).toBe(false);
-      expect(await browser.$(EXPORT_BLOCK).isExisting()).toBe(false);
+      expect(await browser.$(SPECTRUM).isExisting()).toBe(false);
+      expect(await browser.$(figureActions(SPECTRUM)).isExisting()).toBe(false);
 
       await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
-      await browser.$(PANEL).waitForDisplayed({ timeout: 60_000 });
+      await browser.$(SPECTRUM).waitForDisplayed({ timeout: 60_000 });
       await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForDisplayed({
         timeout: 60_000,
       });
       // A preview is loaded and no spectrum is selected: still nothing.
+      expect(await browser.$(figureActions(SPECTRUM)).isExisting()).toBe(false);
       expect(await browser.$(EXPORT_BLOCK).isExisting()).toBe(false);
     });
 
@@ -612,9 +639,9 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       await open({ emptySpectrum: true });
       await loadSpectrum();
 
-      expect(await textOf(`${PANEL} .empty-state`)).toContain("This spectrum has no peaks");
+      expect(await textOf(`${SPECTRUM} .empty-state`)).toContain("This spectrum has no peaks");
       for (const format of FORMATS) {
-        expect(await (await exportButton(format))?.isEnabled()).toBe(true);
+        expect(await offered(await exportButton(format))).toBe(true);
       }
       const panel = await boxOf(PANEL);
       for (const format of FORMATS) {
@@ -636,10 +663,11 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       });
 
       await chooseTheFirstScan();
-      await browser.waitUntil(async () => (await textOf(PANEL)).includes("could not be loaded"), {
+      await browser.waitUntil(async () => (await textOf(SPECTRUM)).includes("could not be loaded"), {
         timeout: 15_000,
       });
 
+      expect(await browser.$(figureActions(SPECTRUM)).isExisting()).toBe(false);
       expect(await browser.$(EXPORT_BLOCK).isExisting()).toBe(false);
     });
   });

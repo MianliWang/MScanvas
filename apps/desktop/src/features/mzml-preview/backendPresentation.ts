@@ -61,10 +61,51 @@ export type BackendPresentationKind =
   | "quarantined"
   | "available";
 
+/**
+ * How the status bar names a state: its tone, and the short label beside the
+ * icon. `ready` is the one green state.
+ */
+export type BackendStatusTone = "ready" | "pending" | "attention" | "danger";
+
+/**
+ * Where a state is shown outside the status bar.
+ *
+ * - `none`: nowhere. A usable backend is silent (S5); its details are one press
+ *   away in the status bar.
+ * - `notice`: one line in the main area, with the one action that fixes it.
+ * - `transient`: a check or a superseded reading is not a verdict, so the
+ *   surface keeps whatever the last verdict put on screen.
+ */
+export type BackendNoticePlacement = "none" | "notice" | "transient";
+
+const STATUS = {
+  checking: { tone: "pending", label: "backendStatusChecking", notice: "transient", primary: null },
+  staleReading: { tone: "pending", label: "backendStatusChecking", notice: "transient", primary: null },
+  available: { tone: "ready", label: "backendReadyShort", notice: "none", primary: null },
+  missing: { tone: "attention", label: "backendStatusMissing", notice: "notice", primary: "choose" },
+  unsupported: { tone: "attention", label: "backendStatusUnavailable", notice: "notice", primary: "choose" },
+  // The fix is a restart, which no button here performs.
+  quarantined: { tone: "attention", label: "backendStatusQuarantined", notice: "notice", primary: null },
+  requestFailed: { tone: "danger", label: "backendStatusFailed", notice: "notice", primary: "recheck" },
+} as const satisfies Record<BackendPresentationKind, {
+  readonly tone: BackendStatusTone;
+  readonly label: MessageKey;
+  readonly notice: BackendNoticePlacement;
+  readonly primary: BackendActionId | null;
+}>;
+
 export interface BackendPresentation {
   readonly kind: BackendPresentationKind;
   /** `danger` for a failed call, `warning` for no usable backend. */
   readonly tone: "neutral" | "success" | "warning" | "danger";
+  /** The status bar's tone and short label. */
+  readonly status: { readonly tone: BackendStatusTone; readonly label: string };
+  readonly notice: BackendNoticePlacement;
+  /**
+   * The one action the notice line offers, by identity: the last action with
+   * this id. `null` when nothing on screen can fix the state.
+   */
+  readonly primary: BackendActionId | null;
   readonly title: string;
   /** The explanation, already localized. Empty for `checking`. */
   readonly body: readonly string[];
@@ -172,11 +213,35 @@ function switchAway(chosen: boolean, message: UiMessage): readonly BackendAction
   return [action("recheck", message), action(chosen ? "automatic" : "choose", message)];
 }
 
+/**
+ * What the reading says, and how the shell shows it.
+ *
+ * `laneQuarantined` is the conversion lane's own fact. A session can lose
+ * track of a process it started while its last reading still says
+ * "available"; that reading must not be shown as ready.
+ */
 export function presentBackend(
   state: BackendState,
   readingSuperseded: boolean,
   message: UiMessage,
+  laneQuarantined = false,
 ): BackendPresentation {
+  const reading = readBackend(state, readingSuperseded, message, laneQuarantined);
+  const shown = STATUS[reading.kind];
+  return {
+    ...reading,
+    status: { tone: shown.tone, label: message(shown.label) },
+    notice: shown.notice,
+    primary: shown.primary,
+  };
+}
+
+function readBackend(
+  state: BackendState,
+  readingSuperseded: boolean,
+  message: UiMessage,
+  laneQuarantined: boolean,
+): Omit<BackendPresentation, "status" | "notice" | "primary"> {
   const base = {
     body: [] as readonly string[],
     code: null,
@@ -184,6 +249,21 @@ export function presentBackend(
     separateInstallations: false,
     chosen: false,
   };
+
+  // Not a verdict about the installation: this session started a process it
+  // cannot account for, so it starts no more. The recovery is a restart of
+  // MSCanvas, which no control here performs, so none is offered: Check again
+  // and Choose folder… could only be refused (rendered review, issue 3).
+  const quarantined = {
+    ...base,
+    kind: "quarantined",
+    tone: "warning",
+    title: message("backendQuarantined"),
+    body: [message("backendQuarantinedBody")],
+    code: "backend_quarantined",
+    actions: [],
+  } as const;
+  if (laneQuarantined) return quarantined;
 
   if (state.status === "checking") {
     // The ways out are offered here too. `busy` disables them for the length of
@@ -255,23 +335,9 @@ export function presentBackend(
 
   const code = availability.failure?.kind ?? null;
   if (code === "backend_quarantined") {
-    // Not a verdict about the installation: this session started a process it
-    // cannot account for, so it starts no more. The recovery is a restart of
-    // MSCanvas, and telling a reader to repair ProteoWizard here would send
-    // them after the wrong thing.
-    return {
-      ...base,
-      kind: "quarantined",
-      tone: "warning",
-      title: message("backendQuarantined"),
-      body: [message("backendQuarantinedBody")],
-      code,
-      chosen,
-      // The same ways out as any unavailable state, unchanged. Rust refuses
-      // them while quarantined and says so; a banner that removed them would
-      // be the only surface offering no way to ask.
-      actions: switchAway(chosen, message),
-    };
+    // Telling a reader to repair ProteoWizard here would send them after the
+    // wrong thing.
+    return { ...quarantined, chosen };
   }
   // Nothing installed is a setup step; an installation MSCanvas cannot use is a
   // repair. A reader is owed the difference, and it is decided from the code
