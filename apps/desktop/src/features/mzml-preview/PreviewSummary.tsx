@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 
 import { Disclosure, Icon, IconButton } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import type { UiMessage } from "../preferences/i18n";
 import type { Metadata, RunSummary, SelectedFile, SelectedSpectrum } from "./contracts";
 import {
   formatByteLength,
@@ -11,7 +12,9 @@ import {
   formatMsLevel,
   formatMz,
   formatRetentionTime,
-  formatRetentionTimeValue,
+  formatRetentionTimeIn,
+  REPRESENTATION,
+  unitText,
 } from "./format";
 import { spectrumSourceDetails } from "./SpectrumViewport";
 import type { SpectrumViewportState } from "./viewer/spectrumViewport";
@@ -153,14 +156,16 @@ export const PreviewMetadata = memo(function PreviewMetadata({ file, runSummary,
                 : formatCount(runSummary.chromatogramCount)}
             </dd>
           </div>
-          <div>
+          {/* A run with no rows has no range to state. */}
+          {runSummary.retentionTimeRange.state === "noRows" ? null : <div>
             <dt>{t("summaryRetentionTime")}</dt>
             <dd>
-              {runSummary.retentionTimeRange === null
-                ? t("viewerNotReported")
-                : `${formatRetentionTimeValue(runSummary.retentionTimeRange.minimum)} – ${formatRetentionTime(runSummary.retentionTimeRange.maximum, t)}`}
+              {runSummary.retentionTimeRange.state === "mixedUnits"
+                ? t("summaryRetentionMixed")
+                : `${runSummary.retentionTimeRange.minimum.toFixed(4)} – ${formatRetentionTimeIn(
+                  runSummary.retentionTimeRange.maximum, runSummary.retentionTimeRange.unit, t)}`}
             </dd>
-          </div>
+          </div>}
         </dl>
       </div>
 
@@ -229,16 +234,18 @@ function SpectrumFacts({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
       <div><dt>{t("scanIndex")}</dt><dd>{formatCount(spectrum.index)}</dd></div>
       <div><dt>{t("scanNumber")}</dt><dd>{spectrum.scanNumber === null ? t("viewerNotReported") : formatCount(spectrum.scanNumber)}</dd></div>
       <div><dt>{t("scanMsLevel")}</dt><dd>MS{spectrum.msLevel}</dd></div>
-      <div><dt>{t("scanRetentionTime")}</dt><dd>{spectrum.retentionTime.unitKnown ? spectrum.retentionTime.value.toFixed(4) :
-        t("viewerRetentionValue", { value: spectrum.retentionTime.value.toFixed(4) })}</dd></div>
+      <div><dt>{t("scanRetentionTime")}</dt><dd>{formatRetentionTime(spectrum.retentionTime, t)}</dd></div>
       <div><dt>{t("viewerPoints")}</dt><dd>{formatCount(spectrum.pointCount)}</dd></div>
       <div><dt>{t("scanTotalIonCurrent")}</dt><dd>{formatIntensity(spectrum.totalIonCurrent)}</dd></div>
       {empty ? null : <>
-        <div><dt>{t("rangeMzAxis")}</dt><dd>{formatMz(spectrum.mzLow)} – {formatMz(spectrum.mzHigh)}</dd></div>
+        {/* The pair the spectrum states, each bound "not reported" where it states none -- never 0. */}
+        <div><dt>{t("rangeMzAxis")}</dt><dd>{spectrum.mzLow === null && spectrum.mzHigh === null ? t("viewerNotReported")
+          : `${reported(spectrum.mzLow, formatMz, t)} – ${reported(spectrum.mzHigh, formatMz, t)}`}</dd></div>
         <div><dt>{t("viewerBasePeak")}</dt><dd>{t("viewerBasePeakValue", { mz: formatMz(spectrum.basePeakMz), value: formatIntensity(spectrum.basePeakIntensity) })}</dd></div>
       </>}
-      <div><dt>{t("viewerRepresentation")}</dt><dd>{t(spectrum.representationKnown ? "viewerReported" : "viewerNotReported")}</dd></div>
-      <div><dt>{t("viewerValueUnits")}</dt><dd>{t(spectrum.valueUnitsKnown ? "viewerReported" : "viewerNotReported")}</dd></div>
+      <div><dt>{t("viewerRepresentation")}</dt><dd>{t(REPRESENTATION[spectrum.representation])}</dd></div>
+      <div><dt>{t("viewerMzUnit")}</dt><dd>{unitText(spectrum.mzUnit, t)}</dd></div>
+      <div><dt>{t("viewerIntensityUnit")}</dt><dd>{unitText(spectrum.intensityUnit, t)}</dd></div>
     </dl>
     {spectrum.identifiers.length === 0 ? null : <>
       <h4>{t("viewerIdentifiers")}</h4>
@@ -249,7 +256,11 @@ function SpectrumFacts({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
       {spectrum.precursorsTruncated ? <p className="notice notice-warning" role="note">
         {t("viewerPrecursorPrefix", { count: spectrum.precursors.length, total: spectrum.totalPrecursorCount })}</p> : null}
       <dl className="metadata-list">{spectrum.precursors.map(precursor => <div key={precursor.index}>
-        <dt>{formatMz(precursor.mz)}</dt><dd>{formatIntensity(precursor.intensity)}</dd></div>)}</dl>
+        <dt>{reported(precursor.mz, formatMz, t)}</dt><dd>{reported(precursor.intensity, formatIntensity, t)}</dd></div>)}</dl>
     </>}
   </>;
+}
+
+function reported(value: number | null, format: (value: number) => string, t: UiMessage): string {
+  return value === null ? t("viewerNotReported") : format(value);
 }

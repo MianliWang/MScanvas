@@ -495,18 +495,35 @@ export interface MsLevelCount {
 }
 
 /**
- * The measured formatter emits no retention-time unit, so `unitKnown` is false
- * and no unit may be displayed alongside the value.
+ * The unit a retention time is stated in, as the file declares it (ADR 0056).
+ * Nothing converts between seconds and minutes, and `notReported` is never
+ * given a unit for display.
  */
+export type RetentionTimeUnit = "second" | "minute" | "notReported";
+
 export interface RetentionTime {
   readonly value: number;
-  readonly unitKnown: boolean;
+  readonly unit: RetentionTimeUnit;
 }
 
-export interface RetentionTimeRange {
-  readonly minimum: RetentionTime;
-  readonly maximum: RetentionTime;
-}
+/**
+ * The run's retention-time range, over every row Rust retained.
+ *
+ * `mixedUnits` where the rows state different units or only some state one:
+ * there is no one range to give, for the reason there is no chromatogram.
+ */
+export type RetentionTimeRange =
+  | { readonly state: "reported"; readonly minimum: number; readonly maximum: number; readonly unit: RetentionTimeUnit }
+  | { readonly state: "mixedUnits" }
+  | { readonly state: "noRows" };
+
+/** Whether a spectrum is centroid or profile, as the file declares it. */
+export type SpectrumRepresentation = "centroid" | "profile" | "notReported";
+
+/** The unit one array's values are stated in: the declared accession, or none. */
+export type ValueUnit =
+  | { readonly state: "declared"; readonly accession: string }
+  | { readonly state: "notReported" };
 
 export interface RunSummary {
   readonly totalSpectrumCount: number;
@@ -516,7 +533,8 @@ export interface RunSummary {
   readonly msLevelsTruncated: boolean;
   /** `null` because no chromatogram count is emitted. It is not zero. */
   readonly chromatogramCount: number | null;
-  readonly retentionTimeRange: RetentionTimeRange | null;
+  /** From the native spectrum table, not from the run summary. */
+  readonly retentionTimeRange: RetentionTimeRange;
 }
 
 export interface SpectrumRow {
@@ -559,8 +577,8 @@ export interface Preview {
    *
    * `null` where there is none, which is exactly where the viewer draws none: a
    * table this session could not transfer whole, a run with no spectra, a
-   * retention time or an intensity that is not a finite number, or a unit this
-   * build cannot name. Rust retains every row the backend reported while this
+   * retention time or an intensity that is not a finite number, or rows in
+   * mixed retention-time units. Rust retains every row the backend reported while this
    * document receives a bounded prefix, so a token is issued only for a run the
    * viewer itself would draw.
    *
@@ -574,8 +592,9 @@ export interface Preview {
    * may copy. The page sends it back with a layer and sends no value: Rust
    * copies the whole summary it retained, not the bounded one above.
    *
-   * `null` where this answer was not the latest open's. It stops naming
-   * anything the moment another preview open begins.
+   * Present on every successful open: an open that is no longer the latest is
+   * refused as `selection_superseded` (ADR 0056). It stops naming anything the
+   * moment another preview open begins.
    */
   readonly qcSnapshotToken: string | null;
   /**
@@ -586,10 +605,11 @@ export interface Preview {
   readonly qcProducerIdentified: boolean;
 }
 
+/** One precursor. An unstated value is `null`, never zero. */
 export interface Precursor {
   readonly index: number;
-  readonly mz: number;
-  readonly intensity: number;
+  readonly mz: number | null;
+  readonly intensity: number | null;
 }
 
 /**
@@ -649,6 +669,20 @@ export interface SpectrumProjection {
   readonly sourcePoints: number;
   /** Whether fewer points are drawn than the window measured. */
   readonly reduced: boolean;
+  /**
+   * For a declared profile spectrum, the measured sample just below and just
+   * above the window, which the joined line crosses each edge from. Not
+   * counted in `sourcePoints`; `null` for a discrete spectrum and where the
+   * window reaches the source's own end.
+   */
+  readonly outsideLow: ProjectionSample | null;
+  readonly outsideHigh: ProjectionSample | null;
+}
+
+/** One measured sample beside a projection's window. */
+export interface ProjectionSample {
+  readonly mz: number;
+  readonly intensity: number;
 }
 
 export interface SelectedSpectrum {
@@ -660,8 +694,12 @@ export interface SelectedSpectrum {
   readonly pointCount: number;
   readonly mz: readonly number[];
   readonly intensity: readonly number[];
-  readonly mzLow: number;
-  readonly mzHigh: number;
+  /**
+   * The lowest and highest observed m/z the spectrum states. `null` where it
+   * states none; never taken from the array.
+   */
+  readonly mzLow: number | null;
+  readonly mzHigh: number | null;
   readonly basePeakMz: number;
   readonly basePeakIntensity: number;
   readonly totalIonCurrent: number;
@@ -669,10 +707,11 @@ export interface SelectedSpectrum {
   /** How many precursors the spectrum really has. */
   readonly totalPrecursorCount: number;
   readonly precursorsTruncated: boolean;
-  /** No profile/centroid marker was emitted, so none may be displayed. */
-  readonly representationKnown: boolean;
-  /** No array unit was emitted, so none may be displayed. */
-  readonly valueUnitsKnown: boolean;
+  /** From the spectrum's own terms; never guessed. */
+  readonly representation: SpectrumRepresentation;
+  readonly mzUnit: ValueUnit;
+  readonly intensityUnit: ValueUnit;
+  /** `mz` and `intensity` are a prefix; `pointCount` is the total. */
   readonly truncated: boolean;
   /**
    * Whether this spectrum has an m/z domain a viewport may navigate.

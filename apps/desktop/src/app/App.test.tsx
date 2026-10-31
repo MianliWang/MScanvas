@@ -40,6 +40,7 @@ import {
 } from "../test/previewFixtures";
 import { App } from "./App";
 import { chooseRosterAction, rosterAction, rosterActionRefused, rosterListMenu } from "../test/rosterActions";
+import { UI_RESOURCES } from "../features/preferences/i18n";
 
 function renderApp(
   api: PreviewApi,
@@ -219,25 +220,39 @@ describe("mzML preview workspace", () => {
     expect(api.requestedSpectra.length).toBe(picksBefore);
   });
 
-  it("clears a stale workspace when a spectrum load is what notices the backend changed", async () => {
-    // The failure is not retryable, so nothing else would say anything: the
-    // table stays on screen looking current and every further row fails the
-    // same way until the user happens to press Check again.
+  it("keeps the open when the native reader refuses one spectrum, and asks nothing of the backend", async () => {
+    // ADR 0056: a selected spectrum is read natively, so its refusal is about
+    // the file. The open and the other spectra stand, the reason and the
+    // reader's stable id stay on screen, and no backend check follows.
     const api = createFakePreviewApi({
       spectrum: () =>
-        Promise.reject(
-          previewError({ kind: "installation_changed_since_preview", retryable: false }),
-        ),
+        Promise.reject(previewError({ kind: "spectrum_value_not_exact", retryable: false, detail: "intensity:integer_not_exact" })),
     });
     await openTheFile(api);
     await screen.findByRole("grid", { name: "Scans" });
+    const checks = api.calls().filter((call) => call === "inspectBackend").length;
 
     selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
 
-    // The readings go, and the retained file is offered back rather than left
-    // looking like it still describes what is installed.
-    expect(await screen.findByRole("button", { name: /^Preview QC_pool_01/ })).toBeVisible();
-    expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
+    expect(await screen.findByText(UI_RESOURCES.en.errSpectrumValueNotExact)).toBeVisible();
+    expect(screen.getByText("intensity:integer_not_exact")).toBeVisible();
+    expect(screen.getByRole("grid", { name: "Scans" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: UI_RESOURCES.en.viewerSpectrumRetry })).toBeNull();
+    expect(api.calls().filter((call) => call === "inspectBackend")).toHaveLength(checks);
+  });
+
+  it("offers to open the file again when its preview is no longer open", async () => {
+    const api = createFakePreviewApi({
+      spectrum: () => Promise.reject(previewError({ kind: "preview_not_open", retryable: false })),
+    });
+    await openTheFile(api);
+    await screen.findByRole("grid", { name: "Scans" });
+    const opens = api.calls().filter((call) => call === "openPreview").length;
+
+    selectRowByIdentifier("controllerType=0 controllerNumber=1 scan=1");
+    fireEvent.click(await screen.findByRole("button", { name: UI_RESOURCES.en.viewerReopenFile }));
+
+    await waitFor(() => { expect(api.calls().filter((call) => call === "openPreview")).toHaveLength(opens + 1); });
   });
 
   it("clears a stale workspace when the backend changed between the check and the spawn", async () => {
@@ -685,6 +700,8 @@ describe("mzML preview workspace", () => {
           intensity: [500, -900, 200, -100],
           sourcePoints: 4,
           reduced: false,
+          outsideLow: null,
+          outsideHigh: null,
         }),
     });
     await openTheFile(api);
@@ -726,6 +743,8 @@ describe("mzML preview workspace", () => {
           intensity: buildSpectrum(2, 12).intensity,
           sourcePoints: 12,
           reduced: false,
+          outsideLow: null,
+          outsideHigh: null,
         }),
     });
     await openTheFile(api);
@@ -800,14 +819,15 @@ describe("mzML preview workspace", () => {
     // points" -- described the transferred prefix, and since M5.2 the drawing
     // is not taken from it: each committed range is drawn from the complete
     // spectrum Rust retained.
-    expect(screen.getByRole("note")).toHaveTextContent("8 points transferred; the drawing and details use the full retained spectrum.");
+    // The prefix and the total, both (ADR 0056).
+    expect(screen.getByRole("note")).toHaveTextContent("8 of 900,000 points transferred; the drawing and details use the full retained spectrum.");
     // The tallest point in the prefix is never presented as the spectrum's.
     expect(plot).not.toHaveAccessibleName(/359\.00/);
     // The notice says what the transfer bound still costs -- which is not the
     // drawing any more -- so it cannot contradict the whole-spectrum facts
     // stated beside it.
     expect(screen.getByRole("note")).toHaveTextContent(
-      "8 points transferred; the drawing and details use the full retained spectrum.",
+      "8 of 900,000 points transferred; the drawing and details use the full retained spectrum.",
     );
   });
 
@@ -993,7 +1013,8 @@ describe("mzML preview workspace", () => {
     expect(screen.getByText("Peak representation").nextElementSibling).toHaveTextContent(
       "Not reported",
     );
-    expect(screen.getByText("Value units").nextElementSibling).toHaveTextContent("Not reported");
+    expect(screen.getByText("m/z unit").nextElementSibling).toHaveTextContent("Not reported");
+    expect(screen.getByText("Intensity unit").nextElementSibling).toHaveTextContent("Not reported");
     // The same caveat is stated in Details' spectrum source, because a reduced
     // profile spectrum looks exactly like a centroided one.
     expect(

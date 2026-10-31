@@ -1030,6 +1030,7 @@ export function PreviewWorkspace() {
                       onDismissExport={workspace.dismissSpectrumExport}
                       onExport={workspace.exportSpectrum}
                       onRetry={workspace.retrySpectrum}
+                      onReopen={workspace.previewActiveAgain}
                       onRetryProjection={workspace.retrySpectrumProjection}
                       projectionError={workspace.spectrumProjectionError}
                       readViewport={workspace.readSpectrumViewport}
@@ -1105,8 +1106,10 @@ export function PreviewWorkspace() {
                 </>}
                 // Reading is idempotent, so a retry is offered when the backend
                 // said the failure was retryable -- and it repeats the step that
-                // actually failed.
-                action={preview.error.retryable && workspace.activeDataset !== null ? (
+                // actually failed. A superseded open is not retryable as such,
+                // but where it is the one on screen (two opens can reach Rust
+                // out of order) reading the row again is the way on.
+                action={(preview.error.retryable || preview.error.kind === "selection_superseded") && workspace.activeDataset !== null ? (
                   <Button variant="secondary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
                     {t("retryEvidence")}
                   </Button>

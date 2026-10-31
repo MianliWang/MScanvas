@@ -3,6 +3,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { joinSentences, type UiMessage } from "../preferences/i18n";
 
+import type { ProjectionSample, SpectrumRepresentation, ValueUnit } from "./contracts";
 import { formatIntensity, formatMz } from "./format";
 import { niceTicks, paintTicks, withHeadroom } from "./viewer/plotAxes";
 
@@ -121,9 +122,9 @@ const MAX_COLUMNS = 900;
 export type SpectrumDrawing =
   | {
       readonly kind: "transfer";
-      /** The backend's own reported pair for the whole spectrum. */
-      readonly reportedMzLow: number;
-      readonly reportedMzHigh: number;
+      /** The pair the spectrum states for itself; `null` where it states none. */
+      readonly reportedMzLow: number | null;
+      readonly reportedMzHigh: number | null;
     }
   /**
    * A range with no drawing under it, and why there is none.
@@ -150,9 +151,11 @@ export type SpectrumDrawing =
    * points answer a different window, so a mid-drag picture is never read as the
    * answer to the range under the cursor.
    */
-  | { readonly kind: "viewport-transient"; readonly low: number; readonly high: number }
+  | { readonly kind: "viewport-transient"; readonly low: number; readonly high: number; readonly outside?: OutsideSamples }
   | {
       readonly kind: "viewport";
+      /** A profile projection's samples beyond each edge, which its line is cut between. */
+      readonly outside?: OutsideSamples;
       /**
        * The committed window, used exactly.
        *
@@ -167,6 +170,9 @@ export type SpectrumDrawing =
       /** Whether Rust drew fewer points than the window measured. */
       readonly reduced: boolean;
     };
+
+/** The measured samples just below and just above a projection's window. */
+export type OutsideSamples = readonly [ProjectionSample | null, ProjectionSample | null];
 
 /**
  * Whether this drawing is something the reader can act on, and how.
@@ -207,7 +213,10 @@ export interface StickSpectrumProps {
   readonly mz: readonly number[];
   readonly intensity: readonly number[];
   readonly drawing: SpectrumDrawing;
-  readonly valueUnitsKnown?: boolean;
+  /** A declared profile spectrum is drawn as a joined line over a viewport; anything else as sticks. */
+  readonly representation?: SpectrumRepresentation;
+  readonly mzUnit?: ValueUnit;
+  readonly intensityUnit?: ValueUnit;
   readonly labelledBy: string;
   readonly surface: SpectrumSurface;
   /** The line under the ticks, left of the m/z title: what range is on screen. */
@@ -223,6 +232,8 @@ interface Stick {
 
 interface Reduction {
   readonly sticks: readonly Stick[];
+  /** Where one measured sample lands on this drawing's axes. */
+  readonly toPoint: (mz: number, intensity: number) => Stick;
   readonly domainLow: number;
   readonly domainHigh: number;
   readonly intensityLow: number;
@@ -276,17 +287,50 @@ function drawsWithoutLength(y: number, zeroY: number): boolean {
  */
 function transferDomain(
   mz: readonly number[],
-  reportedMzLow: number,
-  reportedMzHigh: number,
+  reportedMzLow: number | null,
+  reportedMzHigh: number | null,
 ): { readonly low: number; readonly high: number } {
-  let low = reportedMzLow;
-  let high = reportedMzHigh;
+  let low = reportedMzLow ?? Infinity;
+  let high = reportedMzHigh ?? -Infinity;
   for (let index = 0; index < mz.length; index += 1) {
     const value = mz[index] ?? 0;
     low = Math.min(low, value);
     high = Math.max(high, value);
   }
+  // A bound the spectrum does not state is drawn against the other one, or the
+  // points; with neither, the axis is an empty one at zero, never infinite.
+  if (low === Infinity) low = high === -Infinity ? 0 : high;
+  if (high === -Infinity) high = low;
   return { low, high };
+}
+
+/**
+ * The heights a joined profile line has where it crosses the window's edges:
+ * the export renderer's rule, interpolated along the segment from the sample
+ * beyond each edge to the nearest one inside (or to the sample beyond the
+ * other edge, for a window between two samples). They set the value scale, as
+ * they do in the export; nothing records them as data.
+ */
+function edgeHeights(
+  mz: readonly number[],
+  intensity: readonly number[],
+  low: number,
+  high: number,
+  [below, above]: OutsideSamples,
+): number[] {
+  let first: ProjectionSample | null = null;
+  let last: ProjectionSample | null = null;
+  for (let index = 0; index < mz.length; index += 1) {
+    const value = mz[index] ?? 0;
+    if (value < low || value > high) continue;
+    const sample = { mz: value, intensity: intensity[index] ?? 0 };
+    first ??= sample;
+    last = sample;
+  }
+  const at = (edge: number, left: ProjectionSample | null, right: ProjectionSample | null) =>
+    left !== null && right !== null && left.mz < edge && edge < right.mz
+      ? [left.intensity + (right.intensity - left.intensity) * ((edge - left.mz) / (right.mz - left.mz))] : [];
+  return [...at(low, below, first ?? above), ...at(high, last ?? below, above)];
 }
 
 /**
@@ -313,9 +357,11 @@ function reduce(
   intensity: readonly number[],
   domainLow: number,
   domainHigh: number,
+  /** A joined line's heights at the edges, which the scale must hold too. */
+  edges: readonly number[] = [],
 ): Reduction {
-  let intensityLow = 0;
-  let intensityHigh = 0;
+  let intensityLow = Math.min(0, ...edges);
+  let intensityHigh = Math.max(0, ...edges);
   let negativeCount = 0;
   let drawnFrom = 0;
   const inside = (value: number) => value >= domainLow && value <= domainHigh;
@@ -381,23 +427,22 @@ function reduce(
   const sticks: Stick[] = [];
   let negativesDrawn = 0;
   let negativesDrawnFlat = 0;
+  const toPoint = (value: number, height: number): Stick => ({
+    x: PLOT_PADDING_LEFT + (span > 0 ? (value - domainLow) / span : 0.5) * usableWidth,
+    y: PLOT_PADDING_TOP + (valueSpan > 0 ? (axis.high - height) / valueSpan : 1) * usableHeight,
+  });
   const place = (height: number | null | undefined, value: number) => {
     if (height === null || height === undefined) {
       return;
     }
-    const fraction = span > 0 ? (value - domainLow) / span : 0.5;
-    const scaled = valueSpan > 0 ? (axis.high - height) / valueSpan : 1;
-    const y = PLOT_PADDING_TOP + scaled * usableHeight;
+    const stick = toPoint(value, height);
     if (height < 0) {
       negativesDrawn += 1;
-      if (drawsWithoutLength(y, zeroY)) {
+      if (drawsWithoutLength(stick.y, zeroY)) {
         negativesDrawnFlat += 1;
       }
     }
-    sticks.push({
-      x: PLOT_PADDING_LEFT + fraction * usableWidth,
-      y,
-    });
+    sticks.push(stick);
   };
   for (let column = 0; column < columnCount; column += 1) {
     place(highest[column], highestMz[column] ?? domainLow);
@@ -406,6 +451,7 @@ function reduce(
 
   return {
     sticks,
+    toPoint,
     domainLow,
     domainHigh,
     intensityLow,
@@ -491,12 +537,14 @@ function describeDrawing(
 }
 
 /**
- * A stick spectrum drawn as one SVG path.
+ * A spectrum drawn as one SVG path.
  *
- * Sticks, not a connected line: a mass spectrum is a set of discrete m/z
+ * Sticks for a centroid or undeclared spectrum: those are discrete m/z
  * measurements, and joining them would draw intensity at m/z values that were
- * never measured. Everything is emitted into a single path so that a large
- * spectrum costs one node rather than thousands.
+ * never measured. A spectrum the file declares profile is sampled along m/z,
+ * so over a viewport it is the joined line the export draws (P175).
+ * Everything is emitted into a single path so that a large spectrum costs one
+ * node rather than thousands.
  *
  * The axis is a prop rather than a derivation, which is the M5.2 change. A
  * spectrum with no admitted viewport is still drawn over the range its own
@@ -514,25 +562,64 @@ export function describeSpectrumSource(
   mz: readonly number[],
   intensity: readonly number[],
   drawing: SpectrumDrawing,
-  representationKnown: boolean,
+  representation: SpectrumRepresentation,
   t: UiMessage,
 ): string {
+  const { reduction, line } = drawingGeometry(mz, intensity, drawing, representation);
+  return joinSentences(t, [
+    line !== null ? (drawing.kind === "viewport" && reduction.drawnFrom < drawing.sourcePoints ? t("plotReduced") : "")
+      : drawing.kind === "viewport" || drawing.kind === "transfer" ? describeDrawing(reduction, drawing, t) : "",
+    line === null && reduction.negativeCount > 0 ? describeNegativeDrawing(reduction, t) : "",
+    representation === "notReported" ? t("plotUnknownRepresentation")
+      : representation === "profile" ? t(line === null ? "plotProfileSticks" : "plotProfileLine") : "",
+  ]);
+}
+
+const NO_OUTSIDE: OutsideSamples = [null, null];
+
+/**
+ * What one drawing draws: its m/z axis, its reduction, and -- for a declared
+ * profile spectrum over a viewport -- the joined line (P175). Shared by the
+ * plot and by Details, so the two cannot describe different drawings.
+ *
+ * The line runs from the sample beyond the low edge through the projection's
+ * points to the sample beyond the high edge, and the band's clip cuts it at
+ * each edge at the height between the two samples beside it -- the export's
+ * cut. A settled window is scaled to those heights, as the export is. A
+ * transferred drawing (no viewport) and a line of fewer than two samples stay
+ * sticks: there is no window to cut, or nothing to join.
+ */
+function drawingGeometry(
+  mz: readonly number[],
+  intensity: readonly number[],
+  drawing: SpectrumDrawing,
+  representation: SpectrumRepresentation,
+) {
   const domain = drawing.kind === "transfer"
     ? transferDomain(mz, drawing.reportedMzLow, drawing.reportedMzHigh)
     : { low: drawing.low, high: drawing.high };
-  const reduction = reduce(mz, intensity, domain.low, domain.high);
-  return joinSentences(t, [
-    drawing.kind === "viewport" || drawing.kind === "transfer" ? describeDrawing(reduction, drawing, t) : "",
-    reduction.negativeCount > 0 ? describeNegativeDrawing(reduction, t) : "",
-    representationKnown ? "" : t("plotUnknownRepresentation"),
-  ]);
+  const outside = representation !== "profile" ? null
+    : drawing.kind === "viewport" || drawing.kind === "viewport-transient" ? drawing.outside ?? NO_OUTSIDE : null;
+  const edges = outside !== null && drawing.kind === "viewport"
+    ? edgeHeights(mz, intensity, domain.low, domain.high, outside) : [];
+  const reduction = reduce(mz, intensity, domain.low, domain.high, edges);
+  let line: Stick[] | null = null;
+  if (outside !== null && mz.length + (outside[0] === null ? 0 : 1) + (outside[1] === null ? 0 : 1) >= 2) {
+    line = [];
+    if (outside[0] !== null) line.push(reduction.toPoint(outside[0].mz, outside[0].intensity));
+    for (let index = 0; index < mz.length; index += 1) line.push(reduction.toPoint(mz[index] ?? 0, intensity[index] ?? 0));
+    if (outside[1] !== null) line.push(reduction.toPoint(outside[1].mz, outside[1].intensity));
+  }
+  return { domain, reduction, line };
 }
 
 export function StickSpectrum({
   mz,
   intensity,
   drawing,
-  valueUnitsKnown = false,
+  representation = "notReported",
+  mzUnit,
+  intensityUnit,
   labelledBy,
   surface,
   readout,
@@ -546,33 +633,26 @@ export function StickSpectrum({
     if (typeof externalRef === "function") externalRef(node);
     else if (externalRef) externalRef.current = node;
   }, [externalRef]);
-  const domain = useMemo(
-    () =>
-      drawing.kind === "transfer"
-        ? transferDomain(mz, drawing.reportedMzLow, drawing.reportedMzHigh)
-        : { low: drawing.low, high: drawing.high },
-    [drawing, mz],
-  );
-
-  const reduction = useMemo(
-    () => reduce(mz, intensity, domain.low, domain.high),
-    [domain.high, domain.low, intensity, mz],
+  const { domain, reduction, line } = useMemo(
+    () => drawingGeometry(mz, intensity, drawing, representation),
+    [drawing, intensity, mz, representation],
   );
 
   const path = useMemo(
-    () =>
-      reduction.sticks
+    () => line !== null
+      ? line.map((point, index) => `${index === 0 ? "M" : "L"}${coordinate(point.x)} ${coordinate(point.y)}`).join("")
+      : reduction.sticks
         .map(
           (stick) =>
             `M${coordinate(stick.x)} ${coordinate(reduction.zeroY)}V${coordinate(stick.y)}`,
         )
         .join(""),
-    [reduction.sticks, reduction.zeroY],
+    [line, reduction.sticks, reduction.zeroY],
   );
 
   const flat = reduction.intensityHigh === reduction.intensityLow;
   /** Whether this plot has anything on it, which the value axis depends on. */
-  const nothingDrawn = reduction.sticks.length === 0;
+  const nothingDrawn = line === null && reduction.sticks.length === 0;
   // The m/z axis is painted, not rendered: a gesture repaints it per frame.
   // Every render, so a title that changed width (another language) is
   // measured again against the labels beside it.
@@ -591,12 +671,15 @@ export function StickSpectrum({
   const valueSpan = reduction.axisHigh - reduction.axisLow;
   const valueY = (value: number) => valueSpan > 0
     ? PLOT_PADDING_TOP + ((reduction.axisHigh - value) / valueSpan) * (BASELINE_Y - PLOT_PADDING_TOP) : BASELINE_Y;
-  const valueTitle = t(valueUnitsKnown ? "plotAxisIntensityReported" : "plotAxisIntensity") +
-    (flat && !nothingDrawn ? ` · ${t("plotFlat")}` : "");
+  // Each axis states the unit its array declares, by accession, as the export does.
+  const valueTitle = (intensityUnit?.state === "declared" ? t("plotAxisIntensityUnit", { unit: intensityUnit.accession })
+    : t("plotAxisIntensity")) + (flat && !nothingDrawn ? ` · ${t("plotFlat")}` : "");
+  const mzTitle = mzUnit?.state === "declared" ? t("plotAxisMzUnit", { unit: mzUnit.accession }) : t("plotAxisMz");
   // A blank plot's caption names no drawing: the status line beside the plot
   // already says whether one is on its way or failed.
   const caption = [
-    drawing.kind === "viewport" ? t("plotCaption", { count: reduction.sticks.length, total: drawing.sourcePoints }) :
+    drawing.kind === "viewport" ? line !== null ? t("plotLineCaption", { count: reduction.drawnFrom, total: drawing.sourcePoints })
+      : t("plotCaption", { count: reduction.sticks.length, total: drawing.sourcePoints }) :
       drawing.kind === "transfer" ? t("plotTransferCaption", { count: reduction.sticks.length, total: reduction.drawnFrom }) :
         drawing.kind === "viewport-transient" ? t("plotTransient") : "",
     reduction.negativeCount > 0 ? t("plotNegativeCount", { count: reduction.negativeCount }) : "",
@@ -626,6 +709,9 @@ export function StickSpectrum({
           // are rounded: what a reader checking the scale reads.
           data-value-high={nothingDrawn ? undefined : formatIntensity(reduction.intensityHigh)}
           data-value-low={nothingDrawn ? undefined : formatIntensity(reduction.intensityLow)}
+          // How the points are drawn: a joined line for a declared profile
+          // spectrum over a viewport, sticks for everything else.
+          data-drawn-as={line === null ? "sticks" : "line"}
           // Focusable exactly where there is something to do, and the keyboard
           // exposed only there with it. A tab stop that reaches a picture nothing
           // can be done to spends a keyboard user's time to tell them nothing --
@@ -647,12 +733,13 @@ export function StickSpectrum({
           <defs>
             {/* A stick on either edge of the drawn band keeps its whole
                 width: clipped at its centre it drew half as wide, and read as
-                a lighter mark than its neighbours (P6). */}
+                a lighter mark than its neighbours (P6). A joined line is cut
+                exactly at the band's edges, which is where the export cuts it. */}
             <clipPath id={STICKS_CLIP}>
               <rect
                 height={BASELINE_Y}
-                width={PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT + 2 * STICK_BLEED}
-                x={PLOT_PADDING_LEFT - STICK_BLEED}
+                width={PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT + 2 * (line === null ? STICK_BLEED : 0)}
+                x={PLOT_PADDING_LEFT - (line === null ? STICK_BLEED : 0)}
                 y={0}
               />
             </clipPath>
@@ -669,7 +756,7 @@ export function StickSpectrum({
               redrawn, so a pointer frame costs an attribute rather than a
               reduction over the projection. */}
           <g className={SPECTRUM_STICKS_LAYER} clipPath={`url(#${STICKS_CLIP})`}>
-            {path === "" ? null : <path className="spectrum-sticks" d={path} />}
+            {path === "" ? null : <path className={line === null ? "spectrum-sticks" : "spectrum-line"} d={path} />}
           </g>
         </svg>
         <div aria-hidden="true" className="plot-x-ticks" />
@@ -680,7 +767,7 @@ export function StickSpectrum({
           abandon a gesture): what range is on screen, then the m/z title. */}
       <div className="plot-foot">
         {readout}
-        <p className="plot-axis-title plot-axis-title-x">{t("plotAxisMz")}</p>
+        <p className="plot-axis-title plot-axis-title-x">{mzTitle}</p>
       </div>
       {/* What the drawing is made of, for a screen reader: Details says it to
           the eye, beside the rest of the spectrum's source. */}

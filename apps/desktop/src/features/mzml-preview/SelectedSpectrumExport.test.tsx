@@ -103,7 +103,7 @@ describe("selected spectrum export actions", () => {
       { status: "none" } as const,
       { status: "loading", index: 3 } as const,
       { status: "unavailable", requestedIndex: 3 } as const,
-      { status: "failed", index: 3, error: { kind: "spectrum_failed", summary: "No.", detail: null, retryable: true } } as const,
+      { status: "failed", index: 3, error: { kind: "spectrum_unreadable", summary: "No.", detail: null, retryable: true } } as const,
     ]) {
       const { unmount } = renderPanel(state);
       expect(screen.queryByRole("button", { name: en.figureExportTitle })).toBeNull();

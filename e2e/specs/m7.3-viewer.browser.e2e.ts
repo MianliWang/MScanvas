@@ -1,7 +1,7 @@
 /** Production viewer; deterministic synthetic source responses at the existing IPC boundary only. */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
+import { buildPreview, buildSpectrum, secondFile, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 import { ipcTable } from "../support/fixtures";
 import { readBackSavedPreferences, revealRosterRow, seedARunOf } from "../support/viewer";
 import { choosePlotMenuItem } from "../support/figure";
@@ -47,17 +47,16 @@ async function preferences(language: "en" | "zh-CN", density: "comfortable" | "c
   await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
-function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" = "complete") {
+function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" | "superseded" = "complete") {
   const table: Record<string, unknown> = ipcTable({ emptySpectrum: kind === "empty", refusedViewport: kind === "refused", oneMzViewport: kind === "one" });
   const preview = buildPreview(8);
   preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, {
     identifier: (index === 3 || index === 7 ? "rare-" : "raw-") + index + "-原始标识符_controllerType=0_controllerNumber=1_scan=" + (index + 1),
-    retentionTime: { value: index, unitKnown: false }, msLevel: index % 2 + 1,
+    retentionTime: { value: index, unit: "notReported" }, msLevel: index % 2 + 1,
     totalIonCurrent: (index + 1) * 10,
   }));
-  Object.assign(preview.runSummary, { retentionTimeRange: {
-    minimum: { value: 0, unitKnown: false }, maximum: { value: 7, unitKnown: false },
-  }, msLevels: [{ msLevel: 1, spectrumCount: 4 }, { msLevel: 2, spectrumCount: 4 }] });
+  Object.assign(preview.runSummary, { retentionTimeRange: { state: "reported", minimum: 0, maximum: 7, unit: "notReported" },
+    msLevels: [{ msLevel: 1, spectrumCount: 4 }, { msLevel: 2, spectrumCount: 4 }] });
   if (kind === "large-values") preview.spectrumTable.rows.forEach((row, index) => {
     Object.assign(row, { totalIonCurrent: index === 0 ? -1e12 : (index + 1) * 1e12 });
   });
@@ -65,13 +64,21 @@ function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "la
     Object.assign(preview.spectrumTable, { truncated: true, totalRowCount: 120000 });
     Object.assign(preview.runSummary, { totalSpectrumCount: 120000 });
   }
+  if (kind === "mixed") {
+    // Half the scans declare minutes and half seconds (ADR 0056): Rust gives no
+    // range and no chromatogram token, and nothing converts one to the other.
+    preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, {
+      retentionTime: { value: index, unit: index % 2 === 0 ? "minute" : "second" } }));
+    Object.assign(preview.runSummary, { retentionTimeRange: { state: "mixedUnits" } });
+    Object.assign(preview, { chromatogramExportToken: null });
+  }
   table.open_mzml_preview = preview;
-  table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
+  table.get_workspace_roster = { capacity: 1024, datasets: kind === "superseded" ? [selectedFile, secondFile] : [selectedFile] };
   table.subscribe_workspace_drop_updates = { reservationId: "browser-m73-reservation" };
   return table;
 }
 /** The fixture answers requested source indices and exact retained windows, with no production state patch. */
-async function sourceBoundary(rtStep = 1) {
+async function sourceBoundary(rtStep = 1, declared: Record<string, unknown> = {}) {
   await browser.execute((tableKey, fixture, step) => {
     const table = Reflect.get(window, tableKey) as Record<string, unknown>;
     const internals = Reflect.get(window, "__TAURI_INTERNALS__") as {
@@ -83,29 +90,36 @@ async function sourceBoundary(rtStep = 1) {
       if (command === "load_selected_spectrum") {
         const index = Number(args.index);
         table[command] = { authority: template.authority, outcome: { outcome: "spectrum", spectrum: {
-          ...fixture, index, exportToken: "m73-spectrum-" + index, retentionTime: { value: index * step, unitKnown: false },
+          ...fixture, index, exportToken: "m73-spectrum-" + index, retentionTime: { value: index * step, unit: "notReported" },
         } } };
       } else if (command === "project_selected_spectrum") {
         const response = table[command];
         if (response !== null && typeof response === "object" && "__reject" in response) return invoke(command, args);
         const low = Number(args.low), high = Number(args.high);
         const positions = fixture.mz.flatMap((value, index) => value >= low && value <= high ? [index] : []);
+        // Rust's rule: a profile projection carries the measured sample beyond each edge.
+        const sample = (index: number) => fixture.representation === "profile" && index >= 0 && index < fixture.mz.length
+          ? { mz: fixture.mz[index], intensity: fixture.intensity[index] } : null;
+        const first = fixture.mz.findIndex(value => value >= low);
+        const after = fixture.mz.findIndex(value => value > high);
         table[command] = { low, high, mz: positions.map(index => fixture.mz[index]),
-          intensity: positions.map(index => fixture.intensity[index]), sourcePoints: positions.length, reduced: false };
+          intensity: positions.map(index => fixture.intensity[index]), sourcePoints: positions.length, reduced: false,
+          outsideLow: sample((first < 0 ? fixture.mz.length : first) - 1), outsideHigh: after < 0 ? null : sample(after) };
       }
       return invoke(command, args);
     };
   }, IPC_TABLE_KEY, { ...buildSpectrum(0, 12), mz: Array.from({ length: 12 }, (_, i) => 100 + i * 50),
     intensity: [10, 35, -5, 65, 100, 42, 18, 75, 30, 19, 55, 8], mzLow: 100, mzHigh: 650,
-    viewportDomain: { state: "admitted", low: 100, high: 650 } }, rtStep);
+    viewportDomain: { state: "admitted", low: 100, high: 650 }, ...declared }, rtStep);
 }
-async function open(kind: Parameters<typeof answers>[0] = "complete", options = { width: 1366, height: 768, dpr: 1.5 }, count?: number) {
+async function open(kind: Parameters<typeof answers>[0] = "complete", options = { width: 1366, height: 768, dpr: 1.5 }, count?: number,
+  declared: Record<string, unknown> = {}) {
   await installIpcBoundary(answers(kind));
   await metrics(options.width, options.height, options.dpr);
   await browser.url("/");
   await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').waitForExist();
   if (count !== undefined) await seedARunOf(count);
-  if (kind === "complete" || kind === "prefix") await sourceBoundary(count === undefined ? 1 : .0125);
+  if (kind === "complete" || kind === "prefix") await sourceBoundary(count === undefined ? 1 : .0125, declared);
   const rosterToggle = browser.$('[aria-controls="workbench-roster"]');
   await revealRosterRow(selectedFile.handle);
   await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').click();
@@ -461,5 +475,76 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     expect(trace).toContain("pointercancel");
     await capture("touch-vertical-and-multitouch-cancel");
     await cdp("Emulation.setTouchEmulationEnabled", { enabled: false });
+  });
+
+  // ADR 0056 slice 2's webview: what the file declares, drawn and said as it declares it.
+  const UNITS = { mzUnit: { state: "declared", accession: "MS:1000040" }, intensityUnit: { state: "declared", accession: "MS:1000131" } };
+  const axisTitles = () => browser.execute(() =>
+    [...document.querySelectorAll(".spectrum-panel .plot-axis-title")].map(node => node.textContent));
+  const lineStartX = () => browser.execute(() =>
+    Number(/^M(-?[\d.]+)/u.exec(document.querySelector(".spectrum-panel .spectrum-line")?.getAttribute("d") ?? "")?.[1]));
+
+  it("draws a declared profile spectrum as one joined line, cut at a zoomed window's edges (P175)", async () => {
+    await open("complete", { width: 1366, height: 768, dpr: 1 }, undefined, { representation: "profile", ...UNITS });
+    await clickPlot(RT, .4);
+    await browser.$(MZ + '[data-drawn-as="line"]').waitForExist();
+    expect(await browser.$(".spectrum-panel .spectrum-sticks").isExisting()).toBe(false);
+    expect(await browser.$(".spectrum-head-facts").getText()).toContain("Profile");
+    expect(await axisTitles()).toEqual(["Intensity (MS:1000131)", "m/z (MS:1000040)"]);
+    await capture("profile-line");
+    // Zoomed in, the line runs in from the sample beyond the low edge and the
+    // band's clip cuts it there, as the export cuts it.
+    await browser.$('.spectrum-panel button[aria-label="Zoom in m/z"]').click();
+    await browser.waitUntil(async () => await lineStartX() < 8, { timeoutMsg: "the zoomed line never started beyond the band" });
+    expect(await browser.$(MZ).getAttribute("data-drawn-as")).toBe("line");
+    await capture("profile-line-zoomed");
+    expect(await consoleEntries()).toEqual([]);
+  });
+
+  it("keeps a declared centroid spectrum as sticks", async () => {
+    await open("complete", { width: 1366, height: 768, dpr: 1 }, undefined, { representation: "centroid", ...UNITS });
+    await clickPlot(RT, .4);
+    await browser.$(MZ + '[data-drawn-as="sticks"]').waitForExist();
+    await browser.$(".spectrum-panel .spectrum-sticks").waitForExist();
+    expect(await browser.$(".spectrum-panel .spectrum-line").isExisting()).toBe(false);
+    expect(await browser.$(".spectrum-head-facts").getText()).toContain("Centroid");
+    await capture("centroid-sticks");
+  });
+
+  it("refuses a chromatogram over scans in mixed retention-time units, and converts nothing", async () => {
+    await open("mixed", { width: 1366, height: 768, dpr: 1 });
+    await browser.$(".chromatogram-panel .empty-state").waitForDisplayed();
+    expect(await browser.$(".chromatogram-panel .empty-state").getText()).toContain("different units");
+    expect(await browser.$(RT).isExisting()).toBe(false);
+    // The header claims no one unit, and each value keeps its own.
+    expect(await browser.$(SCANS + " .scan-sort-unit").getText()).toBe("(mixed units)");
+    expect(await browser.$(row(0)).getText()).toContain("0.0000 min");
+    expect(await browser.$(row(1)).getText()).toContain("1.0000 s");
+    await capture("mixed-unit-refusal");
+  });
+
+  it("states a truncated spectrum's prefix and its total", async () => {
+    await open("complete", { width: 1366, height: 768, dpr: 1 }, undefined, { truncated: true, pointCount: 900_000 });
+    await clickPlot(RT, .4);
+    await browser.$(".spectrum-panel .notice-warning").waitForDisplayed();
+    expect(await browser.$(".spectrum-panel .notice-warning").getText()).toContain("12 of 900,000 points transferred");
+    await capture("truncated-spectrum");
+  });
+
+  it("keeps a superseded open's reason on screen beside a button that reads the file again", async () => {
+    const table = answers("complete");
+    await installIpcBoundary({ ...table, open_mzml_preview: { __reject: { kind: "selection_superseded",
+      summary: "A newer request for that file arrived before this one finished, so its result was not used.", detail: null, retryable: false } } });
+    await metrics(1366, 768, 1);
+    await browser.url("/");
+    await revealRosterRow(selectedFile.handle);
+    await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').click();
+    const failed = browser.$('#workbench-evidence[data-evidence="failed"]');
+    await failed.waitForDisplayed();
+    expect(await failed.getText()).toContain("A newer request for that file arrived before this one finished");
+    await capture("superseded-open");
+    await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
+    await failed.$("button").click();
+    await browser.$(SCANS).waitForExist();
   });
 });

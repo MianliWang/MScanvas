@@ -90,7 +90,7 @@ The acceptance table remains the target, including the parts called out below.
   exists, and the visible caption says both. Since ADR 0056 slice 2 the table is
   read by MSCanvas's own mzML reader, and the retention-time axis carries the
   unit the file declares (unreported where it declares none) in the chromatogram
-  export, and on screen once that slice's webview commit lands; intensity stays
+  export and on screen, where a declared profile spectrum is a joined line; intensity stays
   unreported. The traces toggle independently, the retention-time viewport zooms,
   pans and resets by wheel, drag, keyboard and button, the pointer reports the
   nearest scan, and a click selects it. A preview that did not load the complete

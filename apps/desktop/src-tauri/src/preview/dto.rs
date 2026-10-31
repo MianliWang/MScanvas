@@ -2949,6 +2949,20 @@ pub struct SpectrumProjectionDto {
     pub source_points: usize,
     /// Whether fewer points are drawn than the window measured.
     pub reduced: bool,
+    /// For a declared profile spectrum, the measured sample just below and
+    /// just above the window, which the joined line crosses each edge from.
+    /// Not counted in `source_points`. `None` for a centroid or unreported
+    /// spectrum, and where the window reaches the source's own end.
+    pub outside_low: Option<ProjectionSampleDto>,
+    pub outside_high: Option<ProjectionSampleDto>,
+}
+
+/// One measured sample, as a projection carries it beside its window.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionSampleDto {
+    pub mz: f64,
+    pub intensity: f64,
 }
 
 /// How much of a spectrum one export covers.

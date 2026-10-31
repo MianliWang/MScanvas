@@ -277,6 +277,39 @@ function withBackend(verdict: unknown) {
 
 const populated = (locale: Locale) => scenario("populated", locale);
 
+const DECLARED_UNITS = { mzUnit: { state: "declared", accession: "MS:1000040" }, intensityUnit: { state: "declared", accession: "MS:1000131" } };
+
+/** The populated world, its selected spectrum declaring `declared` (ADR 0056). */
+function declaredSpectrum(declared: Record<string, unknown>) {
+  return (locale: Locale) => {
+    const table = scenario("populated", locale);
+    const answer = table.load_selected_spectrum as { authority: unknown; outcome: { spectrum: Record<string, unknown> } };
+    return { ...table, load_selected_spectrum: { ...answer, outcome: { outcome: "spectrum", spectrum: { ...answer.outcome.spectrum, ...declared } } } };
+  };
+}
+
+/** The populated world, its run's scans alternating minutes and seconds. */
+function mixedUnits(locale: Locale) {
+  const table = scenario("populated", locale);
+  const preview = table.open_mzml_preview as { spectrumTable: { rows: { retentionTime: unknown }[] } };
+  return { ...table, open_mzml_preview: { ...preview, chromatogramExportToken: null,
+    runSummary: { ...(table.open_mzml_preview as { runSummary: object }).runSummary, retentionTimeRange: { state: "mixedUnits" } },
+    spectrumTable: { ...preview.spectrumTable, rows: preview.spectrumTable.rows.map((row, index) => ({ ...row,
+      retentionTime: { value: index, unit: index % 2 === 0 ? "minute" : "second" } })) } } };
+}
+
+async function showTheSpectrum() {
+  await openSpectrum();
+  await revealTheSpectrum();
+}
+
+/** Opens the mzML row and leaves whatever the read answered on screen. */
+async function readTheRow() {
+  await revealRosterRow(MZML_ROW.handle);
+  await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+  await foldNarrowRoster();
+}
+
 const STOPS: readonly Stop[] = [
   { name: "workbench-empty", table: emptyTable, anchor: ".workbench-shell" },
   { name: "workbench-roster-loading", table: populated, hold: ["get_workspace_roster"], anchor: ".workbench-shell" },
@@ -305,6 +338,25 @@ const STOPS: readonly Stop[] = [
       await revealTheSpectrum();
     },
     anchor: "svg.spectrum-plot",
+  },
+  // What the file declares (ADR 0056 slice 2): a profile spectrum is a joined
+  // line (P175), a centroid one sticks, both with their units by accession; a
+  // truncated spectrum states its prefix and its total.
+  { name: "spectrum-profile-line", table: declaredSpectrum({ representation: "profile", ...DECLARED_UNITS }),
+    drive: showTheSpectrum, anchor: 'svg.spectrum-plot[data-drawn-as="line"]' },
+  { name: "spectrum-centroid-sticks", table: declaredSpectrum({ representation: "centroid", ...DECLARED_UNITS }),
+    drive: showTheSpectrum, anchor: 'svg.spectrum-plot[data-drawn-as="sticks"]' },
+  { name: "spectrum-truncated", table: declaredSpectrum({ truncated: true, pointCount: 900_000 }),
+    drive: showTheSpectrum, anchor: ".spectrum-panel .notice-warning" },
+  // Scans in seconds and minutes: no chromatogram, the reason in its place.
+  { name: "chromatogram-mixed-units", table: mixedUnits, drive: readTheRow, anchor: ".chromatogram-panel .empty-state" },
+  // An open Rust answered as superseded: its reason, beside reading it again.
+  {
+    name: "workbench-open-superseded",
+    table: (locale) => ({ ...scenario("populated", locale), open_mzml_preview: { __reject: { kind: "selection_superseded",
+      summary: "A newer request for that file arrived before this one finished, so its result was not used.", detail: null, retryable: false } } }),
+    drive: readTheRow,
+    anchor: '#workbench-evidence[data-evidence="failed"] button',
   },
   // Rows listed and none opened: the evidence says where to pick, and where
   // the list is a folded drawer it offers the button that opens it.

@@ -50,7 +50,7 @@ describe("the Details inspector", () => {
   });
 
   it("says what each plot is drawn from, only while there is something to say", () => {
-    renderDetails({ chromatogramScanCount: 50, spectrum: { ...buildSpectrum(3, 4), representationKnown: false } });
+    renderDetails({ chromatogramScanCount: 50, spectrum: { ...buildSpectrum(3, 4), representation: "notReported" } });
 
     expect(screen.getByRole("heading", { name: en.detailsChromatogramSource })).toBeVisible();
     expect(screen.getByText(en.viewerScanSource.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "50"))).toBeVisible();

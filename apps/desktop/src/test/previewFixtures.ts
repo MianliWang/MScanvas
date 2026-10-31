@@ -468,7 +468,7 @@ export function buildRows(count: number): SpectrumRow[] {
       identifier: `controllerType=0 controllerNumber=1 scan=${index + 1}`,
       scanNumber: index + 1,
       msLevel,
-      retentionTime: { value: index * 0.0125, unitKnown: false },
+      retentionTime: { value: index * 0.0125, unit: "notReported" },
       basePeakMz: 400 + (index % 500),
       basePeakIntensity: 1_000 + index,
       totalIonCurrent: 10_000 + index * 3,
@@ -517,10 +517,8 @@ export function buildPreview(rowCount = 6, truncated = false, receipt = 1): Prev
       totalMsLevelCount: 2,
       msLevelsTruncated: false,
       chromatogramCount: null,
-      retentionTimeRange: {
-        minimum: { value: 0, unitKnown: false },
-        maximum: { value: (rowCount - 1) * 0.0125, unitKnown: false },
-      },
+      retentionTimeRange: rowCount === 0 ? { state: "noRows" }
+        : { state: "reported", minimum: 0, maximum: (rowCount - 1) * 0.0125, unit: "notReported" },
     },
     spectrumTable: {
       rows,
@@ -567,20 +565,22 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     scanNumber: index + 1,
     identifiers: [`controllerType=0 controllerNumber=1 scan=${index + 1}`],
     msLevel,
-    retentionTime: { value: index * 0.0125, unitKnown: false },
+    retentionTime: { value: index * 0.0125, unit: "notReported" },
     pointCount,
     mz,
     intensity,
-    mzLow: pointCount === 0 ? 0 : 300,
-    mzHigh: pointCount === 0 ? 0 : 300 + (pointCount - 1) * 0.5,
+    // What an empty spectrum states: no observed m/z range, which is not 0.
+    mzLow: pointCount === 0 ? null : 300,
+    mzHigh: pointCount === 0 ? null : 300 + (pointCount - 1) * 0.5,
     basePeakMz: pointCount === 0 ? 0 : (mz[basePeakIndex] ?? 0),
     basePeakIntensity: pointCount === 0 ? 0 : (intensity[basePeakIndex] ?? 0),
     totalIonCurrent: 54_321,
     precursors,
     totalPrecursorCount: precursors.length,
     precursorsTruncated: false,
-    representationKnown: false,
-    valueUnitsKnown: false,
+    representation: "notReported",
+    mzUnit: { state: "notReported" },
+    intensityUnit: { state: "notReported" },
     truncated: false,
   };
 }
@@ -2349,6 +2349,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         intensity: [1, 2],
         sourcePoints: 2,
         reduced: false,
+        outsideLow: null,
+        outsideHigh: null,
       };
     },
     // Modelled as Rust behaves: the token names the run Rust retained, the

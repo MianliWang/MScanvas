@@ -235,6 +235,46 @@ fn a_window_holding_no_reported_point_is_a_successful_empty_projection() {
     assert!(projection.intensity().is_empty());
     assert_eq!(projection.source_points(), 0);
     assert!(!projection.reduced(), "an empty window dropped nothing");
+    assert_eq!(
+        projection.outside(),
+        [None, None],
+        "a discrete spectrum has no line to cut"
+    );
+}
+
+/// A declared profile spectrum's projection carries the measured sample beyond
+/// each edge, so the screen can cut its joined line where the export does: a
+/// window that cuts a flank, one between two samples, and one at the source's
+/// own ends. A centroid spectrum carries none.
+#[test]
+fn a_profile_window_carries_the_samples_its_line_crosses_the_edges_from() {
+    use super::super::mzml_fixture::native_spectrum;
+    const PEAK: [(f64, f64); 4] = [(100.0, 0.0), (200.0, 80.0), (300.0, 40.0), (400.0, 0.0)];
+    let profile = native_spectrum("MS:1000128", (None, None), &PEAK);
+    let centroid = native_spectrum("MS:1000127", (None, None), &PEAK);
+    let window = |spectrum, low, high| {
+        project(spectrum, settle_viewport_domain(spectrum), low, high)
+            .expect("a window of the source")
+    };
+
+    let flank = window(&profile, 150.0, 250.0);
+    assert_eq!(flank.mz(), &[200.0]);
+    assert_eq!(
+        flank.source_points(),
+        1,
+        "an outside sample is not in the window"
+    );
+    assert_eq!(flank.outside(), [Some((100.0, 0.0)), Some((300.0, 40.0))]);
+
+    let between = window(&profile, 210.0, 290.0);
+    assert!(between.is_empty());
+    assert_eq!(
+        between.outside(),
+        [Some((200.0, 80.0)), Some((300.0, 40.0))]
+    );
+
+    assert_eq!(window(&profile, 100.0, 400.0).outside(), [None, None]);
+    assert_eq!(window(&centroid, 150.0, 250.0).outside(), [None, None]);
 }
 
 #[test]

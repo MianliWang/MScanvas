@@ -140,8 +140,9 @@ use super::dto::{
     conversion_item_not_skippable, conversion_not_stoppable,
 };
 use super::dto::{
-    SpectrumDomainRefusalDto, SpectrumProjectionDto, SpectrumViewportDomainDto,
-    spectrum_projection_no_domain, spectrum_projection_stale, spectrum_projection_window_refused,
+    ProjectionSampleDto, SpectrumDomainRefusalDto, SpectrumProjectionDto,
+    SpectrumViewportDomainDto, spectrum_projection_no_domain, spectrum_projection_stale,
+    spectrum_projection_window_refused,
 };
 use super::dto::{
     WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto, adoption_in_progress,
@@ -3295,6 +3296,9 @@ impl PreviewService {
                 .map_err(|refusal| {
                     Self::projection_refusal(SpectrumProjectionRefusal::Source(refusal))
                 })?;
+        let sample = |outside: Option<(f64, f64)>| {
+            outside.map(|(mz, intensity)| ProjectionSampleDto { mz, intensity })
+        };
         Ok(SpectrumProjectionDto {
             low: projection.window().low(),
             high: projection.window().high(),
@@ -3302,6 +3306,8 @@ impl PreviewService {
             intensity: projection.intensity().to_vec(),
             source_points: projection.source_points(),
             reduced: projection.reduced(),
+            outside_low: sample(projection.outside()[0]),
+            outside_high: sample(projection.outside()[1]),
         })
     }
 

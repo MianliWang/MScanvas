@@ -709,9 +709,8 @@ Slice 1 therefore meets this decision's merge condition.
    - Copy for the new refusals.
    - Rendered QA.
 
-> **2026-10-30: slice 2's Rust side is implemented**; its webview commit is
-> pending, and until it lands the Rust and webview contracts disagree, so the
-> two merge together. What the implementation records:
+> **2026-10-30: slice 2 is implemented**, its Rust side and its webview commit
+> together, in one PR. What the implementation records:
 >
 > - **The `msaccess` operations stay in the crate, ratified by the owner on
 >   2026-10-30.** Decisions 5 and 9 say slice 2 removes them; the owner accepted
@@ -747,8 +746,11 @@ Slice 1 therefore meets this decision's merge condition.
 >   window's value scale, as the chromatogram's does. The caption states the
 >   declared representation and units; the linked figure's caption gives each
 >   panel its own units, because the chromatogram's intensity has none. The
->   screen draws sticks until slice 2's webview commit, which draws the same
->   line. Centroid and undeclared spectra are unchanged.
+>   webview commit draws the same line on screen over a viewport: a profile
+>   projection carries the measured sample beyond each edge, and the plot's
+>   clip cuts the line there, scaled to those heights as the export is. With
+>   no viewport (no admitted m/z domain) a profile spectrum stays sticks and
+>   Details says why. Centroid and undeclared spectra are unchanged.
 >
 >   **Owner decision P175 (2026-10-30).** Shown the decisions that block work
 >   now, the owner replied "全部按推荐，继续" ("all as recommended,

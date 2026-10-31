@@ -36,7 +36,7 @@
 
 use mscanvas_plot_spec::spec::{Domain, MeasurementRefusal, SpecError, measurement_domains};
 
-use mscanvas_proteowizard::SelectedSpectrumResult;
+use mscanvas_proteowizard::{SelectedSpectrumResult, SpectrumRepresentationState};
 
 /// The most columns a screen projection reduces to.
 ///
@@ -208,6 +208,11 @@ pub(super) struct ScreenProjection {
     intensity: Vec<f64>,
     source_points: usize,
     reduced: bool,
+    /// For a declared profile spectrum only, the measured sample just outside
+    /// each edge, which the joined line crosses that edge from: the screen cuts
+    /// it there, as the export does. `None` for a discrete spectrum and where
+    /// the window reaches the source's own end.
+    outside: [Option<(f64, f64)>; 2],
 }
 
 impl ScreenProjection {
@@ -231,6 +236,12 @@ impl ScreenProjection {
     /// Whether fewer points are drawn than the window measured.
     pub(super) const fn reduced(&self) -> bool {
         self.reduced
+    }
+
+    /// The measured samples just below and just above the window, for a
+    /// profile spectrum.
+    pub(super) const fn outside(&self) -> [Option<(f64, f64)>; 2] {
+        self.outside
     }
 
     /// Whether the window holds no reported observation at all.
@@ -292,6 +303,21 @@ pub(super) fn project(
     let start = mz.partition_point(|value| *value < window.low());
     let end = mz.partition_point(|value| *value <= window.high());
     let source_points = end.saturating_sub(start);
+    // A joined profile line crosses each edge from the sample beyond it, so the
+    // screen is handed that measured sample and cuts the line at the edge, as
+    // the export does (P175). A discrete spectrum has nothing between samples.
+    let outside = if matches!(
+        spectrum.representation(),
+        SpectrumRepresentationState::Profile
+    ) {
+        let sample = |at: usize| Some((mz[at], intensity[at]));
+        [
+            start.checked_sub(1).and_then(sample),
+            (end < mz.len()).then_some(end).and_then(sample),
+        ]
+    } else {
+        [None, None]
+    };
 
     if source_points <= MAX_PROJECTION_POINTS {
         // Everything the window holds fits the budget, so the drawing is the
@@ -302,15 +328,19 @@ pub(super) fn project(
             intensity: intensity[start..end].to_vec(),
             source_points,
             reduced: false,
+            outside,
         });
     }
 
-    Ok(reduce(
-        window,
-        &mz[start..end],
-        &intensity[start..end],
-        source_points,
-    ))
+    Ok(ScreenProjection {
+        outside,
+        ..reduce(
+            window,
+            &mz[start..end],
+            &intensity[start..end],
+            source_points,
+        )
+    })
 }
 
 /// Keeps the extremes of each column, at the m/z the source measured them.
@@ -386,6 +416,7 @@ fn reduce(window: Domain, mz: &[f64], intensity: &[f64], source_points: usize) -
         // A reduction that dropped nothing is not one, and saying otherwise
         // would make a caption claim measurements were removed when none were.
         reduced: drawn < source_points,
+        outside: [None, None],
     }
 }
 

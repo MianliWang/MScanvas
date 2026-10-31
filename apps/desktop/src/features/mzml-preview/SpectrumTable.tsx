@@ -1,16 +1,17 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button, Icon } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { MessageKey } from "../preferences/i18n";
 import type { ScanSortKey } from "./viewer/scanTableView";
 import type { ScanTableView } from "./viewer/useScanTableView";
 
-import type { SpectrumRow, SpectrumTable as SpectrumTableModel } from "./contracts";
+import type { RetentionTimeUnit, SpectrumRow, SpectrumTable as SpectrumTableModel } from "./contracts";
 import {
   formatCount,
   formatIntensity,
   formatMz,
   formatRetentionTimeValue,
+  retentionTimeUnitSymbol,
 } from "./format";
 import type { Selection, SelectionConsumer } from "./viewer/interactionState";
 import { consumeSelection, initialSelectionConsumer } from "./viewer/interactionState";
@@ -49,6 +50,17 @@ const SORT_LABELS = {
 interface Column { readonly label: MessageKey; readonly sort: ScanSortKey; readonly cell: (row: SpectrumRow) => string }
 const scanCell = (row: SpectrumRow) => row.scanNumber === null ? "—" : formatCount(row.scanNumber);
 const rtCell = (row: SpectrumRow) => formatRetentionTimeValue(row.retentionTime);
+/** Where the rows state different units, each value carries its own. */
+const rtCellWithUnit = (row: SpectrumRow) => {
+  const symbol = retentionTimeUnitSymbol(row.retentionTime.unit);
+  return symbol === null ? rtCell(row) : `${rtCell(row)} ${symbol}`;
+};
+
+/** The one retention-time unit every row states, or `null` where they differ. */
+function sharedRetentionTimeUnit(rows: readonly SpectrumRow[]): RetentionTimeUnit | null {
+  const unit = rows[0]?.retentionTime.unit ?? "notReported";
+  return rows.every(row => row.retentionTime.unit === unit) ? unit : null;
+}
 const msCell = (row: SpectrumRow) => `MS${row.msLevel}`;
 const precursorCell = (row: SpectrumRow) => row.precursorMz === null ? "—" : formatMz(row.precursorMz);
 
@@ -134,7 +146,11 @@ export const SpectrumTable = memo(function SpectrumTable({
   selectionAvailability,
 }: SpectrumTableProps) {
   const t = useUiMessages();
-  const columns = COLUMNS[layout];
+  const rtUnit = useMemo(() => sharedRetentionTimeUnit(table.rows), [table.rows]);
+  const columns = useMemo(() => rtUnit !== null ? COLUMNS[layout]
+    : COLUMNS[layout].map(column => column.sort === "retentionTime" ? { ...column, cell: rtCellWithUnit } : column), [layout, rtUnit]);
+  const rtUnitSymbol = rtUnit === null ? null : retentionTimeUnitSymbol(rtUnit);
+  const rtHeaderUnit = rtUnit === null ? t("scanUnitMixed") : rtUnitSymbol === null ? t("scanUnitNotReported") : `(${rtUnitSymbol})`;
   const canCommit = selectionAvailability.status === "available";
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -391,10 +407,11 @@ export const SpectrumTable = memo(function SpectrumTable({
                   {/* The name starts with what the header shows, so it can be spoken. */}
                   <button aria-label={short === full ? undefined : t("scanColumnName", { short, full })} className="scan-sort-button"
                     onClick={() => view.sortBy(column.sort)} title={full} type="button">
-                    {/* The file reports no RT unit, and none is assumed (P11). */}
+                    {/* The unit the rows declare, none where they declare none, and
+                        never one claim over rows in different units (P11). */}
                     <span className="scan-sort-label">{short}{column.sort === "retentionTime"
                       // Seen, not re-read: the column's name stays its sort name.
-                      ? <span aria-hidden="true" className="scan-sort-unit">{t("scanUnitNotReported")}</span> : null}</span>
+                      ? <span aria-hidden="true" className="scan-sort-unit">{rtHeaderUnit}</span> : null}</span>
                     <svg aria-hidden="true" viewBox="0 0 12 12" width="10" height="10"
                       data-direction={view.options.sort?.key === column.sort ? view.options.sort.direction : "none"}>
                       <path d={view.options.sort?.key !== column.sort ? "M3 4 6 1 9 4 M3 8 6 11 9 8" :

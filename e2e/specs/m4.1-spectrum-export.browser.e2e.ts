@@ -656,7 +656,7 @@ describe("M4.1 selected-spectrum export, rendered", () => {
       // Set once the preview is open and before a scan is chosen, which is
       // all the refusal needs: only the spectrum read meets it.
       await setInvokeRejection("load_selected_spectrum", {
-        kind: "spectrum_failed",
+        kind: "spectrum_unreadable",
         summary: "That spectrum could not be read.",
         detail: null,
         retryable: true,

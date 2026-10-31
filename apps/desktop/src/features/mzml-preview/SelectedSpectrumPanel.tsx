@@ -8,7 +8,7 @@ import type { UiMessage } from "../preferences/i18n";
 import type { CopiedFigure, ExportedFigure, ExportedSpectrumRange, PreviewError, SelectedSpectrum,
   SpectrumExportFormat } from "./contracts";
 import type { FigureSettingsValidation } from "./figureSettingsValidation";
-import { formatCount } from "./format";
+import { formatCount, REPRESENTATION } from "./format";
 import { SpectrumViewport, SpectrumZoomControls } from "./SpectrumViewport";
 import type { SpectrumExportState, SpectrumState } from "./usePreviewWorkspace";
 import type { SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
@@ -17,6 +17,8 @@ export interface SelectedSpectrumPanelProps {
   readonly onOpenFigure: () => void;
   readonly state: SpectrumState;
   readonly onRetry: () => void;
+  /** Opens the file again, for a spectrum refused because its preview is gone or no longer matches. */
+  readonly onReopen?: () => void;
   /**
    * Why a scan cannot be chosen now, said once, in the empty spectrum, in
    * place of the instruction to choose one (S4).
@@ -48,6 +50,9 @@ export interface SelectedSpectrumPanelProps {
 /** The scan line between the steps. */
 const SCAN_ID = "selected-spectrum-scan";
 
+/** Spectrum refusals whose recovery is opening the file again (ADR 0056). */
+const REOPEN_KINDS = new Set(["preview_not_open", "spectrum_not_as_recorded"]);
+
 /**
  * The selected spectrum (direction A): a head with the title, the scan and its
  * steps, the scan's MS level and size, and one toolbar (m/z range, then the
@@ -77,9 +82,8 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
       </div>
       {spectrum === null ? null : <p className="spectrum-head-facts">
         <span>{`MS${spectrum.msLevel}`}</span>
-        {/* What the file declares (P5). The contract carries only whether it
-            declared one, and the backend reports none today. */}
-        {spectrum.representationKnown ? null : <span>{t("viewerRepresentationNotReported")}</span>}
+        {/* What the file declares (P5): profile is drawn as a line, the rest as sticks. */}
+        <span>{t(spectrum.representation === "notReported" ? "viewerRepresentationNotReported" : REPRESENTATION[spectrum.representation])}</span>
         <span>{t("viewerExportPoints", { count: spectrum.pointCount })}</span>
       </p>}
       {/* The plot's accessible name, in one sentence. */}
@@ -155,7 +159,9 @@ function renderBody(state: Exclude<SpectrumState, { readonly status: "unavailabl
     case "loading": return <div className="empty-state"><strong>{t("viewerSpectrumLoading", { index: formatCount(state.index) })}</strong></div>;
     case "failed": return <div className="empty-state"><strong>{ownedErrorMessage(state.error, t)}</strong>
       {ownedErrorDetail(state.error, t) === null ? null : <span>{ownedErrorDetail(state.error, t)}</span>}
-      {state.error.retryable ? <Button onClick={onRetry} size="sm">{t("viewerSpectrumRetry")}</Button> : null}</div>;
+      {state.error.retryable ? <Button onClick={onRetry} size="sm">{t("viewerSpectrumRetry")}</Button>
+        : REOPEN_KINDS.has(state.error.kind) && binding.onReopen !== undefined
+          ? <Button onClick={binding.onReopen} size="sm">{t("viewerReopenFile")}</Button> : null}</div>;
     case "loaded": return <SpectrumDetail binding={binding} rangeEditor={rangeEditor} spectrum={state.spectrum} />;
   }
 }
@@ -168,9 +174,11 @@ function SpectrumDetail({ spectrum, binding, rangeEditor }: { readonly spectrum:
         onRetryProjection={binding.onRetryProjection} projectionError={binding.projectionError} readState={binding.readViewport}
         reportedMzHigh={spectrum.mzHigh} reportedMzLow={spectrum.mzLow}
         rangeEditing={rangeEditor.editing} onRangeEditorClose={rangeEditor.close}
-        valueUnitsKnown={spectrum.valueUnitsKnown} state={binding.viewport} />}
+        representation={spectrum.representation} mzUnit={spectrum.mzUnit} intensityUnit={spectrum.intensityUnit}
+        state={binding.viewport} />}
     {spectrum.truncated ? <p className="notice notice-warning" role="note">
-      {t(binding.viewport.status === "ready" ? "viewerSpectrumPrefixRetained" : "viewerSpectrumPrefix", { count: spectrum.mz.length })}
+      {t(binding.viewport.status === "ready" ? "viewerSpectrumPrefixRetained" : "viewerSpectrumPrefix",
+        { count: spectrum.mz.length, total: spectrum.pointCount })}
     </p> : null}
   </>;
 }

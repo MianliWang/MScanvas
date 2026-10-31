@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import appStyles from "../../app/app.css?raw";
 import { Chromatogram } from "./Chromatogram";
-import type { SpectrumRow } from "./contracts";
+import type { RetentionTimeUnit, SpectrumRow } from "./contracts";
 import type { TraceVisibility } from "./usePreviewWorkspace";
 import type { ViewerInteractionState } from "./viewer/interactionState";
 import { renderedDomain } from "./viewer/interactionState";
@@ -50,13 +50,13 @@ interface Scan {
 }
 
 /** A run with exactly the per-scan values a case needs. */
-function runOf(scans: readonly Scan[], truncated = false): ScanModel {
+function runOf(scans: readonly Scan[], truncated = false, unit: RetentionTimeUnit = "notReported"): ScanModel {
   const rows: SpectrumRow[] = scans.map((scan, index) => ({
     index,
     identifier: `controllerType=0 controllerNumber=1 scan=${String(index + 1)}`,
     scanNumber: index + 1,
     msLevel: 1,
-    retentionTime: { value: scan.rt, unitKnown: false },
+    retentionTime: { value: scan.rt, unit },
     basePeakMz: 400,
     basePeakIntensity: scan.bpc,
     totalIonCurrent: scan.tic,
@@ -399,6 +399,14 @@ describe("what the traces are made of", () => {
     // Zero is always in it, so a flat trace high above the axis is not drawn as
     // structure.
     expect(axisLow()).toBe("0");
+  });
+
+  it("puts the declared retention-time unit on the axis, never converted", () => {
+    renderChromatogram({ model: runOf([{ rt: 1, tic: 10, bpc: 5 }, { rt: 3, tic: 20, bpc: 8 }], false, "minute") });
+
+    expect(document.querySelector("#chromatogram-axis-x")).toHaveTextContent("Retention time (min)");
+    // The run's own minutes: 1 to 3, not 60 to 180.
+    expect(document.querySelector(".chromatogram-range")).toHaveTextContent("Showing 1.0000 to 3.0000 min");
   });
 
   it("says neither axis carries a unit, in each axis's title", () => {
@@ -1073,10 +1081,11 @@ describe("when there is no chromatogram", () => {
     expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
   });
 
-  it("refuses a retention-time unit it cannot name, without blaming the file", () => {
+  it("refuses rows in mixed retention-time units, without blaming the file", () => {
+    // Only row 7 declares minutes; the rest declare none (ADR 0056).
     const rows = buildRows(20).map((row, index) =>
       index === 7
-        ? { ...row, retentionTime: { value: row.retentionTime.value, unitKnown: true } }
+        ? { ...row, retentionTime: { value: row.retentionTime.value, unit: "minute" as const } }
         : row,
     );
     renderChromatogram({

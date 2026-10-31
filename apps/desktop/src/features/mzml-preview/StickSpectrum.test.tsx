@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { UI_RESOURCES } from "../preferences/i18n";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
+import type { SpectrumRepresentation } from "./contracts";
 import { describeSpectrumSource, StickSpectrum, type SpectrumDrawing } from "./StickSpectrum";
 
 const en = UI_RESOURCES.en;
@@ -28,13 +29,14 @@ function caption(): string {
 }
 
 /** The plot, and the source sentence Details shows for it (hidden when empty). */
-function Plot({ mz, intensity, drawing, representationKnown = true }: {
+function Plot({ mz, intensity, drawing, representation = "centroid" }: {
   readonly mz: readonly number[]; readonly intensity: readonly number[];
-  readonly drawing: SpectrumDrawing; readonly representationKnown?: boolean;
+  readonly drawing: SpectrumDrawing; readonly representation?: SpectrumRepresentation;
 }) {
-  const text = describeSpectrumSource(mz, intensity, drawing, representationKnown, useUiMessages());
+  const text = describeSpectrumSource(mz, intensity, drawing, representation, useUiMessages());
   return <>
-    <StickSpectrum drawing={drawing} intensity={intensity} labelledBy="caption-under-test" mz={mz} surface={{ kind: "static" }} />
+    <StickSpectrum drawing={drawing} intensity={intensity} labelledBy="caption-under-test" mz={mz} representation={representation}
+      surface={{ kind: "static" }} />
     <div className="source-under-test" hidden={text === ""}><p>{text}</p></div>
   </>;
 }
@@ -44,7 +46,7 @@ function details(): HTMLElement {
   return document.querySelector<HTMLElement>(".source-under-test")!;
 }
 
-function renderSpectrum(mz: readonly number[], intensity: readonly number[], representationKnown = true): void {
+function renderSpectrum(mz: readonly number[], intensity: readonly number[], representation: SpectrumRepresentation = "centroid"): void {
   render(
     <Plot
       drawing={{
@@ -54,7 +56,7 @@ function renderSpectrum(mz: readonly number[], intensity: readonly number[], rep
       }}
       intensity={intensity}
       mz={mz}
-      representationKnown={representationKnown}
+      representation={representation}
     />,
   );
 }
@@ -174,11 +176,59 @@ describe("what a window's caption may claim about it", () => {
     expect(document.querySelectorAll("svg .plot-gridlines line")).toHaveLength(6);
   });
 
-  it("says a reported but unnamed unit, and a flat drawing, in the value axis title", () => {
-    render(<StickSpectrum drawing={{ kind: "viewport", low: 300, high: 302, sourcePoints: 2, reduced: false }} valueUnitsKnown
+  it("states each declared unit by its accession, and a flat drawing, in the axis titles", () => {
+    render(<StickSpectrum drawing={{ kind: "viewport", low: 300, high: 302, sourcePoints: 2, reduced: false }}
+      intensityUnit={{ state: "declared", accession: "MS:1000131" }} mzUnit={{ state: "declared", accession: "MS:1000040" }}
       intensity={[0, 0]} labelledBy="caption-under-test" mz={[300.5, 301.5]} surface={{ kind: "static" }} />);
 
-    expect(screen.getByText(`${en.plotAxisIntensityReported} · ${en.plotFlat}`)).toBeVisible();
+    expect(screen.getByText(`Intensity (MS:1000131) · ${en.plotFlat}`)).toBeVisible();
+    expect(screen.getByText("m/z (MS:1000040)")).toBeVisible();
+  });
+});
+
+describe("profile line (P175)", () => {
+  /** A peak with flanks beyond both edges of the window 150 to 250. */
+  const window = (outside: readonly [{ mz: number; intensity: number } | null, { mz: number; intensity: number } | null],
+    sourcePoints = 1): SpectrumDrawing => ({ kind: "viewport", low: 150, high: 250, sourcePoints, reduced: false, outside });
+  const plot = () => document.querySelector("svg.spectrum-plot");
+
+  it("draws a declared profile spectrum as one joined line, cut at the window's edges", () => {
+    render(<Plot drawing={window([{ mz: 100, intensity: 0 }, { mz: 300, intensity: 40 }])} intensity={[80]} mz={[200]}
+      representation="profile" />);
+
+    expect(plot()).toHaveAttribute("data-drawn-as", "line");
+    expect(document.querySelector(".spectrum-sticks")).toBeNull();
+    // Beyond the edge, through the sample, beyond the other edge: the band's clip cuts it at each edge.
+    expect(document.querySelector(".spectrum-line")?.getAttribute("d")?.match(/[ML]/gu)).toEqual(["M", "L", "L"]);
+    // The edge heights set the scale, as the export's do: 40 at 150, 60 at 250, under the 80 peak.
+    expect(plot()).toHaveAttribute("data-value-high", "80.00");
+    expect(caption()).toBe(fill(en.plotLineCaption_one, { total: 1 }));
+    expect(details()).toHaveTextContent(en.plotProfileLine);
+  });
+
+  it("scales a window between two samples to the line's heights at its edges", () => {
+    render(<Plot drawing={window([{ mz: 100, intensity: 100 }, { mz: 300, intensity: 0 }], 0)}
+      intensity={[]} mz={[]} representation="profile" />);
+
+    expect(plot()).toHaveAttribute("data-drawn-as", "line");
+    // 75 at 150 and 25 at 250: the line is drawn, not a blank window.
+    expect(plot()).toHaveAttribute("data-value-high", "75.00");
+  });
+
+  it("keeps centroid and undeclared spectra as sticks", () => {
+    for (const representation of ["centroid", "notReported"] as const) {
+      const { unmount } = render(<Plot drawing={window([null, null])} intensity={[80]} mz={[200]} representation={representation} />);
+      expect(plot()).toHaveAttribute("data-drawn-as", "sticks");
+      expect(document.querySelector(".spectrum-line")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("draws a profile spectrum with no viewport as sticks, and says why", () => {
+    renderSpectrum([300, 301], [10, 20], "profile");
+
+    expect(plot()).toHaveAttribute("data-drawn-as", "sticks");
+    expect(details()).toHaveTextContent(en.plotProfileSticks);
   });
 });
 
@@ -236,7 +286,7 @@ describe("stick plot caption", () => {
   });
 
   it("discloses an unreported representation even when nothing else needs saying", () => {
-    renderSpectrum([300], [100], false);
+    renderSpectrum([300], [100], "notReported");
 
     const disclosure = details();
     expect(disclosure).toBeVisible();

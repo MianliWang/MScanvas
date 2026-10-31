@@ -2088,6 +2088,15 @@ button:disabled,
   vector-effect: non-scaling-stroke;
 }
 
+/* A declared profile spectrum: one joined line, drawn as the trace is (P175). */
+.spectrum-line {
+  fill: none;
+  stroke: var(--color-chart-line);
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 .axis-label {
   fill: var(--color-text-tertiary);
   font-family: var(--font-ui);
