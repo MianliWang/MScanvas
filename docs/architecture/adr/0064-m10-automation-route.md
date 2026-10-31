@@ -4,7 +4,9 @@ Status: **Accepted (2026-10-30)**, by the owner's decision A0064 recorded
 under [Owner decision, 2026-10-30](#owner-decision-2026-10-30). Proposed
 2026-10-30. Nothing here is implemented. Each decision below was the
 maintainer's recommendation; the owner accepted all eight
-[open questions](#open-questions-for-the-owner) as recommended.
+[open questions](#open-questions-for-the-owner) as recommended. Question 3
+awaits re-confirmation; see
+[Changed after acceptance](#changed-after-acceptance-2026-10-30).
 Plan: [after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md), section 5
 (phase 1, item 4) and section 7.3; feature catalog AUT-001, AUT-002 and
 AUT-003.
@@ -157,7 +159,11 @@ still moving (#161).
 
 - The CLI is the package `mscanvas-cli` in `apps/cli`, binary `mscanvas`, over
   the desktop library. The library gains one public module, `cli`, as its only
-  new export, and `preview` stays private.
+  new export, and `preview` stays private. The glue lives in a new submodule,
+  `preview::automation`, which sees the `pub(super)` items of `selection`,
+  `destination_policy` and `destination` as they are, so no visibility there
+  widens. Its entry is a `pub fn` with a standard-library signature (argv as
+  `OsString`s in, the exit code out), and `cli` only re-exports it.
 - Each subcommand is a thin adapter, as a Tauri command is: parse typed argv,
   call the service, print the answer. No subcommand reuses a rule under a
   second spelling. What the CLI adds is listed here, so a review can test the
@@ -198,12 +204,12 @@ still moving (#161).
   `bind`, and the CLI calls neither. The CLI is built without the feature, as
   the shipped desktop is. There is no compile-time barrier, because the
   required `cargo clippy --all-features` run would trip it; instead a test
-  checks that the `cli` module names no `e2e`-gated item.
+  checks that `cli` and `preview::automation` name no `e2e`-gated item.
 - **Tests reach the fake provider in-process only.** The desktop's fake
   provider exists under `cfg(test)` inside the desktop crate
   (`preview/tests.rs`: "no production command can ever return mock data"), and
   `PreviewProvider` is in the private `preview` module. Every test that needs a
-  fake backend is therefore a unit test of the `cli` module. It calls the
+  fake backend is therefore a unit test of `preview::automation`. It calls the
   function behind the binary's `main` with typed argv, a fake provider in
   place of the discovered one and a run lock bound to a temporary directory
   (decision 6), and checks the document and the exit code. Slice 1 needs no
@@ -271,6 +277,10 @@ free-text option.
   `message`. `help` is the only text output.
 - **stderr is empty by default.** `run --progress jsonl` writes bounded
   progress events there (phase, item index, elapsed time).
+- **A panic is exit 5, not 101.** The workspace keeps the default `unwind`.
+  The entry installs a panic hook that writes nothing to stderr and wraps its
+  body in `catch_unwind`; a panic on a worker thread reaches it through that
+  thread's `join` result. Each becomes the exit-5 document.
 - **No prompt, ever.** No interactive question, no pager, no colour, and no
   change of behaviour on a terminal. A missing decision is a refusal.
 - **Exit codes, a closed set:**
@@ -279,7 +289,7 @@ free-text option.
   | --- | --- |
   | 0 | Done as asked: every file inspected; the plan written; every item finalized, or skipped as the plan allowed; every output unchanged and passing |
   | 1 | Refused before anything changed, with a typed code: a path outside the roots, drift, a digest that was not approved, the build, the run lock, capacity. `inspect` with several files exits 1 when any one is refused, and its document still lists every file's own result |
-  | 2 | Usage: an unknown subcommand or flag, a missing or repeated flag, a path that is not valid UTF-8, an input document of an unknown schema or with an unknown field. Nothing is inspected or run |
+  | 2 | Usage: an unknown subcommand or flag, a missing or repeated flag, a path that is not valid UTF-8, an input document of an unknown schema or with an unknown field. Nothing is inspected or run. One exception: `run` without `--approve` is the plan review of decision 5, exit 1 |
   | 3 | Ran, and something failed: an item was not finalized (the others keep their outcomes), or `validate` found a changed output or a failed check |
   | 4 | Cancelled: Ctrl+C or Ctrl+Break, or the adapter's client went away or cancelled. Promised for the console only with the backend detached from it (decision 6). Closing the console is best effort |
   | 5 | Internal error: a defect, said so in the document |
@@ -323,6 +333,11 @@ free-text option.
   - **What it must meet:** the root's identity, read from the root's held
     handle. Identity is the volume serial and the file id, so a sibling
     `D:\data-x` never matches `D:\data`.
+  - **The extracted signature:** start path, start identity, end identity.
+    Today's walk reads its end by name (`canonicalize` of the acquisition
+    root, then `directory_identity_of`); the destination policy keeps doing
+    that and passes the result in, and the CLI passes the identity of its held
+    root.
   - **Failure:** as in the destination policy, an identity that cannot be read
     at any step refuses (`pathOutsideRoots`), and so does a walk that ends at
     the top of its volume.
@@ -402,11 +417,20 @@ free-text option.
   - the intent (a stable id, or the structured intent after #161), its tier
     per item and its lossy statements;
   - the provider's release, revision and `msconvert` SHA-256;
+  - where the installation came from: `named`, with the `--proteowizard`
+    folder's canonical path and identity, or `discovered`;
   - the destination's canonical path and identity, and the conflict policy;
   - the option tokens the intent lowers to, without staging paths.
 
   stdout prints the summary and the plan's digest: the SHA-256 of the file's
   exact bytes.
+- **`run --plan <file>` without `--approve` is the review.** It reads the plan
+  as `run` does (below) and prints MSCanvas's own review document: the
+  summary, every item with its tier and lossy statements, the installation's
+  source, and the digest. It refuses with `planNotApproved` and exits 1. It
+  starts no process, takes no lock and writes nothing. This is what a person
+  approves from: text MSCanvas wrote, read in their own terminal, not an
+  agent's account of the plan.
 - **`run --plan <file> --approve <sha256>`** reads the plan file once, through
   a deny-write handle, into memory; the digest and the parse are of those same
   bytes. It refuses unless the digest equals the approved one
@@ -421,16 +445,17 @@ free-text option.
      acquisition. A bundle's members are locked together, as the desktop's
      SCIEX paths do (`service.rs`), and every member is compared: identity,
      name and digest;
-  2. discover the installation again, from the same source it was planned
-     with (decision 6), and read its configuration;
+  2. resolve the installation again from the source the plan records
+     (decision 6), and read its configuration. `run` takes no
+     `--proteowizard`; one given is a usage refusal;
   3. plan again with the same intent, destination and policy;
   4. compare the result with the approved plan, field by field.
 
   Any difference refuses before a staging directory exists, with the first
   drift's code. Every field has one: a source or companion
-  (`sourceChanged`); the provider's release, revision or `msconvert` SHA-256
-  (`providerChanged`); an intent the installation no longer admits
-  (`intentNotAdmitted`); the destination or the conflict policy
+  (`sourceChanged`); the provider's release, revision, `msconvert` SHA-256 or
+  the installation's source (`providerChanged`); an intent the installation
+  no longer admits (`intentNotAdmitted`); the destination or the conflict policy
   (`destinationChanged`); any other field, such as a tier, a lossy statement,
   an option token or a derived output name (`planChanged`). Then each item
   runs, one at a time, through the ADR 0011 coordinator. Under Fail an item
@@ -500,13 +525,17 @@ free-text option.
     with no `-c/--config` and no free-text argument (ADR 0055, decision 2);
   - the installation is found by discovery or named with
     `--proteowizard <folder>`. A named folder that is unusable is refused,
-    never replaced by discovery. `run` re-derives through the same source the
-    plan was made with, and a different `msconvert` refuses as
-    `providerChanged`;
+    never replaced by discovery. The plan records which (decision 5), and
+    `run` resolves through that source only. A named folder that is now
+    unusable or has another identity, or a discovery that finds another
+    `msconvert`, refuses as `providerChanged`, and discovery never stands in
+    for a named folder;
   - the MCP adapter takes the installation as it takes its roots: from its
     launch configuration (`mscanvas mcp --proteowizard <folder>`) or from
     discovery, fixed for the life of the process. No tool input has an
     installation field, and one that appears is refused as an unknown field.
+    Its `run` refuses a stored plan whose recorded source is not its own
+    launch configuration's (`providerChanged`).
     `intents` and `plan` start a capability probe without an approval, so an
     agent that could name the folder would choose which executable the
     adapter starts. The desktop keeps the same rule: "choosing a file or an
@@ -681,17 +710,19 @@ free-text option.
   there could be triggered during development and lead an agent to
   `intents`, `plan` or `run`, which start ProteoWizard (discovery's probe
   runs `msconvert --help`), against the hold.
-- **What it does.** It walks an agent through inspect → intents → plan → show
-  the person the summary and digest → the person approves and runs →
-  validate. The agent never runs a plan itself:
-  - until MCP slice 2, the skill hands the person the `mscanvas run --plan …
-    --approve …` line to type in their own terminal, and waits;
+- **What it does.** It walks an agent through inspect → intents → plan → the
+  person reviews the plan in MSCanvas's own words and runs it → validate. The
+  agent never runs a plan itself:
+  - until MCP slice 2, the skill hands the person `mscanvas run --plan <file>`
+    with its roots and no digest, to run in their own terminal. That prints
+    the review (decision 5); the person reads it, copies the digest from it
+    and runs the line again with `--approve <digest>`. The agent waits;
   - once the adapter's `run` exists, an agent on the adapter runs through it,
     behind its approval (decision 7). An agent with only a shell keeps the
     first path.
 
-  It never calls `msconvert`, never edits a plan file, never computes or
-  passes an approval digest on the person's behalf, and reports every
+  It never calls `msconvert`, never edits a plan file, never computes, passes
+  or writes out an approval digest on the person's behalf, and reports every
   refusal as the CLI wrote it. Its text says that inside this repository only
   the fake providers are used, and that `intents`, `plan` and `run` against a
   real installation need a recorded hold release.
@@ -711,19 +742,18 @@ free-text option.
 1. **CLI slice 1:** the package, `inspect`, the envelope, exit codes, roots and
    schemas. It needs nothing open and can start now. What it touches outside
    the new package:
-   - one line in `lib.rs` (the `cli` module) and one in the workspace's
-     members; #161 also edits `lib.rs`;
-   - one line in `selection.rs`: `accept_workspace_file` widens from
-     `pub(super)` to `pub(crate)`, because the `cli` module sits outside
-     `preview`. A `pub(crate) use` in `preview/mod.rs` cannot do it, since a
-     re-export cannot be wider than its item. #161 edits `selection.rs`, but
-     not near that line;
+   - the `cli` module in `lib.rs`, a `pub use` of `preview::automation`'s
+     entry, and one line in the workspace's members; #161 also edits `lib.rs`;
+   - one line in `preview/mod.rs`, `pub(crate) mod automation;`, and the new
+     `preview/automation.rs`. #175 edits `preview/mod.rs`;
    - `destination_policy.rs`, for the extracted walk, name check and file
-     creation of decisions 1 and 4, which become `pub(crate)`, with
-     `admit_and_hold`. No lane in flight edits it;
-   - one `pub(crate) use destination_policy::{…}` in `preview/mod.rs`,
-     because the module is private to `preview`. This re-export is legal,
-     since its items are `pub(crate)` themselves. #175 edits that file;
+     creation of decisions 1 and 4. The walk and `create_child_object` are
+     private today and their extracted forms become `pub(super)`;
+     `admit_and_hold`, `SubfolderName::parse` and the types they take are
+     `pub(super)` already. No lane in flight edits it;
+   - nothing in `selection.rs` or `destination.rs`: `preview::automation`
+     sees their `pub(super)` items, so `private_interfaces` has nothing to
+     report;
    - its "no launch" test uses `idle_provider::NoProcess` as it is.
 2. **CLI slice 2:** the run lock and its holder record in both processes, and
    the desktop's refusal while the lock is held. It comes before any
@@ -774,9 +804,11 @@ measured need appears.
   fails; once the invocation has exited, the rename succeeds.
 - Every test runs with stdin closed, and none waits for input. The built
   binary is run as a process for the cases decision 1 lists; the rest are
-  unit tests of the `cli` module.
+  unit tests of `preview::automation`.
+- A panic forced in a test exits 5, prints one document on stdout and leaves
+  stderr empty.
 - Every golden document matches its schema.
-- A test fails if the `cli` module names an `e2e`-gated item.
+- A test fails if `cli` or `preview::automation` names an `e2e`-gated item.
 - The desktop still launches in development, and until open question 4 is
   answered the release-candidate installer carries no executable other than
   `mscanvas-desktop.exe` and `uninstall.exe`.
@@ -791,7 +823,11 @@ measured need appears.
   real profile.
 - While another process holds the lock, the desktop refuses to start a
   conversion, a discovery probe or any other ProteoWizard process, names the
-  holder, and is checked in the rendered app.
+  holder, and is checked in the rendered app. Opening a preview is refused,
+  because an open runs `msaccess` for metadata and the run summary (ADR 0056,
+  decision 3). Before #175 merges a selected spectrum is refused too; after
+  it, a selected spectrum of a preview that was already open is read
+  natively and not refused (ADR 0057, decision 1).
 
 ### CLI slice 3
 
@@ -801,7 +837,8 @@ measured need appears.
   standing at that name is refused, not followed. The printed digest equals
   the SHA-256 of the written bytes.
 - A missing `--intent` exits 2. A vendor file on a build without a measured
-  row follows ADR 0055's build gate: labelled, with SCIEX refused. An advanced
+  row follows ADR 0055's build gate: labelled, with SCIEX refused; on a build
+  that cannot report its release, `plan` refuses every vendor file. An advanced
   intent labels every item, and a blocked combination is refused.
 - A SCIEX plan records the companion's path, identity and digest.
 - While the lock is held, `intents` and `plan` exit 1 with `backendBusy` and
@@ -811,10 +848,16 @@ measured need appears.
 
 - A wrong digest exits 1; no staging directory exists and no process was
   started.
+- `run --plan <file>` without `--approve` exits 1 with `planNotApproved` and
+  the review document, which matches its schema and golden document; no
+  process was started, the lock was not taken and nothing was written.
 - Each drift kind is refused before staging, one test per kind, on the fake
   provider: `buildChanged`, `rootsChanged`, `sourceChanged`,
   `providerChanged`, `intentNotAdmitted`, `destinationChanged` and
-  `planChanged`.
+  `planChanged`. Two of them on the installation's source: a plan made with
+  `--proteowizard <folder>` whose folder is unusable at run refuses as
+  `providerChanged` and discovery is not tried; a plan made by discovery that
+  now discovers another `msconvert` refuses as `providerChanged`.
 - Per-item binding: on the fake provider, the second item's source is
   rewritten in place, keeping its identity, after the run has started. That
   item is refused with `sourceChanged` and no staging; the first item's
@@ -829,7 +872,7 @@ measured need appears.
   helper sends `CTRL_C_EVENT` and `CTRL_BREAK_EVENT` to its console with
   `GenerateConsoleCtrlEvent`; the child is still running afterwards and is
   ended by the job object.
-- Ctrl+C, in the `cli` module on the fake provider: the handler's stop
+- Ctrl+C, in `preview::automation` on the fake provider: the handler's stop
   cancels the item, its staging is reclaimed, and the run exits 4.
 - A staging directory with MSCanvas's marker, left as a killed run leaves it
   and made as the crate's `live_recovery` tests make one, is not removed, and
@@ -843,7 +886,9 @@ measured need appears.
 - Every command in the skill appears in the CLI's golden tests, and the skill
   names no `msconvert` option.
 - `mscanvas run` appears in the skill only as a line the agent hands the
-  person to run in their own terminal, never as a step the agent runs.
+  person to run in their own terminal, never as a step the agent runs, and
+  without `--approve`: the digest the person approves with is one MSCanvas's
+  review printed for them.
 - The skill's file is not under `.agents/skills/`, and its text states the
   hold rule.
 
@@ -992,6 +1037,18 @@ owner's answers and the hold-release window more than by implementation.
    (recommended). Viewing an mzML does not start ProteoWizard once #175's
    native reader is the preview's, so it is not refused. The alternative is to
    have the desktop wait.
+
+   > **Correction, 2026-10-30, after the owner's answer.** The sentence on
+   > viewing is wrong. #175 reads the spectrum table and selected spectra
+   > natively, but an open still runs `msaccess` for metadata and the run
+   > summary (ADR 0056, decision 3). So while a CLI run holds the lock, which
+   > for 1,024 items can be hours, the desktop cannot open a new preview.
+   > Before #175 merges a selected spectrum is refused too; after it, only the
+   > spectra of a preview already open stay readable (ADR 0057, decision 1).
+   > That is the cost ADR 0057, decision 2, already accepts while the
+   > desktop's own queue runs. The recommendation stands, because waiting
+   > would leave an open hanging for as long instead, but the owner answered
+   > on the wrong cost and is asked to confirm again.
 4. **Distribution at M10's closure.** Recommended: the installer carries
    `mscanvas.exe` beside `mscanvas-desktop.exe`, documents where it is, and
    does not change the user's PATH. This is a release change.
@@ -1032,6 +1089,9 @@ this ADR and answers its eight questions as recommended:
 3. **The cross-process run lock:** while a CLI run holds it, the desktop
    refuses operations that would start ProteoWizard and names the holder.
    Viewing an mzML is not refused once #175's reader is the preview's.
+   *Re-confirmation pending: that last sentence was wrong when the owner
+   answered; opening a preview is refused too. See the correction under open
+   question 3.*
 4. **Distribution:** the installer carries `mscanvas.exe` beside
    `mscanvas-desktop.exe`, documents where it is, and does not change PATH.
    This is a release change.
@@ -1054,3 +1114,28 @@ that a method can leave the app as a plan file (export and import of a method
 as JSON). An imported plan is validated by the same constructor as a preset and
 never runs without review. The amendment is a dated note in ADR 0058's
 decision 2.
+
+## Changed after acceptance, 2026-10-30
+
+A review after the owner's answer found these. Nothing is implemented, so
+each is corrected in place above; this list is so the owner can see what
+changed after "全部按推荐".
+
+- **Open question 3's premise was wrong** (correction under the question).
+  The owner is asked to confirm it again.
+- **CLI slice 1 widens no visibility.** The glue moves into
+  `preview::automation`, which sees the `pub(super)` items it needs;
+  `selection.rs` and `destination.rs` are not touched (decisions 1 and 9).
+  The earlier text said one line in `selection.rs` would do, which missed
+  the other `pub(super)` accessors and types a caller outside `preview`
+  would need.
+- **The plan records where the installation came from**, named folder or
+  discovery, and `run` resolves through that source only, so a named folder
+  can never fall back to discovery (decisions 5 and 6).
+- **`run --plan` without `--approve` prints MSCanvas's own review**, and the
+  skill hands the person that line without a digest, so what the person
+  approves is text MSCanvas wrote, not the agent's summary (decisions 3, 5
+  and 8).
+- **A panic is the exit-5 document**, with stderr empty (decision 3).
+- Smaller: the containment walk's extracted signature (decision 4), and the
+  build gate's no-release case in CLI slice 3.

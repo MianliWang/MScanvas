@@ -532,9 +532,10 @@ M10.0 route decision.
 [ADR 0064](../architecture/adr/0064-m10-automation-route.md): a small CLI
 package, `mscanvas`, over the desktop library, driving the same operations
 (inspect, intents, plan, run an approved plan, validate), then one skill, then
-an MCP adapter in the same binary; the plan and run slices wait for PR #161.
+an MCP adapter in the same binary; the plan and run slices wait for PRs #161 and #175.
 Accepted by the owner on 2026-10-30, all eight questions as recommended
-(decision A0064).*
+(decision A0064). Question 3 awaits re-confirmation: its premise on viewing
+was wrong (ADR 0064, "Changed after acceptance").*
 
 ### 7.4 Future capabilities
 
