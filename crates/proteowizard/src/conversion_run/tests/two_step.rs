@@ -647,20 +647,68 @@ fn a_later_confirmed_run_never_clears_an_earlier_unconfirmed_one() {
 
 #[test]
 fn an_intermediate_that_cannot_be_held_is_never_called_the_users_source() {
-    for failure in [
-        ConversionRunFailure::SourceNotRechecked {
-            kind: io::ErrorKind::PermissionDenied,
-        },
-        ConversionRunFailure::SourceChangedBeforeRun,
-        ConversionRunFailure::SourceNotRehashed,
-    ] {
-        let restated = crate::conversion_run::two_step::intermediate_not_held(failure);
-        assert_eq!(restated.stable_id(), "output_rejected");
-        assert!(
-            !restated.detailed_stable_id().starts_with("source_"),
-            "{restated:?}"
-        );
+    use crate::conversion_run::two_step::hold_intermediate;
+    let directory = TestDirectory::new();
+    let path = directory.path().join("sample-converted.mzML");
+    fs::write(&path, b"judged").expect("write");
+    let judged = Sha256Digest::calculate(b"judged").expect("digest");
+    drop(hold_intermediate(&path, 6, judged).expect("held as judged"));
+
+    // Rewritten after its judgement, at the same length and at another, then
+    // gone: run 1's output, never the user's source.
+    let mut refusals = Vec::new();
+    for rewritten in [&b"edited"[..], b"longer bytes"] {
+        fs::write(&path, rewritten).expect("rewrite");
+        refusals.push((
+            hold_intermediate(&path, 6, judged).expect_err("refused"),
+            "output_changed_during_inspection",
+        ));
     }
+    fs::remove_file(&path).expect("remove");
+    refusals.push((
+        hold_intermediate(&path, 6, judged).expect_err("refused"),
+        "output_not_inspected",
+    ));
+    for (failure, detail) in refusals {
+        assert_eq!(failure.stable_id(), "output_rejected", "{failure:?}");
+        assert_eq!(failure.detailed_stable_id(), detail, "{failure:?}");
+    }
+}
+
+#[test]
+fn a_vendor_acquisition_is_written_from_an_intermediate_judged_against_its_object() {
+    let directory = TestDirectory::new();
+    let source = write_thermo_source(directory.path(), "acquisition.raw");
+    let root = directory.path().join("out");
+    fs::create_dir(&root).expect("create destination root");
+    let mgf = StructuredIntent::new(OutputEncoding::Mgf, Vec::new(), Vec::new(), [])
+        .expect("a valid intent");
+    let plan = ConversionPlan::advanced(open_thermo(&source), &root, ConflictPolicy::Fail, mgf)
+        .expect("plan a vendor conversion written from an intermediate");
+    assert_eq!(plan.two_step_target(), Some(NonMzmlFormat::Mgf));
+    let first = writes(intermediate_of(&two_level_source()).into_bytes());
+    let second = writes(written(NonMzmlFormat::Mgf));
+    let runner = TwoRuns {
+        first: FakeRunner::new(&first),
+        second: FakeRunner::new(&second),
+    };
+    let capabilities = capabilities_reporting_with(
+        CAPTURED_HELP,
+        EVIDENCED_RELEASE,
+        Some(EVIDENCED_REVISION),
+        evidenced_executable_sha256(),
+    );
+    let report = run_conversion(&plan, &capabilities, &runner);
+
+    assert!(report.finalized_file().is_some(), "{:?}", report.outcome());
+    assert_eq!(entry_names(&root), [OsString::from("acquisition.mgf")]);
+    // The intermediate takes the acquisition's stem: no source is mzML here.
+    let first_argv = tokens(&runner.first.argv());
+    assert_eq!(
+        first_argv[first_argv.len() - 2..],
+        ["--outfile", "acquisition.mzML"]
+    );
+    assert!(tokens(&runner.second.argv())[0].ends_with("acquisition.mzML"));
 }
 
 #[test]

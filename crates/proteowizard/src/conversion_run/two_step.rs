@@ -161,19 +161,11 @@ fn run_intermediate(
     let (judged, valid) = (*validated).into_parts();
     drop(judged);
     let path = staging.join(name);
-    let pinned = SourceIdentity::capture(&path)
-        .map_err(|error| ConversionRunFailure::SourceNotRechecked { kind: error.kind() })
-        .and_then(|identity| {
-            pin_source_object(&SourceObjectFacts::from_parts(
-                identity,
-                valid.output().byte_length(),
-                valid.output().sha256(),
-            ))
-        });
-    let mut pinned = match pinned {
-        Ok(pinned) => pinned,
-        Err(failure) => return Err(refuse(intermediate_not_held(failure))),
-    };
+    let mut pinned =
+        match hold_intermediate(&path, valid.output().byte_length(), valid.output().sha256()) {
+            Ok(pinned) => pinned,
+            Err(failure) => return Err(refuse(failure)),
+        };
     let kept = pinned
         .seek(SeekFrom::Start(0))
         .map_err(|error| OutputCheckRefusal::from(MzmlScanError::Io { kind: error.kind() }))
@@ -196,18 +188,34 @@ fn run_intermediate(
     })
 }
 
-/// The pin's failures speak of the user's source; here the object is run 1's
-/// intermediate, so they are restated as what they are: an output that could
-/// not be held, rehashed or recognised as the one just judged.
-pub(super) fn intermediate_not_held(failure: ConversionRunFailure) -> ConversionRunFailure {
-    let rejection = match failure {
-        ConversionRunFailure::SourceNotRechecked { kind } => {
-            ConversionOutputRejection::DirectoryInspectionFailed { kind }
-        }
-        ConversionRunFailure::SourceNotRehashed => ConversionOutputRejection::NotHashed,
-        _ => ConversionOutputRejection::ChangedDuringInspection,
-    };
-    ConversionRunFailure::OutputRejected(rejection.into())
+/// Pins the judged intermediate as the source is pinned, rehashing it against
+/// the bytes just judged. The pin's failures speak of the user's source; here
+/// the object is run 1's intermediate, so they are restated as what they are:
+/// an output that could not be held, rehashed or recognised as the one judged.
+pub(super) fn hold_intermediate(
+    path: &Path,
+    byte_length: u64,
+    sha256: Sha256Digest,
+) -> Result<File, ConversionRunFailure> {
+    SourceIdentity::capture(path)
+        .map_err(|error| ConversionRunFailure::SourceNotRechecked { kind: error.kind() })
+        .and_then(|identity| {
+            pin_source_object(&SourceObjectFacts::from_parts(
+                identity,
+                byte_length,
+                sha256,
+            ))
+        })
+        .map_err(|failure| {
+            let rejection = match failure {
+                ConversionRunFailure::SourceNotRechecked { kind } => {
+                    ConversionOutputRejection::DirectoryInspectionFailed { kind }
+                }
+                ConversionRunFailure::SourceNotRehashed => ConversionOutputRejection::NotHashed,
+                _ => ConversionOutputRejection::ChangedDuringInspection,
+            };
+            ConversionRunFailure::OutputRejected(rejection.into())
+        })
 }
 
 /// Run 2 and the final file's checks, then its finalization under the planned
