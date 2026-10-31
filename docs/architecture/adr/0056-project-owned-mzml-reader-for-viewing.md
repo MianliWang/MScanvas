@@ -10,6 +10,9 @@ Amended 2026-10-30 by the owner: decision 1's selected-spectrum refusals gain
 `unit_not_an_accession` (a note there), and decisions 5 and 9's removal of the
 two `msaccess` operations waits for decision 3's admission follow-up (the
 slice-2 note under decision 9).
+Amended 2026-10-30 by the owner (P175): decision 9's profile line is delivered
+in slice 2, in export and, in its webview commit, on screen (the slice-2
+note under decision 9).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -778,16 +781,25 @@ Slice 1 therefore meets this decision's merge condition.
 > - **Figures: slice 3's export half, delivered early.** Decision 9 gives
 >   profile lines on screen and in export to slice 3; slice 2 delivers the
 >   export half. That reorder is a third deviation from the delivery order. The
->   owner ratified the other two, and this one is put to the owner with the
->   pull request. The export maps a declared profile spectrum to a joined
+>   owner ratified the other two, and accepted this one on 2026-10-30 (P175,
+>   below). The export maps a declared profile spectrum to a joined
 >   trace, so its SVG, PNG, `Copy plot` and figure preview draw a line.
 >   Where the line crosses a current range's edge between two samples, it is
 >   cut there at the interpolated height, and that height also sets the
 >   window's value scale, as the chromatogram's does. The caption states the
 >   declared representation and units; the linked figure's caption gives each
 >   panel its own units, because the chromatogram's intensity has none. The
->   screen draws sticks until slice 3. Centroid and undeclared spectra are
->   unchanged.
+>   screen draws sticks until slice 2's webview commit, which draws the same
+>   line. Centroid and undeclared spectra are unchanged.
+>
+>   **Owner decision P175 (2026-10-30).** Shown the decisions that block work
+>   now, the owner replied "全部按推荐，继续" ("all as recommended,
+>   continue"), accepting P175's recommendation, option (a): the profile line
+>   stays in slice 2's export, and the on-screen line, slice 3's drawing of it,
+>   is drawn in slice 2's webview commit (in
+>   [PR #175](https://github.com/MianliWang/MScanvas/pull/175)), so the screen
+>   and the export agree and no sentence explains a difference. Slice 3 keeps
+>   the rest of its list.
 > - **Data-document versions, decided by the owner on 2026-10-30.** The
 >   spectrum documents and the chromatogram document keep their keys. The
 >   spectrum's representation and unit fields and the chromatogram's
@@ -1100,8 +1112,9 @@ keeps today's row-capped state (decision 5). Two other ways:
 > side (the slice-2 note under decision 9) adds these:
 >
 > - **[ADR 0028](0028-figure-renderer-and-semantic-specification.md).** The
->   export draws the profile line from slice 2, the screen from slice 3. That
->   reorder is put to the owner (the slice-2 note).
+>   export and the screen draw the profile line from slice 2, the screen in its
+>   webview commit. The owner accepted that reorder on 2026-10-30 (P175, the
+>   slice-2 note).
 > - **[ADR 0029](0029-first-visible-spectrum-figure-and-data-export.md).**
 >   "Representation and units stay unreported" holds for a spectrum that
 >   declares neither. A native spectrum's figure and data document carry the
