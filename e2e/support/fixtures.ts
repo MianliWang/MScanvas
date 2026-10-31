@@ -168,6 +168,8 @@ export function singleMzProjection() {
     intensity: spectrum.intensity,
     sourcePoints: spectrum.mz.length,
     reduced: false,
+    outsideLow: null,
+    outsideHigh: null,
   };
 }
 
@@ -195,6 +197,8 @@ export function fullSpectrumProjection() {
     intensity: spectrum.intensity,
     sourcePoints: spectrum.mz.length,
     reduced: false,
+    outsideLow: null,
+    outsideHigh: null,
   };
 }
 

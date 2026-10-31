@@ -532,8 +532,10 @@ impl InstalledHelpCapabilities {
         &self.executable
     }
 
+    /// The digest of the executable this help was bound to: what the view
+    /// cache keys a converted copy by (ADR 0060 decision 7).
     #[must_use]
-    pub(crate) const fn executable_sha256(&self) -> Sha256Digest {
+    pub const fn executable_sha256(&self) -> Sha256Digest {
         self.executable_sha256
     }
 

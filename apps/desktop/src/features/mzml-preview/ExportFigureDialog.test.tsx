@@ -48,6 +48,15 @@ describe("the export-specific figure preview", () => {
     }
   });
 
+  it("names a run's window in the unit its scans declare, never converted", async () => {
+    const source = { kind: "chromatogram" as const, token: "chromatogram-1", range: { scope: "full" as const, low: null, high: null },
+      traces: { tic: true, bpc: false } };
+    render(<ExportFigureDialog {...props({ kind: "chromatogram", question: { ...question, source }, committedDomain: { low: 0.5, high: 1.5 },
+      rtUnit: "minute" })} />);
+    await screen.findByRole("img");
+    expect(screen.getByRole("radio", { name: "Current range RT 0.5000–1.5000 min" })).not.toBeChecked();
+  });
+
   it("opens on a close button, keeps the actions real buttons and points refusals at a visible reason", async () => {
     const onExportData = vi.fn();
     const view = render(<ExportFigureDialog {...props({ onExportData, committedDomain: { low: 200, high: 550 } })} />);

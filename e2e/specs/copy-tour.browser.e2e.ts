@@ -373,6 +373,108 @@ function withBackend(verdict: unknown) {
 
 const populated = (locale: Locale) => scenario("populated", locale);
 
+const DECLARED_UNITS = { mzUnit: { state: "declared", accession: "MS:1000040" }, intensityUnit: { state: "declared", accession: "MS:1000131" } };
+
+/** The populated world, its selected spectrum declaring `declared` (ADR 0056). */
+function declaredSpectrum(declared: Record<string, unknown>) {
+  return (locale: Locale) => {
+    const table = scenario("populated", locale);
+    const answer = table.load_selected_spectrum as { authority: unknown; outcome: { spectrum: Record<string, unknown> } };
+    return { ...table, load_selected_spectrum: { ...answer, outcome: { outcome: "spectrum", spectrum: { ...answer.outcome.spectrum, ...declared } } } };
+  };
+}
+
+/** The populated world, its run's scans alternating minutes and seconds. */
+function mixedUnits(locale: Locale) {
+  const table = scenario("populated", locale);
+  const preview = table.open_mzml_preview as { spectrumTable: { rows: { retentionTime: unknown }[] } };
+  return { ...table, open_mzml_preview: { ...preview, chromatogramExportToken: null,
+    runSummary: { ...(table.open_mzml_preview as { runSummary: object }).runSummary, retentionTimeRange: { state: "mixedUnits" } },
+    spectrumTable: { ...preview.spectrumTable, rows: preview.spectrumTable.rows.map((row, index) => ({ ...row,
+      retentionTime: { value: index, unit: index % 2 === 0 ? "minute" : "second" } })) } } };
+}
+
+/**
+ * The populated world, every scan declaring `unit` (ADR 0056): the common
+ * native file. Its selected spectrum is profile, so the line is drawn too.
+ */
+function declaredRun(unit: "minute" | "second") {
+  return (locale: Locale) => {
+    const table = scenario("populated", locale);
+    const preview = table.open_mzml_preview as { runSummary: object; spectrumTable: { rows: object[] } };
+    const rows = preview.spectrumTable.rows.map((row, index) => ({ ...row, retentionTime: { value: index * 7.5, unit } }));
+    const answer = table.load_selected_spectrum as { authority: unknown; outcome: { spectrum: Record<string, unknown> } };
+    return { ...table,
+      open_mzml_preview: { ...preview,
+        runSummary: { ...preview.runSummary, retentionTimeRange: { state: "reported", minimum: 0, maximum: (rows.length - 1) * 7.5, unit } },
+        spectrumTable: { ...preview.spectrumTable, rows } },
+      load_selected_spectrum: { ...answer, outcome: { outcome: "spectrum", spectrum: { ...answer.outcome.spectrum,
+        retentionTime: { value: 0, unit }, representation: "profile", ...DECLARED_UNITS } } } };
+  };
+}
+
+/** The axis states the run's own unit, in either locale's brackets; nothing converts it. */
+async function expectRtAxis(symbol: string) {
+  await browser.waitUntil(async () => {
+    const title = await browser.$(".plot-axis-title-x").getText();
+    return title.includes(`(${symbol})`) || title.includes(`（${symbol}）`);
+  }, { timeout: 10_000, timeoutMsg: `the retention-time axis never said ${symbol}` });
+}
+
+/** The populated world, the spectrum read refused by the reader as `kind`. */
+function refusedSpectrum(kind: string, detail: string | null) {
+  return (locale: Locale) => ({ ...scenario("populated", locale), load_selected_spectrum: { __reject: { kind,
+    summary: "Controlled refusal", detail, retryable: false } } });
+}
+
+/** Clicks the first scan row by script, which reads its spectrum. */
+async function clickTheFirstScan() {
+  await browser.execute(() => {
+    document.querySelector('div.spectrum-table-row[data-row-position="0"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+/** The first scan clicked, and the panel's refusal on screen. */
+async function refuseTheSpectrum() {
+  await openPreview();
+  await clickTheFirstScan();
+  await browser.$(".spectrum-panel .empty-state").waitForExist({ timeout: 30_000 });
+  await browser.execute(() => document.querySelector(".spectrum-panel")?.scrollIntoView({ block: "end" }));
+}
+
+/** A declared-profile spectrum whose projection answers with `projection` merged in. */
+function profileProjection(projection: Record<string, unknown>) {
+  return (locale: Locale) => {
+    const table: Record<string, unknown> = declaredSpectrum({ representation: "profile", ...DECLARED_UNITS })(locale);
+    return { ...table, project_selected_spectrum: { ...(table.project_selected_spectrum as object), ...projection } };
+  };
+}
+
+/** The chromatogram's ⋯ menu, then its first item, Set range…. */
+async function openChromatogramRangeEditor() {
+  await browser.$('.chromatogram-panel .figure-quick-actions button[aria-haspopup="menu"]').click();
+  await browser.$('[role="menuitem"]').waitForDisplayed({ timeout: 30_000 });
+  await (await browser.$$('[role="menuitem"]'))[0]!.click();
+  await browser.$(".chromatogram-panel .plot-range-form").waitForDisplayed();
+}
+
+async function openDetails() {
+  await browser.$('.workbench-header [aria-controls="workbench-inspector"]').click();
+  await frames();
+}
+
+async function showTheSpectrum() {
+  await openSpectrum();
+  await revealTheSpectrum();
+}
+
+/** Opens the mzML row and leaves whatever the read answered on screen. */
+async function readTheRow() {
+  await revealRosterRow(MZML_ROW.handle);
+  await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+  await foldNarrowRoster();
+}
+
 const STOPS: readonly Stop[] = [
   { name: "workbench-empty", table: emptyTable, anchor: ".workbench-shell" },
   { name: "workbench-roster-loading", table: populated, hold: ["get_workspace_roster"], anchor: ".workbench-shell" },
@@ -401,6 +503,70 @@ const STOPS: readonly Stop[] = [
       await revealTheSpectrum();
     },
     anchor: "svg.spectrum-plot",
+  },
+  // What the file declares (ADR 0056 slice 2): a profile spectrum is a joined
+  // line (P175), a centroid one sticks, both with their units by accession; a
+  // truncated spectrum states its prefix and its total.
+  { name: "spectrum-profile-line", table: declaredSpectrum({ representation: "profile", ...DECLARED_UNITS }),
+    drive: showTheSpectrum, anchor: 'svg.spectrum-plot[data-drawn-as="line"]' },
+  { name: "spectrum-centroid-sticks", table: declaredSpectrum({ representation: "centroid", ...DECLARED_UNITS }),
+    drive: showTheSpectrum, anchor: 'svg.spectrum-plot[data-drawn-as="sticks"]' },
+  { name: "spectrum-truncated", table: declaredSpectrum({ truncated: true, pointCount: 900_000 }),
+    drive: showTheSpectrum, anchor: ".spectrum-panel .notice-warning" },
+  // Scans in seconds and minutes: no chromatogram, the reason in its place.
+  { name: "chromatogram-mixed-units", table: mixedUnits, drive: readTheRow, anchor: ".chromatogram-panel .empty-state" },
+  // Scans all in minutes, or all in seconds: the unit on the axis, the range,
+  // the cursor, the table and Metadata. The last scan puts the cursor label at
+  // the right edge.
+  { name: "chromatogram-minutes", table: declaredRun("minute"), drive: async () => { await showTheSpectrum(); await expectRtAxis("min"); },
+    anchor: "svg.spectrum-plot" },
+  { name: "chromatogram-seconds", table: declaredRun("second"), drive: async () => { await showTheSpectrum(); await expectRtAxis("s"); },
+    anchor: "svg.spectrum-plot" },
+  { name: "chromatogram-minutes-last", table: declaredRun("minute"), drive: async () => {
+    await openPreview(); await selectTheSpectrum(5); await revealTheSpectrum();
+  }, anchor: "svg.spectrum-plot" },
+  { name: "viewer-metadata-minutes", table: declaredRun("minute"), drive: () => openViewerTab(3), anchor: ".preview-metadata" },
+  // The range editor's fields in the run's unit, and the figure dialog's run
+  // window once a range is committed.
+  { name: "chromatogram-minutes-range-editor", table: declaredRun("minute"), keepFocus: true, drive: async () => {
+    await openPreview();
+    await openChromatogramRangeEditor();
+  }, anchor: ".chromatogram-panel .plot-range-form" },
+  { name: "export-figure-minutes-range", table: declaredRun("minute"), drive: async () => {
+    await answerFigurePreviews();
+    await openPreview();
+    await openChromatogramRangeEditor();
+    await browser.$("#plot-range-rt-low").setValue("7.5");
+    await browser.$("#plot-range-rt-high").setValue("30");
+    await browser.$(".chromatogram-panel .plot-range-form button[type=submit]").click();
+    await browser.$(".chromatogram-panel .plot-range-form").waitForExist({ reverse: true });
+    await openFigureDialog(".chromatogram-panel");
+    await waitForFigurePreview();
+  }, anchor: ".figure-export-dialog" },
+  // The reader refused the spectrum: its reason, the reader's stable id, and
+  // where the preview is gone, opening the file again.
+  { name: "spectrum-preview-not-open", table: refusedSpectrum("preview_not_open", null), drive: refuseTheSpectrum,
+    anchor: ".spectrum-panel .empty-state button" },
+  { name: "spectrum-encoding-unsupported", table: refusedSpectrum("spectrum_encoding_unsupported", "mz:numpress"), drive: refuseTheSpectrum,
+    anchor: ".spectrum-panel .empty-state" },
+  // A profile spectrum's Details while its window is being drawn (no sticks
+  // reason), and once Rust reduced it (the line's own rule).
+  { name: "spectrum-profile-pending-details", table: declaredSpectrum({ representation: "profile", ...DECLARED_UNITS }),
+    hold: ["project_selected_spectrum"], drive: async () => {
+      await openPreview();
+      await clickTheFirstScan();
+      await browser.$("svg.spectrum-plot").waitForExist({ timeout: 30_000 });
+      await openDetails();
+    }, anchor: "#workbench-inspector .inspector-panel" },
+  { name: "spectrum-profile-reduced-details", table: profileProjection({ reduced: true, sourcePoints: 4_000 }),
+    drive: async () => { await openSpectrum(); await openDetails(); }, anchor: 'svg.spectrum-plot[data-drawn-as="line"]' },
+  // An open Rust answered as superseded: its reason, beside reading it again.
+  {
+    name: "workbench-open-superseded",
+    table: (locale) => ({ ...scenario("populated", locale), open_mzml_preview: { __reject: { kind: "selection_superseded",
+      summary: "A newer request for that file arrived before this one finished, so its result was not used.", detail: null, retryable: false } } }),
+    drive: readTheRow,
+    anchor: '#workbench-evidence[data-evidence="failed"] button',
   },
   // Rows listed and none opened: the evidence says where to pick, and where
   // the list is a folded drawer it offers the button that opens it.

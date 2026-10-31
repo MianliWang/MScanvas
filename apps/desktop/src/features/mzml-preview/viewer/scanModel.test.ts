@@ -7,6 +7,7 @@ import {
   traceValue,
 } from "./scanModel";
 import type { ScanPoint, ScanSource } from "./scanModel";
+import type { RetentionTimeUnit } from "../contracts";
 
 /**
  * One source row, with the two series deliberately far apart.
@@ -21,7 +22,7 @@ function row(overrides: Partial<ScanSource> & { readonly index: number }): ScanS
     scanNumber: overrides.index + 1,
     msLevel: 1,
     retentionTime: overrides.index,
-    retentionTimeUnitKnown: false,
+    retentionTimeUnit: "notReported",
     totalIonCurrent: 5_000 + overrides.index,
     basePeakIntensity: 10 + overrides.index,
     ...overrides,
@@ -96,22 +97,19 @@ describe("what refuses to become a model", () => {
     ).toEqual({ status: "unavailable", reason: "unusable-intensity" });
   });
 
-  it("refuses a retention-time unit it cannot name, however many rows claim one", () => {
-    // Carried forward from PR #72. `unitKnown: true` names no unit, so an axis
-    // could neither be labelled with it nor honestly say none was reported.
-    // "Every row agreed" is deliberately not a special path.
-    for (const rows of [
-      [row({ index: 0 }), row({ index: 1, retentionTimeUnitKnown: true })],
-      [
-        row({ index: 0, retentionTimeUnitKnown: true }),
-        row({ index: 1, retentionTimeUnitKnown: true }),
-      ],
-    ]) {
-      expect(buildScanModel({ rows, truncated: false })).toEqual({
-        status: "unavailable",
-        reason: "unsupported-retention-time-unit",
-      });
-    }
+  it("keeps one shared unit and refuses rows in mixed units, by Rust's rule", () => {
+    // ADR 0056: every row states one unit, or every row states none. Nothing
+    // converts seconds to minutes, and a run where only some rows state a unit
+    // has no one axis either.
+    const unit = (units: readonly RetentionTimeUnit[]) => {
+      const model = buildScanModel({ rows: units.map((each, index) => row({ index, retentionTimeUnit: each })), truncated: false });
+      return model.status === "ready" ? model.retentionTimeUnit : model.reason;
+    };
+    expect(unit(["second", "second"])).toBe("second");
+    expect(unit(["minute", "minute"])).toBe("minute");
+    expect(unit(["notReported", "notReported"])).toBe("notReported");
+    expect(unit(["second", "minute"])).toBe("mixed-retention-time-units");
+    expect(unit(["minute", "notReported"])).toBe("mixed-retention-time-units");
   });
 
   it("builds the run the current boundary actually produces", () => {

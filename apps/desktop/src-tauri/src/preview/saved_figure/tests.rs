@@ -102,7 +102,15 @@ fn no_view_cache() -> PathBuf {
 /// The one place a test builds a row, so a change to the row's test
 /// constructor is a change here and nowhere else.
 fn row(index: u64, scan: u64, retention_time: f64, tic: f64, bpc: f64) -> TableRowFacts {
-    TableRowFacts::for_test(index, Some(scan), 1, retention_time, false, tic, bpc)
+    TableRowFacts::for_test(
+        index,
+        Some(scan),
+        1,
+        retention_time,
+        mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
+        tic,
+        bpc,
+    )
 }
 
 /// The run `fixtures/plot-golden`'s chromatogram documents were rendered from.
@@ -1364,7 +1372,7 @@ fn a_truncated_table_regenerates_no_chromatogram() {
     assert_eq!(
         reopen(&document, &truncated).map(|_| ()),
         Err(ReopenRefusal::Regeneration(
-            RegenerationRefusal::NoChromatogram
+            RegenerationRefusal::NoChromatogram(NoChromatogram::Truncated)
         )),
     );
 }
@@ -1505,7 +1513,9 @@ fn every_refusal_has_its_own_stable_identifier() {
             ReopenRefusal::SourceMissing,
             ReopenRefusal::SourceUnavailable(UnavailableReason::Unreadable),
             ReopenRefusal::SourceChanged,
-            ReopenRefusal::Regeneration(RegenerationRefusal::NoChromatogram),
+            ReopenRefusal::Regeneration(RegenerationRefusal::NoChromatogram(
+                NoChromatogram::Truncated,
+            )),
             ReopenRefusal::FigureChanged,
             ReopenRefusal::DigestUnavailable,
         ]

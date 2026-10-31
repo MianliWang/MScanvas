@@ -1528,6 +1528,13 @@ pub(super) struct ConversionSlot {
     current_attempt: Option<CurrentAttempt>,
     /// A stop accepted for an attempt whose handle was not yet bound.
     pending_item_stop: Option<PendingItemStop>,
+    /// The latest one-click view (ADR 0060 decision 5). While it runs it holds
+    /// this slot, so every route the slot refuses is refused; the queue state
+    /// above is left exactly as it was.
+    view: Option<super::raw_view::RawView>,
+    /// How many views this session has begun: the next one's operation, and a
+    /// part of the incarnation a workspace clear is planned against.
+    views_begun: u64,
 }
 
 impl Default for ConversionSlot {
@@ -1544,6 +1551,8 @@ impl Default for ConversionSlot {
             stop_requested_at: None,
             current_attempt: None,
             pending_item_stop: None,
+            view: None,
+            views_begun: 0,
         }
     }
 }
@@ -1600,7 +1609,7 @@ impl ConversionSlot {
     }
     /// New queues and retries are distinct confirmations even when their rows
     /// happen to be identical. Settling one attempt does not change this key.
-    pub(super) fn incarnation(&self) -> (u64, u64) {
+    pub(super) fn incarnation(&self) -> (u64, u64, u64) {
         let round = match &self.state {
             SlotState::Idle => 0,
             SlotState::AwaitingDestination { queue, .. }
@@ -1608,12 +1617,20 @@ impl ConversionSlot {
             | SlotState::Stopping { queue }
             | SlotState::Terminal { queue, .. } => queue.retry_round,
         };
-        (self.operation, round)
+        (self.operation, round, self.views_begun)
     }
 
     /// A reserved picker has launched no process. Retiring its reservation
     /// makes its eventual answer stale; it cannot start work after Clear.
     pub(super) fn request_clear_stop(&mut self) -> Result<StopAccepted, PreviewErrorDto> {
+        // Clear treats a running view as active work (ADR 0060 decision 5):
+        // Cancel and clear cancels it, and waits for its worker as for a queue.
+        // No queue is busy beside it: Begin and Retry refuse while a view
+        // runs, and a view begins only on a slot that is not busy.
+        if let Some(view) = self.view.as_ref().filter(|view| view.is_running()) {
+            view.request_cancel();
+            return Ok(StopAccepted::AlreadyRequested);
+        }
         if matches!(self.state, SlotState::AwaitingDestination { .. }) {
             self.cancel(self.operation);
             return Ok(StopAccepted::AlreadyRequested);
@@ -1629,12 +1646,64 @@ impl ConversionSlot {
     // A terminal queue does not: it is a thing to read, not work in flight.
     /// This is what every workspace mutation asks before it proceeds.
     pub(super) const fn is_busy(&self) -> bool {
-        matches!(
-            self.state,
-            SlotState::AwaitingDestination { .. }
-                | SlotState::Running { .. }
-                | SlotState::Stopping { .. }
-        )
+        self.view_is_running()
+            || matches!(
+                self.state,
+                SlotState::AwaitingDestination { .. }
+                    | SlotState::Running { .. }
+                    | SlotState::Stopping { .. }
+            )
+    }
+
+    /// Whether a one-click view holds the slot.
+    pub(super) const fn view_is_running(&self) -> bool {
+        match &self.view {
+            Some(view) => view.is_running(),
+            None => false,
+        }
+    }
+
+    /// What a route the slot refuses answers with: `raw_view_busy` while the
+    /// holder is a view, so the reason names the work that is in the way.
+    pub(super) fn busy_refusal(&self) -> PreviewErrorDto {
+        if self.view_is_running() {
+            super::raw_view::raw_view_busy()
+        } else {
+            conversion_busy()
+        }
+    }
+
+    /// Takes the slot for a new view, dropping the previous view's state.
+    pub(super) fn begin_view(
+        &mut self,
+        dataset: DatasetId,
+        file_name: String,
+    ) -> Result<u64, PreviewErrorDto> {
+        if self.is_busy() {
+            return Err(self.busy_refusal());
+        }
+        self.views_begun = self
+            .views_begun
+            .checked_add(1)
+            .expect("a session begins fewer than u64::MAX views");
+        self.view = Some(super::raw_view::RawView::new(
+            self.views_begun,
+            dataset,
+            file_name,
+        ));
+        Ok(self.views_begun)
+    }
+
+    /// The latest view, whatever its state.
+    pub(super) const fn view(&self) -> Option<&super::raw_view::RawView> {
+        self.view.as_ref()
+    }
+
+    /// The view this operation names, whatever its state.
+    pub(super) fn view_mut(&mut self, operation: u64) -> Option<&mut super::raw_view::RawView> {
+        self.view
+            .as_mut()
+            .filter(|view| view.operation == operation)
     }
 
     /// Whether a busy queue holds this row.
@@ -1647,6 +1716,13 @@ impl ConversionSlot {
     // request has been made and the attempt has not settled, so the row may
     /// still be being read.
     pub(super) fn busy_holds(&self, dataset: DatasetId) -> bool {
+        if self
+            .view
+            .as_ref()
+            .is_some_and(|view| view.is_running() && view.dataset == dataset)
+        {
+            return true;
+        }
         match &self.state {
             SlotState::AwaitingDestination { queue, .. }
             | SlotState::Running { queue }
@@ -1665,7 +1741,7 @@ impl ConversionSlot {
         queue: ConversionQueue,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         if self.is_busy() {
-            return Err(conversion_busy());
+            return Err(self.busy_refusal());
         }
         let reservation = ConversionReservationId(self.next_reservation);
         self.next_reservation = self

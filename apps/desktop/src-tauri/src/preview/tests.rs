@@ -72,9 +72,13 @@ use super::dto::{
     ConversionQueueTerminalReasonDto, DatasetSourceKindDto, ValidationModeDto,
     WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
 };
-use super::dto::{MAX_SPECTRUM_POINTS, SpectrumDomainRefusalDto, SpectrumViewportDomainDto};
+use super::dto::{
+    MAX_SPECTRUM_POINTS, RetentionTimeRangeDto, RetentionTimeUnitDto, SpectrumDomainRefusalDto,
+    SpectrumRepresentationDto, SpectrumViewportDomainDto, ValueUnitDto,
+};
 use super::idle_provider::NoProcess;
 use super::installation::InstallationIdentity;
+use super::mzml_fixture::{FixtureArray, FixtureSpectrum, document};
 use super::operation::SettledItemAdoption;
 use super::operation::{
     AdmittedDestination, AttemptFacts, CancellationFacts, ClaimedOutputName, ConversionQueue,
@@ -112,64 +116,111 @@ const METADATA_OUTPUT: &str = concat!(
     "  processing: conversion\n",
 );
 
-const SPECTRUM_TABLE_OUTPUT: &str = concat!(
-    "# sample.mzML\n",
-    "index\tid\tevent\tanalyzer\tmsLevel\trt\tmzLow\tmzHigh\tbasePeakMZ\tbasePeakInt\tTIC\t",
-    "charge\tprecursorMZ\tthermo_monoMZ\tfilterStringMZ\tionInjectionTime\n",
-    "0\t19\t1\tFTMS\tms1\t0.10\t100\t1000\t445.12\t9000\t120000\t\t\t\t\t\n",
-    "1\t20\t2\tFTMS\tms2\t0.20\t100\t1000\t333.33\t5000\t60000\t2\t445.12\t\t\t\n",
-    "2\t21\t1\tFTMS\tms1\t0.30\t100\t1000\t500.00\t7000\t80000\t\t\t\t\t\n",
-);
+/// The three spectra every sample file holds, read by the native reader (ADR
+/// 0056): ids `scan=19` to `scan=21`, MS levels 1, 2 and 1, and a precursor on
+/// the second. Nothing declares a unit or a representation, so every such
+/// state stays unreported. The summary terms are what the table shows; the
+/// points are what a selected spectrum and its exports carry, and nothing
+/// derives one from the other.
+fn sample_spectra() -> Vec<FixtureSpectrum> {
+    let mut ms2 = FixtureSpectrum::new(
+        "scan=20",
+        2,
+        0.2,
+        (333.33, 5000.0),
+        60_000.0,
+        &[(300.0, 5.0), (400.0, 6.0)],
+    );
+    ms2.precursor = Some((Some(445.12), None));
+    vec![
+        FixtureSpectrum::new(
+            "scan=19",
+            1,
+            0.1,
+            (445.12, 9000.0),
+            120_000.0,
+            &[(100.5, 10.0), (200.25, 40.0)],
+        ),
+        ms2,
+        FixtureSpectrum::new(
+            "scan=21",
+            1,
+            0.3,
+            (500.0, 7000.0),
+            80_000.0,
+            &[(500.0, 7000.0)],
+        ),
+    ]
+}
 
-/// A table whose native identifiers are path-shaped, which nothing stops an
+/// The sample file.
+fn sample_document() -> String {
+    document(&sample_spectra())
+}
+
+/// The sample file with one spectrum's points replaced.
+fn sample_with_points(index: usize, points: &[(f64, f64)]) -> String {
+    let mut spectra = sample_spectra();
+    with_points(&mut spectra[index], points);
+    document(&spectra)
+}
+
+/// Replaces one fixture spectrum's points, and its declared length with them.
+fn with_points(spectrum: &mut FixtureSpectrum, points: &[(f64, f64)]) {
+    let (mz, intensity): (Vec<f64>, Vec<f64>) = points.iter().copied().unzip();
+    spectrum.mz = FixtureArray::f64s(&mz);
+    spectrum.intensity = FixtureArray::f64s(&intensity);
+    spectrum.declared_length = points.len();
+}
+
+/// A second acquisition, told apart from the sample by every value a selected
+/// spectrum is reconciled against.
+///
+/// Two datasets opened with the same file would let a test that claims each
+/// keeps its own rows pass while they shared one.
+fn other_spectra() -> Vec<FixtureSpectrum> {
+    let mut ms2 = FixtureSpectrum::new(
+        "scan=808",
+        2,
+        4.2,
+        (488.9, 1400.0),
+        19_000.0,
+        &[(488.9, 1400.0)],
+    );
+    ms2.precursor = Some((Some(612.45), None));
+    vec![
+        FixtureSpectrum::new(
+            "scan=807",
+            1,
+            4.1,
+            (612.45, 2200.0),
+            31_000.0,
+            &[(612.45, 2200.0)],
+        ),
+        ms2,
+    ]
+}
+
+fn other_document() -> String {
+    document(&other_spectra())
+}
+
+/// A file whose one native identifier is path-shaped, which nothing stops an
 /// acquisition from containing.
 ///
-/// The rows a session records are kept as the backend reported them, because
-/// reconciling a later spectrum against redacted text would compare two
-/// different strings. That makes them the one place in the session where a path
-/// can arrive without passing through the redactor.
-const PATH_SHAPED_SPECTRUM_TABLE_OUTPUT: &str = concat!(
-    "# sample.mzML\n",
-    "index\tid\tevent\tanalyzer\tmsLevel\trt\tmzLow\tmzHigh\tbasePeakMZ\tbasePeakInt\tTIC\t",
-    "charge\tprecursorMZ\tthermo_monoMZ\tfilterStringMZ\tionInjectionTime\n",
-    "0\tD:\\MSData\\private-run.raw#19\t1\tFTMS\tms1\t0.10\t100\t1000\t445.12\t9000\t120000\t\t\t\t\t\n",
-);
-
-/// A second acquisition's table, told apart from the first by every value a
-/// selected spectrum is reconciled against.
-///
-/// Two datasets opened with the same canned table would let a test that claims
-/// each keeps its own rows pass while they shared one.
-const OTHER_SPECTRUM_TABLE_OUTPUT: &str = concat!(
-    "# other.mzML\n",
-    "index\tid\tevent\tanalyzer\tmsLevel\trt\tmzLow\tmzHigh\tbasePeakMZ\tbasePeakInt\tTIC\t",
-    "charge\tprecursorMZ\tthermo_monoMZ\tfilterStringMZ\tionInjectionTime\n",
-    "0\t807\t1\tFTMS\tms1\t4.10\t100\t1000\t612.45\t2200\t31000\t\t\t\t\t\n",
-    "1\t808\t2\tFTMS\tms2\t4.20\t100\t1000\t488.90\t1400\t19000\t2\t612.45\t\t\t\n",
-);
-
-/// One spectrum of that second acquisition, agreeing with the row above.
-fn other_selected_spectrum_output(index: u64, points: &[(f64, f64)]) -> String {
-    let mut text = String::from("# other.mzML\n#\n");
-    text.push_str(&format!("# index: {index}\n"));
-    text.push_str(&format!("# id: scan={}\n", index + 807));
-    text.push_str(&format!("# scanNumber: {}\n", index + 807));
-    text.push_str("# massAnalyzerType: FTMS\n");
-    text.push_str("# scanEvent: 1\n");
-    text.push_str("# msLevel: 1\n");
-    text.push_str("# retentionTime: 4.10\n");
-    text.push_str("# filterString: synthetic\n");
-    text.push_str("# mzLow: 100\n");
-    text.push_str("# mzHigh: 1000\n");
-    text.push_str("# basePeakMZ: 612.45000000\n");
-    text.push_str("# basePeakIntensity: 2200.00000000\n");
-    text.push_str("# totalIonCurrent: 31000.00000000\n");
-    text.push_str("# precursorCount: 0\n");
-    text.push_str(&format!("# binary ({}):\n", points.len()));
-    for (mz, intensity) in points {
-        text.push_str(&format!("{mz:.8} {intensity:.8}\n"));
-    }
-    text
+/// The rows a session records keep the identifier as the file states it,
+/// because reconciling a later spectrum against redacted text would compare
+/// two different strings. That makes them the one place in the session where a
+/// path can arrive without passing through the redactor.
+fn path_shaped_document() -> String {
+    document(&[FixtureSpectrum::new(
+        r"D:\MSData\private-run.raw#19",
+        1,
+        0.1,
+        (445.12, 9000.0),
+        120_000.0,
+        &[(445.12, 9000.0)],
+    )])
 }
 
 fn run_summary_output() -> String {
@@ -230,29 +281,6 @@ fn run_summary_output() -> String {
         "0.30",
     ];
     format!("{}\n{}\n", headers.join("\t"), values.join("\t"))
-}
-
-fn selected_spectrum_output(index: u64, points: &[(f64, f64)]) -> String {
-    let mut text = String::from("# sample.mzML\n#\n");
-    text.push_str(&format!("# index: {index}\n"));
-    text.push_str(&format!("# id: scan={}\n", index + 19));
-    text.push_str(&format!("# scanNumber: {}\n", index + 19));
-    text.push_str("# massAnalyzerType: FTMS\n");
-    text.push_str("# scanEvent: 1\n");
-    text.push_str("# msLevel: 1\n");
-    text.push_str("# retentionTime: 0.10\n");
-    text.push_str("# filterString: synthetic\n");
-    text.push_str("# mzLow: 100\n");
-    text.push_str("# mzHigh: 1000\n");
-    text.push_str("# basePeakMZ: 445.12000000\n");
-    text.push_str("# basePeakIntensity: 9000.00000000\n");
-    text.push_str("# totalIonCurrent: 120000.00000000\n");
-    text.push_str("# precursorCount: 0\n");
-    text.push_str(&format!("# binary ({}):\n", points.len()));
-    for (mz, intensity) in points {
-        text.push_str(&format!("{mz:.8} {intensity:.8}\n"));
-    }
-    text
 }
 
 /// The confirmed disposition, obtained the only way this crate can obtain it.
@@ -384,12 +412,6 @@ impl InstalledFiles {
             &self.home.join(MSACCESS),
             "3.0.26013",
         )
-    }
-
-    /// Replaces one executable, as an installer repairing in place would.
-    fn replace_msaccess(&self) {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        fs::write(self.home.join(MSACCESS), b"a different msaccess entirely").expect("replace");
     }
 }
 
@@ -761,8 +783,21 @@ impl TestFile {
         ));
         fs::create_dir_all(&directory).expect("create test directory");
         let path = directory.join("sample.mzML");
-        fs::write(&path, b"<mzML/>").expect("write test source");
+        fs::write(&path, sample_document()).expect("write test source");
         Self { directory, path }
+    }
+
+    /// The sample file with one spectrum's points replaced, written before the
+    /// session accepts it so its accepted identity is this content's.
+    fn with_points(label: &str, index: usize, points: &[(f64, f64)]) -> Self {
+        let file = Self::new(label);
+        file.write(&sample_with_points(index, points));
+        file
+    }
+
+    /// Replaces this file's content.
+    fn write(&self, document: &str) {
+        fs::write(&self.path, document).expect("rewrite the test source");
     }
 }
 
@@ -771,7 +806,7 @@ impl TestFile {
     /// to hold more than one dataset.
     fn sibling(&self, name: &str) -> PathBuf {
         let path = self.directory.join(name);
-        fs::write(&path, b"<mzML> another acquisition </mzML>").expect("write sibling source");
+        fs::write(&path, other_document()).expect("write sibling source");
         path
     }
 
@@ -813,11 +848,13 @@ impl Drop for TestFile {
     }
 }
 
+/// What one open asks of `msaccess`. The spectrum table is read natively from
+/// the file itself (ADR 0056), and a selected spectrum never reaches the
+/// provider.
 fn open_responses() -> Vec<Response> {
     vec![
         Response::File(METADATA_OUTPUT.to_owned()),
         Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
     ]
 }
 
@@ -1074,105 +1111,14 @@ fn an_unusable_reading_names_no_location() {
     );
 }
 
-/// A provider that says when its batch has finished, so a test can queue an
-/// installation change directly behind one open.
-struct SignallingProvider {
-    inner: FakeProvider,
-    finished: Mutex<Option<std::sync::mpsc::Sender<()>>>,
-}
-
-impl PreviewProvider for SignallingProvider {
-    fn use_installation(&self, home: Option<PathBuf>) {
-        self.inner.use_installation(home);
-    }
-
-    fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
-        self.inner.availability()
-    }
-
-    fn run(
-        &self,
-        source: &Path,
-        operation: &PreviewOperation,
-    ) -> Result<OperationAttempt, PreviewErrorDto> {
-        self.inner.run(source, operation)
-    }
-
-    fn run_batch(
-        &self,
-        source: &Path,
-        operations: &[PreviewOperation],
-    ) -> Result<Vec<OperationAttempt>, PreviewErrorDto> {
-        let results = self.inner.run_batch(source, operations);
-        // Sent while the gate is still held, so the waiting change queues
-        // behind this open rather than racing it.
-        if let Some(sender) = self.finished.lock().expect("test lock").take() {
-            let _ = sender.send(());
-        }
-        results
-    }
-}
-
 #[test]
-fn a_change_queued_behind_an_open_is_not_absorbed_into_what_that_open_recorded() {
-    // The rows an open records are the work of the installation in use for its
-    // batch. A change waiting on the gate takes effect the moment that open
-    // releases it, so anything read after that point describes the installation
-    // which replaced the one that did the reading -- and a preview stamped that
-    // way passes the very check that exists to refuse it.
-    let file = TestFile::new("queued-change");
-    let responses = vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-    ];
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let service = std::sync::Arc::new(PreviewService::new(Box::new(SignallingProvider {
-        inner: FakeProvider::available(responses),
-        finished: Mutex::new(Some(sender)),
-    })));
-    let selected = service.accept_file(&file.path).expect("accepted");
-
-    let change = {
-        let service = std::sync::Arc::clone(&service);
-        std::thread::spawn(move || {
-            receiver
-                .recv()
-                .expect("the open reports its batch finished");
-            // Blocks on the backend gate until the open releases it.
-            service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
-        })
-    };
-
-    service
-        .open_preview(&selected.handle)
-        .expect("the file opens");
-    change.join().expect("the queued change completes");
-
-    let error = service
-        .load_spectrum(&selected.handle, 0)
-        .expect_err("a spectrum is not reconciled against another installation's table");
-
-    assert_eq!(error.kind, "installation_changed_since_preview");
-}
-
-#[test]
-fn a_spectrum_is_refused_rather_than_reconciled_across_an_installation_change() {
-    // The table's rows are what a selected spectrum is reconciled against, and
-    // they were read by whichever installation was in use then. Comparing
-    // across a change would call the difference between two installations a
-    // finding about the file. Dropping the comparison is not the alternative:
-    // it is what keeps the row the user clicked and the panel beside it
-    // describing the same spectrum.
+fn a_spectrum_is_read_natively_across_an_installation_change() {
+    // ADR 0056, decision 3: a selected spectrum is read by the project's own
+    // reader, so no installation read it and none is checked. The table it is
+    // reconciled against was read natively too, so a change of ProteoWizard
+    // installation says nothing about either.
     let file = TestFile::new("installation-change");
-    let responses = vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-    ];
-    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     service
         .open_preview(&selected.handle)
@@ -1180,15 +1126,13 @@ fn a_spectrum_is_refused_rather_than_reconciled_across_an_installation_change() 
 
     service.use_installation(Some(PathBuf::from(r"C:\pwiz")));
 
-    let error = service
+    let outcome = service
         .load_spectrum(&selected.handle, 0)
-        .expect_err("a spectrum is not reconciled against another installation's table");
-
-    assert_eq!(error.kind, "installation_changed_since_preview");
-    // Not retryable: reading again changes nothing. Opening the file again is
-    // the action, and the message says so.
-    assert!(!error.retryable);
-    assert!(error.summary.contains("Open the file again"));
+        .expect("the spectrum is read from the offset the open recorded");
+    assert!(matches!(
+        outcome.outcome,
+        SelectedSpectrumOutcomeDto::Spectrum { .. }
+    ));
 }
 
 #[test]
@@ -1202,8 +1146,6 @@ fn asking_for_the_installation_already_in_use_is_not_a_change() {
     let responses = vec![
         Response::File(METADATA_OUTPUT.to_owned()),
         Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
     ];
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     let selected = service.accept_file(&file.path).expect("accepted");
@@ -1327,11 +1269,15 @@ fn opening_a_file_returns_typed_metadata_run_summary_and_rows() {
     assert_eq!(preview.run_summary.ms_levels.len(), 2);
     // The measured formatter emits no chromatogram count, which is not zero.
     assert_eq!(preview.run_summary.chromatogram_count, None);
-    let range = preview
-        .run_summary
-        .retention_time_range
-        .expect("a retention-time range was emitted");
-    assert!(!range.minimum.unit_known && !range.maximum.unit_known);
+    // The page's range is the native rows', not the run summary's (ADR 0056).
+    assert_eq!(
+        preview.run_summary.retention_time_range,
+        RetentionTimeRangeDto::Reported {
+            minimum: 0.1,
+            maximum: 0.3,
+            unit: RetentionTimeUnitDto::NotReported,
+        }
+    );
     assert_eq!(preview.spectrum_table.rows.len(), 3);
     assert_eq!(preview.spectrum_table.total_row_count, 3);
     assert!(!preview.spectrum_table.truncated);
@@ -1352,15 +1298,19 @@ fn one_open_action_resolves_the_backend_once_for_every_panel() {
         .open_preview(&selected.handle)
         .expect("preview loads");
 
-    // Asserted through the service surface: metadata, run summary and the
-    // spectrum table are requested as one batch rather than three independent
-    // discoveries.
+    // Asserted through the service surface: metadata and the run summary are
+    // requested as one batch rather than two independent discoveries, and the
+    // spectrum table is not requested of `msaccess` at all (ADR 0056).
     let provider = FakeProvider::available(open_responses());
     let operations = super::backend::open_operations();
+    assert_eq!(
+        operations,
+        [PreviewOperation::Metadata, PreviewOperation::RunSummary]
+    );
     let results = provider
         .run_batch(&file.path, &operations)
         .expect("the batch runs");
-    assert_eq!(results.len(), 3);
+    assert_eq!(results.len(), 2);
     assert_eq!(provider.batch_count(), 1);
     assert_eq!(provider.requested_operations(), operations);
 }
@@ -1399,11 +1349,10 @@ fn a_missing_required_result_is_refused_rather_than_shown_as_empty() {
 
 #[test]
 fn a_selected_spectrum_returns_its_arrays_and_canonical_identity() {
-    let file = TestFile::new("spectrum");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
-        selected_spectrum_output(0, &[(100.5, 10.0), (200.25, 40.0)]),
-    )])));
+    let file = TestFile::with_points("spectrum", 0, &[(100.5, 10.0), (200.25, 40.0)]);
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
+    service.open_preview(&selected.handle).expect("opens");
 
     let outcome = service
         .load_spectrum(&selected.handle, 0)
@@ -1418,19 +1367,27 @@ fn a_selected_spectrum_returns_its_arrays_and_canonical_identity() {
     assert_eq!(spectrum.mz, vec![100.5, 200.25]);
     assert_eq!(spectrum.intensity, vec![10.0, 40.0]);
     assert!(!spectrum.truncated);
-    // Neither representation nor array units were emitted, so neither is claimed.
-    assert!(!spectrum.representation_known);
-    assert!(!spectrum.value_units_known);
-    assert!(!spectrum.retention_time.unit_known);
+    // The file declares neither a representation nor a unit, so none is claimed.
+    assert_eq!(
+        spectrum.representation,
+        SpectrumRepresentationDto::NotReported
+    );
+    assert_eq!(spectrum.mz_unit, ValueUnitDto::NotReported);
+    assert_eq!(spectrum.intensity_unit, ValueUnitDto::NotReported);
+    assert_eq!(
+        spectrum.retention_time.unit,
+        RetentionTimeUnitDto::NotReported
+    );
+    // And no m/z range is stated, so none is reported.
+    assert_eq!((spectrum.mz_low, spectrum.mz_high), (None, None));
 }
 
 #[test]
 fn a_spectrum_with_no_peaks_is_a_valid_spectrum_not_a_no_result() {
-    let file = TestFile::new("empty-spectrum");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
-        selected_spectrum_output(2, &[]),
-    )])));
+    let file = TestFile::with_points("empty-spectrum", 2, &[]);
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
+    service.open_preview(&selected.handle).expect("opens");
 
     let outcome = service
         .load_spectrum(&selected.handle, 2)
@@ -1447,8 +1404,9 @@ fn a_spectrum_with_no_peaks_is_a_valid_spectrum_not_a_no_result() {
 #[test]
 fn an_unavailable_index_is_a_typed_no_result() {
     let file = TestFile::new("no-result");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::NoOutput])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
+    service.open_preview(&selected.handle).expect("opens");
 
     let outcome = service
         .load_spectrum(&selected.handle, 4_096)
@@ -1676,7 +1634,8 @@ fn a_source_rewritten_between_operations_is_refused_rather_than_combined() {
     // Two defences, and the file cannot come back describing another run
     // through either of them. Where the file could not be replaced at all the
     // preview is simply correct; where it could, the result is refused.
-    let replaced = fs::read(&file.path).expect("read back the source") != b"<mzML/>";
+    let replaced =
+        fs::read(&file.path).expect("read back the source") != sample_document().as_bytes();
     if replaced {
         let error = outcome.expect_err("results from two generations are never combined");
         assert_eq!(error.kind, "source_changed_during_preview");
@@ -1702,98 +1661,60 @@ fn backend_labels_are_redacted_and_bounded_like_any_other_backend_text() {
 }
 
 #[test]
-fn only_one_backend_operation_runs_at_a_time() {
+fn a_native_spectrum_read_waits_for_the_backend_gate() {
+    // ADR 0056, decision 3: a native read is admitted and serialized exactly
+    // as the `msaccess` read it replaces, so the one backend gate is what
+    // keeps two reads of a large file from competing for the machine.
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
 
-    /// Records the highest number of operations ever in flight together.
-    struct ConcurrencyProbe {
-        inner: FakeProvider,
-        active: AtomicUsize,
-        peak: Arc<AtomicUsize>,
-    }
-
-    impl PreviewProvider for ConcurrencyProbe {
-        fn use_installation(&self, _home: Option<PathBuf>) {}
-
-        fn availability(&self) -> (BackendAvailabilityDto, Option<InstallationIdentity>) {
-            self.inner.availability()
-        }
-
-        fn run(
-            &self,
-            source: &Path,
-            operation: &PreviewOperation,
-        ) -> Result<OperationAttempt, PreviewErrorDto> {
-            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
-            self.peak.fetch_max(active, Ordering::SeqCst);
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            let result = self.inner.run(source, operation);
-            self.active.fetch_sub(1, Ordering::SeqCst);
-            result
-        }
-    }
-
-    let file = TestFile::new("concurrency");
-    let peak = Arc::new(AtomicUsize::new(0));
-    let mut responses = Vec::new();
-    for _ in 0..4 {
-        responses.push(Response::File(selected_spectrum_output(
-            0,
-            &[(445.12, 9000.0)],
-        )));
-    }
-    let service = Arc::new(PreviewService::new(Box::new(ConcurrencyProbe {
-        inner: FakeProvider::available(responses),
-        active: AtomicUsize::new(0),
-        peak: Arc::clone(&peak),
-    })));
+    let file = TestFile::new("gate");
+    let service = Arc::new(PreviewService::new(Box::new(FakeProvider::available(
+        open_responses(),
+    ))));
     let selected = service.accept_file(&file.path).expect("accepted");
+    service.open_preview(&selected.handle).expect("opens");
 
-    let workers: Vec<_> = (0..4)
-        .map(|_| {
-            let service = Arc::clone(&service);
-            let handle = selected.handle.clone();
-            std::thread::spawn(move || service.load_spectrum(&handle, 0))
+    let gate = service.hold_backend_gate();
+    let (finished, observe_finish) = mpsc::channel();
+    let reader = {
+        let service = Arc::clone(&service);
+        let handle = selected.handle.clone();
+        std::thread::spawn(move || {
+            let outcome = service.load_spectrum(&handle, 0);
+            let _ = finished.send(());
+            outcome
         })
-        .collect();
-    for worker in workers {
-        let _ = worker.join().expect("worker finished");
-    }
-
-    // Four selections, never two processes at once.
-    assert_eq!(peak.load(Ordering::SeqCst), 1);
+    };
+    assert!(
+        observe_finish
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "the read waits while another holds the gate"
+    );
+    drop(gate);
+    observe_finish
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the read runs once the gate is free");
+    reader
+        .join()
+        .expect("the reader finished")
+        .expect("the spectrum loads");
 }
 
 #[test]
 fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
     use std::sync::Arc;
-    use std::sync::mpsc;
 
     let file = TestFile::new("supersede");
-    let (started, observe_start) = mpsc::channel();
-    let (release, wait_for_release) = mpsc::channel();
-    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
-        inner: FakeProvider::available(vec![
-            Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-            Response::File(selected_spectrum_output(1, &[(333.33, 5000.0)])),
-        ]),
-        started,
-        release: Mutex::new(Some(wait_for_release)),
-    })));
+    let service = Arc::new(PreviewService::new(Box::new(FakeProvider::available(
+        open_responses(),
+    ))));
     let first = service.accept_file(&file.path).expect("accepted");
+    service.open_preview(&first.handle).expect("opens");
 
-    // One request occupies the only process slot.
-    let running = {
-        let service = Arc::clone(&service);
-        let handle = first.handle.clone();
-        std::thread::spawn(move || service.load_spectrum(&handle, 0))
-    };
-    observe_start
-        .recv_timeout(std::time::Duration::from_secs(10))
-        .expect("the first request reached the provider");
-
-    // A second one queues behind it.
+    // Something else occupies the only backend lane.
+    let gate = service.hold_backend_gate();
     let waiting = {
         let service = Arc::clone(&service);
         let handle = first.handle.clone();
@@ -1801,7 +1722,8 @@ fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
     };
     // Waited for rather than slept on. Replacing the selection before this
     // request has claimed its turn answers `unknown_file_handle`, which is a
-    // different thing from the supersession this test is about.
+    // different thing from the supersession this test is about. The open
+    // claimed the first request.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while service.requests_made(&first.handle) < 2 {
         assert!(
@@ -1813,14 +1735,8 @@ fn opening_another_file_supersedes_a_spectrum_still_waiting_for_its_turn() {
 
     // The user opens another file while it is still waiting.
     service.accept_file(&file.path).expect("accepted again");
-    release.send(()).expect("the provider is still waiting");
+    drop(gate);
 
-    assert!(
-        running
-            .join()
-            .expect("the running request finished")
-            .is_ok()
-    );
     let superseded = waiting
         .join()
         .expect("the waiting request finished")
@@ -1859,15 +1775,13 @@ fn metadata_printed_before_the_first_section_is_shown_rather_than_counted() {
 }
 
 #[test]
-fn an_acquisition_larger_than_one_read_is_refused_whole_rather_than_shown_in_part() {
-    // No test covered this user-visible state. A run whose spectrum table
-    // exceeds `MAX_PREVIEW_TEXT_BYTES` is refused outright: the parser needs
-    // the whole output, and a list cut mid-file would read as a shorter
-    // acquisition than the one on disk.
+fn backend_output_larger_than_one_read_is_refused_whole_rather_than_shown_in_part() {
+    // The metadata and the run summary are still `msaccess` output, and output
+    // above `MAX_PREVIEW_TEXT_BYTES` is refused outright: the parser needs the
+    // whole of it, and a document cut mid-file would read as a shorter one.
+    // The spectrum table is read natively since ADR 0056 and has no such cap.
     let file = TestFile::new("oversized");
     let responses = vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
         // Taken from the limit rather than restated, so raising the limit moves
         // the case instead of leaving it testing a number nothing enforces.
         Response::OversizedFile {
@@ -1880,7 +1794,7 @@ fn an_acquisition_larger_than_one_read_is_refused_whole_rather_than_shown_in_par
 
     let error = service
         .open_preview(&selected.handle)
-        .expect_err("a partial spectrum list is never presented as a whole one");
+        .expect_err("a partial metadata document is never presented as a whole one");
 
     assert_eq!(error.kind, "incomplete_parser_input");
     // Not retryable: reading again produces the same output. The limit is a
@@ -1890,89 +1804,80 @@ fn an_acquisition_larger_than_one_read_is_refused_whole_rather_than_shown_in_par
     let detail = error.detail.expect("the sizes are part of the message");
     assert!(detail.contains("8388608"), "{detail}");
     assert!(detail.contains("12582912"), "{detail}");
+}
 
-    // Metadata and the run summary parsed. Today they are discarded with the
-    // batch: the whole open fails and the user is told nothing about the run.
-    assert!(
-        service.open_preview(&selected.handle).is_err(),
-        "the provider is exhausted, so this documents that nothing was retained"
+#[test]
+fn a_native_table_refusal_is_shown_and_never_reread_with_msaccess() {
+    // ADR 0056, decision 3: the operation fixes the reader. A file the native
+    // reader refuses is refused, with the reader's own identifier, and no
+    // `msaccess` spectrum table is asked for in its place.
+    let file = TestFile::new("table-refused");
+    file.write(&sample_document().replace(r#"version="1.1.0""#, r#"version="1.0.0""#));
+    let provider = FakeProvider::available(open_responses());
+    let world = provider.clone_world();
+    let service = PreviewService::new(Box::new(provider));
+    let selected = service.accept_file(&file.path).expect("accepted");
+
+    let error = service
+        .open_preview(&selected.handle)
+        .expect_err("a document that is not mzML 1.1 is refused");
+
+    assert_eq!(error.kind, "spectrum_table_refused");
+    assert_eq!(error.detail.as_deref(), Some("not_mzml_1_1"));
+    assert!(!error.retryable);
+    assert_eq!(
+        *world.requested.lock().expect("test lock"),
+        [PreviewOperation::Metadata, PreviewOperation::RunSummary]
+    );
+    // Nothing was retained, so no spectrum can be read against it.
+    assert!(!service.holds_preview_state(&selected.handle));
+    assert_eq!(
+        service
+            .load_spectrum(&selected.handle, 0)
+            .expect_err("no preview")
+            .kind,
+        "preview_not_open"
     );
 }
 
 #[test]
-fn a_spectrum_that_measures_something_else_than_its_table_row_is_refused() {
-    let file = TestFile::new("facts-conflict");
-    // The table says row 0 peaks at m/z 445.12; the binary formatter says 512.
-    let conflicting_table = SPECTRUM_TABLE_OUTPUT.replace("	445.12	9000	", "	512.25	9000	");
-    let responses = vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(conflicting_table),
-        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-    ];
-    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+fn a_selected_spectrum_needs_its_preview() {
+    // Decision 4: a spectrum is read from the offset its open recorded, so a
+    // dataset with no retained preview asks for a reopen rather than reading.
+    let file = TestFile::new("no-preview");
+    let service = PreviewService::new(Box::new(FakeProvider::available(Vec::new())));
     let selected = service.accept_file(&file.path).expect("accepted");
-    service
-        .open_preview(&selected.handle)
-        .expect("the preview loads");
 
     let error = service
         .load_spectrum(&selected.handle, 0)
-        .expect_err("a row and its detail panel never report different measurements");
-    assert_eq!(error.kind, "spectrum_facts_conflict");
+        .expect_err("no open preview");
+
+    assert_eq!(error.kind, "preview_not_open");
+    assert!(!error.retryable);
+    assert!(error.summary.contains("Open the file again"));
 }
 
 #[test]
-fn rounded_table_values_are_not_treated_as_a_contradiction() {
-    let file = TestFile::new("facts-rounding");
-    // The table rounds; the binary formatter does not. That is not a conflict.
-    let responses = vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(selected_spectrum_output(0, &[(445.1237, 9000.4)])),
-    ];
-    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
+fn an_index_beyond_the_open_table_is_unavailable() {
+    let file = TestFile::new("beyond");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
-    service
-        .open_preview(&selected.handle)
-        .expect("the preview loads");
+    service.open_preview(&selected.handle).expect("opens");
 
-    assert!(service.load_spectrum(&selected.handle, 0).is_ok());
-}
+    let outcome = service
+        .load_spectrum(&selected.handle, 3)
+        .expect("an index the table does not have is an answer, not an error");
 
-#[test]
-fn a_spectrum_that_contradicts_its_table_row_is_refused() {
-    let file = TestFile::new("identity-conflict");
-    // The table says index 0 is scan 4242; the binary formatter says scan 19.
-    let conflicting_table = SPECTRUM_TABLE_OUTPUT.replace("0	19	1	", "0	4242	1	");
-    let responses = vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(conflicting_table),
-        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-    ];
-
-    let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
-    let selected = service.accept_file(&file.path).expect("accepted");
-    service
-        .open_preview(&selected.handle)
-        .expect("the preview loads");
-
-    let error = service
-        .load_spectrum(&selected.handle, 0)
-        .expect_err("a row and its detail panel never describe different scans");
-    assert_eq!(error.kind, "spectrum_identity_conflict");
+    assert_eq!(
+        outcome.outcome,
+        SelectedSpectrumOutcomeDto::Unavailable { requested_index: 3 }
+    );
 }
 
 #[test]
 fn a_spectrum_is_refused_when_the_file_changed_after_it_was_opened() {
     let file = TestFile::new("regeneration");
-    let mut responses = open_responses();
-    responses.push(Response::File(selected_spectrum_output(
-        0,
-        &[(445.12, 9000.0)],
-    )));
+    let responses = open_responses();
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     let selected = service.accept_file(&file.path).expect("accepted");
     service
@@ -2083,13 +1988,26 @@ fn the_open_action_never_requests_a_chromatogram_or_tic_operation() {
 }
 
 #[test]
-fn a_selected_spectrum_request_uses_the_fixed_formatter_precision() {
+fn a_selected_spectrum_never_reaches_msaccess() {
+    // ADR 0056: a selected spectrum is read natively, from the offset its open
+    // recorded. `msaccess` serves the open's metadata and run summary only.
+    let file = TestFile::new("native-spectrum");
+    let provider = FakeProvider::available(open_responses());
+    let world = provider.clone_world();
+    let service = PreviewService::new(Box::new(provider));
+    let selected = service.accept_file(&file.path).expect("accepted");
+    service.open_preview(&selected.handle).expect("opens");
+
+    service
+        .load_spectrum(&selected.handle, 0)
+        .expect("the spectrum loads");
+    service
+        .load_spectrum(&selected.handle, 1)
+        .expect("another spectrum loads");
+
     assert_eq!(
-        super::backend::selected_spectrum_operation(7),
-        PreviewOperation::SpectrumByIndex {
-            index: 7,
-            precision: super::backend::SELECTED_SPECTRUM_PRECISION,
-        }
+        *world.requested.lock().expect("test lock"),
+        [PreviewOperation::Metadata, PreviewOperation::RunSummary]
     );
 }
 
@@ -2129,8 +2047,6 @@ fn opened_preview_responses() -> Vec<Response> {
     vec![
         Response::File(METADATA_OUTPUT.to_owned()),
         Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
     ]
 }
 
@@ -2175,41 +2091,6 @@ fn a_chosen_folder_that_resolves_to_the_tools_already_in_use_is_not_a_change() {
     service
         .load_spectrum(&selected.handle, 0)
         .expect("the preview is still the work of the backend still in use");
-}
-
-#[test]
-fn an_old_preview_is_refused_before_a_spectrum_is_launched_for_it() {
-    // Both halves matter: refused, and refused without spending a process on a
-    // reading that was never going to be shown. The pre-flight asks the
-    // filesystem and launches nothing, so this is the shape it catches -- the
-    // tools it recorded are not the files that are there now.
-    let file = TestFile::new("refused-early");
-    let tools = InstalledFiles::new("refused-early");
-    let provider = Box::new(FakeProvider::available(opened_preview_responses()));
-    let world = provider.clone_world();
-    world.resolves_to(Some(tools.identity()));
-    let service = PreviewService::new(provider);
-    let selected = service.accept_file(&file.path).expect("accepted");
-    service
-        .open_preview(&selected.handle)
-        .expect("the file opens");
-    let operations_after_open = world.requested_count();
-
-    // Replaced in place: the path did not move and nothing was requested, so
-    // only the file itself can show it.
-    tools.replace_msaccess();
-
-    let error = service
-        .load_spectrum(&selected.handle, 0)
-        .expect_err("a spectrum is not reconciled against another backend's table");
-
-    assert_eq!(error.kind, "installation_changed_since_preview");
-    assert!(!error.retryable);
-    assert_eq!(
-        world.requested_count(),
-        operations_after_open,
-        "the spectrum must be refused before its operation is run"
-    );
 }
 
 #[test]
@@ -2307,9 +2188,6 @@ fn every_spectrum_after_an_open_that_noticed_a_change_still_works() {
     let provider = Box::new(FakeProvider::available(vec![
         Response::File(METADATA_OUTPUT.to_owned()),
         Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
     ]));
     let world = provider.clone_world();
     let service = PreviewService::new(provider);
@@ -2342,75 +2220,6 @@ fn retryable_launch_failure() -> Response {
         "The backend could not be started for that request.",
         true,
     ))
-}
-
-#[test]
-fn a_retryable_failure_under_a_replaced_backend_is_reported_as_the_change_it_is() {
-    // The pre-flight passes because the recorded tools are untouched, discovery
-    // then resolves a different installation, and execution under it fails for
-    // a reason that says nothing about which backend ran. Propagating that
-    // error would leave the banner and the table describing the installation
-    // that read them while every retry ran the new one.
-    let file = TestFile::new("failure-under-replacement");
-    let tools = InstalledFiles::new("failure-under-replacement");
-    let provider = Box::new(FakeProvider::available(vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        retryable_launch_failure(),
-    ]));
-    let world = provider.clone_world();
-    world.resolves_to(Some(tools.identity()));
-    let service = PreviewService::new(provider);
-    let selected = service.accept_file(&file.path).expect("accepted");
-    service
-        .open_preview(&selected.handle)
-        .expect("the file opens under the installation it found");
-    let before = service.inspect_backend().authority.revision;
-
-    world.resolves_to(Some(backend("replacement", "3.0.26999")));
-
-    let error = service
-        .load_spectrum(&selected.handle, 0)
-        .expect_err("a spectrum read by another backend is not shown beside this table");
-
-    // The recovery the user can act on, not the launch error underneath it.
-    assert_eq!(error.kind, "installation_changed_since_preview");
-    assert!(!error.retryable);
-    assert!(error.summary.contains("Open the file again"));
-    // And the change was observed rather than lost with the failure, so the
-    // banner cannot stay on the installation that is no longer running.
-    assert!(service.inspect_backend().authority.revision > before);
-}
-
-#[test]
-fn a_retryable_failure_under_the_same_backend_keeps_its_own_error() {
-    // Nothing changed, so the operation's own failure is the truth about this
-    // read -- including that retrying it is worth offering.
-    let file = TestFile::new("failure-same-backend");
-    let tools = InstalledFiles::new("failure-same-backend");
-    let provider = Box::new(FakeProvider::available(vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        retryable_launch_failure(),
-    ]));
-    let world = provider.clone_world();
-    world.resolves_to(Some(tools.identity()));
-    let service = PreviewService::new(provider);
-    let selected = service.accept_file(&file.path).expect("accepted");
-    service
-        .open_preview(&selected.handle)
-        .expect("the file opens");
-    let before = service.inspect_backend().authority.revision;
-
-    let error = service
-        .load_spectrum(&selected.handle, 0)
-        .expect_err("the read failed");
-
-    assert_eq!(error.kind, "backend_launch_failed");
-    assert!(error.retryable);
-    assert_eq!(service.inspect_backend().authority.revision, before);
 }
 
 /// What a run that could not account for a process it started answers with.
@@ -2465,7 +2274,6 @@ fn a_discovery_that_could_not_account_for_its_process_quarantines_the_session() 
     let provider = Box::new(FakeProvider::available(vec![
         Response::File(METADATA_OUTPUT.to_owned()),
         Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
     ]));
     let world = provider.clone_world();
     let service = PreviewService::new(provider);
@@ -2508,7 +2316,6 @@ fn a_preview_that_could_not_account_for_its_process_quarantines_the_session() {
     let provider = Box::new(FakeProvider::available(vec![
         launch_failure_leaving_a_process_unaccounted(),
         Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
     ]));
     let service = PreviewService::new(provider);
     let selected = service.accept_file(&file.path).expect("accepted");
@@ -2531,31 +2338,6 @@ fn a_preview_that_could_not_account_for_its_process_quarantines_the_session() {
     assert_eq!(refused.kind, "backend_quarantined");
 }
 
-/// The spectrum lane asks the same question the open does.
-#[test]
-fn a_spectrum_read_that_could_not_account_for_its_process_quarantines_the_session() {
-    let file = TestFile::new("spectrum-lost-a-process");
-    let provider = Box::new(FakeProvider::available(vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        launch_failure_leaving_a_process_unaccounted(),
-    ]));
-    let service = PreviewService::new(provider);
-    let selected = service.accept_file(&file.path).expect("accepted");
-    service
-        .open_preview(&selected.handle)
-        .expect("the file opens");
-    assert!(!service.backend_is_quarantined());
-
-    let error = service
-        .load_spectrum(&selected.handle, 0)
-        .expect_err("the spectrum read could not account for its process");
-
-    assert_eq!(error.kind, "backend_not_accounted_for");
-    assert!(service.backend_is_quarantined());
-}
-
 /// And an ordinary failure is not one, so it does not stop the session.
 ///
 /// Without this the rule above could be "quarantine whenever a preview fails",
@@ -2563,21 +2345,13 @@ fn a_spectrum_read_that_could_not_account_for_its_process_quarantines_the_sessio
 #[test]
 fn an_ordinary_preview_failure_leaves_the_session_trusting_the_backend() {
     let file = TestFile::new("preview-ordinary-failure");
-    let provider = Box::new(FakeProvider::available(vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        retryable_launch_failure(),
-    ]));
+    let provider = Box::new(FakeProvider::available(vec![retryable_launch_failure()]));
     let service = PreviewService::new(provider);
     let selected = service.accept_file(&file.path).expect("accepted");
-    service
-        .open_preview(&selected.handle)
-        .expect("the file opens");
 
     let error = service
-        .load_spectrum(&selected.handle, 0)
-        .expect_err("the read failed");
+        .open_preview(&selected.handle)
+        .expect_err("the open's first operation failed");
 
     assert_eq!(error.kind, "backend_launch_failed");
     assert!(
@@ -2596,7 +2370,6 @@ fn an_open_stops_at_its_first_failed_operation() {
     let provider = Box::new(FakeProvider::available(vec![
         retryable_launch_failure(),
         Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
     ]));
     let world = provider.clone_world();
     let service = PreviewService::new(provider);
@@ -2889,22 +2662,14 @@ fn a_dataset_whose_name_now_points_elsewhere_is_refused_and_still_held() {
 }
 
 #[test]
-fn two_datasets_each_keep_their_own_preview_facts() {
+fn a_preview_is_retained_for_one_dataset_at_a_time() {
+    // ADR 0056, decision 4: native preview state -- the table and an offset
+    // per spectrum -- is kept for one dataset at a time. Starting an open drops
+    // every other dataset's, so the second open takes the first's away.
     let file = TestFile::new("per-dataset");
     let other = file.sibling("other.mzML");
-    // Two different acquisitions. The rows a spectrum is reconciled against
-    // agree with one and contradict the other, so a shared or swapped record
-    // fails rather than passing quietly.
-    let responses = vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(OTHER_SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-        Response::File(other_selected_spectrum_output(0, &[(612.45, 2200.0)])),
-    ];
+    let mut responses = open_responses();
+    responses.extend(open_responses());
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     let first = service.add_dataset(&file.path).expect("added");
     let second = service.add_dataset(&other).expect("added");
@@ -2916,101 +2681,67 @@ fn two_datasets_each_keep_their_own_preview_facts() {
         .open_preview(&second.handle)
         .expect("the second preview loads");
 
-    // Neither open took the other's facts with it, which one shared record of
-    // "the preview" would have done.
-    assert!(service.holds_preview_state(&first.handle));
+    assert!(!service.holds_preview_state(&first.handle));
     assert!(service.holds_preview_state(&second.handle));
     assert_eq!(
         second_preview.spectrum_table.rows.len(),
         2,
         "the second dataset was read as itself"
     );
-    for (handle, scan) in [(&first.handle, 19_u64), (&second.handle, 807)] {
-        let Ok(AuthorityObservedDto {
-            outcome: SelectedSpectrumOutcomeDto::Spectrum { spectrum },
-            ..
-        }) = service.load_spectrum(handle, 0)
-        else {
-            panic!("each dataset reconciles a spectrum against its own rows");
-        };
-        assert_eq!(
-            spectrum.scan_number,
-            Some(scan),
-            "and against its own rows rather than the other dataset's"
-        );
-    }
+    let Ok(AuthorityObservedDto {
+        outcome: SelectedSpectrumOutcomeDto::Spectrum { spectrum },
+        ..
+    }) = service.load_spectrum(&second.handle, 0)
+    else {
+        panic!("the open dataset reads a spectrum from its own table");
+    };
+    assert_eq!(spectrum.scan_number, Some(807));
+    // The first dataset's offsets went with its preview: it asks for a reopen
+    // rather than reading against a table nothing on screen came from.
+    assert_eq!(
+        service
+            .load_spectrum(&first.handle, 0)
+            .expect_err("no retained preview")
+            .kind,
+        "preview_not_open"
+    );
 }
 
 #[test]
 fn work_on_one_dataset_never_supersedes_work_on_another() {
     use std::sync::Arc;
-    use std::sync::mpsc;
 
     let file = TestFile::new("cross-dataset");
     let other = file.sibling("other.mzML");
-    let (started, observe_start) = mpsc::channel();
-    let (release, wait_for_release) = mpsc::channel();
-    let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
-        inner: FakeProvider::available(vec![
-            Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-            Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-            Response::File(selected_spectrum_output(0, &[(445.12, 9000.0)])),
-        ]),
-        started,
-        release: Mutex::new(Some(wait_for_release)),
-    })));
+    let service = Arc::new(PreviewService::new(Box::new(FakeProvider::available(
+        open_responses(),
+    ))));
     let first = service.add_dataset(&file.path).expect("added");
     let second = service.add_dataset(&other).expect("added");
     assert_eq!(service.dataset_count(), 2);
+    service.open_preview(&first.handle).expect("opens");
 
     let spectrum = |handle: &str, index: u64| {
         let service = Arc::clone(&service);
         let handle = handle.to_owned();
         std::thread::spawn(move || service.load_spectrum(&handle, index))
     };
-    // Waits for a request to have been claimed rather than guessing at it with
-    // a sleep. The order these two queue in is the whole point of the test: a
-    // single session-wide ticket only cancels the second if the third claimed
-    // its number afterwards.
-    let claimed = |handle: &str, requests: u64| {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while service.requests_made(handle) < requests {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "a spawned request never claimed its turn"
-            );
-            std::thread::yield_now();
-        }
-    };
-    // One request occupies the only process slot.
-    let running = spectrum(&first.handle, 0);
-    observe_start
-        .recv_timeout(std::time::Duration::from_secs(10))
-        .expect("the first request reached the provider");
-    // The same dataset is asked again and queues behind it. This is the request
-    // the user is now waiting for.
+    // Something else occupies the only backend lane.
+    let gate = service.hold_backend_gate();
+    // A spectrum of the open dataset queues behind it: the request the user is
+    // now waiting for. The open claimed the dataset's first request.
     let waiting = spectrum(&first.handle, 0);
-    claimed(&first.handle, 2);
+    wait_for_requests(&service, &first.handle, 2);
     // Then, and only then, a request in the other dataset arrives.
     let elsewhere = spectrum(&second.handle, 0);
-    claimed(&second.handle, 1);
-    // Exactly one, which is what makes waiting for it an ordering and not a
-    // guess. A session-wide counter would already be past two here, so this
-    // request would be released before it had claimed anything and the test
-    // would be watching a race instead of a rule.
+    wait_for_requests(&service, &second.handle, 1);
     assert_eq!(
         service.requests_made(&second.handle),
         1,
         "a dataset counts its own requests and nobody else's"
     );
-    release.send(()).expect("the provider is still waiting");
+    drop(gate);
 
-    assert!(
-        running
-            .join()
-            .expect("the running request finished")
-            .is_ok()
-    );
     // The one this test exists for. Under a single session-wide ticket, the
     // other dataset's arrival would have cancelled this one, throwing away a
     // read for a row the user is still looking at.
@@ -3018,10 +2749,16 @@ fn work_on_one_dataset_never_supersedes_work_on_another() {
         .join()
         .expect("the waiting request finished")
         .expect("a request nobody has moved on from still runs");
-    elsewhere
-        .join()
-        .expect("the other dataset's request finished")
-        .expect("a request in another dataset runs on its own turn");
+    // The other ran on its own turn, unsuperseded, and answers for itself: it
+    // has no open preview to read from.
+    assert_eq!(
+        elsewhere
+            .join()
+            .expect("the other dataset's request finished")
+            .expect_err("no preview of the other dataset is open")
+            .kind,
+        "preview_not_open"
+    );
 }
 
 /// Waits for a dataset to have claimed a given number of requests, rather than
@@ -3103,10 +2840,10 @@ fn an_open_still_waiting_for_its_turn_never_starts_once_a_newer_one_arrives() {
         .join()
         .expect("the newest open finished")
         .expect("the request the user is waiting for is the one that answers");
-    // Six operations, not nine: the open that was still waiting spent nothing.
+    // Four operations, not six: the open that was still waiting spent nothing.
     assert_eq!(
         world.requested_count(),
-        6,
+        4,
         "a superseded open must not launch an operation"
     );
 }
@@ -3123,17 +2860,8 @@ fn an_open_that_had_already_started_cannot_commit_after_a_newer_one() {
     let file = TestFile::new("open-supersede-running");
     let (started, observe_start) = mpsc::channel();
     let (release, wait_for_release) = mpsc::channel();
-    // Two different acquisitions' tables, so which one the session kept is a
-    // question a spectrum can answer rather than a matter of counting.
-    let responses = vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        Response::File(OTHER_SPECTRUM_TABLE_OUTPUT.to_owned()),
-        Response::File(other_selected_spectrum_output(0, &[(612.45, 2200.0)])),
-    ];
+    let mut responses = open_responses();
+    responses.extend(open_responses());
     let service = Arc::new(PreviewService::new(Box::new(BlockFirstProvider {
         inner: FakeProvider::available(responses),
         started,
@@ -3168,6 +2896,9 @@ fn an_open_that_had_already_started_cannot_commit_after_a_newer_one() {
         .expect("the newer open finished")
         .expect("the newer open is the one that answers");
 
+    // The newer read's preview is the one retained, and a spectrum is read
+    // against it.
+    assert!(service.holds_preview_state(&selected.handle));
     let Ok(AuthorityObservedDto {
         outcome: SelectedSpectrumOutcomeDto::Spectrum { spectrum },
         ..
@@ -3175,15 +2906,15 @@ fn an_open_that_had_already_started_cannot_commit_after_a_newer_one() {
     else {
         panic!("the spectrum reconciles against the rows the newer open recorded");
     };
-    assert_eq!(
-        spectrum.scan_number,
-        Some(807),
-        "the session kept the newer read's rows, not the abandoned read's"
-    );
+    assert_eq!(spectrum.scan_number, Some(19));
 }
 
 #[test]
-fn an_open_of_one_dataset_never_supersedes_an_open_of_another() {
+fn a_newer_open_of_another_dataset_supersedes_an_older_open() {
+    // ADR 0056, decision 4: an open retains nothing unless its ticket is still
+    // the latest, across every dataset. The older open here had already
+    // started, and its own dataset's epoch is still current -- it is the
+    // session-wide ticket that stops it committing a second native table.
     use std::sync::Arc;
     use std::sync::mpsc;
 
@@ -3220,15 +2951,19 @@ fn an_open_of_one_dataset_never_supersedes_an_open_of_another() {
     );
     release.send(()).expect("the provider is still waiting");
 
-    running
-        .join()
-        .expect("the running open finished")
-        .expect("a request nobody has moved on from still commits");
+    assert_eq!(
+        running
+            .join()
+            .expect("the running open finished")
+            .expect_err("an open a newer one has passed retains nothing")
+            .kind,
+        "selection_superseded"
+    );
     elsewhere
         .join()
         .expect("the other dataset's open finished")
-        .expect("an open in another dataset runs on its own turn");
-    assert!(service.holds_preview_state(&first.handle));
+        .expect("the newer open is the one that answers");
+    assert!(!service.holds_preview_state(&first.handle));
     assert!(service.holds_preview_state(&second.handle));
 }
 
@@ -3242,11 +2977,7 @@ fn beginning_an_open_drops_what_the_previous_open_recorded() {
     let responses = vec![
         Response::File(METADATA_OUTPUT.to_owned()),
         Response::Stdout(run_summary_output()),
-        Response::File(SPECTRUM_TABLE_OUTPUT.to_owned()),
         retryable_launch_failure(),
-        // Another acquisition's spectrum entirely: it agrees with nothing in the
-        // table the first open recorded, so it is refused if those rows survived.
-        Response::File(other_selected_spectrum_output(0, &[(612.45, 2200.0)])),
     ];
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     let selected = service.accept_file(&file.path).expect("accepted");
@@ -3264,14 +2995,14 @@ fn beginning_an_open_drops_what_the_previous_open_recorded() {
         !service.holds_preview_state(&selected.handle),
         "a failed reopen leaves no preview behind"
     );
-    let Ok(AuthorityObservedDto {
-        outcome: SelectedSpectrumOutcomeDto::Spectrum { spectrum },
-        ..
-    }) = service.load_spectrum(&selected.handle, 0)
-    else {
-        panic!("with no recorded table there is nothing to reconcile against");
-    };
-    assert_eq!(spectrum.scan_number, Some(807));
+    // With no recorded table there are no offsets to read from either.
+    assert_eq!(
+        service
+            .load_spectrum(&selected.handle, 0)
+            .expect_err("nothing to read against")
+            .kind,
+        "preview_not_open"
+    );
 }
 
 #[test]
@@ -3444,11 +3175,7 @@ fn replacing_the_selection_drops_what_the_session_derived_from_it() {
     // session no longer has.
     let file = TestFile::new("revoke-derived");
     let other = file.sibling("other.mzML");
-    let mut responses = open_responses();
-    responses.push(Response::File(selected_spectrum_output(
-        0,
-        &[(445.12, 9000.0)],
-    )));
+    let responses = open_responses();
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     let first = service.accept_file(&file.path).expect("accepted");
     service
@@ -3484,15 +3211,12 @@ fn nothing_the_session_holds_prints_a_path() {
     // generation, the installation that read it and every table row -- so a
     // field added to any of those would show up here.
     let file = TestFile::new("opaque-session");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        Response::File(METADATA_OUTPUT.to_owned()),
-        Response::Stdout(run_summary_output()),
-        // A native spectrum identifier shaped like a path, which is a thing an
-        // acquisition is free to contain. The rows are kept raw for
-        // reconciliation, so this is the one value in the session that carries
-        // a path and is never redacted.
-        Response::File(PATH_SHAPED_SPECTRUM_TABLE_OUTPUT.to_owned()),
-    ])));
+    // A native spectrum identifier shaped like a path, which is a thing an
+    // acquisition is free to contain. The rows are kept raw for reconciliation,
+    // so this is the one value in the session that carries a path and is never
+    // redacted.
+    file.write(&path_shaped_document());
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     service
         .open_preview(&selected.handle)
@@ -3593,7 +3317,10 @@ fn adding_one_file_is_one_row_and_reading_the_roster_is_no_work() {
 
     assert_eq!(roster_handles(&result.roster), ["file-0"]);
     assert_eq!(result.roster.datasets[0].file_name, "sample.mzML");
-    assert_eq!(result.roster.datasets[0].byte_length, 7);
+    assert_eq!(
+        result.roster.datasets[0].byte_length,
+        sample_document().len() as u64
+    );
     // Read again and again: a roster read is stored facts, so nothing here
     // reaches the filesystem or the backend.
     assert_eq!(service.roster(), service.roster());
@@ -3865,11 +3592,7 @@ fn removing_a_row_releases_its_hold_and_leaves_its_file_where_it_was() {
 fn removing_the_row_a_preview_belongs_to_takes_its_facts_with_it() {
     let file = TestFile::new("remove-runtime");
     let other = file.sibling("other.mzML");
-    let mut responses = open_responses();
-    responses.push(Response::File(selected_spectrum_output(
-        0,
-        &[(445.12, 9000.0)],
-    )));
+    let responses = open_responses();
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     service.add_files_now(&[file.path.clone(), other]);
     service.open_preview("file-0").expect("the preview loads");
@@ -4272,6 +3995,16 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "open_finalized_output",
             "open_mzml_preview",
             "load_selected_spectrum",
+            // ADR 0060 slice 2: the one-click view of a Thermo RAW row. Begin
+            // names the row and no intent; the state is polled, not pushed;
+            // Cancel and Open name the exact operation; the cache's summary
+            // and Clear name nothing. None takes a path.
+            "begin_raw_view",
+            "get_raw_view_state",
+            "cancel_raw_view",
+            "open_raw_view",
+            "describe_view_cache",
+            "clear_view_cache",
             "describe_workspace_conversion_queue",
             "get_workspace_conversion_state",
             "begin_workspace_conversion_queue",
@@ -4350,12 +4083,22 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
     // caller here and is deliberately not in this list.
     //
-    // ADR 0052's per-output adoption lands in Rust before its contract and
-    // hook slice (the webview is rebuilt on its own branch), so it is the one
-    // registered command no caller names yet. Declared rather than skipped,
-    // and the declaration retires itself: once the frontend calls it, this
-    // list must lose it.
-    let awaiting_a_caller = ["adopt_workspace_conversion_output"];
+    // The registered commands no caller names yet: ADR 0052's per-output
+    // adoption, which lands in Rust before its contract and hook slice (the
+    // webview is rebuilt on its own branch), and ADR 0060 slice 2's view
+    // commands, which its slice 3, the interface, will call once the owner
+    // chooses its direction. Declared rather than skipped, so the list cannot
+    // grow silently, and the declaration retires itself: once the frontend
+    // calls one, this list must lose it.
+    let awaiting_a_caller = [
+        "adopt_workspace_conversion_output",
+        "begin_raw_view",
+        "get_raw_view_state",
+        "cancel_raw_view",
+        "open_raw_view",
+        "describe_view_cache",
+        "clear_view_cache",
+    ];
     for name in &registered[1..] {
         if awaiting_a_caller.contains(name) {
             assert!(
@@ -7340,6 +7083,38 @@ fn mzml_document(spectra: u32, indexed: bool) -> String {
     }
 }
 
+/// Two spectra as the shipped default writes them -- indexed, every array
+/// zlib, m/z at 64 bits and intensity at 32 -- in a document the native reader
+/// opens: the faithful output `mzml_document` stands for, readable natively.
+fn viewable_document() -> String {
+    let spectra = [
+        ("scan=1", 0.1, [(100.5_f64, 10.0_f32), (200.25, 40.0)]),
+        ("scan=2", 0.2, [(300.0, 5.0), (400.5, 20.0)]),
+    ]
+    .map(|(id, retention_time, points)| {
+        let (base_peak_mz, base_peak_intensity) = points[1];
+        let mut spectrum = FixtureSpectrum::new(
+            id,
+            1,
+            retention_time,
+            (base_peak_mz, f64::from(base_peak_intensity)),
+            points.iter().map(|(_, value)| f64::from(*value)).sum(),
+            &[],
+        );
+        spectrum.mz = FixtureArray::f64s(&points.map(|(mz, _)| mz)).zlib();
+        spectrum.intensity = FixtureArray::f32s(&points.map(|(_, value)| value)).zlib();
+        spectrum.declared_length = points.len();
+        spectrum
+    });
+    document(&spectra)
+        .replacen(
+            "<mzML ",
+            r#"<indexedmzML xmlns="http://psi.hupo.org/ms/mzml"><mzML "#,
+            1,
+        )
+        .replacen("</mzML>", "</mzML></indexedmzML>", 1)
+}
+
 /// An mzML document with chromatograms and no spectra at all.
 ///
 /// A real shape, not a contrived one: the second lawful LabSolutions fixture
@@ -7525,6 +7300,9 @@ fn evidenced_capabilities() -> InstalledHelpCapabilities {
 enum BackendAct {
     /// Writes the document the plan asked for, where it asked for it.
     Convert,
+    /// As `Convert`, with a document the native reader opens too (ADR 0056):
+    /// what a view's cached copy has to be for the view to open.
+    ConvertViewable,
     /// Exits cleanly having written nothing.
     WriteNothing,
     /// Writes a document with no spectra in it.
@@ -7739,6 +7517,10 @@ impl FakeConversionRunner {
         let exit_code = match self.act {
             BackendAct::Convert | BackendAct::ConvertLeavingAProcess => {
                 fs::write(destination, mzml_document(2, true)).expect("write staged output");
+                0
+            }
+            BackendAct::ConvertViewable => {
+                fs::write(destination, viewable_document()).expect("write staged output");
                 0
             }
             BackendAct::ConvertEmpty => {
@@ -9118,7 +8900,8 @@ fn a_conversion_leaves_the_preview_of_its_dataset_alone() {
     );
     provider.inner = FakeProvider::available(open_responses());
     let service = PreviewService::new(Box::new(provider));
-    let source = fixture.readable_mzml("acquisition.mzML");
+    // A document the native reader opens, since the open reads the table itself.
+    let source = fixture.named_bytes("acquisition.mzML", sample_document().as_bytes());
     let dataset = service.add_dataset(&source).expect("add the dataset");
     service
         .open_preview(&dataset.handle)
@@ -20792,7 +20575,10 @@ fn adding_a_bundle_previews_nothing_and_disturbs_no_open_preview() {
     responses.extend(open_responses());
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
 
-    let mzml = add_one_acquisition(&service, &fixture.readable_mzml("open.mzML"));
+    let mzml = add_one_acquisition(
+        &service,
+        &fixture.named_bytes("open.mzML", sample_document().as_bytes()),
+    );
     let preview = service.open_preview(&mzml).expect("an mzML row previews");
     let opened = preview.file.handle.clone();
 
@@ -24484,6 +24270,7 @@ fn default_figure_settings() -> FigureSettingsDto {
 
 /// Loads one spectrum and answers with the token the panel would hold.
 fn loaded_export_token(service: &PreviewService, handle: &str, index: u64) -> String {
+    open_unless_open(service, handle);
     let outcome = service
         .load_spectrum(handle, index)
         .expect("the spectrum loads");
@@ -24493,11 +24280,12 @@ fn loaded_export_token(service: &PreviewService, handle: &str, index: u64) -> St
     spectrum.export_token.clone()
 }
 
-fn one_spectrum() -> Response {
-    Response::File(selected_spectrum_output(
-        0,
-        &[(100.5, 10.0), (200.25, 40.0)],
-    ))
+/// Opens the dataset's preview unless it is already open, because a selected
+/// spectrum is read from the offsets its open recorded (ADR 0056).
+fn open_unless_open(service: &PreviewService, handle: &str) {
+    if !service.holds_preview_state(handle) {
+        service.open_preview(handle).expect("the preview opens");
+    }
 }
 
 /// The figure settings a panel would send with these fields in them.
@@ -24513,7 +24301,7 @@ fn figure_settings(width_px: u32, height_px: u32, png_dpi: u32) -> FigureSetting
 /// One loaded spectrum, and the token the panel would hold for it.
 fn one_loaded_spectrum() -> (TestFile, PreviewService, String) {
     let file = TestFile::new("figure-settings");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
     (file, service, token)
@@ -24725,18 +24513,16 @@ fn a_saved_png_reports_the_resolution_it_recorded_and_an_svg_reports_none() {
 #[test]
 fn a_spectrum_that_turns_out_unavailable_revokes_the_retained_one() {
     let file = TestFile::new("lifecycle-unavailable");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        one_spectrum(),
-        Response::NoOutput,
-    ])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
     let retained = service
         .retained_spectrum_weak()
         .expect("a loaded spectrum is retained");
 
+    // The sample holds three spectra, so index 3 is not one of them.
     let outcome = service
-        .load_spectrum(&selected.handle, 1)
+        .load_spectrum(&selected.handle, 3)
         .expect("an absent index is an answer, not a failure");
     assert!(matches!(
         outcome.outcome,
@@ -24761,23 +24547,24 @@ fn a_spectrum_that_turns_out_unavailable_revokes_the_retained_one() {
 #[test]
 fn a_spectrum_whose_read_fails_revokes_the_retained_one() {
     let file = TestFile::new("lifecycle-failed");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        one_spectrum(),
-        Response::Error(PreviewErrorDto::new(
-            "spectrum_failed",
-            "the read did not complete",
-            true,
-        )),
-    ])));
+    // Spectrum 1 declares more points than it stores, which the reader refuses.
+    let mut spectra = sample_spectra();
+    spectra[1].declared_length = 5;
+    file.write(&document(&spectra));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
     let retained = service
         .retained_spectrum_weak()
         .expect("a loaded spectrum is retained");
 
-    service
-        .load_spectrum(&selected.handle, 1)
-        .expect_err("the read fails");
+    assert_eq!(
+        service
+            .load_spectrum(&selected.handle, 1)
+            .expect_err("the read fails")
+            .kind,
+        "spectrum_refused"
+    );
 
     assert!(retained.upgrade().is_none());
     assert_eq!(
@@ -24797,7 +24584,7 @@ fn a_spectrum_whose_read_fails_revokes_the_retained_one() {
 #[test]
 fn removing_the_previews_own_dataset_revokes_the_retained_spectrum() {
     let file = TestFile::new("lifecycle-remove-own");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
     let retained = service
@@ -24830,7 +24617,7 @@ fn removing_an_unrelated_dataset_leaves_the_retained_spectrum() {
     // removal would refuse the next export of a spectrum still on screen.
     let file = TestFile::new("lifecycle-remove-other");
     let sibling = file.sibling("other.mzML");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     // Added as a batch, because accepting a file one at a time is the picker
     // path and that replaces the whole selection.
     service.add_files_now(&[file.path.clone(), sibling]);
@@ -24860,7 +24647,7 @@ fn removing_an_unrelated_dataset_leaves_the_retained_spectrum() {
 #[test]
 fn clearing_the_list_revokes_the_retained_spectrum() {
     let file = TestFile::new("lifecycle-clear");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
     let retained = service
@@ -24891,7 +24678,7 @@ fn opening_a_preview_revokes_whatever_the_last_one_left() {
     // at that moment -- which is why this asserts it against an open that does
     // not even complete.
     let file = TestFile::new("lifecycle-open");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
     let retained = service
@@ -24925,7 +24712,7 @@ fn reading_the_roster_does_not_revoke_the_retained_spectrum() {
     // and the spectrum has to survive that.
     let file = TestFile::new("lifecycle-focus");
     let sibling = file.sibling("beside.mzML");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     service.add_files_now(&[file.path.clone(), sibling]);
     let read = service.roster().datasets[0].handle.clone();
     let token = loaded_export_token(&service, &read, 0);
@@ -24950,7 +24737,7 @@ fn a_claimed_export_finishes_after_the_spectrum_it_names_is_revoked() {
     // start something new; it does not reach into an operation the user already
     // committed to, which holds its own handle and finishes from that.
     let file = TestFile::new("lifecycle-claimed");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
 
@@ -24997,10 +24784,7 @@ fn a_claimed_export_finishes_after_the_spectrum_it_names_is_revoked() {
 #[test]
 fn a_later_spectrum_installs_one_snapshot_and_keeps_no_history() {
     let file = TestFile::new("lifecycle-replace");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        one_spectrum(),
-        Response::File(selected_spectrum_output(1, &[(300.5, 5.0)])),
-    ])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let first = loaded_export_token(&service, &selected.handle, 0);
     let retained = service
@@ -25044,7 +24828,7 @@ fn choosing_another_file_through_the_picker_revokes_the_retained_spectrum() {
     // is exactly why it needs its own revocation and its own test.
     let file = TestFile::new("lifecycle-replace-selection");
     let another = file.sibling("another.mzML");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
     let retained = service
@@ -25127,14 +24911,7 @@ fn chromatogram_saved_as(
 #[test]
 fn a_selected_spectrum_export_is_refused_under_another_format_s_extension() {
     let file = TestFile::new("spectrum-extension");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        one_spectrum(),
-        one_spectrum(),
-        one_spectrum(),
-        one_spectrum(),
-        one_spectrum(),
-        one_spectrum(),
-    ])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
     let folder = file.path.parent().expect("a folder");
@@ -25447,7 +25224,7 @@ fn a_chromatogram_figure_export_still_answers_for_every_figure_setting() {
 #[test]
 fn the_selected_spectrum_export_answers_the_same_way_it_always_did() {
     let file = TestFile::new("spectrum-unmoved");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let token = loaded_export_token(&service, &selected.handle, 0);
     let oversize = figure_settings_sized(20_001, 900);
@@ -25796,11 +25573,15 @@ fn an_open_completing_as_a_newer_one_begins_never_installs_over_it() {
         release_older.send(()).expect("the older open is waiting");
         start_newer.send(()).expect("the newer open is waiting");
 
-        let replaced = older
-            .join()
-            .expect("the older open finished")
-            .expect("its own dataset is still the newest request for itself")
-            .chromatogram_export_token;
+        // Either it committed before the newer open began, or the newer one's
+        // ticket came first and it retains nothing (ADR 0056, decision 4).
+        let replaced = match older.join().expect("the older open finished") {
+            Ok(preview) => preview.chromatogram_export_token,
+            Err(error) => {
+                assert_eq!(error.kind, "selection_superseded");
+                None
+            }
+        };
         assert_eq!(
             observe_start
                 .recv_timeout(Duration::from_secs(10))
@@ -26014,15 +25795,17 @@ fn an_older_completion_cannot_install_after_a_newer_attempt_failed_early() {
     );
 
     release.send(()).expect("the older open is still parked");
-    let landed = opening
-        .join()
-        .expect("the older open finished")
-        .expect("it is still the newest request for its own dataset");
-
+    // Still the newest request for its own dataset, but no longer the latest
+    // open: it retains nothing and answers as superseded (ADR 0056, decision 4).
     assert_eq!(
-        landed.chromatogram_export_token, None,
-        "an open a newer intent has already passed installs nothing",
+        opening
+            .join()
+            .expect("the older open finished")
+            .expect_err("an open a newer intent has already passed installs nothing")
+            .kind,
+        "selection_superseded",
     );
+    assert!(!service.holds_preview_state(&older.handle));
     assert_eq!(
         chromatogram_export_refusal(&service, &replaced),
         Some("chromatogram_export_stale".to_owned()),
@@ -26249,35 +26032,6 @@ fn two_opens_of_one_dataset_are_still_decided_by_the_request_epoch() {
 // is asserted is the sentence a reader is shown and the file that reaches their
 // folder.
 
-/// The third scan of the canned table, as the backend would print it.
-///
-/// `selected_spectrum_output` always names the first row's measurements, so a
-/// test that needs a *second* selection needs a second spectrum -- one that
-/// agrees with the row it claims to be, or the loader refuses it as a
-/// contradiction.
-fn third_scan_output(points: &[(f64, f64)]) -> String {
-    let mut text = String::from("# sample.mzML\n#\n");
-    text.push_str("# index: 2\n");
-    text.push_str("# id: scan=21\n");
-    text.push_str("# scanNumber: 21\n");
-    text.push_str("# massAnalyzerType: FTMS\n");
-    text.push_str("# scanEvent: 1\n");
-    text.push_str("# msLevel: 1\n");
-    text.push_str("# retentionTime: 0.30\n");
-    text.push_str("# filterString: synthetic\n");
-    text.push_str("# mzLow: 100\n");
-    text.push_str("# mzHigh: 1000\n");
-    text.push_str("# basePeakMZ: 500.00000000\n");
-    text.push_str("# basePeakIntensity: 7000.00000000\n");
-    text.push_str("# totalIonCurrent: 80000.00000000\n");
-    text.push_str("# precursorCount: 0\n");
-    text.push_str(&format!("# binary ({}):\n", points.len()));
-    for (mz, intensity) in points {
-        text.push_str(&format!("{mz:.8} {intensity:.8}\n"));
-    }
-    text
-}
-
 /// One session showing a run and holding a spectrum of it.
 ///
 /// The pair a linked figure is about, obtained the way the interface obtains it:
@@ -26305,14 +26059,9 @@ struct LinkedSession {
     spectrum: String,
 }
 
-/// The responses one open and one spectrum read consume.
+/// The responses one open consumes; the spectrum read is native.
 fn linked_responses() -> Vec<Response> {
-    let mut responses = open_responses();
-    responses.push(Response::File(selected_spectrum_output(
-        0,
-        &[(445.12, 9000.0), (500.0, 1200.0)],
-    )));
-    responses
+    open_responses()
 }
 
 /// A current range, as the viewer would send one.
@@ -26473,23 +26222,19 @@ fn each_linked_refusal_names_what_the_reader_can_change() {
     );
 }
 
-/// Two runs on screen at once do not make one linked figure.
+/// Two runs on screen at once cannot make one linked figure.
 ///
-/// Reachable without a race: open one run, open another, and select a scan of
-/// the first -- the session still holds that spectrum, and both tokens are
-/// current. Same session is not same scan, and this is the refusal that says so.
+/// Since ADR 0056 (decision 4) the pair cannot even be formed at the boundary:
+/// opening another run drops the first run's preview, and with it the offsets a
+/// scan of that run is read from, so a scan of the first is refused rather than
+/// selected beside the second's chromatogram. The slot's own tests cover the
+/// refusal a mismatched pair would meet.
 #[test]
-fn a_spectrum_of_another_run_is_not_a_scan_of_this_chromatogram() {
+fn a_spectrum_of_another_run_cannot_be_selected_beside_this_chromatogram() {
     let file = TestFile::new("linked-owner");
     let other = file.sibling("other.mzML");
     let mut responses = open_responses();
-    responses.push(Response::File(METADATA_OUTPUT.to_owned()));
-    responses.push(Response::Stdout(run_summary_output()));
-    responses.push(Response::File(OTHER_SPECTRUM_TABLE_OUTPUT.to_owned()));
-    responses.push(Response::File(selected_spectrum_output(
-        0,
-        &[(445.12, 9000.0)],
-    )));
+    responses.extend(open_responses());
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     let first = service.accept_file(&file.path).expect("accepted");
     let second = service.add_dataset(&other).expect("added");
@@ -26502,32 +26247,16 @@ fn a_spectrum_of_another_run_is_not_a_scan_of_this_chromatogram() {
         .expect("the second opens")
         .chromatogram_export_token
         .expect("and it is the run on screen");
-    // A scan of the *first* run, which this session still holds.
-    let spectrum = loaded_export_token(&service, &first.handle, 0);
 
     assert_eq!(
-        linked_refusal(
-            &service,
-            &visible,
-            &spectrum,
-            &full_run_range(),
-            both_traces(),
-            &default_figure_settings(),
-        ),
-        Some("linked_figure_source_mismatch".to_owned()),
+        service
+            .load_spectrum(&first.handle, 0)
+            .expect_err("the first run is no longer open")
+            .kind,
+        "preview_not_open"
     );
-    // Neither half is stale, so this is a refusal about the pair rather than
-    // about either token.
+    // The run on screen is untouched by the refusal.
     assert_eq!(chromatogram_export_refusal(&service, &visible), None);
-    let reservation = service
-        .begin_spectrum_export(
-            &spectrum,
-            "svg",
-            &full_spectrum_range(),
-            &default_figure_settings(),
-        )
-        .expect("the spectrum this session holds is still exportable");
-    service.cancel_spectrum_export(&reservation);
 }
 
 /// A linked reservation opens the linked dialog and no other.
@@ -26888,8 +26617,7 @@ fn a_linked_export_in_progress_closes_every_other_scientific_export() {
 #[test]
 fn a_claimed_linked_export_writes_the_pair_it_began_on() {
     let file = TestFile::new("linked-frozen");
-    let mut responses = linked_responses();
-    responses.push(Response::File(third_scan_output(&[(500.0, 7000.0)])));
+    let responses = linked_responses();
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     let LinkedSession {
         handle,
@@ -26943,13 +26671,13 @@ fn a_claimed_linked_export_writes_the_pair_it_began_on() {
 /// names what it knows.
 #[test]
 fn a_linked_figure_the_contract_refuses_is_refused_as_a_pair() {
-    let file = TestFile::new("linked-unspecifiable");
-    let mut responses = open_responses();
     // Descending m/z, which the figure contract will not accept as a series.
-    responses.push(Response::File(selected_spectrum_output(
+    let file = TestFile::with_points(
+        "linked-unspecifiable",
         0,
         &[(500.0, 1_000.0), (100.0, 9_000.0)],
-    )));
+    );
+    let responses = open_responses();
     let service = PreviewService::new(Box::new(FakeProvider::available(responses)));
     let LinkedSession {
         chromatogram,
@@ -27068,6 +26796,7 @@ fn loaded_spectrum(
     handle: &str,
     index: u64,
 ) -> super::dto::SelectedSpectrumDto {
+    open_unless_open(service, handle);
     let outcome = service
         .load_spectrum(handle, index)
         .expect("the spectrum loads");
@@ -27077,9 +26806,9 @@ fn loaded_spectrum(
     *spectrum
 }
 
-/// A spectrum of `count` ascending points, as the backend would emit one.
-fn ascending_spectrum(count: usize) -> Response {
-    let points: Vec<(f64, f64)> = (0..count)
+/// A spectrum of `count` ascending points.
+fn ascending_spectrum(count: usize) -> Vec<(f64, f64)> {
+    (0..count)
         .map(|step| {
             #[expect(
                 clippy::cast_precision_loss,
@@ -27088,14 +26817,13 @@ fn ascending_spectrum(count: usize) -> Response {
             let offset = step as f64;
             (100.0 + offset, 1.0 + offset)
         })
-        .collect();
-    Response::File(selected_spectrum_output(0, &points))
+        .collect()
 }
 
 #[test]
 fn a_spectrum_the_figure_admits_carries_the_domain_its_own_points_span() {
     let file = TestFile::new("viewport-domain");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
 
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
@@ -27113,10 +26841,12 @@ fn a_spectrum_the_figure_admits_carries_the_domain_its_own_points_span() {
 fn an_unordered_spectrum_is_refused_a_viewport_and_left_alone() {
     // mzML permits a descending m/z array and nothing here sorts one. The
     // figure contract refuses the series, so the viewport refuses it too.
-    let file = TestFile::new("viewport-unordered");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
-        selected_spectrum_output(0, &[(500.0, 1_000.0), (100.0, 9_000.0)]),
-    )])));
+    let file = TestFile::with_points(
+        "viewport-unordered",
+        0,
+        &[(500.0, 1_000.0), (100.0, 9_000.0)],
+    );
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
 
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
@@ -27158,10 +26888,12 @@ fn a_spectrum_the_figure_cannot_draw_is_refused_a_viewport_and_still_exports() {
     // and the m/z array is ordered, but the intensity axis spans
     // `f64::MAX - (-f64::MAX)`, which the figure contract refuses. The viewport
     // refuses it for the same reason, and says which axis.
-    let file = TestFile::new("viewport-value-domain");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
-        selected_spectrum_output(0, &[(100.0, -f64::MAX), (200.0, f64::MAX)]),
-    )])));
+    let file = TestFile::with_points(
+        "viewport-value-domain",
+        0,
+        &[(100.0, -f64::MAX), (200.0, f64::MAX)],
+    );
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
 
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
@@ -27207,28 +26939,64 @@ fn a_spectrum_the_figure_cannot_draw_is_refused_a_viewport_and_still_exports() {
 }
 
 #[test]
-fn the_transfer_bound_is_unreachable_because_the_text_bound_refuses_first() {
-    // Recorded rather than assumed. `MAX_SPECTRUM_POINTS` bounds the arrays a
-    // selected spectrum transfers, but a spectrum large enough to reach it does
-    // not survive `MAX_PREVIEW_TEXT_BYTES`: one formatted point is about
-    // twenty-five bytes, so eight mebibytes runs out first. A truncated
-    // selected spectrum is therefore not reachable through this parser today.
-    //
-    // Which is why the retained-source property the viewport depends on is
-    // proved in `projection::tests`, over spectra built directly rather than
-    // parsed -- see `a_window_past_any_transfer_prefix_draws_the_retained_source`.
-    let count = MAX_SPECTRUM_POINTS + 5_000;
-    let file = TestFile::new("viewport-transfer-bound");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![ascending_spectrum(
-        count,
-    )])));
+fn a_spectrum_above_the_transfer_bound_crosses_as_a_prefix_and_exports_whole() {
+    // ADR 0056, decision 5. No text cap stands in front of a native spectrum,
+    // so one above `MAX_SPECTRUM_POINTS` is reachable now. It crosses as that
+    // prefix, with its total and a statement that it is a prefix; every export
+    // reads the complete retained spectrum.
+    let count = MAX_SPECTRUM_POINTS + 5;
+    let file = TestFile::with_points("transfer-prefix", 0, &ascending_spectrum(count));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
+    let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
-    let error = service
-        .load_spectrum(&selected.handle, 0)
-        .expect_err("the text bound refuses before the transfer bound applies");
+    assert_eq!(spectrum.point_count, count);
+    assert!(spectrum.truncated);
+    assert_eq!(spectrum.mz.len(), MAX_SPECTRUM_POINTS);
+    assert_eq!(spectrum.intensity.len(), MAX_SPECTRUM_POINTS);
 
-    assert_eq!(error.kind, "incomplete_parser_input");
+    let records = |name: &str| {
+        let text = fs::read_to_string(file.directory.join(name)).expect("the export");
+        text.lines()
+            .filter(|line| !line.starts_with('#'))
+            .skip(1)
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        spectrum_saved_as(
+            &service,
+            &spectrum.export_token,
+            "csv",
+            &file.directory.join("whole.csv")
+        ),
+        None
+    );
+    assert_eq!(records("whole.csv").len(), count);
+
+    // A range wholly past the transferred prefix holds the retained points.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "test sizes are far below the f64 integer bound"
+    )]
+    let high = 100.0 + (count - 1) as f64;
+    let reservation = service
+        .begin_spectrum_export(
+            &spectrum.export_token,
+            "csv",
+            &current_spectrum_range(high - 2.0, high),
+            &default_figure_settings(),
+        )
+        .expect("the range export begins");
+    let claimed = service
+        .claim_spectrum_export(&reservation)
+        .expect("its dialog");
+    service
+        .write_spectrum_export(&claimed, &file.directory.join("tail.csv"))
+        .expect("the range is written");
+    let tail = records("tail.csv");
+    assert_eq!(tail.len(), 3);
+    assert_eq!(tail[2], format!("{high},{}", high - 99.0));
 }
 
 #[test]
@@ -27237,10 +27005,8 @@ fn a_window_of_a_large_spectrum_draws_points_no_prefix_would_reach() {
     // screen, so a window in its tail is a window whose points a naive
     // head-of-the-array drawing would never contain.
     let count = 150_000;
-    let file = TestFile::new("viewport-tail-window");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![ascending_spectrum(
-        count,
-    )])));
+    let file = TestFile::with_points("viewport-tail-window", 0, &ascending_spectrum(count));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27269,9 +27035,12 @@ fn a_projection_launches_no_backend_operation() {
     // projection reads the retained snapshot rather than the acquisition: a
     // backend call would find no response and fail.
     let file = TestFile::new("viewport-no-reread");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let provider = FakeProvider::available(open_responses());
+    let world = provider.clone_world();
+    let service = PreviewService::new(Box::new(provider));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
+    let after_load = world.requested_count();
 
     for _ in 0..8 {
         service
@@ -27279,19 +27048,17 @@ fn a_projection_launches_no_backend_operation() {
             .expect("a window of the retained spectrum");
     }
 
-    // And the queue really is empty: another spectrum read has nothing to
-    // answer with, so the projections above consumed no backend response.
-    assert!(
-        service.load_spectrum(&selected.handle, 0).is_err(),
-        "the response queue was not empty, so the proof above is vacuous",
-    );
+    // No backend operation was asked for, and the spectrum read itself was
+    // native, so the open's two are all there are.
+    assert_eq!(world.requested_count(), after_load);
+    assert_eq!(after_load, 2);
 }
 
 #[test]
 fn a_projection_takes_no_scientific_export_lane() {
     // A drawing is not an export. A reader may pan while a file is written.
     let file = TestFile::new("viewport-lane");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27312,10 +27079,7 @@ fn a_projection_takes_no_scientific_export_lane() {
 #[test]
 fn a_stale_spectrum_token_is_refused_a_drawing() {
     let file = TestFile::new("viewport-stale");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        one_spectrum(),
-        Response::File(selected_spectrum_output(1, &[(300.0, 5.0), (400.0, 6.0)])),
-    ])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let first = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27336,7 +27100,7 @@ fn a_stale_spectrum_token_is_refused_a_drawing() {
 #[test]
 fn a_window_outside_the_retained_source_is_refused_rather_than_clamped() {
     let file = TestFile::new("viewport-outside");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27351,10 +27115,8 @@ fn a_window_outside_the_retained_source_is_refused_rather_than_clamped() {
 
 #[test]
 fn a_window_holding_nothing_is_a_successful_empty_drawing() {
-    let file = TestFile::new("viewport-empty-window");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
-        selected_spectrum_output(0, &[(100.0, 1.0), (500.0, 2.0)]),
-    )])));
+    let file = TestFile::with_points("viewport-empty-window", 0, &[(100.0, 1.0), (500.0, 2.0)]);
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27371,10 +27133,8 @@ fn a_window_holding_nothing_is_a_successful_empty_drawing() {
 #[test]
 fn a_drawing_is_bounded_however_large_the_spectrum_is() {
     let count = 150_000;
-    let file = TestFile::new("viewport-bounded");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![ascending_spectrum(
-        count,
-    )])));
+    let file = TestFile::with_points("viewport-bounded", 0, &ascending_spectrum(count));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
     let SpectrumViewportDomainDto::Admitted { low, high } = spectrum.viewport_domain else {
@@ -27398,7 +27158,7 @@ fn a_drawing_is_bounded_however_large_the_spectrum_is() {
 fn a_projection_leaves_the_scientific_export_exactly_as_it_was() {
     // The sibling-projection rule: a drawing changes nothing a file is made of.
     let file = TestFile::new("viewport-export-unchanged");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
     let folder = file.path.parent().expect("a folder");
@@ -27449,7 +27209,7 @@ fn settlements() -> usize {
 #[test]
 fn retaining_one_spectrum_settles_its_drawability_exactly_once() {
     let file = TestFile::new("settle-once");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
 
     let before = settlements();
@@ -27478,7 +27238,7 @@ fn projections_over_one_snapshot_settle_nothing_further() {
     // complete arrays to rediscover a fact the snapshot already had, so a deep
     // zoom of a large spectrum cost as much as the whole of it.
     let file = TestFile::new("settle-reused");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27517,10 +27277,8 @@ fn projections_over_one_snapshot_settle_nothing_further() {
 fn a_refused_spectrum_answers_every_projection_from_its_settled_verdict() {
     // A refusal is a property of the source too, so it is carried rather than
     // rediscovered. Re-reading the arrays could not produce a different answer.
-    let file = TestFile::new("settle-refused");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
-        selected_spectrum_output(0, &[(500.0, 1_000.0), (100.0, 9_000.0)]),
-    )])));
+    let file = TestFile::with_points("settle-refused", 0, &[(500.0, 1_000.0), (100.0, 9_000.0)]);
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27544,10 +27302,12 @@ fn a_refused_spectrum_answers_every_projection_from_its_settled_verdict() {
 
 #[test]
 fn a_value_domain_refusal_is_carried_by_the_snapshot_too() {
-    let file = TestFile::new("settle-value-domain");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
-        selected_spectrum_output(0, &[(100.0, -f64::MAX), (200.0, f64::MAX)]),
-    )])));
+    let file = TestFile::with_points(
+        "settle-value-domain",
+        0,
+        &[(100.0, -f64::MAX), (200.0, f64::MAX)],
+    );
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27576,10 +27336,7 @@ fn selecting_another_spectrum_settles_that_one_and_leaves_the_first_behind() {
     // The verdict has the snapshot's lifetime: a replacement gets its own,
     // computed once, and the replaced one goes with the spectrum it described.
     let file = TestFile::new("settle-lifecycle");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        one_spectrum(),
-        Response::File(selected_spectrum_output(1, &[(300.0, 5.0), (400.0, 6.0)])),
-    ])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let first = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27612,7 +27369,7 @@ fn selecting_another_spectrum_settles_that_one_and_leaves_the_first_behind() {
 fn revoking_the_source_takes_its_settled_verdict_with_it() {
     let file = TestFile::new("settle-revoked");
     let another = file.sibling("another.mzML");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![one_spectrum()])));
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -27646,25 +27403,23 @@ fn revoking_the_source_takes_its_settled_verdict_with_it() {
 // ---------------------------------------------------------------------------
 
 /// A spectrum whose observations straddle the windows these tests commit to.
-fn ranged_spectrum_response(index: u64) -> Response {
-    Response::File(selected_spectrum_output(
-        index,
-        &[
-            (100.0, 5.0),
-            (110.0, 20.0),
-            (120.0, 9_000_000.0),
-            (130.0, 8.0),
-            (140.0, 3.0),
-        ],
-    ))
+const RANGED_POINTS: [(f64, f64); 5] = [
+    (100.0, 5.0),
+    (110.0, 20.0),
+    (120.0, 9_000_000.0),
+    (130.0, 8.0),
+    (140.0, 3.0),
+];
+
+/// The sample file with the ranged spectrum at index 0.
+fn ranged_file(name: &str) -> TestFile {
+    TestFile::with_points(name, 0, &RANGED_POINTS)
 }
 
 /// One loaded ranged spectrum and the service that holds it.
 fn a_ranged_spectrum(name: &str) -> (TestFile, PreviewService, super::dto::SelectedSpectrumDto) {
-    let file = TestFile::new(name);
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        ranged_spectrum_response(0),
-    ])));
+    let file = ranged_file(name);
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
     (file, service, spectrum)
@@ -27690,7 +27445,7 @@ fn export_spectrum_range(
 }
 
 #[test]
-fn a_current_range_data_export_writes_schema_two_over_the_committed_window() {
+fn a_current_range_data_export_writes_schema_four_over_the_committed_window() {
     let (file, service, spectrum) = a_ranged_spectrum("m53-current-csv");
     let destination = file.directory.join("range.csv");
 
@@ -27728,7 +27483,7 @@ fn a_current_range_data_export_writes_schema_two_over_the_committed_window() {
     assert_eq!(exported_point_count, 3);
 
     let document = fs::read_to_string(&destination).expect("the file exists");
-    assert!(document.contains("#schema_version,2\n"), "{document}");
+    assert!(document.contains("#schema_version,4\n"), "{document}");
     assert!(document.contains("#range_scope,current\n"), "{document}");
     assert!(document.contains("#source_point_count,5\n"), "{document}");
     assert!(document.contains("#exported_point_count,3\n"), "{document}");
@@ -27741,7 +27496,7 @@ fn a_current_range_data_export_writes_schema_two_over_the_committed_window() {
 }
 
 #[test]
-fn a_full_source_data_export_is_still_schema_one() {
+fn a_full_source_data_export_is_schema_three() {
     let (file, service, spectrum) = a_ranged_spectrum("m53-full-csv");
     let destination = file.directory.join("full.csv");
 
@@ -27779,11 +27534,11 @@ fn a_full_source_data_export_is_still_schema_one() {
     );
 
     let document = fs::read_to_string(&destination).expect("the file exists");
-    assert!(document.contains("#schema_version,1\n"), "{document}");
+    assert!(document.contains("#schema_version,3\n"), "{document}");
     assert!(document.contains("#point_count,5\n"), "{document}");
     assert!(
         !document.contains("#range_scope"),
-        "version 1 gains no field: {document}"
+        "the full-source document gains no field: {document}"
     );
 }
 
@@ -27860,7 +27615,7 @@ fn a_current_range_with_nothing_committed_covers_the_whole_admitted_domain() {
     );
     assert_eq!(exported_point_count, 5);
     let document = fs::read_to_string(&destination).expect("the file exists");
-    assert!(document.contains("#schema_version,2\n"), "{document}");
+    assert!(document.contains("#schema_version,4\n"), "{document}");
 }
 
 #[test]
@@ -27991,10 +27746,12 @@ fn a_malformed_range_never_reaches_the_retained_spectrum() {
 fn a_domain_refused_spectrum_offers_no_current_range_and_keeps_its_data_exports() {
     // Descending m/z: legal mzML, refused by the figure contract, and valid
     // source data throughout.
-    let file = TestFile::new("m53-refused-viewport");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
-        selected_spectrum_output(0, &[(500.0, 1_000.0), (100.0, 9_000.0)]),
-    )])));
+    let file = TestFile::with_points(
+        "m53-refused-viewport",
+        0,
+        &[(500.0, 1_000.0), (100.0, 9_000.0)],
+    );
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
     assert_eq!(
@@ -28164,10 +27921,8 @@ fn a_failing_screen_projection_does_not_close_the_current_range_export() {
 
 #[test]
 fn a_range_export_and_a_chromatogram_export_share_the_one_scientific_lane() {
-    let file = TestFile::new("m53-one-lane");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        ranged_spectrum_response(0),
-    ])));
+    let file = ranged_file("m53-one-lane");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -28216,39 +27971,10 @@ fn a_range_export_and_a_chromatogram_export_share_the_one_scientific_lane() {
     );
 }
 
-/// The beyond-transfer-prefix property has its home where it is reachable.
-///
-/// A spectrum large enough to truncate one transfer does not survive
-/// `MAX_PREVIEW_TEXT_BYTES`, which
-/// `the_transfer_bound_is_unreachable_because_the_text_bound_refuses_first`
-/// already records. So the range export's own beyond-prefix proof is in
-/// `export::tests`, over a spectrum built directly rather than parsed -- see
-/// `a_range_beyond_the_transfer_prefix_exports_retained_observations`. This
-/// pins the reason the service suite does not carry a second copy of it.
-#[test]
-fn the_range_export_beyond_prefix_proof_lives_where_the_source_can_be_built() {
-    let count = MAX_SPECTRUM_POINTS + 500;
-    let file = TestFile::new("m53-beyond-prefix-reachability");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![ascending_spectrum(
-        count,
-    )])));
-    let selected = service.accept_file(&file.path).expect("accepted");
-    assert_eq!(
-        service
-            .load_spectrum(&selected.handle, 0)
-            .expect_err("the text bound refuses such a spectrum first")
-            .kind,
-        "incomplete_parser_input",
-    );
-}
-
 #[test]
 fn a_claimed_range_export_writes_its_begin_time_range_after_the_selection_moves() {
-    let file = TestFile::new("m53-begin-time-range");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![
-        ranged_spectrum_response(0),
-        Response::File(selected_spectrum_output(1, &[(700.0, 1.0), (800.0, 2.0)])),
-    ])));
+    let file = ranged_file("m53-begin-time-range");
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("accepted");
     let spectrum = loaded_spectrum(&service, &selected.handle, 0);
 
@@ -31596,6 +31322,8 @@ mod active_clear;
 mod conversion_intent_wire;
 #[cfg(windows)]
 mod figure_preview;
+mod native_reader;
 mod output_opening;
 mod per_output_adoption;
+mod raw_view;
 mod staging_recovery;

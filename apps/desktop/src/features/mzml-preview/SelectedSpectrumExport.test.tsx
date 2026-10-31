@@ -103,7 +103,7 @@ describe("selected spectrum export actions", () => {
       { status: "none" } as const,
       { status: "loading", index: 3 } as const,
       { status: "unavailable", requestedIndex: 3 } as const,
-      { status: "failed", index: 3, error: { kind: "spectrum_failed", summary: "No.", detail: null, retryable: true } } as const,
+      { status: "failed", index: 3, error: { kind: "spectrum_unreadable", summary: "No.", detail: null, retryable: true } } as const,
     ]) {
       const { unmount } = renderPanel(state);
       expect(screen.queryByRole("button", { name: en.figureExportTitle })).toBeNull();
@@ -265,6 +265,23 @@ describe("selected spectrum export actions", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Export TSV…" }));
     await waitFor(() => expect(more).toHaveFocus());
   });
+});
+
+describe("opening the file again from a refused spectrum", () => {
+  it.each(["preview_not_open", "spectrum_not_as_recorded", "source_changed_since_preview"])(
+    "offers it for %s, and refuses it with the visible reason while a read cannot start", kind => {
+      const onReopen = vi.fn();
+      render(<SelectedSpectrumPanel {...NO_VIEWPORT} exportState={{ status: "idle" }} figureSettingsValidation={validateFigureDraft(DEFAULT_DRAFT)}
+        onCopyPlot={() => undefined} onDismissExport={() => undefined} onExport={() => undefined} onRetry={() => undefined}
+        onReopen={onReopen} canReopen={false} reopenReasonId="why-not-now" scientificExportBusy={false}
+        state={{ status: "failed", index: 3, error: { kind, summary: "No.", detail: null, retryable: false } }} />);
+
+      const reopen = button(en.viewerReopenFile);
+      expect(reopen).toHaveAttribute("aria-disabled", "true");
+      expect(reopen.getAttribute("aria-describedby")).toContain("why-not-now");
+      fireEvent.click(reopen);
+      expect(onReopen).not.toHaveBeenCalled();
+    });
 });
 
 describe("what a finished range export is allowed to claim", () => {

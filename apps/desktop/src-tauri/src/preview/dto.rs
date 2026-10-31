@@ -2806,22 +2806,67 @@ pub struct MsLevelCountDto {
     pub spectrum_count: u64,
 }
 
-/// A retention time with the unit the backend actually emitted.
+/// The unit a retention time is stated in, as the file declares it.
 ///
-/// The measured `msaccess` formatter emits no unit, so `unit_known` is false
-/// and no unit is invented for display.
+/// `NotReported` where the file states none (ADR 0056). Nothing converts
+/// between seconds and minutes, and no unit is invented for display.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RetentionTimeUnitDto {
+    Second,
+    Minute,
+    NotReported,
+}
+
+/// A retention time with the unit the file declares.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RetentionTimeDto {
     pub value: f64,
-    pub unit_known: bool,
+    pub unit: RetentionTimeUnitDto,
 }
 
+/// The run's retention-time range on the preview page.
+///
+/// The lowest and highest retention time among every row the table retained,
+/// not only the transferred prefix (ADR 0056, decision 3). `msaccess`'s own
+/// range prints another scale and goes only to a QC snapshot.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum RetentionTimeRangeDto {
+    /// Every row states this one unit, or every row states none.
+    #[serde(rename_all = "camelCase")]
+    Reported {
+        minimum: f64,
+        maximum: f64,
+        unit: RetentionTimeUnitDto,
+    },
+    /// The rows state different units, or only some of them state one. No
+    /// range is given, for the reason the chromatogram gives none.
+    MixedUnits,
+    /// The table has no rows.
+    NoRows,
+}
+
+/// Whether a spectrum is centroid or profile, as the file declares it.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RetentionTimeRangeDto {
-    pub minimum: RetentionTimeDto,
-    pub maximum: RetentionTimeDto,
+pub enum SpectrumRepresentationDto {
+    Centroid,
+    Profile,
+    NotReported,
+}
+
+/// The unit one array's values are stated in.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum ValueUnitDto {
+    /// The accession the array's role term declares, such as `MS:1000040`.
+    #[serde(rename_all = "camelCase")]
+    Declared {
+        accession: String,
+    },
+    NotReported,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -2835,7 +2880,8 @@ pub struct RunSummaryDto {
     /// `None` because the measured run-summary format emits no chromatogram
     /// count. It is not a count of zero.
     pub chromatogram_count: Option<u64>,
-    pub retention_time_range: Option<RetentionTimeRangeDto>,
+    /// From the native spectrum table, not from the run summary.
+    pub retention_time_range: RetentionTimeRangeDto,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -2888,7 +2934,8 @@ pub struct PreviewDto {
     /// `None` where there is no chromatogram to export, which is exactly where
     /// the viewer draws none: a table this session could not transfer whole, a
     /// run with no spectra, a retention time or an intensity that is not a
-    /// finite number, or a unit this build cannot name. Rust retains every row
+    /// finite number, or rows that state different retention-time units or
+    /// where only some state one (ADR 0056). Rust retains every row
     /// the backend reported and the webview receives a bounded prefix, so
     /// issuing a token for a run the viewer refuses would open an export door
     /// onto a capability the product does not otherwise have.
@@ -2901,9 +2948,10 @@ pub struct PreviewDto {
     /// Rust copies the whole summary it retained, not the bounded projection
     /// above.
     ///
-    /// `None` where this reply is not the latest open's, which the page is
-    /// discarding anyway. Stops naming anything the moment another preview
-    /// open begins.
+    /// Present on every successful open: since ADR 0056 (decision 4) a reply
+    /// that is no longer the latest open's is refused as superseded rather
+    /// than answered without one. Stops naming anything the moment another
+    /// preview open begins.
     pub qc_snapshot_token: Option<String>,
     /// Whether the build that produced this preview can be identified well
     /// enough for a snapshot to record it. Where it cannot, a capture is
@@ -2912,12 +2960,14 @@ pub struct PreviewDto {
     pub qc_producer_identified: bool,
 }
 
+/// One precursor. Either value may be unstated in mzML, and an unstated value
+/// is `None`, never zero.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PrecursorDto {
     pub index: u64,
-    pub mz: f64,
-    pub intensity: f64,
+    pub mz: Option<f64>,
+    pub intensity: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -2931,8 +2981,10 @@ pub struct SelectedSpectrumDto {
     pub point_count: usize,
     pub mz: Vec<f64>,
     pub intensity: Vec<f64>,
-    pub mz_low: f64,
-    pub mz_high: f64,
+    /// The lowest and highest observed m/z the spectrum states (MS:1000528,
+    /// MS:1000527). `None` where it states none; never taken from the array.
+    pub mz_low: Option<f64>,
+    pub mz_high: Option<f64>,
     pub base_peak_mz: f64,
     pub base_peak_intensity: f64,
     pub total_ion_current: f64,
@@ -2941,11 +2993,10 @@ pub struct SelectedSpectrumDto {
     /// `precursors`.
     pub total_precursor_count: usize,
     pub precursors_truncated: bool,
-    /// The backend emitted no profile/centroid marker for a selected spectrum,
-    /// so representation stays unknown rather than being guessed.
-    pub representation_known: bool,
-    /// The backend emitted no unit for the arrays, so no unit is displayed.
-    pub value_units_known: bool,
+    /// From the spectrum's own terms; never guessed.
+    pub representation: SpectrumRepresentationDto,
+    pub mz_unit: ValueUnitDto,
+    pub intensity_unit: ValueUnitDto,
     pub truncated: bool,
     /// Which retained spectrum this panel's operations name.
     ///
@@ -3036,6 +3087,20 @@ pub struct SpectrumProjectionDto {
     pub source_points: usize,
     /// Whether fewer points are drawn than the window measured.
     pub reduced: bool,
+    /// For a declared profile spectrum, the measured sample just below and
+    /// just above the window, which the joined line crosses each edge from.
+    /// Not counted in `source_points`. `None` for a centroid or unreported
+    /// spectrum, and where the window reaches the source's own end.
+    pub outside_low: Option<ProjectionSampleDto>,
+    pub outside_high: Option<ProjectionSampleDto>,
+}
+
+/// One measured sample, as a projection carries it beside its window.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionSampleDto {
+    pub mz: f64,
+    pub intensity: f64,
 }
 
 /// How much of a spectrum one export covers.

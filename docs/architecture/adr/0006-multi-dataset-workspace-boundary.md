@@ -9,6 +9,10 @@
   bundle. Duplicate identity is correspondingly the whole acquisition's
   identity rather than a single object's; for every family described here that
   is the same value it always was.
+- Amended: 2026-10-30 ([ADR 0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+  slice 2) — a Thermo RAW row's preview state can be backed by a pinned
+  view-cache entry. The row keeps its lease, its handle and its identity, and
+  removing it releases the pin and deletes neither the RAW nor the entry.
 - Amended: 2026-10-20 (post-PM9, documentation only) — distinguish the original
   544px stacked-layout budget from the current folded workbench. The owner
   assigned this correction after PM9 in

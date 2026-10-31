@@ -528,7 +528,14 @@ writer and Rust's ownership of files.
     and its marker, the key, the manifest, verification, publishing, the pins,
     eviction, Clear and the staging sweep, with Rust tests. No command, UI or
     conversion yet; slice 2 is next.
-  - Left to slice 2: a chunked, cancellable hash of the RAW for Checking file
+  - Slice 2, the operation and its commands, is on `be/viewraw-op`
+    (2026-10-30): the phases, Cancel in each, the view as a holder of the
+    conversion slot, the failures of decision 10, and six commands with no UI
+    caller yet. Its departures and deferrals are ADR 0060's
+    [slice 2 notes](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-2-notes-2026-10-30),
+    including the two cases below (accepted by the owner, 2026-10-30, A0060).
+    Slice 3, the interface, builds on #164's structure once it lands (A0060).
+  - Left to slice 2, and done there: a chunked, cancellable hash of the RAW for Checking file
     and Checking output; reading the volume's free space for `make_space`; the
     1.5 GiB refusal before any work; the summary and Clear DTOs over `usage`
     and `clear`; and codes for a check that could not be made
@@ -536,6 +543,13 @@ writer and Rust's ownership of files.
     which decision 10's table does not list. An attempt that a sharing refusal
     keeps from being removed after `view_cache_not_stored` stays until a later
     session's sweep, because decision 6 leaves this process's attempts alone.
+- ADR 0056 decision 3's admission follow-up, not yet written: viewing mzML
+  without ProteoWizard changes Rust's admission, the webview's `canPreview` and
+  ADR 0044's `backendUsable` together, and stops judging `msaccess`
+  availability against the spectrum-table and selected-spectrum operations. In
+  the same change it removes those two operations and their parsers from
+  `crates/proteowizard`, which the owner ratified keeping until then
+  (2026-10-30).
 - Non-mzML outputs through ADR 0055's two runs: implemented in the conversion crate on `be/two-step` (2026-10-30, stacked on draft PR #161) for mgf, text, ms1, ms2, cms1, cms2, mz5 and mzMLb, against the fake provider ([ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md#6-every-other-format-is-written-from-a-private-mzml-intermediate), implementation note). mzXML stays refused. Left: the desktop still refuses these formats before planning (output name and not-adoptable label are interface work; two-phase progress also needs a live step signal the crate does not give yet), SCIEX output sets, and a measurement on the real build under a bounded ProteoWizard hold release.
 - CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
@@ -583,6 +597,11 @@ writer and Rust's ownership of files.
   and base peak intensity, printed to two decimals, matched the stored values
   (installed check, item 5). Read at full precision or decode the arrays; the
   measurement needs a new bounded release of the ProteoWizard hold.
+  **Addressed by ADR 0056 slice 2 once merged** (Rust side and webview
+  commit implemented): the table and the
+  selected spectrum are read natively, `SELECTED_SPECTRUM_PRECISION` is gone,
+  and CSV/TSV write the stored values exactly (tested in Rust). Rechecking the
+  installed item still needs the hold release above.
 - NQ-I's worker `beforeSession` guard throws at `e2e/wdio.pm9-native.conf.ts:201`
   on every attempt and WDIO only logs it, so the checks after it never run;
   `specs[0]` arriving as a `file:///` URL is the unconfirmed suspect.

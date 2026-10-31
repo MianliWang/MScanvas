@@ -386,7 +386,7 @@ describe("M4.2 saving a figure through the real dialog", () => {
     // The document Rust wrote, read back from disk.
     const written = readFileSync(destination, "utf8");
     expect(written).toContain("#format,mscanvas_chromatogram_export");
-    expect(written).toContain("#schema_version,1");
+    expect(written).toContain("#schema_version,2");
     expect(written).toContain("#source,per_scan_spectrum_table");
     expect(written).toContain("#range_scope,full");
     expect(written).toContain(

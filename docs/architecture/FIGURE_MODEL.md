@@ -125,6 +125,11 @@ are not read out of SVG coordinates and the figure is not drawn from the rows.
 | Saving | Rust-owned native dialog, no overwrite, private-sibling publication, no path crosses to React |
 | Figure size and theme | M4.1 fixed 1200×640 light; **M4.2 makes both the user's**, defaulting to the same figure |
 
+> **2026-10-30, ADR 0056 slice 2:** a spectrum is read by MSCanvas's own mzML
+> reader, so its representation and units are what the file declares, and
+> `Unreported` only where it declares none. The data documents moved to new
+> versions: spectrum full source 3 and range 4, chromatogram 2.
+
 ## Second slice — M4.2
 
 PNG, `Copy plot`, and the figure settings all three figure outputs share.

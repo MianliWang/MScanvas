@@ -122,11 +122,12 @@ pub use mzml::{
 };
 pub use mzml_reader::{
     ArrayProblem, ArrayRole, ArrayUnit, BinaryDataType, MAX_DECODED_ARRAY_BYTES,
-    MAX_DECODED_ARRAY_POINTS, MAX_DECODED_SPECTRUM_BYTES, MzmlArray, MzmlOpenError, MzmlPrecursor,
-    MzmlRepresentation, MzmlRetentionTime, MzmlSelectedSpectrum, MzmlSpectrumError,
-    MzmlSpectrumRow, MzmlSpectrumTable, ReaderLimitKind, RequiredValue, RetentionTimeUnit,
-    read_selected_spectrum, read_selected_spectrum_from, read_spectrum_table,
-    read_spectrum_table_from,
+    MAX_DECODED_ARRAY_POINTS, MAX_DECODED_SPECTRUM_BYTES, MAX_METADATA_BYTES, MzmlArray,
+    MzmlDeclared, MzmlMetadata, MzmlMetadataElement, MzmlMetadataKind, MzmlOpenError, MzmlParam,
+    MzmlPolarity, MzmlPrecursor, MzmlRepresentation, MzmlRetentionTime, MzmlRetentionTimeRange,
+    MzmlRunSummary, MzmlSelectedSpectrum, MzmlSpectrumError, MzmlSpectrumRow, MzmlSpectrumTable,
+    ReaderLimitKind, RequiredValue, RetentionTimeUnit, read_selected_spectrum,
+    read_selected_spectrum_from, read_spectrum_table, read_spectrum_table_from,
 };
 pub use output_inspect::{
     FinalOutputVerdict, IntermediateFacts, MzxmlEncoding, MzxmlPrecision, NonMzmlFormat,
@@ -137,11 +138,11 @@ pub use preview::{
     MAX_PREVIEW_TEXT_BYTES, MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind,
     MsLevelBucket, MsLevelCount, NumericPrecisionEvidence, PreviewInputSource,
     PreviewInterpretError, PreviewMalformedKind, PreviewNoResult, PreviewOutcome,
-    PreviewOutputEntry, PreviewOutputManifest, PreviewValue, RetentionTime, RunRetentionTimeRange,
-    RunSummaryResult, SelectedSpectrumResult, SpectrumIdentifier, SpectrumIdentifierKind,
-    SpectrumIdentity, SpectrumIdentityConflict, SpectrumPrecursor, SpectrumRepresentationState,
-    SpectrumTableResult, SpectrumTableRow, TicIntensityOrigin, TicPoint, TicResult, TicSourceOrder,
-    UnitState, interpret_preview,
+    PreviewOutputEntry, PreviewOutputManifest, PreviewValue, RetentionTime, RetentionTimeUnitState,
+    RunRetentionTimeRange, RunSummaryResult, SelectedSpectrumResult, SpectrumIdentifier,
+    SpectrumIdentifierKind, SpectrumIdentity, SpectrumIdentityConflict, SpectrumPrecursor,
+    SpectrumRepresentationState, SpectrumTableResult, SpectrumTableRow, SpectrumValueOrigin,
+    TicIntensityOrigin, TicPoint, TicResult, TicSourceOrder, ValueUnitState, interpret_preview,
 };
 pub use process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,
