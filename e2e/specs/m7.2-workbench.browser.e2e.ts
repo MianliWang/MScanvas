@@ -69,19 +69,42 @@ async function capture(label: string) {
     expect(control.y + control.height).toBeLessThanOrEqual(measured.css.height);
   }
 }
+/** The search's clear: the field's icon button, or the no-match state's own button of that name. */
+const CLEAR_SEARCH = '//button[@aria-label="Clear search" or normalize-space()="Clear search"]';
+/** An icon button since the rebuild (spec 3.3), named by its label. */
+const UNDO_ORGANIZATION = 'button[aria-label="Undo organization"]';
+/** The roster footer's list menu (owner review): Remove highlighted, Clear list, New group. */
+async function listAction(item: "remove" | "clear" | "new-group") {
+  await browser.$("[data-roster-list-menu]").click();
+  await browser.$(`[data-roster-${item}]`).click();
+}
 async function newGroup(name: string) {
-  await browser.$("button=New group").click();
+  await listAction("new-group");
   await browser.$("#organization-group-name").setValue(name);
   await browser.$("button=Save group").click();
   await browser.$(".group-name-dialog").waitForExist({ reverse: true });
+}
+/**
+ * The highlight and its hidden part, which head the list menu since the
+ * footer became one row (direction A 2.1): read from the open menu, which is
+ * then closed. With `backToRow`, the keyboard goes back to the row that holds
+ * the list's tab stop, as it was before the menu took it.
+ */
+async function highlightContext(backToRow = false): Promise<string> {
+  await browser.$("[data-roster-list-menu]").click();
+  const text = await browser.$(".roster-menu-context").getText();
+  await browser.keys("Escape");
+  await browser.$(".roster-menu-context").waitForExist({ reverse: true });
+  if (backToRow) await browser.execute(() => document.querySelector<HTMLElement>('.grouped-roster [data-handle][tabindex="0"]')?.focus());
+  return text;
 }
 async function locale(value: "en" | "zh-CN") {
   // The shared table confirms every save as English, and the shell adopts what
   // a save confirms (PM9 baseline §11).
   await readBackSavedPreferences();
   await browser.$("[data-settings-entry]").click();
-  await browser.$(`[data-settings-dialog] input[value="${value}"]`).click();
-  await browser.$("[data-settings-dialog]").$(value === "en" ? "button=Apply" : "button=应用").click();
+  await browser.$(`[data-settings-dialog] [role="radio"]:has([data-setting-value="${value}"])`).click();
+  await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
 async function viewerAnnouncement() {
@@ -153,7 +176,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       expect(await consoleEntries()).toEqual([]);
     }
   });
-  it("review regression: keeps empty, reading and failed evidence reachable when details are unavailable", async () => {
+  it("review regression: keeps empty, reading and failed evidence reachable while details have nothing to show", async () => {
     for (const language of ["en", "zh-CN"] as const) {
       const table: Record<string, unknown> = ipcTable();
       table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
@@ -165,15 +188,20 @@ describe("M7.2 workbench shell and grouped roster", () => {
       // "Localization and accessibility coverage"); it was English in both.
       const backendFailure = language === "en" ? "Something went wrong while talking to the MSCanvas backend." : "与 MSCanvas 后端通信时出现问题。";
       const details = browser.$('[aria-controls="workbench-inspector"]');
+      const nothingToShow = language === "en" ? "Read an acquisition preview to see its details." : "读取采集预览后可查看详情。";
       const unavailable = async (state: string) => {
-        // Refused but focusable, so its reason is reachable (PM9.2 L20).
-        expect(await details.getAttribute("aria-disabled")).toBe("true");
-        expect(await details.getAttribute("aria-expanded")).toBe("false");
-        expect(await browser.$("#workbench-inspector").isDisplayed()).toBe(false);
+        // Never refused (GOALS S3, B4): Details always opens and, with nothing
+        // to describe, says so in one line. No drawer covers the evidence
+        // unless a press opened one.
+        expect(await details.getAttribute("aria-disabled")).toBe(null);
+        expect(await browser.$(".workbench-shell").getAttribute("data-drawer")).toBe(null);
+        if (await browser.$("#workbench-inspector").isDisplayed()) {
+          expect(await browser.$("#workbench-inspector").getText()).toBe(nothingToShow);
+        }
         expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(true);
         await capture(`review-inspector-${language}-${state}`);
       };
-      await browser.$("#workbench-evidence .empty-state").waitForDisplayed();
+      await browser.$("#workbench-evidence .ui-empty-state").waitForDisplayed();
       await unavailable("wide-empty");
       await metrics(960, 640, 2);
       await unavailable("empty");
@@ -182,7 +210,9 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await browser.$(row(selectedFile.handle)).click();
       await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
       await browser.$(".workbench-home").click();
-      expect(await browser.$("#workbench-evidence strong").getText()).toBe(language === "en" ? "Reading the acquisition…" : "正在读取采集…");
+      // The wait names the file it is reading.
+      expect(await browser.$("#workbench-evidence strong").getText()).toBe(
+        language === "en" ? `Reading ${selectedFile.fileName}…` : `正在读取 ${selectedFile.fileName}…`);
       await unavailable("reading");
       // A held call resolves at release; a malformed DTO exercises the real
       // adapter's retryable protocol failure without modifying the harness.
@@ -192,9 +222,10 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await unavailable("failed");
       await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
       await browser.$("#workbench-evidence").$(language === "en" ? "button=Try reading this file again" : "button=重试读取此文件").click();
-      await browser.waitUntil(async () => (await details.getAttribute("aria-disabled")) === null); await details.click();
+      await browser.$("#workbench-evidence .viewer-file").waitForDisplayed();
+      if (await details.getAttribute("aria-expanded") !== "true") await details.click();
       await browser.$("#workbench-inspector").waitForDisplayed();
-      expect(await browser.$("#workbench-inspector").getText()).toContain(selectedFile.fileName);
+      await browser.waitUntil(async () => (await browser.$("#workbench-inspector").getText()).includes(selectedFile.fileName));
       await capture(`review-inspector-${language}-loaded`);
       // Re-read with an already requested inspector. Availability must close it
       // immediately, even before a resize folds the constrained layout.
@@ -203,7 +234,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       // toggle would close it (panelPresentation.ts: request versus suppression).
       await revealRosterRow(selectedFile.handle);
       await holdInvoke("open_mzml_preview");
-      await browser.$(".dataset-roster-actions button:nth-child(3)").click();
+      await browser.$(row(selectedFile.handle)).click();
       await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
       await unavailable("already-open-reading");
       await metrics(960, 640, 2);
@@ -216,7 +247,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     }
   });
   it("review regression: reveals accepted roster previews and leaves rejected activation on its current surface", async () => {
-    for (const [width, language, activation] of [[960, "en", "pointer"], [1366, "zh-CN", "keyboard"], [960, "zh-CN", "button"]] as const) {
+    for (const [width, language, activation] of [[960, "en", "pointer"], [1366, "zh-CN", "keyboard"], [960, "zh-CN", "keyboard"]] as const) {
       const table: Record<string, unknown> = ipcTable();
       table.subscribe_workspace_drop_updates = { reservationId: "browser-m72-reservation" };
       table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile, { ...selectedFile, handle: "unreadable-raw", fileName: "研究.raw", sourceKind: "thermo_raw" }] };
@@ -235,8 +266,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       expect(await ipcCalls()).toEqual(before);
       await holdInvoke("open_mzml_preview");
       if (activation === "pointer") await browser.$(row(selectedFile.handle)).click();
-      else if (activation === "keyboard") await browser.keys("Enter");
-      else await browser.$(".dataset-roster-actions button:nth-child(3)").click();
+      else await browser.keys("Enter");
       await browser.waitUntil(async () => await heldCallers("open_mzml_preview") === 1);
       expect(await browser.$(".workbench-shell").getAttribute("data-surface")).toBe("workbench");
       expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(true);
@@ -277,13 +307,14 @@ describe("M7.2 workbench shell and grouped roster", () => {
       const retry = browser.$(language === "en" ? "button=Try reading it again" : "button=重试读取列表");
       await retry.waitForDisplayed();
       expect(await browser.$("#dataset-roster-matches").isExisting()).toBe(false);
-      expect(await browser.$(".dataset-roster-actions button:first-child").isEnabled()).toBe(true);
+      expect(await browser.$("[data-add-files]").getAttribute("aria-disabled")).toBe(null);
       expect(await browser.$('[data-live-region="search"]').getProperty("textContent")).toBe("");
       await capture(`review-capacity-${language}-failed`);
       await setInvokeResult("get_workspace_roster", { capacity: 1024, datasets: [] });
       await retry.click();
       await browser.waitUntil(async () => (await browser.$("#dataset-roster-matches").getText()).includes("1024"));
-      expect(await browser.$("#dataset-roster-matches").getAttribute("title")).toContain("1024");
+      // The visible tag is the bare count; the whole sentence is its title (rebuild spec 3.3).
+      expect(await browser.$(".roster-count-tag").getAttribute("title")).toContain("1024");
       expect(await browser.$('[data-live-region="search"]').getProperty("textContent")).toContain("1024");
       await capture(`review-capacity-${language}-known`);
       expect(await consoleEntries()).toEqual([]);
@@ -316,7 +347,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
       await capture(`review-group-dissolve-${language}-before`);
       await browser.$(trigger).click(); await browser.keys(["End", "Enter"]);
       await browser.$(group).waitForExist({ reverse: true });
-      await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches(".organization-toolbar button:first-child") === true));
+      await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true));
       expect(await browser.$(row(selectedFile.handle)).getAttribute("data-group")).toBe(originalGroup);
       expect(await browser.$(`${row(selectedFile.handle)} input[type="checkbox"]`).isSelected()).toBe(membership);
       expect(await ipcCalls()).toEqual(before);
@@ -340,7 +371,8 @@ describe("M7.2 workbench shell and grouped roster", () => {
       const before = await ipcCalls();
       await browser.$("#dataset-roster-search").setValue(selectedFile.fileName);
       expect(await browser.$(".roster-empty strong").getText()).toBe(language === "en" ? "No matching rows are visible" : "没有可见的匹配行");
-      expect(await browser.$(".roster-empty span").getText()).toBe(language === "en" ? "Clear the search or expand a group. Hidden highlighted rows remain selected." : "请清除搜索或展开分组。隐藏的高亮行仍保持选中。");
+      // The heading and Clear search say it; no help sentence restates them.
+      expect(await browser.$(".roster-empty span").isExisting()).toBe(false);
       expect(await browser.$(`${group} .group-count`).getText()).toBe("1");
       await capture(`review-collapsed-match-${language}`);
       await browser.$(`${group} .group-disclosure`).click();
@@ -385,15 +417,15 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await search.setValue("Tail_"); await browser.$(row("menu-80")).click();
     await browser.performActions([{ type: "key", id: "menu-tail-select", actions: [{ type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" }] }]);
     await browser.releaseActions();
-    expect(await browser.$(".roster-selection-context").getText()).toContain("150 highlighted");
+    expect(await highlightContext(true)).toContain("150 highlighted");
     await browser.$(`${row("menu-80")} .row-menu-trigger`).click();
     await browser.$('[role="menuitem"]=Tail').click();
     await search.setValue("Move_"); await browser.$(row("menu-0")).click();
     await browser.performActions([{ type: "key", id: "menu-source-select", actions: [{ type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" }] }]);
     await browser.releaseActions();
-    expect(await browser.$(".roster-selection-context").getText()).toContain("80 highlighted");
+    expect(await highlightContext(true)).toContain("80 highlighted");
     await browser.keys("End"); await browser.$(row("menu-79")).waitForDisplayed();
-    await browser.$("button=Clear search").click();
+    await browser.$(CLEAR_SEARCH).click();
     await browser.$('[data-group-id="group-1"] .group-disclosure').click();
     await browser.$(`${row("menu-79")} .row-menu-trigger`).click();
     expect(await browser.$('.grouped-roster[data-windowed="true"]').isExisting()).toBe(true);
@@ -414,9 +446,9 @@ describe("M7.2 workbench shell and grouped roster", () => {
       selection: document.querySelector(".roster-selection-context")?.textContent,
     })) });
     await browser.waitUntil(() => browser.execute(() => !(Reflect.get(window, "__m72MenuTargetBefore") as Element).isConnected));
-    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches(".organization-toolbar button:first-child") === true));
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true));
     expect(await ipcCalls()).toEqual(before);
-    expect(await browser.$(".roster-selection-context").getText()).toContain("80 highlighted · 80 hidden");
+    expect(await highlightContext()).toContain("80 highlighted · 80 hidden");
     await capture("review-menu-unmounted-target-fallback");
     expect(await consoleEntries()).toEqual([]);
   });
@@ -440,7 +472,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$('[role="menuitem"]=Session group 研究').click();
     expect(await browser.$(row("sample-1")).getAttribute("data-group")).toBe("group-1");
     expect(await ipcCalls()).toEqual(before);
-    await browser.$("button=Undo organization").click();
+    await browser.$(UNDO_ORGANIZATION).click();
     expect(await browser.$(row("sample-1")).getAttribute("data-group")).toBe("ungrouped");
     await browser.$(".workbench-navigation button:nth-child(2)").click();
     await browser.$("#workbench-conversion").waitForDisplayed();
@@ -458,7 +490,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     expect(await browser.$(row(selectedFile.handle)).getAttribute("data-group")).toBe("group-1");
     expect(await ipcCalls()).toEqual(before);
     await capture("05-pointer-drop");
-    await browser.$("button=Undo organization").click();
+    await browser.$(UNDO_ORGANIZATION).click();
     await startDrag(`${row("sample-1")} .row-drag-handle`);
     await dragOver('[data-group-id="group-1"]');
     await browser.keys("Escape");
@@ -481,7 +513,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await capture("06-hidden-payload-collapsed-target");
     await dropDrag();
     expect(await browser.$('[data-group-id="group-1"] .group-count').getText()).toBe("3");
-    await browser.$("button=Clear search").click();
+    await browser.$(CLEAR_SEARCH).click();
     await browser.$('[data-group-id="group-1"] .group-disclosure').click();
     for (const handle of [selectedFile.handle, "sample-1", "sample-2"]) expect(await browser.$(row(handle)).getAttribute("data-group")).toBe("group-1");
     await browser.performActions([{ type: "key", id: "roster-modifier", actions: [{ type: "keyDown", value: "\uE009" }] }]);
@@ -541,7 +573,9 @@ describe("M7.2 workbench shell and grouped roster", () => {
       { type: "keyDown", value: "\uE009" }, { type: "keyDown", value: "a" }, { type: "keyUp", value: "a" }, { type: "keyUp", value: "\uE009" },
     ] }]);
     await browser.releaseActions();
-    expect(await browser.$(".roster-selection-context").getText()).toBe("200 highlighted · 0 hidden · 0 checked");
+    // The footer counts the checked rows; the highlight heads the list menu.
+    expect(await browser.$(".roster-selection-context").getText()).toBe("0 checked");
+    expect(await highlightContext()).toBe("200 highlighted");
     expect(await browser.$$(".grouped-roster [data-handle]").length).toBeLessThan(80);
     const before = await ipcCalls();
     await startDrag(`${row("wide-0")} .row-drag-handle`);
@@ -574,12 +608,12 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$('[data-group-id="group-1"]').waitForExist();
     expect(await browser.$('[data-group-id="group-1"] .group-count').getText()).toBe("200");
     expect(await ipcCalls()).toEqual(before);
-    await browser.$("button=Undo organization").click();
+    await browser.$(UNDO_ORGANIZATION).click();
     expect(await browser.$(row("wide-0")).getAttribute("data-group")).toBe("ungrouped");
     await browser.$("[data-settings-entry]").click();
-    await browser.$('[data-settings-dialog] input[value="zh-CN"]').click();
-    await browser.$('[data-settings-dialog] input[value="compact"]').click();
-    await browser.$('[data-settings-dialog]').$("button=应用").click();
+    await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="zh-CN"])').click();
+    await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="compact"])').click();
+    await browser.$("[data-settings-close]").click();
     await browser.$('[data-settings-dialog]').waitForExist({ reverse: true });
     await metrics(1200, 800, 1.25); await capture("11-zh-compact-1200");
     await metrics(960, 640, 2);
@@ -588,7 +622,9 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$('[aria-controls="workbench-roster"]').click();
     await browser.$("#workbench-roster").waitForDisplayed();
     await capture("13-zh-compact-960-roster");
-    expect(await browser.$("#workbench-evidence").isDisplayed()).toBe(false);
+    // The roster is a modal drawer over the evidence at this width (rebuild
+    // spec 3.1): the evidence stays on screen, behind it and inert.
+    expect(await browser.$("#workbench-evidence").getAttribute("inert")).not.toBeNull();
     await browser.$("#dataset-roster-search").setValue("采集_199");
     await browser.$(row("wide-199")).waitForDisplayed();
     await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
@@ -620,7 +656,8 @@ describe("M7.2 workbench shell and grouped roster", () => {
     // original in zh-CN since M7.5 (ownedErrorMessages.ts, `errorReportedAsSent`;
     // docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md, "Localization and
     // accessibility coverage").
-    expect(await viewerAnnouncement()).toBe("无法读取工作区列表. 后端的原始报告（未翻译）：Controlled roster refusal 原文");
+    // The message and its detail are joined in the locale's own punctuation.
+    expect(await viewerAnnouncement()).toBe("无法读取工作区列表。后端的原始报告（未翻译）：Controlled roster refusal 原文");
     await capture("16a-zh-refused-announcement");
     await locale("en");
     const extra = [0, 1, 2].map(index => ({ ...selectedFile, handle: `async-${index}`, fileName: `异步样本_${index}.raw`, sourceKind: "thermo_raw" }));
@@ -692,7 +729,7 @@ describe("M7.2 workbench shell and grouped roster", () => {
     await browser.$(row("async-1")).click();
     await holdInvoke("remove_workspace_datasets");
     await setInvokeResult("remove_workspace_datasets", { roster: { datasets: [selectedFile, extra[0], extra[2]], capacity: 1024 }, removedHandles: ["async-1"], unknownHandles: [] });
-    await browser.$(".dataset-roster-actions button:nth-last-child(2)").click();
+    await listAction("remove");
     await browser.waitUntil(async () => (await heldCallers("remove_workspace_datasets")) === 1);
     const removalCalls = await ipcCalls();
     await startDrag(`${row("async-1")} .row-drag-handle`);

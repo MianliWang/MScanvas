@@ -1,29 +1,31 @@
 import { announceConversion } from "./conversionMessages";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
 import { ProjectPanel, busyKey } from "../project/ProjectPanel";
 import { ProvenanceDetails } from "../project/ProvenanceDetails";
 import { useProject } from "../project/useProject";
 import { WorkbenchHeader, type WorkbenchSurface } from "../workbench/WorkbenchHeader";
-import type { ShellContextFacts } from "../workbench/shellContext";
+import { shellContextItems } from "../workbench/shellContext";
+import { STATUS_BACKEND_ID, STATUS_BUSY_ID, WorkbenchStatusBar, statusBusyReason, statusItemId, type StatusBackend } from "../workbench/StatusBar";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
+import { Button, EmptyState, Icon, IconButton, Tabs } from "../../components/ui";
 
 import { ActiveClearDialog } from "./ActiveClearDialog";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 import { BackendStatus } from "./BackendStatus";
+import { presentBackend } from "./backendPresentation";
 import { Chromatogram } from "./Chromatogram";
-import { ChromatogramExportPanel, ChromatogramExportResult, LinkedFigureResult } from "./ChromatogramExportPanel";
+import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportTools, LinkedFigureResult, describeUnavailable } from "./ChromatogramExportPanel";
 import { resolveConversionScope } from "./conversionScope";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
-import { PreviewSummary } from "./PreviewSummary";
+import { InspectorClose, PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
-import { QuickFigureActions } from "./QuickFigureActions";
-import type { FigurePreviewKind } from "./contracts";
-import { SpectrumTable } from "./SpectrumTable";
+import { SOURCE_KIND_LABEL, type FigurePreviewKind } from "./contracts";
+import { SpectrumTable, scanStepReasonId } from "./SpectrumTable";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
@@ -37,13 +39,15 @@ export function PreviewWorkspace() {
   const workspace = usePreviewWorkspace();
   const [activeClear, setActiveClear] = useState<{ returnTo: HTMLElement | null } | null>(null);
   const [figureDialog, setFigureDialog] = useState<{ kind: FigurePreviewKind; returnTo: HTMLElement | null } | null>(null);
-  const openFigure = (kind: FigurePreviewKind) => setFigureDialog({ kind, returnTo: document.activeElement instanceof HTMLElement ? document.activeElement : null });
+  const openFigure = (kind: FigurePreviewKind, returnTo: HTMLElement | null = document.activeElement instanceof HTMLElement ? document.activeElement : null) => setFigureDialog({ kind, returnTo });
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
   const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
-  /** The contextual region, so focus can follow a request to reveal it. */
+  /** The open file's tab (direction A): kept across files and surfaces, so switching loses nothing. */
+  const [viewerView, setViewerView] = useState<"spectra" | "scans" | "metadata">("spectra");
+  /** The two side panels, so focus can follow a drawer that opens. */
   const inspectorRef = useRef<HTMLElement | null>(null);
-  const pendingInspectorFocus = useRef(false);
+  const rosterRef = useRef<HTMLElement | null>(null);
   // The panels are owned by the preference provider, which is the one place
   // that knows both what the user asked for and what the window can fit. What
   // is left here is the session fact the provider has no business knowing:
@@ -168,22 +172,10 @@ export function PreviewWorkspace() {
         : null,
     [preview],
   );
-  /**
-   * Whether the contextual region has anything to describe *on this surface*.
-   *
-   * It was a loaded acquisition and nothing else, which left the Details
-   * control disabled on the Project surface -- where the region is exactly
-   * where provenance belongs. Availability is a property of the surface the
-   * user is on, so each surface answers for itself. Deliberately not a
-   * registry: there are two surfaces with contextual detail and this is what
-   * they are.
-   */
-  const detailsAvailable =
-    surface === "project" ? project.inspecting !== null : preview.status === "loaded";
-  // The request is the preference; availability is not. A details panel asked
-  // for while nothing is loaded stays asked for, and appears the moment a run
-  // does -- it never becomes authority to load one.
-  const detailsOpen = panels.present.details && detailsAvailable;
+  // Details always opens (GOALS S3, B4): with nothing to describe on this
+  // surface it says so in one line, so its toggle is never a refusal. It never
+  // becomes authority to load anything.
+  const detailsOpen = panels.present.details;
   const evidenceRef = useRef<HTMLElement | null>(null);
   const pendingRevealFocus = useRef(false);
   useLayoutEffect(() => {
@@ -193,15 +185,59 @@ export function PreviewWorkspace() {
     }
   }, [surface, rosterOpen, detailsOpen]);
   /**
-   * Whether the chromatogram's export surface is open.
-   *
-   * Closed to begin with, and the control that opens it sits in the panel's
-   * existing header row: the three-panel column's floors are measured, and a
-   * disclosure that added a row to the body would push a control out of a panel
-   * that clips. Local to this component -- it is a preference about what is on
-   * screen, not a fact about the run.
+   * At 1050 px and below the roster and Details are drawers over the workspace
+   * card (spec 3.1). While one is open it is modal: the rest of the card and
+   * the status bar are inert under a scrim, the header stays live so its toggle
+   * can close it, and the keyboard moves in when it opens. Esc and the scrim
+   * fold it for space without touching the stored request, and Esc or its ×
+   * gives the keyboard back to the control that opened it (the header toggle
+   * when that control is gone).
    */
-  const [chromatogramExportOpen, setChromatogramExportOpen] = useState(false);
+  const drawer = !constrained ? null : rosterOpen ? "roster" : detailsOpen ? "details" : null;
+  const openedDrawer = useRef<typeof drawer>(null);
+  const drawerOpener = useRef<HTMLElement | null>(null);
+  const drawerReturn = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const was = openedDrawer.current;
+    openedDrawer.current = drawer;
+    if (drawer === null) {
+      // Spent in the commit that lifts `inert`, before which the opener
+      // cannot take the focus.
+      const target = drawerReturn.current;
+      drawerReturn.current = null;
+      drawerOpener.current = null;
+      if (target !== null && target.isConnected && target.closest("[hidden], [inert]") === null) target.focus({ preventScroll: true });
+      return;
+    }
+    if (drawer === was) return;
+    const region = drawer === "roster" ? rosterRef.current : inspectorRef.current;
+    drawerOpener.current = document.activeElement instanceof HTMLElement && region?.contains(document.activeElement) !== true
+      ? document.activeElement : null;
+    if (region !== null && !region.contains(document.activeElement)) region.focus({ preventScroll: true });
+  }, [drawer]);
+  const closeDrawer = (returnFocus: boolean) => {
+    if (drawer === null) return;
+    const region = drawer === "roster" ? rosterRef.current : inspectorRef.current;
+    const opener = drawerOpener.current;
+    drawerReturn.current = !returnFocus ? null
+      : opener !== null && opener !== document.body && opener.isConnected && region?.contains(opener) !== true ? opener
+      : document.querySelector<HTMLElement>(`.workbench-header [aria-controls="${drawer === "roster" ? "workbench-roster" : "workbench-inspector"}"]`);
+    panels.navigate();
+  };
+  const closeDrawerRef = useRef(closeDrawer);
+  closeDrawerRef.current = closeDrawer;
+  const closeInspector = useCallback(() => closeDrawerRef.current(true), []);
+  const drawerKeys = (event: ReactKeyboardEvent<HTMLElement>) => {
+    // Only from inside the drawer's own DOM: a menu or dialog portalled out of
+    // it handles its own Esc, and React would bubble that one here too.
+    // A drag in the roster owns Esc: it cancels the drag and nothing else.
+    // dnd-kit's pointer sensor hears the key at the body, after this handler.
+    if (event.key !== "Escape" || drawer === null || event.defaultPrevented || event.nativeEvent.isComposing
+      || !event.currentTarget.contains(event.target as Node)
+      || event.currentTarget.querySelector('[data-drag-active="true"]') !== null) return;
+    event.preventDefault();
+    closeDrawer(true);
+  };
   const [restoreAddFolderFocusToken, setRestoreAddFolderFocusToken] = useState(0);
   const [restoreAddFilesFocusToken, setRestoreAddFilesFocusToken] = useState(0);
   const [activeClearFocusReturn, setActiveClearFocusReturn] = useState<ActiveClearFocusReturn | null>(null);
@@ -266,21 +302,14 @@ export function PreviewWorkspace() {
   const backendUsable =
     workspace.backend.status === "resolved" &&
     workspace.backend.availability.state === "available";
-  // Deliberately not the negation of the above. This is the one state that has
-  // something specific to tell the user about installing ProteoWizard, and
-  // saying it while a check is still running would be a guess.
-  const backendUnavailable =
-    workspace.backend.status === "resolved" &&
-    workspace.backend.availability.state === "unavailable";
-  // The banner has nothing to act on only while a usable installation stands
-  // and nothing is being checked, superseded or held back by the conversion
-  // lane; then it folds to a phrase in the header and costs the workspace no
-  // height (PM9 L10). Every other state keeps it on screen. Whether the reader
-  // opened it again is presentation for this session and stored nowhere.
-  const [backendExpanded, setBackendExpanded] = useState(false);
-  const backendQuiet =
-    backendUsable && !workspace.backendReadingStale && !workspace.conversion.backendQuarantined;
-  const backendCollapsed = backendQuiet && !workspace.backendBusy && !backendExpanded;
+  // Copy that offers dropping files only while dropping files works.
+  const dropAvailable = workspace.dropSubscriptionStatus === "available";
+  // ProteoWizard is an icon and a short label in the status bar; its details
+  // open over the bar from there. Whether they are open is presentation for
+  // this session and stored nowhere.
+  const [backendOpen, setBackendOpen] = useState(false);
+  const closeBackend = useCallback(() => { setBackendOpen(false); }, []);
+  const backendView = presentBackend(workspace.backend, workspace.backendReadingStale, t, workspace.conversion.backendQuarantined);
 
   // Curating the workspace is not backend work, so it stays available when no
   // ProteoWizard is installed. What it waits for is a picker already on screen,
@@ -380,22 +409,6 @@ export function PreviewWorkspace() {
     !workspace.previewBackendBusy &&
     (!workspace.conversion.busy || workspace.conversion.adopting) &&
     !workspace.conversion.backendQuarantined;
-  // The evidence pane's one next step, reading the retained acquisition again,
-  // holds the filled accent while it is on screen; `Add files…` gives it up
-  // rather than offer a second (PM9 UI-19). In the constrained layout the two
-  // are never on screen together -- an open roster takes the pane's place --
-  // so there it keeps the accent.
-  const reopenOffered =
-    !constrained &&
-    surface === "workbench" &&
-    workspace.activeDataset !== null &&
-    preview.status !== "loaded" &&
-    preview.status !== "opening" &&
-    preview.status !== "failed";
-  // The empty Project's New project is that surface's one next step (PM9.7
-  // F2), so `Add files…` gives up the accent beside it for the same reason.
-  const addFilesQuiet =
-    reopenOffered || (!constrained && surface === "project" && !project.state.open);
   // There is deliberately no `canConvert` here any more. Converting had an
   // expression of its own on this line, strictly wider than the guard the
   // operation applied, and the panel's `Retry` answered to it as well -- three
@@ -418,30 +431,95 @@ export function PreviewWorkspace() {
   }, [describeConversion, describeKey]);
 
   /**
-   * What the header's context line describes.
+   * What the status bar says about work and the project.
    *
-   * Every field is read from the owner that already holds it -- the project
-   * session, the viewer, the scope the Conversion surface resolves and the
-   * conversion lane -- so the line cannot come to disagree with the surface it
-   * points at. A stop that was asked for reads as stopping, as the Conversion
-   * surface reads it, before the lane itself says so.
+   * Every field is read from the owner that already holds it, so the bar
+   * cannot come to disagree with the surface it points at. A stop that was
+   * asked for reads as stopping, as the Conversion surface reads it, before the
+   * lane itself says so.
    */
-  const shellContext: ShellContextFacts = {
+  const statusItems = shellContextItems({
     project: project.state.open ? { name: project.state.name, unsaved: project.state.dirty } : null,
     projectActivity: busyKey(project.busy),
-    viewing: previewFile === null ? null : {
-      name: previewFile.fileName,
-      context: previewFile.relativeContext,
-      spectrumIndex: spectrum.status === "loaded" ? spectrum.spectrum.index : null,
-    },
-    conversionScope: roster.datasets.length === 0
-      ? null
-      : { scope: resolvedScope.scope, eligible: resolvedScope.handles.length },
     conversionStatus: workspace.conversion.state.status === "running" && workspace.conversion.stopping
       ? "stopping"
       : workspace.conversion.state.status,
-    inspecting: project.provenance,
+  }, t);
+  /**
+   * Why adding, re-reading or changing the list waits: the visible reason the
+   * refused workspace actions point at. `null` exactly when none of them is
+   * refused, so no control ever points at a reason that is not there.
+   */
+  const busyReason = statusBusyReason({
+    backendBusy: workspace.backendBusy,
+    pickerBusy: workspace.pickerBusy,
+    folderBusy: workspace.folderBusy,
+    dropBusy: workspace.dropBusy,
+    workspaceBusy: workspace.workspaceBusy,
+    projectAdmitting: project.busy === "admitting",
+    conversionBusy: workspace.conversion.busy,
+    rosterLoad: workspace.rosterLoad.status,
+  }, t);
+  const backendItem: StatusBackend = {
+    tone: backendView.status.tone,
+    text: backendView.status.label,
+    expanded: backendOpen,
+    onToggle: () => setBackendOpen((was) => !was),
   };
+  /**
+   * The visible reason a refused read points at: the backend item when the
+   * backend is why, the busy reason when a workspace change is.
+   */
+  const previewReasonId = !backendUsable || workspace.backendBusy || workspace.conversion.backendQuarantined
+    ? STATUS_BACKEND_ID
+    : busyReason !== null ? STATUS_BUSY_ID : undefined;
+  /**
+   * A vendor row the reader picked: it is never previewed, so the evidence
+   * says what it is and offers its one route, conversion (spec 3.6).
+   */
+  const focusedVendor = roster.focused === null || !roster.selected.has(roster.focused)
+    ? null
+    : roster.datasets.find((row) => row.handle === roster.focused && row.sourceKind !== "mzml") ?? null;
+  const evidenceState = preview.status !== "empty" ? preview.status
+    // While the list is being read, or could not be, the evidence never sends
+    // the reader to a list that has nothing in it yet.
+    : roster.datasets.length === 0 ? (workspace.rosterLoad.status === "ready" ? "first-run"
+      : workspace.rosterLoad.status === "failed" ? "roster-failed" : "roster-loading")
+    : focusedVendor !== null ? "vendor"
+    // Only where setting ProteoWizard up is the way forward: a restart is not.
+    : backendView.kind === "missing" || backendView.kind === "unsupported" ? "backend"
+    : "idle";
+  /** Whether the evidence shows a filled primary of its own (vendor, re-read, first run). */
+  const evidenceHasPrimary = surface === "workbench" && preview.status === "empty"
+    && (evidenceState === "vendor" || (evidenceState === "first-run" && !rosterOpen)
+      || (evidenceState === "idle" && workspace.activeDataset !== null));
+  /**
+   * An evidence action that shows another surface hides the button that was
+   * pressed, so the keyboard follows to the surface it asked for rather than
+   * being left on the body.
+   */
+  const pendingSurfaceFocus = useRef<"conversion" | "project" | null>(null);
+  useLayoutEffect(() => {
+    if (pendingSurfaceFocus.current === null || pendingSurfaceFocus.current !== surface) return;
+    pendingSurfaceFocus.current = null;
+    document.getElementById(`workbench-${surface}`)?.focus({ preventScroll: true });
+  }, [surface]);
+  /**
+   * The first run's Add buttons leave when the first rows arrive. A reader who
+   * was on one continues from the evidence, which now says what to do next,
+   * rather than from the body. Read in the ref's cleanup, while the node is
+   * still in the document.
+   */
+  const firstRunHeldFocus = useRef(false);
+  const firstRunActions = useCallback((node: HTMLDivElement | null) => {
+    if (node === null) return;
+    return () => { firstRunHeldFocus.current = node.contains(document.activeElement); };
+  }, []);
+  useLayoutEffect(() => {
+    if (evidenceState === "first-run" || !firstRunHeldFocus.current) return;
+    firstRunHeldFocus.current = false;
+    if (document.activeElement === null || document.activeElement === document.body) evidenceRef.current?.focus({ preventScroll: true });
+  }, [evidenceState]);
 
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
@@ -457,13 +535,12 @@ export function PreviewWorkspace() {
   );
 
   return (
-    <div className="app-shell workbench-shell" data-surface={surface} data-roster-open={rosterOpen} data-details-open={detailsOpen} data-settings-return-target="" tabIndex={-1}>
+    <div className="app-shell workbench-shell" data-surface={surface} data-roster-open={rosterOpen} data-details-open={detailsOpen}
+      data-drawer={drawer ?? undefined} data-settings-return-target="" tabIndex={-1}>
       <WorkbenchHeader surface={surface} onNavigate={setSurface}
-        detailsAvailable={detailsAvailable} rowCount={roster.datasets.length}
-        busy={workspace.conversion.busy}
-        retained={workspace.conversion.state.status === "terminal"} dropStatus={workspace.dropSubscriptionStatus}
-        projectBusy={project.busy !== "idle"} context={shellContext}
-        backend={backendQuiet ? { expanded: !backendCollapsed, onToggle: () => setBackendExpanded(backendCollapsed) } : null} />
+        conversionBusy={workspace.conversion.busy}
+        conversionRetained={workspace.conversion.state.status === "terminal"}
+        projectBusy={project.busy !== "idle"} />
 
       {workspace.dropPresentation.status === "idle" ? null : (
         <div
@@ -477,11 +554,6 @@ export function PreviewWorkspace() {
                 ? t("dropRelease", { count: workspace.dropPresentation.itemCount })
                 : t("dropAdding")}
             </strong>
-            {workspace.dropPresentation.status === "importing" ? (
-              <span>
-                {t("dropInspecting")}
-              </span>
-            ) : null}
           </div>
         </div>
       )}
@@ -496,8 +568,9 @@ export function PreviewWorkspace() {
           onUseAutomaticDiscovery={workspace.useAutomaticDiscovery}
           readingSuperseded={workspace.backendReadingStale}
           state={workspace.backend}
-          collapsed={backendCollapsed}
-          onEngage={() => setBackendExpanded(true)}
+          laneQuarantined={workspace.conversion.backendQuarantined}
+          open={backendOpen}
+          onClose={closeBackend}
         />
 
         {/* A picker that would not open is its own problem. It never replaces
@@ -509,17 +582,16 @@ export function PreviewWorkspace() {
             {/* The same action as `Add files…`, so it is refused in the same
                 states. An enabled control that returns at a guard tells the
                 user their retry failed again. */}
-            <button
-              className="link-button"
-              disabled={!canAcquire}
+            <Button
+              variant="secondary"
+              size="sm"
+              refused={!canAcquire}
+              reasonId={STATUS_BUSY_ID}
               onClick={workspace.addFiles}
-              type="button"
             >
               {t("retryFiles")}
-            </button>
-            <button className="link-button" onClick={workspace.dismissPickerError} type="button">
-              {t("dismiss")}
-            </button>
+            </Button>
+            <IconButton className="notice-dismiss" size="sm" icon={<Icon name="close" />} label={t("dismiss")} onClick={workspace.dismissPickerError} />
           </div>
         )}
 
@@ -533,9 +605,11 @@ export function PreviewWorkspace() {
           <div className="notice notice-danger" role="status">
             <strong>{t("folderFailed")}</strong>
             <span>{ownedErrorMessage(workspace.folderError, t)}</span>
-            <button
-              className="link-button"
-              disabled={!canAddFolder}
+            <Button
+              variant="secondary"
+              size="sm"
+              refused={!canAddFolder}
+              reasonId={STATUS_BUSY_ID}
               onClick={(event) => {
                 // This retry is transient: starting it clears the notice and
                 // removes the button that owns the keyboard. Hand that ownership
@@ -546,12 +620,14 @@ export function PreviewWorkspace() {
                 }
                 workspace.addFolder();
               }}
-              type="button"
             >
               {t("chooseAnotherFolder")}
-            </button>
-            <button
-              className="link-button"
+            </Button>
+            <IconButton
+              className="notice-dismiss"
+              size="sm"
+              icon={<Icon name="close" />}
+              label={t("dismiss")}
               onClick={(event) => {
                 // Dismissing removes this focused recovery action just as
                 // starting the adjacent retry does. Carry its keyboard place
@@ -562,10 +638,7 @@ export function PreviewWorkspace() {
                 }
                 workspace.dismissFolderError();
               }}
-              type="button"
-            >
-              {t("dismiss")}
-            </button>
+            />
           </div>
         )}
 
@@ -587,30 +660,8 @@ export function PreviewWorkspace() {
           </div>
         ) : null}
 
-        {workspace.dropSubscriptionError === null ? null : (
-          // Connectivity is not a failed import: Rust may still hold a valid
-          // roster and the picker actions remain usable. Keep its recovery and
-          // wording separate from the error for one accepted Drop below.
-          <div className="notice notice-danger">
-            <strong>{t("dropUnavailable")}</strong>
-            <span>{ownedErrorMessage(workspace.dropSubscriptionError, t)}</span>
-            <button
-              className="link-button"
-              onClick={(event) => {
-                // Keyboard activation has click detail zero. A real pointer
-                // press focuses the button before click, so activeElement on
-                // its own would manufacture a keyboard debt for mouse users.
-                if (event.detail === 0 && document.activeElement === event.currentTarget) {
-                  setRestoreAddFilesFocusToken((token) => token + 1);
-                }
-                workspace.retryDropSubscription();
-              }}
-              type="button"
-            >
-              {t("dropReconnect")}
-            </button>
-          </div>
-        )}
+        {/* Drop connectivity has no banner: the status bar already says file
+            drop is unavailable, and carries its reconnect beside it. */}
 
         {workspace.dropError === null ? null : (
           // The permanently mounted drop live region below is the one
@@ -619,18 +670,18 @@ export function PreviewWorkspace() {
           <div className="notice notice-danger">
             <strong>{t("dropFailed")}</strong>
             <span>{ownedErrorMessage(workspace.dropError, t)}</span>
-            <button
-              className="link-button"
+            <IconButton
+              className="notice-dismiss"
+              size="sm"
+              icon={<Icon name="close" />}
+              label={t("dismiss")}
               onClick={(event) => {
                 if (event.detail === 0 && document.activeElement === event.currentTarget) {
                   setRestoreAddFilesFocusToken((token) => token + 1);
                 }
                 workspace.dismissDropError();
               }}
-              type="button"
-            >
-              {t("dismiss")}
-            </button>
+            />
           </div>
         )}
 
@@ -638,9 +689,7 @@ export function PreviewWorkspace() {
           <div className="notice notice-danger" role="status">
             <strong>{t("workspaceFailed")}</strong>
             <span>{ownedErrorMessage(workspace.workspaceError, t)}</span>
-            <button className="link-button" onClick={workspace.dismissWorkspaceError} type="button">
-              {t("dismiss")}
-            </button>
+            <IconButton className="notice-dismiss" size="sm" icon={<Icon name="close" />} label={t("dismiss")} onClick={workspace.dismissWorkspaceError} />
           </div>
         )}
 
@@ -676,9 +725,7 @@ export function PreviewWorkspace() {
                 )}
               </ul>
             )}
-            <button className="link-button" onClick={workspace.dismissWorkspaceNotice} type="button">
-              {t("dismiss")}
-            </button>
+            <IconButton className="notice-dismiss" size="sm" icon={<Icon name="close" />} label={t("dismiss")} onClick={workspace.dismissWorkspaceNotice} />
           </div>
         )}
 
@@ -692,14 +739,15 @@ export function PreviewWorkspace() {
                 reconciliation already supplies the authoritative answer,
                 without another loading state whose usefulness depends on
                 commit order. */}
-            <button
-              className="link-button"
-              disabled={!canReloadRoster}
+            <Button
+              variant="secondary"
+              size="sm"
+              refused={!canReloadRoster}
+              reasonId={STATUS_BUSY_ID}
               onClick={workspace.reloadRoster}
-              type="button"
             >
               {t("rosterRetry")}
-            </button>
+            </Button>
           </div>
         ) : null}
       </div>
@@ -769,19 +817,31 @@ export function PreviewWorkspace() {
       }} onExecute={workspace.executeActiveClear} /> : null}
       {figureDialog !== null ? <ExportFigureDialog
         kind={figureDialog.kind}
-        sourceLabel={`${previewFile?.fileName ?? (preview.status === "loaded" ? preview.preview.file.fileName : t("viewerSpectrumNone"))} · ${figureDialog.kind === "chromatogram" ? t("viewerChromatogram") : spectrum.status === "loaded" ? t("viewerSpectrumIndex", { index: String(spectrum.spectrum.index) }) : t("viewerSpectrumNone")}`}
+        sourceLabel={figureSourceLabel(figureDialog.kind, previewFile?.fileName ?? (preview.status === "loaded" ? preview.preview.file.fileName : null),
+          spectrum.status === "loaded" ? spectrum.spectrum : null, t)}
         question={workspace.figurePreviewQuestion(figureDialog.kind)} preview={workspace.previewFigure} onExport={workspace.exportPreviewedFigure}
         onCopy={workspace.copyPreviewedFigure}
         returnTo={figureDialog.returnTo} onClose={() => setFigureDialog(null)} busy={workspace.scientificExportBusy}
         settings={workspace.figureSettings} validation={workspace.figureSettingsValidation} onSetting={workspace.setFigureSetting} onTheme={workspace.setFigureTheme}
         scope={figureDialog.kind === "spectrum" ? workspace.spectrumRangeScope : workspace.chromatogramRangeScope}
-        currentAvailable={figureDialog.kind !== "spectrum" || workspace.spectrumRangeAvailability === "available"}
+        rangeAvailability={figureDialog.kind === "spectrum" ? workspace.spectrumRangeAvailability : "available"}
         onScope={figureDialog.kind === "spectrum" ? workspace.setSpectrumRangeScope : workspace.setChromatogramRangeScope}
-        scopeHelp={figureDialog.kind === "spectrum" ? workspace.spectrumCommittedDomain === null ? t("viewerExportFullHelp") : t("viewerExportRangeHelp", { low: String(workspace.spectrumCommittedDomain.low), high: String(workspace.spectrumCommittedDomain.high) }) : workspace.chromatogramCommittedDomain === null ? t("viewerExportFullRunHelp") : t("viewerExportRtHelp", { low: String(workspace.chromatogramCommittedDomain.low), high: String(workspace.chromatogramCommittedDomain.high) })}
-        result={figureDialog.kind === "spectrum" ? <p role="status">{describeSpectrumExport(workspace.spectrumExport, t)}{workspace.spectrumExport.status === "failed" ? <span className="notice-detail">{ownedErrorDetail(workspace.spectrumExport.error, t)}</span> : null}</p> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} /></div>}
+        committedDomain={figureDialog.kind === "spectrum" ? workspace.spectrumCommittedDomain : workspace.chromatogramCommittedDomain}
+        onExportData={figureDialog.kind === "spectrum" ? workspace.exportSpectrum : figureDialog.kind === "chromatogram" ? workspace.exportChromatogram : undefined}
+        // A linked figure the lane would refuse says why here, beside the
+        // actions it refuses, rather than accepting a press that does nothing.
+        refusal={figureDialog.kind === "linked" && workspace.linkedFigureUnavailable !== null
+          ? describeUnavailable(workspace.linkedFigureUnavailable, t) : null}
+        result={figureDialog.kind === "spectrum" ? <><p role="status">{describeSpectrumExport(workspace.spectrumExport, t)}{workspace.spectrumExport.status === "failed" ? <span className="notice-detail">{ownedErrorDetail(workspace.spectrumExport.error, t)}</span> : null}</p>
+          {["saved", "copied", "cancelled", "failed"].includes(workspace.spectrumExport.status) ? <IconButton size="sm" icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={workspace.dismissSpectrumExport} /> : null}</> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} /></div>}
       /> : null}
+      {/* One workspace card per surface (spec 1.2): the columns share its
+          border and are separated by rules, not gaps. */}
       <main className="workspace-layout">
-        <aside id="workbench-roster" className="workspace-sidebar" hidden={!rosterOpen}>
+        {/* Over the card while a drawer is open; a click folds the drawer. */}
+        {drawer === null ? null : <div className="workspace-scrim" aria-hidden="true" data-drawer-scrim="" onClick={() => closeDrawer(false)} />}
+        <aside id="workbench-roster" ref={rosterRef} tabIndex={-1} className="workspace-sidebar" hidden={!rosterOpen}
+          onKeyDown={drawer === "roster" ? drawerKeys : undefined}>
           <DatasetRoster
             activeClearFocusReturn={activeClearFocusReturn}
             canAddFiles={canAcquire}
@@ -791,6 +851,7 @@ export function PreviewWorkspace() {
             canReloadRoster={canReloadRoster}
             dispatch={workspace.dispatchRoster}
             focusAddFilesToken={workspace.focusAddFilesToken}
+            dropAvailable={dropAvailable}
             dropBusy={workspace.dropBusy}
             folderBusy={workspace.folderBusy}
             load={workspace.rosterLoad}
@@ -803,12 +864,28 @@ export function PreviewWorkspace() {
               panels.navigate();
             }}
             onAddFiles={workspace.addFiles}
-            addFilesQuiet={addFilesQuiet}
+            // The first run's one primary (spec 3.3, 3.6): while the roster is
+            // on screen the evidence leaves the Add actions to it.
+            addFilesPrimary={surface === "workbench" && evidenceState === "first-run"}
+            // One filled primary per screen (B2): while the evidence offers its
+            // own, the footer's Convert yields to secondary.
+            convertPrimary={!evidenceHasPrimary}
+            // "conversion" is the status bar's sentinel for its own item, never words.
+            acquireReason={busyReason === "conversion" ? t("shellConversionRunning") : busyReason}
             onAddFolder={workspace.addFolder}
+            // The Workbench's one route to batch conversion. Elsewhere the
+            // surface has its own next step, and on Conversion its own Convert.
+            onConvertChecked={surface !== "workbench" ? undefined : () => {
+              workspace.setConversionScope("selected");
+              setSurface("conversion");
+              panels.navigate();
+            }}
             canRemove={canRemove}
-            onClearList={() => {
+            onClearList={(returnTo) => {
               if (!workspace.conversion.busy) return workspace.clearList();
-              setActiveClear({ returnTo: document.activeElement instanceof HTMLElement ? document.activeElement : null });
+              // From the list menu the item that was pressed is leaving; the
+              // confirmation returns to the menu's trigger instead.
+              setActiveClear({ returnTo: returnTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null) });
               return true;
             }}
             onReloadRoster={workspace.reloadRoster}
@@ -829,10 +906,12 @@ export function PreviewWorkspace() {
             no provider, so it is reachable on a machine with no converter
             installed. */}
         {/* Each surface names itself (PM9 L1) in the navigation's own words, so
-            the title and the tab that leads here cannot disagree; the region's
-            accessible name is the title, unchanged from the label it replaces. */}
-        <section id="workbench-project" className="workbench-project" hidden={surface !== "project" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-project">
-          <h1 id="surface-title-project" className="surface-title">{t("projectSurface")}</h1>
+            the title and the control that leads here cannot disagree; the
+            region's accessible name is the title. Kept for that name and hidden
+            from view (spec 1.2): the selected tab already says where this is. */}
+        <section id="workbench-project" tabIndex={-1} className="workbench-project" hidden={surface !== "project"}
+          inert={drawer !== null || undefined} aria-labelledby="surface-title-project">
+          <h1 id="surface-title-project" className="surface-title visually-hidden">{t("projectSurface")}</h1>
           <ProjectPanel
             session={project}
             liveDatasetHandles={liveDatasetHandles}
@@ -847,51 +926,126 @@ export function PreviewWorkspace() {
             detailsPresent={detailsOpen}
             onRevealDetails={() => {
               if (panels.busy) return;
-              // The control that reveals the region is inside the project
-              // surface, and in one column that surface is hidden the moment
-              // the region appears -- so the button that was just pressed
-              // unmounts and the keyboard would be left on the body. Focus
-              // follows to the region it asked for.
-              pendingInspectorFocus.current = true;
+              // In one column the region opens as a drawer over this surface,
+              // and the keyboard follows it there (`drawer` above).
               panels.toggle("details");
             }}
           />
         </section>
-        <section id="workbench-conversion" className="workbench-conversion" hidden={surface !== "conversion" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-conversion">
-          <h1 id="surface-title-conversion" className="surface-title">{t("conversionTask")}</h1>
+        <section id="workbench-conversion" tabIndex={-1} className="workbench-conversion" hidden={surface !== "conversion"}
+          inert={drawer !== null || undefined} aria-labelledby="surface-title-conversion">
+          <h1 id="surface-title-conversion" className="surface-title visually-hidden">{t("conversionTask")}</h1>
           <ConversionPanel
             configuration={workspace.conversionConfiguration}
             conversion={workspace.conversion}
             plan={workspace.conversionPlan}
             resolvedScope={resolvedScope}
             onScopeChange={workspace.setConversionScope}
+            onSortChange={(sort) => workspace.dispatchRoster({ type: "sortChanged", sort })}
+            buildRelease={backendView.names?.release ?? null}
           />
         </section>
-        <aside id="workbench-inspector" ref={inspectorRef} tabIndex={-1} className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}>
-          {/* One region, whichever surface is asking. The Project surface puts
-              provenance here rather than adding a navigation target of its own,
-              which is where the accepted direction puts contextual metadata. */}
-          {surface === "project" ? (
-            <ProvenanceDetails
-              provenance={project.provenance}
-              onSelect={project.inspect}
-              liveDatasetHandles={liveDatasetHandles}
-              onShowInWorkbench={revealInWorkbench}
-            />
-          ) : preview.status === "loaded" ? (
-            <PreviewSummary
-              file={previewFile ?? preview.preview.file}
-              measurements={workspace.measurements}
-              metadata={preview.preview.metadata}
-              runSummary={preview.preview.runSummary}
-              spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
-            />
-          ) : null}        </aside>
-        <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench" || (constrained && (rosterOpen || detailsOpen))} aria-labelledby="surface-title-workbench">
-        <h1 id="surface-title-workbench" className="surface-title">{t("workbench")}</h1>
-
+        <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench"}
+          inert={drawer !== null || undefined} data-evidence={evidenceState} aria-labelledby="surface-title-workbench">
         {preview.status === "loaded" ? (
-          <div className="viewer-column">
+          // Direction A's file row: the surface's title is the file being
+          // read, then its three views as tabs. One view is mounted at a time;
+          // what it shows lives in the workspace, so a switch loses nothing.
+          <div className="viewer-file">
+            <h1 id="surface-title-workbench" className="viewer-file-name" title={formatDatasetLabel(previewFile ?? preview.preview.file)}>
+              {formatDatasetLabel(previewFile ?? preview.preview.file)}
+            </h1>
+            <Tabs className="viewer-tabs" label={t("viewerViews")} value={viewerView} onChange={setViewerView} items={[
+              { value: "spectra", label: t("viewerTabSpectra") },
+              { value: "scans", label: t("viewerTabScans") },
+              { value: "metadata", label: t("viewerTabMetadata") },
+            ]}>
+              {viewerView === "metadata" ? (
+                <PreviewMetadata
+                  file={previewFile ?? preview.preview.file}
+                  metadata={preview.preview.metadata}
+                  runSummary={preview.preview.runSummary}
+                  spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
+                />
+              ) : (
+                <div className="viewer-view" data-view={viewerView}>
+                  {viewerView === "spectra" ? <Chromatogram
+                    dispatch={workspace.dispatchViewerEvent}
+                    exportStatus={
+                      <ChromatogramExportStatus
+                        exportState={workspace.chromatogramExport}
+                        linkedExportState={workspace.linkedFigureExport}
+                        onDismiss={workspace.dismissChromatogramExport}
+                        onDismissLinked={workspace.dismissLinkedFigureExport}
+                      />
+                    }
+                    exportTools={
+                      workspace.chromatogramExportToken === null ? undefined : leadingItems => (
+                        <ChromatogramExportTools
+                          leadingItems={leadingItems}
+                          figureSettingsValidation={workspace.figureSettingsValidation}
+                          linkedUnavailable={workspace.linkedFigureUnavailable}
+                          onCopyPlot={workspace.copyChromatogramPlot}
+                          onExport={workspace.exportChromatogram}
+                          onOpenFigure={() => openFigure("chromatogram")}
+                          onOpenLinkedFigure={trigger => openFigure("linked", trigger)}
+                          scientificExportBusy={workspace.scientificExportBusy}
+                          traces={workspace.chromatogramTraces}
+                        />
+                      )
+                    }
+                    interaction={workspace.viewerInteraction}
+                    model={workspace.scanModel}
+                    onSelect={workspace.selectSpectrum}
+                    onToggleTrace={workspace.toggleChromatogramTrace}
+                    readInteraction={workspace.readViewerInteraction}
+                    selectionAvailability={workspace.spectrumSelection}
+                    traces={workspace.chromatogramTraces}
+                  /> : null}
+                  {/* The scan list beside the spectrum it selects, or across
+                      the evidence above it on the Scans tab. */}
+                  <div className="viewer-lower">
+                    <SpectrumTable
+                      layout={viewerView === "scans" ? "full" : "compact"}
+                      view={workspace.scanTableView}
+                      onRendered={handleTableRendered}
+                      onSelect={workspace.selectSpectrum}
+                      selection={workspace.viewerInteraction.selection}
+                      selectionAvailability={workspace.spectrumSelection}
+                      table={preview.preview.spectrumTable}
+                    />
+                    <SelectedSpectrumPanel
+                      onOpenFigure={() => openFigure("spectrum")}
+                      // What would make a choice possible, in a few words; the
+                      // full sentence is the controls' description (once).
+                      selectionRefusal={workspace.spectrumSelection.status !== "unavailable" ? null
+                        : workspace.spectrumSelection.reason === "backend-unavailable" ? t("viewerSelectNeedsBackend")
+                        : workspace.spectrumSelection.reason === "backend-changing" ? t("viewerSelectAfterCheck")
+                        : workspace.spectrumSelection.reason === "conversion-running" ? t("viewerSelectAfterConversion")
+                        : null}
+                      dispatchViewport={workspace.dispatchSpectrumViewportEvent}
+                      exportState={workspace.spectrumExport}
+                      figureSettingsValidation={workspace.figureSettingsValidation}
+                      onCopyPlot={workspace.copySpectrumPlot}
+                      onDismissExport={workspace.dismissSpectrumExport}
+                      onExport={workspace.exportSpectrum}
+                      onRetry={workspace.retrySpectrum}
+                      onRetryProjection={workspace.retrySpectrumProjection}
+                      projectionError={workspace.spectrumProjectionError}
+                      readViewport={workspace.readSpectrumViewport}
+                      scientificExportBusy={workspace.scientificExportBusy}
+                      state={spectrum}
+                      viewport={workspace.spectrumViewport}
+                      canSelectNext={workspace.canSelectNextScan}
+                      canSelectPrevious={workspace.canSelectPreviousScan}
+                      onSelectNext={workspace.selectNextScan}
+                      onSelectPrevious={workspace.selectPreviousScan}
+                      stepReasonId={scanStepReasonId(workspace.scanTableView, workspace.viewerInteraction.selection?.index ?? null, workspace.spectrumSelection)}
+                    />
+                  </div>
+                </div>
+              )}
+            </Tabs>
             {/*
               One explanation for both committing surfaces, and one occurrence
               of it in the accessibility tree. Always mounted so that the
@@ -899,9 +1053,11 @@ export function PreviewWorkspace() {
               collapsed by `:empty` -- while a scan can be selected, because a
               working control with a sentence under it is a reason to doubt it.
             */}
+            {/* Heard and described, not seen: the empty spectrum says it on
+                screen, once (S4), and the tab row carries no sentence. */}
             <p
               aria-live="polite"
-              className="notice notice-warning viewer-selection-notice"
+              className="viewer-selection-notice visually-hidden"
               data-live-region="spectrum-selection-availability"
               /*
                * The id only while there is something to point at. The element
@@ -919,150 +1075,183 @@ export function PreviewWorkspace() {
                 ? spectrumSelectionMessage(workspace.spectrumSelection.reason, t)
                 : ""}
             </p>
-            <div className="viewer-stack">
-              <Chromatogram
-                dispatch={workspace.dispatchViewerEvent}
-                exportPanel={
-                  chromatogramExportOpen && workspace.chromatogramExportToken !== null ? (
-                    <ChromatogramExportPanel
-                      onOpenLinkedFigure={() => openFigure("linked")}
-                      committedDomain={workspace.chromatogramCommittedDomain}
-                      exportState={workspace.chromatogramExport}
-                      figureSettings={workspace.figureSettings}
-                      figureSettingsValidation={workspace.figureSettingsValidation}
-                      linkedExportState={workspace.linkedFigureExport}
-                      linkedUnavailable={workspace.linkedFigureUnavailable}
-                      onCopyLinkedPlot={workspace.copyLinkedPlot}
-                      onCopyPlot={workspace.copyChromatogramPlot}
-                      onDismiss={workspace.dismissChromatogramExport}
-                      onDismissLinked={workspace.dismissLinkedFigureExport}
-                      onExport={workspace.exportChromatogram}
-                      onExportLinked={workspace.exportLinkedFigure}
-                      onFigureSetting={workspace.setFigureSetting}
-                      onFigureTheme={workspace.setFigureTheme}
-                      onRangeScope={workspace.setChromatogramRangeScope}
-                      pngDpiProblem={workspace.pngDpiProblem}
-                      rangeScope={workspace.chromatogramRangeScope}
-                      renderSettingsProblem={workspace.renderSettingsProblem}
-                      scientificExportBusy={workspace.scientificExportBusy}
-                      traces={workspace.chromatogramTraces}
-                    />
-                  ) : null
-                }
-                exportToggle={
-                  workspace.chromatogramExportToken === null ? null : (
-                    <div className="figure-quick-actions"><QuickFigureActions busy={workspace.scientificExportBusy} quickVisible={!chromatogramExportOpen}
-                      context={[t("viewerChromatogram"), t(workspace.chromatogramRangeScope === "current" ? "viewerExportCurrent" : "viewerExportFullRun"), `${workspace.figureSettings.widthPx || "—"} × ${workspace.figureSettings.heightPx || "—"} px`]}
-                      figureUnavailable={workspace.renderSettingsProblem !== null || (!workspace.chromatogramTraces.tic && !workspace.chromatogramTraces.bpc)}
-                      pngUnavailable={workspace.pngDpiProblem !== null} onPreview={() => openFigure("chromatogram")}
-                      onPng={() => workspace.exportChromatogram("png")} onCopy={workspace.copyChromatogramPlot} />
-                    <button
-                      aria-controls="chromatogram-export-panel"
-                      aria-expanded={chromatogramExportOpen}
-                      className="secondary-button"
-                      id="chromatogram-export-toggle"
-                      onClick={() => {
-                        setChromatogramExportOpen((open) => !open);
-                      }}
-                      type="button"
-                    >
-                      {t("viewerExport")}
-                    </button></div>
-                  )
-                }
-                interaction={workspace.viewerInteraction}
-                model={workspace.scanModel}
-                onSelect={workspace.selectSpectrum}
-                onToggleTrace={workspace.toggleChromatogramTrace}
-                readInteraction={workspace.readViewerInteraction}
-                selectionAvailability={workspace.spectrumSelection}
-                traces={workspace.chromatogramTraces}
-              />
-              <SelectedSpectrumPanel
-                onOpenFigure={() => openFigure("spectrum")}
-                committedDomain={workspace.spectrumCommittedDomain}
-                dispatchViewport={workspace.dispatchSpectrumViewportEvent}
-                exportState={workspace.spectrumExport}
-                figureSettings={workspace.figureSettings}
-                figureSettingsValidation={workspace.figureSettingsValidation}
-                onCopyPlot={workspace.copySpectrumPlot}
-                onDismissExport={workspace.dismissSpectrumExport}
-                onExport={workspace.exportSpectrum}
-                onFigureSetting={workspace.setFigureSetting}
-                onFigureTheme={workspace.setFigureTheme}
-                onRangeScope={workspace.setSpectrumRangeScope}
-                onRetry={workspace.retrySpectrum}
-                onRetryProjection={workspace.retrySpectrumProjection}
-                pngDpiProblem={workspace.pngDpiProblem}
-                rangeAvailability={workspace.spectrumRangeAvailability}
-                rangeScope={workspace.spectrumRangeScope}
-                projectionError={workspace.spectrumProjectionError}
-                readViewport={workspace.readSpectrumViewport}
-                renderSettingsProblem={workspace.renderSettingsProblem}
-                scientificExportBusy={workspace.scientificExportBusy}
-                state={spectrum}
-                viewport={workspace.spectrumViewport}
-              />
-              <SpectrumTable
-                view={workspace.scanTableView}
-                canSelectNext={workspace.canSelectNextScan}
-                canSelectPrevious={workspace.canSelectPreviousScan}
-                onRendered={handleTableRendered}
-                onSelect={workspace.selectSpectrum}
-                onSelectNext={workspace.selectNextScan}
-                onSelectPrevious={workspace.selectPreviousScan}
-                selection={workspace.viewerInteraction.selection}
-                selectionAvailability={workspace.spectrumSelection}
-                table={preview.preview.spectrumTable}
-              />
-            </div>
           </div>
         ) : (
-          <section className="panel workspace-placeholder">
+          <>
+            <h1 id="surface-title-workbench" className="surface-title visually-hidden">{t("workbench")}</h1>
+            {/* Each state centred in the card (spec 3.6): what is missing, and
+                the buttons that fill it. No paragraph explains the interface. */}
             {preview.status === "opening" ? (
-              <div className="empty-state">
-                <strong>{t("readingEvidence")}</strong>
-                <span>
-                  {t("readingEvidenceHelp")}
-                </span>
-              </div>
-            ) : preview.status === "failed" ? (
-              <div className="empty-state">
-                <strong>{ownedErrorMessage(preview.error, t)}</strong>
-                {ownedErrorDetail(preview.error, t) === null ? null : <span>{ownedErrorDetail(preview.error, t)}</span>}
-                <div className="empty-state-actions">
-                  {/* Reading is idempotent, so a retry is offered when the
-                      backend said the failure was retryable — and it repeats
-                      the step that actually failed. */}
-                  {preview.error.retryable && workspace.activeDataset !== null ? (
-                    <button
-                      className="secondary-button"
-                      disabled={!canPreview}
-                      onClick={workspace.previewActiveAgain}
-                      type="button"
-                    >
-                      {t("retryEvidence")}
-                    </button>
-                  ) : null}
+              // The final layout's shape while the file is read (S2): the file
+              // row, then empty plot frames and table rows where they will be.
+              // ponytail: no Cancel; reading has no cancel path in Rust yet, and
+              // one needs its own narrow command.
+              <div className="viewer-skeleton" aria-busy="true">
+                <strong className="viewer-skeleton-name">{workspace.activeDataset === null
+                  ? t("readingSelected") : t("readingEvidence", { name: formatDatasetLabel(workspace.activeDataset) })}</strong>
+                <div className="viewer-skeleton-plot" aria-hidden="true"><span className="viewer-skeleton-head" /><span className="viewer-skeleton-frame" /></div>
+                <div className="viewer-skeleton-lower" aria-hidden="true">
+                  <div className="viewer-skeleton-table">{[0, 1, 2, 3, 4, 5].map(row => <span key={row} className="viewer-skeleton-row" />)}</div>
+                  <div className="viewer-skeleton-plot"><span className="viewer-skeleton-head" /><span className="viewer-skeleton-frame" /></div>
                 </div>
               </div>
+            ) : preview.status === "failed" ? (
+              <EmptyState
+                className="evidence-state"
+                message={<>
+                  <Icon name="info" size={28} />
+                  <strong>{ownedErrorMessage(preview.error, t)}</strong>
+                  {ownedErrorDetail(preview.error, t) === null ? null : <span>{ownedErrorDetail(preview.error, t)}</span>}
+                </>}
+                // Reading is idempotent, so a retry is offered when the backend
+                // said the failure was retryable -- and it repeats the step that
+                // actually failed.
+                action={preview.error.retryable && workspace.activeDataset !== null ? (
+                  <Button variant="secondary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
+                    {t("retryEvidence")}
+                  </Button>
+                ) : undefined}
+              />
+            ) : evidenceState === "first-run" ? (
+              <EmptyState
+                className="evidence-state"
+                // What fills the empty Workbench, in the words of the buttons
+                // that do it: here, or the roster's Add buttons beside it.
+                message={<><Icon name="file" size={28} /><strong>{t("evidenceFirstRun")}</strong></>}
+                action={<div className="evidence-actions" ref={firstRunActions}>
+                  {/* The roster's own Add buttons are these same actions; while
+                      it is on screen they are not offered twice. */}
+                  {rosterOpen ? null : <>
+                    <Button variant="primary" refused={!canAcquire} reasonId={STATUS_BUSY_ID} icon={<Icon name="plus" />} onClick={workspace.addFiles}>
+                      {t("addFiles")}
+                    </Button>
+                    <Button refused={!canAddFolder} reasonId={STATUS_BUSY_ID} icon={<Icon name="folder" />} onClick={workspace.addFolder}>
+                      {t("addFolder")}
+                    </Button>
+                  </>}
+                  <Button refused={project.busy !== "idle"} reasonId={statusItemId("projectActivity")} onClick={() => {
+                    pendingSurfaceFocus.current = "project";
+                    setSurface("project");
+                    panels.navigate();
+                    void project.openProject();
+                  }}>
+                    {t("projectOpen")}
+                  </Button>
+                </div>}
+              />
+            ) : evidenceState === "vendor" && focusedVendor !== null ? (
+              <EmptyState
+                className="evidence-state"
+                message={<>
+                  <Icon name="file" size={28} />
+                  <strong>{formatDatasetLabel(focusedVendor)}</strong>
+                  <span id="preview-needs-conversion-description">{`${SOURCE_KIND_LABEL[focusedVendor.sourceKind]} · ${t("needsConversion")}`}</span>
+                </>}
+                action={<Button variant="primary" onClick={() => {
+                  // Checks this row and keeps every other check, then shows the
+                  // checked rows on the Conversion surface. Nothing is read.
+                  workspace.dispatchRoster({ type: "membershipChanged", handles: [focusedVendor.handle], checked: true });
+                  workspace.setConversionScope("selected");
+                  pendingSurfaceFocus.current = "conversion";
+                  setSurface("conversion");
+                  panels.navigate();
+                }}>
+                  {t("openInConversion")}
+                </Button>}
+              />
+            ) : evidenceState === "backend" ? (
+              <EmptyState
+                className="evidence-state"
+                // The notice above carries the fix; this only says what waits on it.
+                message={<><Icon name="info" size={28} /><strong>{t("previewBackendRequired")}</strong></>}
+              />
+            ) : evidenceState === "roster-loading" || evidenceState === "roster-failed" ? (
+              <EmptyState
+                className="evidence-state"
+                // The list's own state, never an instruction to choose from a
+                // list that holds nothing yet. Said once (S4): while the roster
+                // is on screen it says it, with its retry, and this stays quiet.
+                message={<><Icon name={evidenceState === "roster-failed" ? "info" : "clock"} size={28} />
+                  {rosterOpen ? null : <strong>{t(evidenceState === "roster-failed" ? "rosterFailed" : "rosterLoading")}</strong>}</>}
+                action={evidenceState === "roster-failed" && constrained && !rosterOpen ? (
+                  <Button icon={<Icon name="panelLeft" />} onClick={() => { if (!panels.busy) panels.toggle("roster"); }}>
+                    {t("evidenceShowAcquisitions")}
+                  </Button>
+                ) : undefined}
+              />
             ) : (
-              <div className="empty-state">
-                <strong>{t("emptyEvidence")}</strong>
-                <span>{backendUnavailable ? t("previewBackendRequired") : t("emptyEvidenceHelp")}</span>
-                {/* The one owned next step in this state -- the acquisition that
-                    was being read, one click from being read again -- so it is
-                    this surface's primary action (PM9 L1). No other state gets
-                    one invented for it. */}
-                {workspace.activeDataset !== null ? <button type="button" className="primary-button" disabled={!canPreview} onClick={workspace.previewActiveAgain}>
-                  {t("previewRetained", { name: formatDatasetLabel(workspace.activeDataset) })}
-                </button> : null}
-              </div>
+              <EmptyState
+                className="evidence-state"
+                // Rows and none open: the next step is in the list. Where the
+                // list is a drawer and folded, the one button here opens it.
+                message={<><Icon name="chart" size={28} /><strong>{t("emptyEvidence")}</strong></>}
+                action={workspace.activeDataset !== null || (constrained && !rosterOpen) ? <div className="evidence-actions">
+                  {/* The one owned next step in this state -- the acquisition
+                      that was being read, one click from being read again -- so
+                      it is this surface's primary action (PM9 L1). */}
+                  {workspace.activeDataset === null ? null : (
+                    <Button variant="primary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
+                      {t("previewRetained", { name: formatDatasetLabel(workspace.activeDataset) })}
+                    </Button>
+                  )}
+                  {constrained && !rosterOpen ? (
+                    <Button icon={<Icon name="panelLeft" />} onClick={() => { if (!panels.busy) panels.toggle("roster"); }}>
+                      {t("evidenceShowAcquisitions")}
+                    </Button>
+                  ) : null}
+                </div> : undefined}
+              />
             )}
-          </section>
+          </>
         )}
         </section>
+        {/* Last in the DOM as it is last on screen (roster, main, Details), so
+            Tab follows the visual order; the grid area places it. */}
+        <aside id="workbench-inspector" ref={inspectorRef} tabIndex={-1} className="workbench-inspector" hidden={!detailsOpen} aria-label={t("inspectorToggle")}
+          onKeyDown={drawer === "details" ? drawerKeys : undefined}>
+          {/* One region, whichever surface is asking. The Project surface puts
+              provenance here rather than adding a navigation target of its own,
+              which is where the accepted direction puts contextual metadata. */}
+          {surface === "project" ? (
+            <ProvenanceDetails
+              provenance={project.provenance}
+              onSelect={project.inspect}
+              liveDatasetHandles={liveDatasetHandles}
+              onShowInWorkbench={revealInWorkbench}
+              onClose={() => closeDrawer(false)}
+            />
+          ) : preview.status === "loaded" ? (
+            <PreviewSummary
+              chromatogramScanCount={workspace.scanModel.status === "ready" ? workspace.scanModel.points.length : null}
+              file={previewFile ?? preview.preview.file}
+              spectrum={spectrum.status === "loaded" ? spectrum.spectrum : null}
+              spectrumViewport={workspace.spectrumViewport}
+              onClose={closeInspector}
+            />
+          ) : (
+            // Nothing to describe yet: one line, never a refused toggle (S3).
+            <section className="panel inspector-panel" aria-label={t("inspectorToggle")}>
+              <InspectorClose onClose={closeInspector} />
+              <p className="provenance-empty">{t("inspectorUnavailable")}</p>
+            </section>
+          )}
+        </aside>
       </main>
+      <WorkbenchStatusBar backend={backendItem} items={statusItems} busy={busyReason}
+        dropStatus={workspace.dropSubscriptionStatus} onNavigate={setSurface} inert={drawer !== null}
+        // Connectivity is not a failed import: Rust may still hold a valid
+        // roster and the picker actions remain usable, so its recovery stays
+        // separate from the error for one accepted Drop.
+        dropProblem={workspace.dropSubscriptionError === null ? null : ownedErrorMessage(workspace.dropSubscriptionError, t)}
+        onReconnectDrop={(event) => {
+          // Keyboard activation has click detail zero. A real pointer press
+          // focuses the button before click, so activeElement on its own would
+          // manufacture a keyboard debt for mouse users.
+          if (event.detail === 0 && document.activeElement === event.currentTarget) {
+            setRestoreAddFilesFocusToken((token) => token + 1);
+          }
+          workspace.retryDropSubscription();
+        }} />
     </div>
   );
 }
@@ -1088,9 +1277,20 @@ function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
 }
 
 /**
- * What each refusal says. Exhaustive over the reasons, so one added to the
- * boundary fails compilation here rather than being dropped in silence.
+ * The figure dialog's subtitle, in the viewer's own numbering: the scan number
+ * the spectrum head shows, and the index only where the file gives no scan
+ * number (direction A 2.5).
  */
+function figureSourceLabel(kind: "spectrum" | "chromatogram" | "linked", fileName: string | null,
+  spectrum: { readonly index: number; readonly scanNumber: number | null } | null, t: UiMessage): string {
+  if (fileName === null) return t("viewerSpectrumNone");
+  if (kind === "chromatogram") return t("figureSourceChromatogram", { name: fileName });
+  if (spectrum === null) return fileName;
+  return spectrum.scanNumber === null
+    ? t("figureSourceSpectrumIndex", { index: formatCount(spectrum.index), name: fileName })
+    : t("figureSourceSpectrum", { scan: formatCount(spectrum.scanNumber), name: fileName });
+}
+
 /**
  * What a reader is told about the conversion queue.
  *
@@ -1099,10 +1299,15 @@ function announceNotice(notice: WorkspaceNotice, t: UiMessage): string {
  * percentage: nothing measures one.
  */
 function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessage): string {
-  if (workspace.dropSubscriptionStatus === "unavailable") return `${t("dropUnavailable")}. ${workspace.dropSubscriptionError === null ? t("addFiles") : ownedErrorMessage(workspace.dropSubscriptionError, t)}`;
-  if (workspace.dropSubscriptionStatus === "connecting") return t("shellDropConnecting");
+  if (workspace.dropSubscriptionStatus === "unavailable") {
+    return workspace.dropSubscriptionError === null
+      ? t("shellDropUnavailable")
+      : t("messageWithDetail", { message: t("dropUnavailable"), detail: ownedErrorMessage(workspace.dropSubscriptionError, t) });
+  }
+  // Nothing to say until drop is live: a hint about a gesture that cannot work yet is noise.
+  if (workspace.dropSubscriptionStatus === "connecting") return "";
   if (workspace.dropRejectedToken > 0) return `${t(workspace.dropRejectedReason === "drop_busy" ? "dropBusy" : "dropConversionBusy")}${workspace.dropRejectedToken % 2 === 1 ? "\u00a0" : ""}`;
-  if (workspace.dropError !== null) return `${t("dropFailed")}. ${ownedErrorMessage(workspace.dropError, t)}`;
+  if (workspace.dropError !== null) return t("messageWithDetail", { message: t("dropFailed"), detail: ownedErrorMessage(workspace.dropError, t) });
   switch (workspace.dropPresentation.status) {
     case "idle": return "";
     case "hovering": return t("dropRelease", { count: workspace.dropPresentation.itemCount });
@@ -1128,7 +1333,7 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     if (rosterLoad.status === "failed" && roster.datasets.length === 0) {
       // Nor after the read failed, which is the same ignorance by another
       // route -- and the failure itself is worth hearing.
-      return `${t("rosterFailed")}. ${ownedErrorMessage(rosterLoad.error, t)}`;
+      return t("messageWithDetail", { message: t("rosterFailed"), detail: ownedErrorMessage(rosterLoad.error, t) });
     }
     return roster.datasets.length === 0
       ? t("rosterEmptyAnnouncement")
@@ -1147,8 +1352,8 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
       // the same spectrum is worse than either of them saying less.
       return t("viewerSpectrumLoaded", { index: String(spectrum.spectrum.index), count: spectrum.spectrum.pointCount });
     case "unavailable":
-      return t("viewerSpectrumUnavailable", { index: String(spectrum.requestedIndex) });
+      return t("viewerSpectrumAbsent", { index: String(spectrum.requestedIndex) });
     case "failed":
-      return `${t("viewerSpectrumFailed", { index: String(spectrum.index) })}. ${ownedErrorMessage(spectrum.error, t)}`;
+      return t("messageWithDetail", { message: t("viewerSpectrumFailed", { index: String(spectrum.index) }), detail: ownedErrorMessage(spectrum.error, t) });
   }
 }

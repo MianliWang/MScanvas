@@ -710,6 +710,10 @@ own run carries its producing Plan's digest, so it reads as before.
   revision advances to its last value once and then refuses without writing*;
   *a document at the last revision opens but neither save nor save as writes*;
   *a stale session still cannot overwrite once the last revision is reached*.
+  *2026-10-30:* the free-name control is now *a save as with no stored result
+  reserves the result store name before the document*, which asserts the
+  opposite: the empty store is published first
+  ([plan section 7.2](AFTER_BETA1_PLAN.md#72-polish-and-limits)).
 - `targeted_ms1::tests`: *a save as at the last revision copies no result and
   writes nothing*.
 - `targeted_ms1::tests::batch`: *a result moved onto another member's run is
@@ -827,7 +831,9 @@ reference and its binding and is still unsaved; the original document is
 byte-identical. Asked again, Save As publishes, and the new reference's
 locator resolves to the file itself from the new document's directory. The
 paths with no stored result, including Save As over the bound document, have no
-copy step to act in and no test; the check is unconditional.
+copy step to act in and no test; the check is unconditional. *2026-10-30: a
+Save As to a new name with no stored result now assembles an empty store too,
+with no file to copy.*
 
 | Command | On | Exit |
 | --- | --- | ---: |

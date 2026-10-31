@@ -1343,6 +1343,9 @@ pub struct ConversionQueueItemDto {
     /// discovered here. A backend-named set carries no name, because none
     /// exists until the run has finished.
     pub output: ConversionOutputPlanDto,
+    /// The "not verified by MSCanvas" label this row runs under, as its plan
+    /// row stated it (ADR 0055), or `null` for a verified conversion.
+    pub not_verified_by_mscanvas: Option<crate::project::record::NotVerifiedByMscanvas>,
     pub state: ConversionQueueItemStateDto,
     /// How many times this item has been attempted. One after the first pass.
     pub attempts: u64,
@@ -1477,18 +1480,20 @@ pub enum ConversionQueueItemStateDto {
     /// confirmed tree would claim one for a run that never started a process.
     Cancelled,
     /// The queue never began this item. Not a failure: no process was launched
-    /// and nothing was created.
+    /// and no output was written. A destination folder the queue prepared
+    /// follows the queue's reclamation rule, as for `SkippedByRequest`.
     ///
-    /// A stop is one way that happens and not the only one — a session that
-    /// loses track of a process it started refuses the rest of the queue on its
-    /// own, and that queue is `completed`.
+    /// A stop is one way that happens and not the only one: any queue-level
+    /// refusal settles the rest of the queue this way, and that queue is
+    /// `completed`. A retry does not rerun such an item in place; converting it
+    /// is a new queue.
     NotRun,
     /// The user settled this item without running it, and the queue carried on.
     ///
     /// Its own state rather than either neighbour. `Skipped` is the conflict
     /// policy leaving an existing file alone -- a decision about a destination,
-    /// which this is not. `NotRun` is a stopped queue never reaching the item --
-    /// a consequence of ending the batch, which this is not either.
+    /// which this is not. `NotRun` is a stopped or refused queue never reaching
+    /// the item -- a consequence of ending the batch, which this is not either.
     ///
     /// No conversion ran and no output was written. It does **not** say that
     /// nothing was created: a destination folder the queue prepared is bound to
@@ -2296,6 +2301,11 @@ pub fn queue_output_name_collision(names: &[String]) -> PreviewErrorDto {
         false,
     )
     .with_detail(names.join(", "))
+    // Whole, as a list: the detail above is bounded and a name may hold a
+    // comma, so the interface lists these (ADR 0057 decision 3).
+    .with_context(PreviewErrorContextDto::OutputNameCollision {
+        names: names.to_vec(),
+    })
 }
 
 /// What a retry answers with when the folder it would write into is no longer
@@ -3493,6 +3503,11 @@ pub enum PreviewErrorContextDto {
     /// Which rule refused a conversion intent, by stable id.
     ConversionIntent {
         reason: String,
+    },
+    /// Every planned output name two queued items would both write, once
+    /// each: display names, never locations.
+    OutputNameCollision {
+        names: Vec<String>,
     },
 }
 

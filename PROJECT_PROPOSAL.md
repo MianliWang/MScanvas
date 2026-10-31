@@ -35,7 +35,7 @@ MSCanvas is a modern, free, open-source and local-first workspace for mass-spect
 
 MSCanvas does not initially reimplement proprietary RAW readers or mature scientific algorithms. It creates a better product layer around established backends and, later, may orchestrate reviewed packages such as OpenMS/pyOpenMS, matchms and general numerical/statistical libraries through typed, isolated modules.
 
-The first product is therefore a **viewer + converter + figure workspace**. Analysis is a deferred capability, not a permanent exclusion.
+The first product is therefore a **viewer + converter + figure workspace**. Analysis follows it: on 2026-10-30 the owner directed that it be planned and built (milestone M11, section 18), without displacing the three core jobs.
 
 ---
 
@@ -141,7 +141,7 @@ The primary product through the first public beta:
 
 ### Layer 3 — Modular analysis
 
-Deferred until the first workflows are dependable:
+Planned and built from 2026-10-30 (M11, section 18); each module still passes the analysis promotion gate and keeps the rules of section 20:
 
 - QC summaries and reports;
 - signal processing;
@@ -689,6 +689,10 @@ Isolated worker and one or two reviewed, typed recipes backed by mature packages
 
 Stable CLI and schemas, then skills and a narrow local MCP adapter.
 
+### M11 — Analysis
+
+The analysis functions of the v5.11 demo, on two tracks that run beside M10. Track A needs no Python runtime: sample metadata, imported feature tables as project artifacts with their own digest and lineage, project-owned statistics in Rust, the XIC and the 2D map. Track B is pyOpenMS feature detection, alignment, gap filling and annotation, in the supervised worker; it reaches users only through a released, verified runtime. Each function needs its own record, typed recipe, provenance and rendered QA, and passes the promotion gate in [docs/product/ANALYSIS_CAPABILITY_MAP.md](docs/product/ANALYSIS_CAPABILITY_MAP.md). See the roadmap, [docs/development/ROADMAP_V511_AND_ANALYSIS.md](docs/development/ROADMAP_V511_AND_ANALYSIS.md).
+
 ---
 
 ## 19. Codex development constraints
@@ -717,6 +721,8 @@ The repository command policy additionally blocks destructive Git cleanup/reset 
 - stable CLI/MCP;
 - Docker/Wine auto-configuration;
 - macOS/Linux public packaging.
+
+*2026-10-30:* the first public product shipped as beta 1. XIC, multi-file overlays, feature detection, alignment, annotation and statistics are now planned under M11. A workflow canvas, a stable CLI/MCP and a persistent run database keep their own records (C59, ADR 0064, RUN-1).
 
 ### Excluded by design unless a future decision reverses them
 

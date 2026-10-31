@@ -58,7 +58,7 @@ describe("Settings, by keyboard and by screen reader", () => {
   beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it("associates each group with its label and its help, in both locales", async () => {
+  it("associates each group with its label, in both locales", async () => {
     mount();
     await screen.findByText(en.backendMissing);
     for (const [locale, bundle] of [["en", en], ["zh-CN", zh]] as const) {
@@ -68,26 +68,26 @@ describe("Settings, by keyboard and by screen reader", () => {
       }
       const groups = within(dialog).getAllByRole("radiogroup");
       expect(groups).toHaveLength(2);
-      // A group names itself from its own label element, and describes itself
-      // from the help beside it. Neither is a placeholder or a title.
+      // A group names itself from its own label element, not a placeholder or
+      // a title. The choices explain themselves, so nothing describes them.
       expect(groups[0]).toHaveAccessibleName(bundle.language);
-      expect(groups[0]).toHaveAccessibleDescription(bundle.languageHelp);
+      expect(groups[0]).not.toHaveAttribute("aria-describedby");
       expect(groups[1]).toHaveAccessibleName(bundle.density);
-      expect(groups[1]?.getAttribute("aria-describedby")).not.toBeNull();
-      // Every option is a real radio with a real name, so the arrow keys and
-      // the form semantics are the platform's rather than this dialog's.
+      expect(groups[1]).not.toHaveAttribute("aria-describedby");
+      // Every option is a segmented-control radio with a real name: a button,
+      // so the arrow keys and the single Tab stop are the radiogroup's.
       for (const name of [bundle.english, bundle.simplifiedChinese, bundle.comfortable, bundle.compact]) {
-        expect(within(dialog).getByRole("radio", { name })).toBeInstanceOf(HTMLInputElement);
+        expect(within(dialog).getByRole("radio", { name })).toBeInstanceOf(HTMLButtonElement);
       }
     }
   });
 
-  it("names the dialog, describes it, and traps and returns the keyboard", async () => {
+  it("names the dialog, adds no description, and traps and returns the keyboard", async () => {
     mount();
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     expect(dialog).toHaveAccessibleName(en.settings);
-    expect(dialog).toHaveAccessibleDescription(en.description);
+    expect(dialog).not.toHaveAttribute("aria-describedby");
     // Opened onto the current value rather than onto the first control, so the
     // keyboard starts where the reader's attention is.
     expect(within(dialog).getByRole("radio", { name: en.english })).toHaveFocus();
@@ -108,47 +108,39 @@ describe("Settings, by keyboard and by screen reader", () => {
     expect(liveRegion()).toHaveTextContent("");
 
     fireEvent.click(within(dialog).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(dialog).getByRole("button", { name: zh.apply }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // In the language that was just applied, which is the language the reader
     // is now being read.
-    expect(liveRegion()).toHaveTextContent(zh.applied);
+    await waitFor(() => expect(liveRegion()).toHaveTextContent(zh.applied));
     expect(preferences.stored()?.appearance.locale).toBe("zh-CN");
+    fireEvent.click(within(dialog).getByRole("button", { name: zh.close }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     dialog = openSettings();
     fireEvent.click(within(dialog).getByRole("button", { name: zh.reset }));
-    // Reset previews the defaults, and English is one of them -- so the
+    // Reset applies the defaults, and English is one of them -- so the
     // announcement is in the language now on screen rather than in the one
-    // being replaced. Announcing a preview in the old language would describe
-    // the preview in words the preview itself has stopped using.
-    expect(liveRegion()).toHaveTextContent(en.resetPreview);
-    fireEvent.click(within(dialog).getByRole("button", { name: en.cancel }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(liveRegion()).toHaveTextContent(zh.cancelled);
+    // being replaced.
+    await waitFor(() => expect(liveRegion()).toHaveTextContent(en.applied));
   });
 
-  it("really refuses the controls it freezes while a publish is in flight", async () => {
+  it("keeps every control live while a write is in flight, and one press is one write", async () => {
     const { preferences } = mount(createFakePreferencesApi({ deferred: true }));
     await preferences.release();
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     fireEvent.click(within(dialog).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(dialog).getByRole("button", { name: zh.apply }));
 
-    // `aria-busy` on the control that is working, and `disabled` on the native
-    // elements rather than a style that only looks refused.
-    const pending = within(dialog).getByRole("button", { name: zh.savePending });
-    expect(pending).toHaveAttribute("aria-busy", "true");
+    // Nothing native-disabled under the keyboard (B4); the footer says it is saving.
     for (const control of within(dialog).getAllByRole("radio")) {
-      expect(control).toBeDisabled();
+      expect(control).toBeEnabled();
     }
-    // A keyboard activation of a frozen control changes nothing.
-    fireEvent.keyDown(pending, { key: "Enter" });
-    fireEvent.click(within(dialog).getAllByRole("radio")[0]!);
+    expect(dialog.querySelector("[data-storage-note]")).toHaveTextContent(zh.savePending);
+    // Choosing the value already chosen asks for nothing.
+    fireEvent.click(within(dialog).getByRole("radio", { name: zh.simplifiedChinese }));
     expect(preferences.requests).toHaveLength(1);
 
     await preferences.release();
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(dialog.querySelector("[data-storage-note]")).toBeEmptyDOMElement());
   });
 
   it("gives a storage problem an alert and a storage fact a status", async () => {
@@ -184,12 +176,10 @@ describe("the workspace shell, by keyboard", () => {
 
     const inspector = screen.getByRole("button", { name: en.inspectorToggle });
     expect(inspector).toHaveAttribute("aria-controls", "workbench-inspector");
-    // Refused because there is nothing loaded to inspect, and it says why
-    // rather than only looking grey -- and it stays in the tab order, so the
-    // reason and the control are reachable from the keyboard (PM9 L20).
-    expect(inspector).toHaveAttribute("aria-disabled", "true");
+    // Never refused (GOALS S3, B4): with nothing loaded the region opens and
+    // says so in one line. It stays in the tab order (PM9 L20).
+    expect(inspector).not.toHaveAttribute("aria-disabled");
     expect(inspector).not.toBeDisabled();
-    expect(inspector).toHaveAttribute("title", en.inspectorUnavailable);
     inspector.focus();
     expect(inspector).toHaveFocus();
   });
@@ -199,7 +189,9 @@ describe("the workspace shell, by keyboard", () => {
       createFakePreferencesApi({ stored: storedRecord({ layout: { roster: "hidden", details: "automatic" } }) }),
     );
     await screen.findByText(en.backendMissing);
-    const reset = await screen.findByRole("button", { name: en.layoutReset });
+    // In Settings, under Layout, since the v5.11 rebuild.
+    const dialog = openSettings();
+    const reset = within(dialog).getByRole("button", { name: en.layoutReset });
     reset.focus();
     expect(reset).toHaveFocus();
     // Activated by the keyboard, through the same handler a pointer reaches.
@@ -276,17 +268,19 @@ describe("the backend banner, by screen reader", () => {
     expect(actions[0]).toHaveFocus();
   });
 
-  it("offers the offline help as a real disclosure, closed, with a named summary", async () => {
+  it("offers the offline help as a disclosure button, closed, with a named region, in the status bar's details", async () => {
     mount();
     await screen.findByText(en.backendMissing);
-    const help = document.querySelector<HTMLDetailsElement>("[data-backend-help]")!;
-    expect(help.open).toBe(false);
-    const summary = within(help).getByText(en.backendHelpTitle);
-    expect(summary.tagName).toBe("SUMMARY");
-    // A native disclosure, so the keyboard and the screen reader get its state
-    // from the platform rather than from an aria attribute this file wrote.
-    fireEvent.click(summary);
-    await waitFor(() => expect(help.open).toBe(true));
+    fireEvent.click(document.querySelector<HTMLElement>("[data-backend-item]")!);
+    const help = await screen.findByRole("button", { name: en.backendHelpTitle });
+    expect(help).toHaveAttribute("data-backend-help");
+    expect(help).toHaveAttribute("aria-expanded", "false");
+    const region = document.getElementById(help.getAttribute("aria-controls")!)!;
+    expect(region).not.toBeVisible();
+    fireEvent.click(help);
+    await waitFor(() => expect(help).toHaveAttribute("aria-expanded", "true"));
+    expect(region).toBeVisible();
+    expect(region).toHaveTextContent(en.backendHelpProvider);
   });
 
   it("keeps the long Chinese labels intact, which is what the rendered checks measure", async () => {
@@ -294,7 +288,7 @@ describe("the backend banner, by screen reader", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     fireEvent.click(within(dialog).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(dialog).getByRole("button", { name: zh.apply }));
+    fireEvent.click(within(dialog).getByRole("button", { name: zh.close }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     // Every action still has its own name, and no name is empty or elided --
@@ -315,11 +309,10 @@ describe("the inspector panel's own copy", () => {
     // panel renders from: every label is a resource, translated, and the
     // unreported state stays the unreported state rather than becoming a zero.
     for (const key of [
-      "summaryRun", "summarySummary", "summarySpectra", "summaryChromatograms",
+      "summaryRun", "summarySpectra", "summaryChromatograms",
       "summaryRetentionTime", "summaryMsLevels", "summaryNoMsLevels",
-      "summaryEmptySection", "summaryTiming", "summaryTimingHelp",
-      "summaryOpenToPreview", "summaryRowToRendered", "summaryTableRender",
-      "summaryNotMeasured",
+      "summaryEmptySection", "detailsChromatogramSource", "detailsSpectrumSource",
+      "detailsSourceMetadata",
     ] as const) {
       expect(en[key].trim(), key).not.toBe("");
       expect(zh[key].trim(), key).not.toBe("");

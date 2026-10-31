@@ -1,14 +1,29 @@
 /**
- * Opens the backend banner where a usable installation folded it.
+ * Opens the ProteoWizard details from the status bar's item.
  *
- * With nothing to act on, the banner folds to a phrase in the header (PM9.2
- * L10), and its actions and help are reached through that phrase. A banner
- * that is already showing -- every state with something to act on -- has no
- * such phrase and is left as it is.
+ * ProteoWizard is an icon and a short label at the window's foot (direction
+ * A); its reading, build, every recovery action and the setup help open over
+ * the bar from there, in every state. Details already open are left as they
+ * are.
  */
 export async function showBackendBanner(): Promise<void> {
-  const toggle = browser.$("[data-backend-toggle]");
-  if ((await toggle.isExisting()) && (await toggle.getAttribute("aria-expanded")) === "false") {
-    await toggle.click();
+  const item = browser.$("[data-backend-item]");
+  await item.waitForExist();
+  if ((await item.getAttribute("aria-expanded")) === "false") {
+    await item.click();
+    await browser.$('#backend-status[data-backend-mode="popover"]').waitForDisplayed();
   }
+}
+
+/**
+ * Closes the ProteoWizard details, if open, with Esc from inside them, as a
+ * keyboard reader does. They float over the workspace, so a spec that goes on
+ * to press what is beneath them closes them first.
+ */
+export async function hideBackendBanner(): Promise<void> {
+  const open = browser.$('#backend-status[data-backend-mode="popover"]');
+  if (!(await open.isExisting())) return;
+  await browser.execute(() => document.getElementById("backend-status")?.focus());
+  await browser.keys("Escape");
+  await open.waitForExist({ reverse: true });
 }

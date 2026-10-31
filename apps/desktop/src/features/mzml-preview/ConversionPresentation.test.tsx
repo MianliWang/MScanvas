@@ -56,7 +56,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 async function panelOf(api: FakePreviewApi): Promise<HTMLElement> {
@@ -193,27 +193,33 @@ describe("PM9.4 O2: the excluded rows, named", () => {
     await check("Calibration_reference_");
     await waitFor(() => expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull());
     const asked = api.planRequests().length;
-    expect(within(panel).getByText(/2 requested · 1 eligible · 1 excluded \(not convertible\)\./)).toBeVisible();
-    const summary = within(panel).getByText("Excluded rows (1)");
-    // A native disclosure: a Tab stop, closed until asked.
-    expect(summary.tagName).toBe("SUMMARY");
-    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(within(panel).getByText(/2 requested · 1 eligible · 1 excluded \(not convertible\)/)).toBeVisible();
+    const toggle = within(panel).getByRole("button", { name: "Excluded rows (1)" });
+    // A disclosure button: a Tab stop, closed until asked.
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const region = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    expect(region).toHaveAttribute("hidden");
     // Outside the live scope summary, so a scope change does not read the names out.
-    expect(summary.closest("[aria-live]")).toBeNull();
-    fireEvent.click(summary);
-    expect(within(summary.closest("details")!).getByText(long)).toBeInTheDocument();
+    expect(toggle.closest("[aria-live]")).toBeNull();
+    expect(region.closest("[aria-live]")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(within(region).getByText(long)).toBeVisible();
     expect(api.planRequests()).toHaveLength(asked);
     expect(api.planRequests().at(-1)?.handles).toEqual(["file-1"]);
     expect(within(screen.getByRole("row", { name: /Calibration_reference_/ })).getByRole("checkbox")).toBeChecked();
   });
 
-  it("names at most twenty and counts the rest", async () => {
+  it("names every excluded row, windowed past the threshold like every conversion list", async () => {
     const rows = Array.from({ length: 25 }, (_, index) => mzml(index + 1));
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: rows, availability: availableBackend }));
     fireEvent.click(within(panel).getByRole("radio", { name: "All workspace rows" }));
-    const details = within(panel).getByText("Excluded rows (25)").closest("details")!;
-    expect(details.querySelectorAll("li")).toHaveLength(20);
-    expect(within(details).getByText("5 more not listed here.")).toBeInTheDocument();
+    const toggle = within(panel).getByRole("button", { name: "Excluded rows (25)" });
+    const details = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    const list = details.querySelector(".conversion-name-list")!;
+    expect(list).toHaveAttribute("aria-label", "Excluded rows (25)");
+    expect(list.querySelectorAll("li")).toHaveLength(25);
+    expect(list).toHaveAttribute("data-windowed", "false");
   });
 });
 
@@ -296,9 +302,10 @@ describe("PM9.4 O4: a failed request names its own control", () => {
     fireEvent.click(await within(panel).findByRole("button", { name: "Stop queue" }));
     const label = await within(panel).findByText("Stop queue:", { selector: "strong" });
     const banner = label.closest<HTMLElement>(".notice")!;
-    expect(banner).toHaveAttribute("role", "status");
-    expect(banner).toHaveTextContent("Stop queue: There is no conversion of yours to stop.");
-    expect(panel.querySelectorAll(".notice-danger[role='status']")).toHaveLength(1);
+    // Its sentences are the live part; Dismiss is not.
+    expect(label.closest("[role='status']")).toHaveTextContent("Stop queue: There is no conversion of yours to stop.");
+    expect(within(label.closest<HTMLElement>("[role='status']")!).queryByRole("button")).toBeNull();
+    expect(panel.querySelectorAll(".notice-danger [role='status']")).toHaveLength(1);
     fireEvent.click(within(banner).getByRole("button", { name: "Dismiss" }));
     expect(within(panel).queryByText("Stop queue:")).toBeNull();
   });
@@ -369,37 +376,43 @@ describe("PM9.4 O5: the ellipsis only where a picker follows", () => {
   });
 });
 
-describe("PM9.4 O6: Stop and Skip explained where they are offered", () => {
+describe("PM9.4 O6: Stop explained where it is offered", () => {
   it("leaves them out of a ready review", async () => {
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend }));
     await check("run-1.raw");
     const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
     await waitFor(() => expect(convert).not.toHaveAttribute("aria-disabled"));
-    expect(convert).toHaveAccessibleDescription(/One Thermo RAW acquisition will be converted to mzML\. Output-only validation\./);
+    // Described by the short plan (C11): its destination and conflict policy.
+    expect(convert).toHaveAccessibleDescription(new RegExp(en.m74CnvRequestedDestination));
     expect(panel.textContent).not.toMatch(/Stop queue|Stop this file|Skip settles/);
   });
 
-  it("explains Skip beside the rows that offer it while the queue runs", async () => {
+  it("offers Skip on the rows that can take it, and explains Stop queue", async () => {
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1), raw(2), raw(3)], availability: availableBackend, initialConversion: running() }));
     const skip = await within(panel).findByRole("button", { name: "Skip run-3.raw" });
-    expect(skip).toHaveAccessibleDescription(en.m74CnvSkipExplanation);
-    expect(within(panel).getByText(en.m74CnvSkipExplanation)).toBeVisible();
-    // Stop queue and Stop this file keep their own explanations.
+    // Its name says what it skips; nothing else restates it.
+    expect(skip).not.toHaveAttribute("aria-describedby");
     expect(within(panel).getByRole("button", { name: "Stop queue" })).toHaveAccessibleDescription(en.m74CnvStopExplanation);
   });
+});
 
-  it("says nothing of Skip where no row offers it", async () => {
-    const panel = await panelOf(createFakePreviewApi({
-      initialDatasets: [raw(1), raw(2)], availability: availableBackend,
-      initialConversion: { status: "running", operationId: "1", queue: queueOf([converted("file-1", "run-1.raw"), queueItem("file-2", "run-2.raw", { state: "running", attempts: 1 })]) },
-    }));
-    await within(panel).findByRole("button", { name: "Stop queue" });
-    expect(within(panel).queryByText(en.m74CnvSkipExplanation)).toBeNull();
+describe("the plan summary", () => {
+  it("lists only what differs from the shipped settings, then the destination and the conflict policy (C11)", async () => {
+    const panel = await panelOf(createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend }));
+    await check("run-1.raw");
+    await waitFor(() => expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull());
+    const summary = panel.querySelector("#conversion-plan-summary")!;
+    // The shipped settings: nothing changed, so no setting is repeated, and the
+    // rounding the form already says beside its control is not said again.
+    expect(summary.querySelectorAll("[data-plan-changed]")).toHaveLength(0);
+    expect(summary).not.toHaveTextContent(en.cnvMz64I32Note);
+    expect(within(summary as HTMLElement).getByText(en.m74CnvRequestedDestination)).toBeVisible();
+    expect(within(summary as HTMLElement).getByText(en.m74CnvConflict)).toBeVisible();
   });
 });
 
 describe("PM9.4 O7: validation extent from the Rust-projected mode", () => {
-  it("says output-only for an output-only plan and claims no check for another", async () => {
+  it("claims no check before a plan has run, whatever its mode", async () => {
     const api = createFakePreviewApi({ initialDatasets: [raw(1)], availability: availableBackend });
     const planned = api.describeConversion;
     let mode: "output_only" | "source_comparison" = "output_only";
@@ -408,14 +421,15 @@ describe("PM9.4 O7: validation extent from the Rust-projected mode", () => {
       return answer.outcome === "planned" ? { ...answer, plan: { ...answer.plan, validationMode: mode } } : answer;
     } });
     await check("run-1.raw");
-    await waitFor(() => expect(panel.querySelector("#conversion-validation-disclosure")).toHaveTextContent(en.m74CnvOutputOnly));
+    await waitFor(() => expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull());
+    // The rail repeats nothing (C11); what a check covered is said with its
+    // result, once one has run.
+    expect(panel).not.toHaveTextContent(en.m74CnvOutputOnly);
     mode = "source_comparison";
     fireEvent.click(within(panel).getByRole("radio", { name: "Beside each source" }));
-    // The judgement resources for that mode report a finished comparison,
-    // which a plan has not run: the review says nothing of it.
     await waitFor(() => {
       expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull();
-      expect(panel.querySelector("#conversion-validation-disclosure")).toBeNull();
+      expect(panel).not.toHaveTextContent(en.m74CnvOutputOnly);
     });
     const convert = within(panel).getByRole("button", { name: "Convert 1 eligible" });
     for (const id of convert.getAttribute("aria-describedby")!.split(" ")) {
@@ -470,7 +484,7 @@ describe("PM9.4 O8: a refused finished-queue action points at what holds it", ()
     fireEvent.click(await within(panel).findByRole("button", { name: en.stagingRecoveryButton }));
     const add = within(panel).getByRole("button", { name: en.m74CnvAddOne });
     await waitFor(() => expect(add).toHaveAttribute("aria-disabled", "true"));
-    expect(add).toHaveAccessibleDescription(`${en.m74CnvAdoptExplanation} ${en.stagingRecoveryWorking}`);
+    expect(add).toHaveAccessibleDescription(en.stagingRecoveryWorking);
     fireEvent.click(add);
     expect(api.calls()).not.toContain("adoptConversionOutputs");
     // The failed row makes diagnostics available, and the export is refused
@@ -483,7 +497,7 @@ describe("PM9.4 O8: a refused finished-queue action points at what holds it", ()
     expect(api.diagnosticsExportRequests).toEqual([]);
     await act(async () => reclaim.resolve({ status: "cleaned" }));
     await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
-    expect(add).toHaveAccessibleDescription(en.m74CnvAdoptExplanation);
+    expect(add).not.toHaveAttribute("aria-describedby");
   });
 
   it("refers staging cleanup to the running queue's status line", async () => {

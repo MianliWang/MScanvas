@@ -1040,7 +1040,9 @@ export interface PreviewError {
     | { readonly kind: "temporaryExportLeftBehind" }
     | { readonly kind: "clipboardBusy" }
     /** Which rule refused a conversion intent, by stable id (ADR 0055). */
-    | { readonly kind: "conversionIntent"; readonly reason: string };
+    | { readonly kind: "conversionIntent"; readonly reason: string }
+    /** Every output name two queued items would both write, once each (ADR 0057). */
+    | { readonly kind: "outputNameCollision"; readonly names: readonly string[] };
 }
 
 /** The only output format this workflow produces. */
@@ -1442,6 +1444,12 @@ export interface ConversionQueueItem {
   readonly sourceKind: DatasetSourceKind;
   /** What this item will produce, in the cardinality it will produce it. */
   readonly output: ConversionOutputPlan;
+  /**
+   * The "not verified by MSCanvas" label this row runs under, bound at BEGIN
+   * from its plan row (ADR 0055); `null` for a verified conversion. Optional
+   * only until fixtures carry it; Rust always sends it.
+   */
+  readonly notVerifiedByMscanvas?: NotVerifiedByMscanvas | null;
   readonly state: ConversionQueueItemState;
   readonly attempts: number;
   readonly retryable: boolean;

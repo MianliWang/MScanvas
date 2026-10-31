@@ -180,7 +180,7 @@ describe("narrow desktop layout rules", () => {
       requireStyleRule(app, ".spectrum-table-viewport").style.getPropertyValue(
         "scroll-padding-top",
       ),
-    ).toBe("36px");
+    ).toBe("30px");
   });
 
   it("keeps the drop overlay out of layout and unable to intercept the pointer", () => {
@@ -200,41 +200,46 @@ describe("narrow desktop layout rules", () => {
 });
 
 describe("narrow desktop layout markup", () => {
-  it("keeps the conversion panel inside the column rather than beside it", () => {
+  it("keeps the conversion surface in two columns that each scroll their own content", () => {
     const app = mountStyles(appStyles);
-    const panel = requireStyleRule(app, ".panel.conversion-panel").style;
+    const panel = requireStyleRule(app, ".conversion-panel").style;
 
-    // As tall as its own content and no taller. A share of the column would
-    // take height from the list on every window that has the panel and leave an
-    // empty box on every window that does not.
-    expect(panel.getPropertyValue("flex")).toBe("0 1 auto");
-    // Its own overflow outranks `.panel`'s hidden. A long failure sentence or a
-    // long output name scrolls here rather than pushing the roster out.
-    expect(panel.getPropertyValue("overflow")).toBe("auto");
+    // The form and a 300-360 px plan rail that ends in the action it describes
+    // (direction A 2.2; 600 and 360 px at the 960 px window).
+    expect(panel.getPropertyValue("grid-template-columns")).toBe("minmax(0, 1fr) clamp(300px, 34%, 360px)");
     expect(panel.getPropertyValue("min-width")).toBe("0px");
-    // The header alone, so a squeezed panel still says which panel it is.
-    expect(panel.getPropertyValue("min-height")).toBe("54px");
+    // Each column is its own scroll owner: a long failure sentence or a long
+    // output name scrolls there rather than pushing the other column away.
+    const columns = requireStyleRule(app, ".conversion-main, .conversion-side").style;
+    expect(columns.getPropertyValue("overflow")).toBe("auto");
+    expect(columns.getPropertyValue("min-width")).toBe("0px");
+    expect(columns.getPropertyValue("min-height")).toBe("0px");
+    // The rail's foot -- what refuses the start, then the start -- is pinned
+    // to the bottom of whatever scrolls, and at the rail's end otherwise.
+    const foot = requireStyleRule(app, ".conversion-rail-foot").style;
+    expect(foot.getPropertyValue("position")).toBe("sticky");
+    expect(foot.getPropertyValue("bottom")).toBe("0px");
+    expect(foot.getPropertyValue("margin-top")).toBe("auto");
 
-    // The one primary action wraps rather than being clipped at any width.
+    // The actions wrap rather than being clipped at any width.
     expect(requireStyleRule(app, ".conversion-actions").style.getPropertyValue("flex-wrap")).toBe(
       "wrap",
     );
   });
 
   it("lets a queue of sixteen sit in the column without widening it", () => {
-    // The panel is in the narrow column with the roster, and a queue puts two
-    // file names on every line of it. Neither name may be what pushes the
-    // sidebar -- and the document -- past the window.
+    // A queue puts two file names on every row. Neither name may be what
+    // pushes the column -- and the document -- past the window.
     const app = mountStyles(appStyles);
 
-    const list = requireStyleRule(app, ".conversion-queue-list").style;
+    const list = requireStyleRule(app, ".conversion-queue-list, .conversion-requested-list").style;
     expect(list.getPropertyValue("min-width")).toBe("0px");
-    // The position is rendered as text, so the list marker would say it twice.
+    // The position is rendered as a cell or a circle, so the marker would say it twice.
     expect(list.getPropertyValue("list-style")).toBe("none");
 
-    const item = requireStyleRule(app, ".conversion-queue-list > li").style;
+    const item = requireStyleRule(app, ".conversion-run-list > li").style;
     expect(item.getPropertyValue("min-width")).toBe("0px");
-    expect(item.getPropertyValue("flex-wrap")).toBe("wrap");
+    expect(item.getPropertyValue("grid-template-columns")).toBe("26px minmax(0, 1fr) auto");
 
     // Both names shrink on the same terms, so a long acquisition name cannot
     // take the whole line from the name it converts to.
@@ -248,18 +253,18 @@ describe("narrow desktop layout markup", () => {
     expect(names.getPropertyValue("text-overflow")).toBe("ellipsis");
     expect(names.getPropertyValue("white-space")).toBe("nowrap");
 
-    // The state and a failure sentence take the next line whole and wrap
-    // there, rather than being clipped alongside the names. So does everything
-    // a backend-named set says about its result, for the same reason: a
+    // A failure sentence and everything a backend-named set says about its
+    // result wrap under the name rather than being clipped beside it: a
     // sentence clipped to a column width is a sentence the user cannot read.
+    expect(requireStyleRule(app, ".conversion-run-detail").style.getPropertyValue("grid-column")).toBe("2 / -1");
     const status = requireStyleRule(
       app,
-      ".conversion-queue-status, .conversion-queue-attempts, .conversion-queue-facts, " +
-        ".conversion-queue-reason, .conversion-queue-residue, .conversion-queue-set-result, " +
+      ".conversion-queue-attempts, .conversion-queue-facts, .conversion-queue-reason, " +
+        ".conversion-queue-retry, .conversion-queue-residue, .conversion-queue-set-result, " +
         ".conversion-queue-set-completeness, .conversion-queue-set-partial",
     ).style;
-    expect(status.getPropertyValue("flex")).toBe("1 0 100%");
     expect(status.getPropertyValue("overflow-wrap")).toBe("anywhere");
+    expect(status.getPropertyValue("min-width")).toBe("0px");
     // Two digits' worth, so item 10 does not shift the column item 9 set.
     expect(requireStyleRule(app, ".conversion-queue-order").style.getPropertyValue("min-width")).toBe(
       "1.6em",
@@ -276,23 +281,26 @@ describe("narrow desktop layout markup", () => {
     expect(
       requireStyleRule(
         app,
-        '.conversion-queue-list > li[data-item-state="failed"] > .conversion-queue-status, .conversion-queue-reason',
+        '.conversion-run-list > li:is([data-item-state="failed"], [data-item-state="cancellationFailed"]) .conversion-queue-status',
       ).style.getPropertyValue("color"),
     ).toBe("var(--color-danger)");
+    expect(requireStyleRule(app, ".conversion-queue-reason").style.getPropertyValue("color")).toBe(
+      "var(--color-danger)",
+    );
     expect(
       requireStyleRule(
         app,
-        '.conversion-queue-list > li[data-item-state="finalized"] > .conversion-queue-status',
+        '.conversion-run-list > li[data-item-state="finalized"] .conversion-queue-status',
       ).style.getPropertyValue("color"),
     ).toBe("var(--color-success)");
-    // The running item is the one the user is watching, so it is the one that
-    // takes the primary colour and the weight.
+    // The running item is the one the user is watching, so it takes the
+    // accent and the weight.
     const running = requireStyleRule(
       app,
-      '.conversion-queue-list > li[data-item-state="running"] > .conversion-queue-status',
+      '.conversion-run-list > li[data-item-state="running"] .conversion-queue-status',
     ).style;
-    expect(running.getPropertyValue("color")).toBe("var(--color-text-primary)");
-    expect(running.getPropertyValue("font-weight")).toBe("600");
+    expect(running.getPropertyValue("color")).toBe("var(--color-accent-hover)");
+    expect(running.getPropertyValue("font-weight")).toBe("650");
   });
 
   it("gives the source family a track of its own without taking the name's", () => {
@@ -325,14 +333,14 @@ describe("narrow desktop layout markup", () => {
 
     expect(await screen.findAllByRole("button", { name: "Add files…" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Add mzML folder…" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Preview focused" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Remove highlighted" })).toHaveLength(1);
+    // The list actions live in the roster footer, which an empty list does not show.
+    expect(screen.queryByRole("button", { name: "Remove highlighted" })).toBeNull();
     await showBackendBanner();
     expect(screen.getAllByRole("button", { name: "Check again" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Choose folder…" })).toHaveLength(1);
   });
 
-  it("states the whole empty-state sentence rather than a shortened one", async () => {
+  it("states the whole empty-state heading rather than a shortened one", async () => {
     // #24 reported this text clipped. Nothing may fix that by saying less.
     render(
       <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
@@ -342,11 +350,7 @@ describe("narrow desktop layout markup", () => {
       </WorkspaceDropTransportProvider>,
     );
 
-    expect(
-      await screen.findByText(
-        "To add local data, choose Add files… in Acquisitions. If Acquisitions is not open, open it with the Acquisitions button in the header. Then activate an mzML row to inspect its plots and scans. Vendor acquisitions are not previewed; they remain available for conversion.",
-      ),
-    ).toBeVisible();
+    expect(await screen.findByText("Add acquisitions or open a project.")).toBeVisible();
   });
 
   it("keeps the roster tall enough to be a list when the column is stacked", () => {
@@ -435,9 +439,9 @@ describe("narrow desktop layout markup", () => {
       "minmax(342px, 0.9fr) minmax(526px, 1.6fr)",
     );
     expect(workspace.getPropertyValue("overflow-y")).toBe("auto");
-    // The stack's own grid floors were never applied under the workbench
-    // shell, which lays it out as a flex column, and are gone (PM9 UI-47).
-    expect(requireStyleRule(app, ".viewer-stack").style.getPropertyValue("grid-template-rows")).toBe("");
+    // The old stack's own grid floors were never applied under the workbench
+    // shell and are gone with it (PM9 UI-47): app.css has no viewer stack.
+    expect(appStyles).not.toContain(".viewer-stack");
   });
 
   it("lets a row's notes give ground so the file name keeps a column", () => {
@@ -458,17 +462,6 @@ describe("narrow desktop layout markup", () => {
     const notes = requireStyleRule(app, ".dataset-row-notes").style;
     expect(notes.getPropertyValue("min-width")).toBe("0px");
     expect(notes.getPropertyValue("overflow")).toBe("hidden");
-  });
-
-  it("lets five actions wrap rather than widening the column they sit in", () => {
-    // The fifth action is what raised the panel's floor by one wrapped line.
-    // What must not happen instead is the row refusing to wrap and pushing the
-    // sidebar -- and the document -- wider than the window.
-    const app = mountStyles(appStyles);
-    const actions = requireStyleRule(app, ".dataset-roster-actions").style;
-
-    expect(actions.getPropertyValue("display")).toBe("flex");
-    expect(actions.getPropertyValue("flex-wrap")).toBe("wrap");
   });
 
   it("lets a row's collision context give ground before the file name does", () => {
@@ -526,24 +519,12 @@ describe("narrow desktop layout markup", () => {
     expect(requireStyleRule(app, ".dataset-row-kept").style.getPropertyValue("color")).toBe(
       "var(--color-text-secondary)",
     );
-    expect(requireStyleRule(app, ".roster-field > label").style.getPropertyValue("color")).toBe(
-      "var(--color-text-secondary)",
-    );
-    // And the match count, which while a query hides rows is the only visible
-    // account of how much of the session is out of sight. It owns a selector of
-    // its own rather than inheriting the header note's tertiary colour, and
-    // that selector has to out-specify `.panel-header p` to mean anything.
-    const matches = requireStyleRule(app, ".panel-header p.dataset-roster-matches").style;
-    expect(matches.getPropertyValue("color")).toBe("var(--color-text-secondary)");
-    expect(requireStyleRule(app, ".panel-header p").style.getPropertyValue("color")).toBe(
-      "var(--color-text-tertiary)",
-    );
   });
 
-  it("gives the match count its own class only while a query is hiding rows", async () => {
-    // The line has two duties. As a header note about how many files a session
-    // holds it is quiet chrome, and the roster shows the same count in full
-    // underneath; as the account of a search it is the only thing that says so.
+  it("describes the search box with the match count only while a query is hiding rows", async () => {
+    // The whole sentence stays for assistive technology; the eye reads the
+    // count tag beside the heading. While a query hides rows the search box
+    // points at the sentence, because then it is the account of the search.
     render(
       <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
         <PreviewApiProvider
@@ -556,17 +537,17 @@ describe("narrow desktop layout markup", () => {
         </PreviewApiProvider>
       </WorkspaceDropTransportProvider>,
     );
-    const line = () => document.querySelector("#dataset-roster-matches");
+    const search = () => screen.getByRole("searchbox", { name: "Search files" });
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
-    expect(line()).not.toHaveClass("dataset-roster-matches");
+    expect(search()).not.toHaveAttribute("aria-describedby");
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
+    fireEvent.change(search(), {
       target: { value: "QC" },
     });
 
-    expect(line()).toHaveClass("dataset-roster-matches");
-    expect(line()).toHaveTextContent("2 visible / 3 acquisitions");
+    expect(search()).toHaveAttribute("aria-describedby", "dataset-roster-matches");
+    expect(document.querySelector("#dataset-roster-matches")).toHaveTextContent("2 visible / 3 acquisitions");
   });
 
   it("leaves the workspace roster scrolling inside its own panel", async () => {
@@ -602,14 +583,11 @@ describe("narrow desktop layout markup", () => {
     // happen to be adjacent, which at 586 CSS pixels is the difference between
     // a column and a pile.
     const app = mountStyles(appStyles);
-    const adoption = requireStyleRule(app, ".conversion-adoption").style;
-    const diagnostics = requireStyleRule(app, ".conversion-diagnostics").style;
-
-    for (const property of ["display", "flex-direction", "gap", "padding-top", "border-top"]) {
-      expect(diagnostics.getPropertyValue(property)).toBe(adoption.getPropertyValue(property));
-    }
-    expect(diagnostics.getPropertyValue("display")).toBe("flex");
-    expect(diagnostics.getPropertyValue("flex-direction")).toBe("column");
+    // One rule for both, so the two shapes cannot drift apart.
+    const offers = requireStyleRule(app, ".conversion-adoption, .conversion-diagnostics").style;
+    expect(offers.getPropertyValue("display")).toBe("flex");
+    expect(offers.getPropertyValue("flex-direction")).toBe("column");
+    expect(offers.getPropertyValue("border-top")).not.toBe("");
   });
 
   it("lets a digest break rather than widen the column it sits in", () => {
@@ -674,7 +652,7 @@ describe("the conversion queue at each checked window size", () => {
         </WorkspaceDropTransportProvider>,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+      fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
       await screen.findByText("Converting item 2 of 3…");
       // One list of items, not one per breakpoint.
       const lists = document.querySelectorAll(".conversion-queue-list");
@@ -706,7 +684,7 @@ describe("the conversion queue at each checked window size", () => {
       expect(screen.queryByRole("button", { name: "Export failure diagnostics…" })).toBeNull();
       expect(
         screen.getByText(
-          "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
+          "Stop queue keeps completed outputs.",
         ),
       ).toBeVisible();
     });

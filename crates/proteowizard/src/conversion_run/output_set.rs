@@ -2047,6 +2047,22 @@ fn run_set_backend(
             process,
         };
     }
+    // The single-output rule: no member is judged or published while the
+    // owned tree is not confirmed gone, whatever the exit code.
+    if !OwnedTreeDisposition::of(&output).no_owned_process_survives() {
+        let failure = if requested {
+            MultiOutputFailure::CancellationNotConfirmed(BackendExecutionFailure::NotTerminated)
+        } else {
+            MultiOutputFailure::Backend(BackendExecutionFailure::NotTerminated)
+        };
+        return SetBackendRun {
+            backend,
+            failure: Some(failure),
+            output: Some(output),
+            identity,
+            process,
+        };
+    }
     if !output.success() {
         let failure = MultiOutputFailure::BackendRejected {
             exit_code: output.exit_code,

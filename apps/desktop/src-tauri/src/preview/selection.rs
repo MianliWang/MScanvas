@@ -1652,6 +1652,14 @@ impl RegisteredDataset {
     pub(crate) const fn not_verified(&self) -> Option<&NotVerifiedByMscanvas> {
         self.not_verified.as_ref()
     }
+
+    /// Gains a label, merged with any the row has: what either says stays said.
+    fn gain(&mut self, label: NotVerifiedByMscanvas) {
+        self.not_verified = Some(match self.not_verified.take() {
+            Some(held) => held.merged(label),
+            None => label,
+        });
+    }
 }
 
 impl fmt::Debug for RegisteredDataset {
@@ -1859,10 +1867,7 @@ impl DatasetRegistry {
             if let (Some(existing), Some(label)) =
                 (self.datasets.get_mut(&existing_id), not_verified)
             {
-                existing.not_verified = Some(match existing.not_verified.take() {
-                    Some(held) => held.merged(label),
-                    None => label,
-                });
+                existing.gain(label);
             }
             // The same objects, and possibly not the same bytes. A bundle
             // remembers what each member held, so a member rewritten in place
@@ -1917,6 +1922,18 @@ impl DatasetRegistry {
 
     pub(super) fn get(&self, id: DatasetId) -> Option<&RegisteredDataset> {
         self.datasets.get(&id)
+    }
+
+    /// Gives one row a label, merged with any it has, and answers the row's
+    /// label now; `None` where the row has gone.
+    pub(super) fn label(
+        &mut self,
+        id: DatasetId,
+        label: NotVerifiedByMscanvas,
+    ) -> Option<NotVerifiedByMscanvas> {
+        let row = self.datasets.get_mut(&id)?;
+        row.gain(label);
+        row.not_verified.clone()
     }
 
     pub(super) fn contains(&self, id: DatasetId) -> bool {

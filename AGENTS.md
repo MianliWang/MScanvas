@@ -16,7 +16,7 @@ Before non-trivial work, read `PROJECT_PROPOSAL.md` and the nearest relevant `AG
 ## Product rules
 
 - MSCanvas is a local-first mass-spectrometry workbench, not a generic dashboard template.
-- The early product is viewer + converter + figure export. Analysis is deferred but architecturally allowed.
+- The early product is viewer + converter + figure export, and those three jobs keep priority. Since 2026-10-30 analysis is planned and built (roadmap: [docs/development/ROADMAP_V511_AND_ANALYSIS.md](docs/development/ROADMAP_V511_AND_ANALYSIS.md)) on two tracks: Track A needs no Python runtime; Track B (pyOpenMS) reaches users only through a released, verified runtime. Each analysis function still passes the promotion gate in [docs/product/ANALYSIS_CAPABILITY_MAP.md](docs/product/ANALYSIS_CAPABILITY_MAP.md).
 - Reuse mature scientific backends; do not reimplement proprietary RAW readers or mature algorithms without a written decision.
 - Optimize normal workflows before expanding feature count. Every major UI change needs a user goal, task path, error recovery path and rendered validation.
 - Workspace removal never means deleting source acquisition data.

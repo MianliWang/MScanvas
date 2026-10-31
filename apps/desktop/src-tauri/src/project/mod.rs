@@ -770,7 +770,9 @@ impl ProjectStore {
     /// whole is copied into a store assembled beside the destination, checked
     /// byte for byte, and given the store's name by a rename that refuses an
     /// existing one -- and only then is the document published, so a new
-    /// document never names results it does not have. A result already missing
+    /// document never names results it does not have. A project with none
+    /// gets an empty store the same way, so the name is its own before the
+    /// document is published. A result already missing
     /// or damaged is carried forward as the record it is and stays unavailable;
     /// copying cannot make it whole. An existing store at the destination is
     /// refused and never deleted, whoever it seems to belong to.
@@ -845,23 +847,19 @@ impl ProjectStore {
             None
         } else {
             // Whether or not there is a result to copy: a project with none
-            // yet would otherwise be published beside a store it does not
-            // own, and its first run would find that store instead of making
-            // its own. What is observed here is refused now; it is not a
-            // reservation of the name.
-            let store = unoccupied_store(destination)?;
-            if managed.is_empty() {
-                None
-            } else {
-                Some(assemble_store(
-                    store,
-                    directory,
-                    project_id,
-                    binding.as_ref().map(|binding| binding.path.as_path()),
-                    &managed,
-                    seams,
-                )?)
-            }
+            // yet would otherwise be published beside a name anyone could take
+            // before its first run, and that run would find another writer's
+            // store instead of making its own. The store is assembled, empty
+            // if need be, and claimed by the same no-replace rename before the
+            // document is published: the reservation of the name.
+            Some(assemble_store(
+                unoccupied_store(destination)?,
+                directory,
+                project_id,
+                binding.as_ref().map(|binding| binding.path.as_path()),
+                &managed,
+                seams,
+            )?)
         };
         let abandon = |pending: &Option<PendingStore>| {
             if let Some(pending) = pending {
@@ -1796,6 +1794,7 @@ impl ProjectStore {
             generation,
             path,
             identities: proved.identities().to_vec(),
+            not_verified: input.not_verified_by_mscanvas,
         })
     }
 
@@ -2174,7 +2173,8 @@ impl ProjectStore {
     /// Anything refused before the attempt starts records nothing: no saved
     /// document, a plan that is not current, a source this recipe does not
     /// read, a runtime that is not there, a work area with no room for the
-    /// source's copy, a store that is not this project's. Once the attempt starts, the run is
+    /// source's copy, a store that is not this project's, a new plan the
+    /// document has no room for. Once the attempt starts, the run is
     /// recorded however it ends. A completed attempt's result is published
     /// beside the document first and referenced second; a failed or cancelled
     /// one publishes nothing and keeps its run, with its code and stage.
@@ -2716,7 +2716,7 @@ impl ProjectStore {
         choice: PlanChoice<'_>,
         executor: &dyn RecipeExecutor,
     ) -> Result<PreparedRun, ProjectError> {
-        let (plan, input, binding_path, project_id, plan_recorded) = {
+        let (plan, input, binding_path, project_id, plan_recorded, plan_fits) = {
             let session = self.locked();
             if session.analysis_quarantined {
                 return Err(ProjectError::AnalysisQuarantined);
@@ -2761,12 +2761,22 @@ impl ProjectStore {
                 .clone()
                 .ok_or(ProjectError::NotYetPublished)?;
             refuse_full_history(&project.document)?;
+            // A plan not yet recorded is recorded with the run, and records
+            // only add bytes: where the document and the plan alone could not
+            // be saved, no end of the attempt could be kept, so no worker is
+            // started for one. Measured again once the attempt ended.
+            let plan_fits = recorded.is_some() || {
+                let mut with_plan = project.document.clone();
+                with_plan.plans.push(plan.clone());
+                fits_every_later_save(&with_plan)
+            };
             (
                 plan,
                 input,
                 binding.path,
                 project.document.project_id,
                 recorded.is_some(),
+                plan_fits,
             )
         };
         if !recipe::source_is_supported(&input) {
@@ -2775,6 +2785,11 @@ impl ProjectStore {
         let base = binding_path.parent().unwrap_or_else(|| Path::new(""));
         let source = record::resolve(&input.locator, base).map_err(ProjectError::Document)?;
         executor.preflight(&plan, &source)?;
+        // After the member's own refusals: `oversized` stops a whole batch,
+        // and a member its source or preflight refuses stops only itself.
+        if !plan_fits {
+            return Err(ProjectError::Oversized);
+        }
         let store = payload::store_of(&binding_path).ok_or(ProjectError::NotYetPublished)?;
         payload::ensure_store(&store, project_id)
             .map_err(|_| ProjectError::PayloadStoreUnusable)?;
@@ -3290,11 +3305,7 @@ fn assemble_store(
     managed: &[ManagedResult],
     seams: &SaveAsSeams<'_>,
 ) -> Result<PendingStore, ProjectError> {
-    let name = store
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or(ProjectError::DestinationNotNamed)?;
-    let path = directory.join(format!(".{name}.{}.pending", uuid::Uuid::new_v4()));
+    let path = payload::pending_store(directory);
     std::fs::create_dir(&path).map_err(|_| ProjectError::NotPublished)?;
     let source_store = bound.and_then(payload::store_of);
     let mut copied = Vec::new();
@@ -3414,6 +3425,8 @@ pub struct AdmissibleInput {
     /// companion was replaced after the proof is not the acquisition that was
     /// proved, and a proof covering the primary alone would say it was.
     identities: Vec<ObjectIdentity>,
+    /// The "not verified by MSCanvas" label the record carries (ADR 0055).
+    not_verified: Option<record::NotVerifiedByMscanvas>,
 }
 
 impl AdmissibleInput {
@@ -3421,6 +3434,13 @@ impl AdmissibleInput {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The label the proved record carries, which the row it is admitted as
+    /// gains once the project has claimed that row.
+    #[must_use]
+    pub const fn not_verified(&self) -> Option<&record::NotVerifiedByMscanvas> {
+        self.not_verified.as_ref()
     }
 
     /// The objects this proof is bound to.

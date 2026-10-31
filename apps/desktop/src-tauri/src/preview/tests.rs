@@ -7521,7 +7521,7 @@ fn evidenced_capabilities() -> InstalledHelpCapabilities {
 }
 
 /// What a substituted backend process does when it is launched.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BackendAct {
     /// Writes the document the plan asked for, where it asked for it.
     Convert,
@@ -7548,6 +7548,11 @@ enum BackendAct {
     /// that the process it owned is gone. Labelled as injected, because no
     /// vendor run was observed doing this.
     StrandAnOwnedProcess,
+    /// Writes the document and exits 0 while its owned Job still counts a
+    /// process, so the tree is not confirmed gone. Injected, like the above.
+    ConvertLeavingAProcess,
+    /// Exits 1 while its owned Job still counts a process. Injected.
+    FailLeavingAProcess,
 }
 
 /// A hook a test can run inside a provider's backend resolution, shared so it
@@ -7732,7 +7737,7 @@ impl FakeConversionRunner {
             .expect("a conversion plan carries an output destination")
             .to_path_buf();
         let exit_code = match self.act {
-            BackendAct::Convert => {
+            BackendAct::Convert | BackendAct::ConvertLeavingAProcess => {
                 fs::write(destination, mzml_document(2, true)).expect("write staged output");
                 0
             }
@@ -7746,7 +7751,7 @@ impl FakeConversionRunner {
                 0
             }
             BackendAct::WriteNothing => 0,
-            BackendAct::Fail => 1,
+            BackendAct::Fail | BackendAct::FailLeavingAProcess => 1,
             BackendAct::FailAfterStaging => {
                 fs::write(destination, b"<indexedmzML partial")
                     .expect("write a partial staged output");
@@ -7771,7 +7776,10 @@ impl FakeConversionRunner {
             elapsed: Duration::from_millis(3),
             termination: Termination::Exited,
             max_active_processes: Some(1),
-            final_active_processes: Some(0),
+            final_active_processes: Some(u32::from(matches!(
+                self.act,
+                BackendAct::ConvertLeavingAProcess | BackendAct::FailLeavingAProcess
+            ))),
             peak_job_memory_bytes: Some(2_048),
             total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
@@ -11469,10 +11477,11 @@ fn a_queue_whose_items_would_share_an_output_name_is_refused_before_anything_run
     let fixture = TestFile::new("queue-collision");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
     // Different folders, same basename -- so the same planned output name.
+    // A comma in it, which the bounded detail cannot keep apart.
     let nested = fixture.directory.join("nested");
     fs::create_dir_all(&nested).expect("create the nested folder");
-    let one = add_one_acquisition(&service, &fixture.thermo_raw("run.raw"));
-    let other = nested.join("run.raw");
+    let one = add_one_acquisition(&service, &fixture.thermo_raw("run, final.raw"));
+    let other = nested.join("run, final.raw");
     fs::write(&other, thermo_raw_bytes()).expect("write the twin");
     let two = add_one_acquisition(&service, &other);
 
@@ -11480,7 +11489,14 @@ fn a_queue_whose_items_would_share_an_output_name_is_refused_before_anything_run
         .conversion_queue_plan_now(&[one.clone(), two.clone()])
         .expect_err("two items cannot write one name");
     assert_eq!(error.kind, "queue_output_name_collision");
-    assert_eq!(error.detail.as_deref(), Some("run.mzML"));
+    assert_eq!(error.detail.as_deref(), Some("run, final.mzML"));
+    // On the wire the names are a list, each one whole (ADR 0057 decision 3).
+    let wire = serde_json::to_value(&error).expect("the error serializes");
+    assert_eq!(wire["context"]["kind"], "outputNameCollision");
+    assert_eq!(
+        wire["context"]["names"],
+        serde_json::json!(["run, final.mzML"])
+    );
 
     // And no reservation exists to claim.
     let document = current_document(&service);
@@ -12007,6 +12023,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "error",
             "fileName",
             "finalizedOutputs",
+            "notVerifiedByMscanvas",
             "output",
             "process",
             "result",
@@ -12020,6 +12037,8 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
         ],
         "one latest attempt per item, never a history of them"
     );
+    // The shipped row on the measured build: nothing to label.
+    assert_eq!(item["notVerifiedByMscanvas"], serde_json::Value::Null);
     // A known single output states its one name, under the arm that has one.
     assert_eq!(
         sorted_keys(&item["output"]),
@@ -14467,6 +14486,69 @@ fn a_skip_of_a_row_that_never_ran_is_the_users_decision() {
     assert_eq!(dto.failed_count, 0);
 }
 
+/// A queue-level refusal the session can recover from settles what it never
+/// reached as not run, and a retry reruns the failures only.
+///
+/// Left pending, such a row read "Waiting" in a queue that was over and was
+/// counted nowhere, and a retry labelled as rerunning failures converted it
+/// too. Settled as not run, it is what a stop leaves: a new queue's to convert.
+#[test]
+fn a_recoverable_queue_refusal_settles_unreached_rows_as_not_run_and_a_retry_leaves_them() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+    slot.release_attempt(operation, 0, attempt);
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Refused {
+            attempt: AttemptFacts::NOTHING_RAN,
+            retryable: true,
+            error: PreviewErrorDto::new("backend_wait_failed", "lost track", true),
+        },
+    ));
+    // Refused before item 1 starts, for a reason the session can recover from.
+    slot.refuse(
+        operation,
+        PreviewErrorDto::new("queue_destination_changed", "moved", true),
+    );
+
+    let update = slot.read(
+        false,
+        ConversionDiagnosticsStateDto::default(),
+        BackendAuthorityProjectionDto::unresolved(),
+    );
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = update.state else {
+        panic!("the refused queue is terminal: {:?}", update.state);
+    };
+    assert_eq!(
+        queue
+            .items
+            .iter()
+            .map(|item| item.state)
+            .collect::<Vec<_>>(),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::NotRun
+        ],
+        "the row the refusal kept from starting is not waiting for anything"
+    );
+    assert_eq!((queue.failed_count, queue.not_run_count), (1, 1));
+
+    slot.begin_retry().expect("a retryable failure is rerun");
+    assert_eq!(
+        running_queue_dto(&slot)
+            .items
+            .iter()
+            .map(|item| item.state)
+            .collect::<Vec<_>>(),
+        vec![
+            ConversionQueueItemStateDto::Pending,
+            ConversionQueueItemStateDto::NotRun
+        ],
+        "the retry reruns the failure and not the row never run"
+    );
+}
+
 /// The stop handle belongs to one exact attempt.
 ///
 /// Released by operation, item and attempt number, so a release that names any
@@ -16764,6 +16846,52 @@ fn a_plan_on_an_unmeasured_build_labels_every_row_with_its_release() {
     }
 }
 
+/// The plan's label is bound into the queue at `BEGIN`, so a row waiting for
+/// its destination says it before any report exists, and its report agrees
+/// once it has run.
+#[test]
+fn a_queue_on_an_unmeasured_build_labels_every_row_before_it_runs() {
+    let fixture = TestFile::new("queue-unverified-build");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+        FakeConversionRunner::new(BackendAct::Convert),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_now(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("the queue is admitted");
+    let waiting = serde_json::to_value(service.conversion_state()).expect("the state serializes");
+    let label = &waiting["state"]["queue"]["items"][0]["notVerifiedByMscanvas"];
+    assert_eq!(label["unverifiedBuildRelease"], "3.0.26204");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(operation, &destination);
+    let item = &terminal_queue(&update).items[0];
+    assert_eq!(item.state, ConversionQueueItemStateDto::Finalized);
+    let Some(super::dto::ConversionAttemptResultDto::Single { report }) = &item.result else {
+        panic!("a Thermo item reports once: {:?}", item.result);
+    };
+    assert_eq!(
+        item.not_verified_by_mscanvas
+            .as_ref()
+            .and_then(|label| label.unverified_build_release.as_deref()),
+        report.unverified_build_release.as_deref()
+    );
+    assert_eq!(
+        item.not_verified_by_mscanvas
+            .as_ref()
+            .map(|label| label.unverified_settings),
+        Some(report.unverified_settings)
+    );
+}
+
 /// A plan asked under a binding the session has left is refused with the one it
 /// is on.
 ///
@@ -18687,6 +18815,84 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         .eligible_item_count,
         0
     );
+}
+
+/// An attempt with no report of its own -- a refusal, a stop that could not
+/// be confirmed -- exports the label `BEGIN` bound to its row, so on a build
+/// with no measured row the export names the release the queue row names
+/// (ADR 0055 decision 3), and never reads as a measured build.
+#[test]
+fn a_refusal_and_an_unconfirmed_stop_export_the_label_their_row_shows() {
+    let label = super::selection::NotVerifiedByMscanvas::of(false, Some("3.0.26204".to_owned()));
+    let mut items = vec![test_queue_item(), test_queue_item_named(1, "two.raw")];
+    for item in &mut items {
+        item.set_not_verified(label.clone());
+    }
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
+        DestinationPolicy::CustomFolder,
+        items,
+    )
+    .expect("two items are a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0", "file-1"]))
+            .is_ok()
+    );
+    let first = slot.start_item(operation, 0).expect("the item starts");
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Refused {
+            attempt: AttemptFacts::NOTHING_RAN,
+            retryable: true,
+            error: PreviewErrorDto::new("file_unreadable", "unreadable", true),
+        },
+    ));
+    slot.release_attempt(operation, 0, first);
+    let second = slot.start_item(operation, 1).expect("the item starts");
+    assert!(slot.settle_item(
+        operation,
+        1,
+        ItemOutcome::Stopped {
+            attempt: stopped_attempt_facts(),
+            set: None,
+            facts: CancellationFacts {
+                process_launched: Some(true),
+                owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::Unconfirmed,
+                elapsed: Duration::from_millis(7),
+                termination: None,
+                staging_residue: None,
+            },
+            diagnostics: None,
+        },
+    ));
+    slot.release_attempt(operation, 1, second);
+    slot.finish(operation, None, TerminalReason::StopFailed);
+
+    let (queue, provider, _round, tickets) = slot
+        .terminal_diagnostics(operation)
+        .expect("a stop-failed queue is exportable");
+    assert_eq!(tickets[1].describes(), ItemState::CancellationFailed);
+    let rendered =
+        super::diagnostics::payload::render(&super::diagnostics::DiagnosticsExportRequest {
+            queue,
+            provider,
+            tickets,
+        });
+    let document: serde_json::Value = serde_json::from_slice(&rendered.bytes).expect("valid JSON");
+    let items = document["items"].as_array().expect("an item array");
+    assert_eq!(items.len(), 2);
+    for item in items {
+        assert_eq!(item["unverifiedBuildRelease"], "3.0.26204", "{item}");
+        assert_eq!(item["unverifiedSettings"], false, "{item}");
+    }
 }
 
 /// A backend that fails after printing a great deal of text that needs
@@ -29434,6 +29640,10 @@ fn a_destination_replaced_after_the_queue_starts_refuses_before_it_writes() {
         Vec::<String>::new(),
         "and nothing was written into the object that took the name"
     );
+    // And the row it kept from starting is not left waiting in a queue that
+    // is over.
+    assert_eq!(queue.items[0].state, ConversionQueueItemStateDto::NotRun);
+    assert_eq!(queue.not_run_count, 1);
 }
 
 /// Nothing the destination authority holds renders a user's own text.
@@ -30016,6 +30226,90 @@ fn an_owned_process_this_run_cannot_account_for_stops_the_queue_without_a_stop()
         "an item nothing will ever start is not waiting its turn"
     );
     assert_eq!(queue.not_run_count, 1);
+}
+
+/// A run that exits, cleanly or not, while its owned tree is unconfirmed is
+/// neither judged nor finalized, and it quarantines the backend with no stop
+/// asked for.
+///
+/// The crate's guard says the report leaves a process unaccounted for; this is
+/// the desktop half: the session stops trusting the backend, the next BEGIN is
+/// refused, the queue launches nothing more and the target name stays free.
+/// Injected, like the test above.
+#[cfg(windows)]
+#[test]
+fn an_exit_with_an_unconfirmed_tree_quarantines_the_backend_without_a_stop() {
+    for act in [
+        BackendAct::ConvertLeavingAProcess,
+        BackendAct::FailLeavingAProcess,
+    ] {
+        let fixture = TestFile::new("unconfirmed-tree-exit");
+        let runner = FakeConversionRunner::new(act);
+        let launches = runner.launches();
+        let service = PreviewService::new(Box::new(ConvertingProvider::new(
+            evidenced_capabilities(),
+            runner,
+        )));
+        let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+        let second = add_one_acquisition(&service, &fixture.thermo_raw("second.raw"));
+        let document = current_document(&service);
+        let reservation = service
+            .begin_conversion_under_now(
+                &[first.clone(), second],
+                ConversionConflictPolicyDto::Fail,
+                document,
+                DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+            )
+            .expect("two acquisitions are a queue");
+        let operation = service
+            .claim_conversion(&reservation.reservation_id, document)
+            .expect("claim the reservation");
+        assert!(service.start_resolved_for_test(operation, None));
+
+        let update = service.drain_queue_for_test(operation);
+
+        assert_eq!(launches.load(Ordering::SeqCst), 1, "{act:?}");
+        assert!(service.backend_is_quarantined(), "{act:?}");
+        assert!(update.backend_quarantined, "{act:?}");
+        let queue = terminal_queue(&update);
+        assert_eq!(
+            queue.items[0].state,
+            ConversionQueueItemStateDto::Failed,
+            "{act:?}"
+        );
+        let report = item_report(&queue.items[0]).expect("the attempt reports");
+        assert_eq!(
+            report.detailed_outcome.as_deref(),
+            Some("backend_not_terminated"),
+            "{act:?}: {report:?}"
+        );
+        assert_eq!(queue.finalized_count, 0, "{act:?}");
+        assert_eq!(
+            queue.items[1].state,
+            ConversionQueueItemStateDto::NotRun,
+            "{act:?}"
+        );
+        assert!(
+            !fixture
+                .directory
+                .join("converted")
+                .join("first.mzML")
+                .exists(),
+            "{act:?}: nothing was published under the target name"
+        );
+        assert_eq!(
+            service
+                .begin_conversion_now(
+                    std::slice::from_ref(&first),
+                    ConversionConflictPolicyDto::Fail,
+                    current_document(&service),
+                )
+                .unwrap_err()
+                .kind,
+            "backend_quarantined",
+            "{act:?}"
+        );
+    }
 }
 
 /// The admitted per-item stop, end to end through the command the interface

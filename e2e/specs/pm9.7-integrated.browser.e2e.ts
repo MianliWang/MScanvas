@@ -35,10 +35,10 @@ const ANCHORS = [
 
 /** motion's development-build notice when the page asks for reduced motion. */
 const REDUCED_MOTION_NOTICE = "You have Reduced Motion enabled on your device";
-const CONVERT = ".conversion-plan button.primary-button, .conversion-plan .conversion-start";
+const CONVERT = "button.conversion-start";
 const ROSTER_TOGGLE = '[aria-controls="workbench-roster"]';
-/** DESIGN_SYSTEM's focus ring: 2 px, solid, the one focus colour `#1769d1` (UI-46). */
-const RING = "2px solid rgb(23, 105, 209)";
+/** DESIGN_SYSTEM's focus ring: 2 px, solid, the one focus colour, `#1769e0` since the rebuild's tokens (spec 1.3; UI-46). */
+const RING = "2px solid rgb(23, 105, 224)";
 
 async function frames() {
   await browser.execute(
@@ -47,11 +47,16 @@ async function frames() {
 }
 
 async function navigate(name: string) {
-  await browser.execute((label: string) => {
-    [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
-      .find((button) => (button.textContent ?? "").trim() === label)
-      ?.click();
+  const found = await browser.execute((label: string) => {
+    const target = [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
+      .find((button) => (button.textContent ?? "").trim() === label);
+    target?.click();
+    return target !== undefined;
   }, name);
+  // Project is the header's third tab (direction A).
+  if (!found) {
+    await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
+  }
   await frames();
 }
 
@@ -314,7 +319,7 @@ describe("PM9.7 integrated states, rendered", () => {
         await browser.$(".roster-empty").waitForExist({ timeout: 30_000 });
         const workbench = await sample(`i1-workbench-${at}`);
         expect(workbench.surface).toBe("workbench");
-        expect(workbench.text).toContain(words.emptyEvidence);
+        expect(workbench.text).toContain(words.evidenceFirstRun);
         let add = await mark(".workbench-shell", words.addFiles, "data-pm97-add");
         if (add === null) {
           // Folded below 1050 px: the header's Acquisitions action unfolds it.
@@ -358,45 +363,15 @@ describe("PM9.7 integrated states, rendered", () => {
         const reopen = await mark(".project-header", words.projectOpen, "data-pm97-open");
         expect([create, reopen].every((selector) => selector !== null)).toBe(true);
         expect([await offered(create!), await offered(reopen!)]).toEqual([true, true]);
-        // Save, Save As… and Close are refused with nothing open: they read as
-        // refused, point at the no-project sentence and say why (PM9.7 F1).
-        const refused = await browser.execute(
-          (labels: string[]) =>
-            labels.map((label) => {
-              const button = [...document.querySelectorAll<HTMLButtonElement>(".project-header button")].find(
-                (candidate) => (candidate.textContent ?? "").trim() === label,
-              );
-              return button === undefined
-                ? { label, found: false }
-                : {
-                    label,
-                    found: true,
-                    refused: button.getAttribute("aria-disabled"),
-                    disabled: button.disabled,
-                    opacity: getComputedStyle(button).opacity,
-                    title: button.title,
-                    describedBy: document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent?.trim() ?? null,
-                  };
-            }),
-          [words.projectSave, words.projectSaveAs, words.projectClose],
+        // Save, Save As… and Close act on an open project, so with nothing open
+        // they are not offered at all: the head holds exactly the two ways in.
+        const offeredInHead = await browser.execute(() =>
+          [...document.querySelectorAll<HTMLButtonElement>(".project-header button")].map(
+            (button) => (button.textContent ?? "").trim(),
+          ),
         );
-        evidence.push({ refusedActions: `i1-project-${at}`, refused });
-        for (const fact of refused) {
-          expect(fact).toMatchObject({
-            found: true,
-            refused: "true",
-            disabled: false,
-            opacity: "0.48",
-            title: words.projectNeedsProject,
-            describedBy: words.projectNoneHint,
-          });
-        }
-        // Focused, a refused action keeps its full ring rather than fading with it.
-        const save = await mark(".project-header", words.projectSave, "data-pm97-save");
-        expect(await reach(save!, `i1-project-${at} save (refused)`)).not.toBeNull();
-        expect(await browser.execute(() => getComputedStyle(document.activeElement!).opacity)).toBe("1");
-        expect(await focusFacts()).toMatchObject({ onBody: false, inViewport: true, covered: false, ring: true, treatment: { outline: RING } });
-        await shot(`i1-project-${at}-save-refused-focused`);
+        evidence.push({ headActions: `i1-project-${at}`, offered: offeredInHead });
+        expect(offeredInHead).toEqual([words.projectNew, words.projectOpen]);
 
         expect(await reach(create!, `i1-project-${at} new project`)).not.toBeNull();
         expect(await focusFacts()).toMatchObject({ onBody: false, inViewport: true, covered: false, ring: true, treatment: { outline: RING } });
@@ -418,7 +393,7 @@ describe("PM9.7 integrated states, rendered", () => {
         await open(scenario("populated", locale), locale, width, height);
         await revealRosterRow(MZML_ROW.handle);
         await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
-        await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+        await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
         await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForExist({ timeout: 60_000 });
         await selectTheSpectrum(0);
         // The drawing, not only its range: while the projection loads, the
@@ -498,7 +473,7 @@ describe("PM9.7 integrated states, rendered", () => {
       await open(scenario("populated", locale), locale, 960, 640);
       await revealRosterRow(MZML_ROW.handle);
       await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
-      await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+      await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
       await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForExist({ timeout: 60_000 });
       await selectTheSpectrum(0);
       await walk("viewer-960x640", 13);
@@ -513,7 +488,7 @@ describe("PM9.7 integrated states, rendered", () => {
       await open(scenario("populated", locale), locale, 1366, 768);
       await revealRosterRow(MZML_ROW.handle);
       await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
-      await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+      await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
       await browser.$('div.spectrum-table-row[data-row-position="0"]').waitForExist({ timeout: 60_000 });
       await selectTheSpectrum(0);
       await walk("workbench-1366x768", 20, 120);

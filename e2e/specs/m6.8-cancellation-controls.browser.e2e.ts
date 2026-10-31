@@ -1,4 +1,5 @@
 /** M6.8 browser evidence: production React, mocked Tauri boundary only. */
+import { metrics } from "../support/cdp";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
@@ -70,9 +71,9 @@ const terminal = (items: readonly ConversionQueueItem[], reason: "completed" | "
 const MID_RUN = [item(1, "finalized", 1), item(2, "running", 1), item(3, "pending", 0)];
 
 async function viewport(width: number, height: number) {
-  await browser.setWindowSize(width, height);
-  const frame = await browser.execute(() => ({ width: outerWidth - innerWidth, height: outerHeight - innerHeight }));
-  await browser.setWindowSize(width + frame.width, height + frame.height);
+  // Emulated rather than a resized OS window: a CI runner's display can be
+  // smaller than the window asked for, which left M6.7 at 1350x617 (2026-10-30).
+  await metrics(width, height);
   expect(await browser.execute(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width, height });
   console.log("M6.8 measured inner viewport", { width, height });
 }
@@ -91,7 +92,7 @@ async function capture(name: string, selector: string) {
   await browser.saveScreenshot(resolve(directory, `${name}.png`));
 }
 async function requests(command: string) { return (await ipcCalls()).filter((call) => call.command === command).map((call) => call.args); }
-async function button(name: string) { return browser.$(RUNNING).$(`button=${name}`); }
+async function button(name: string) { return browser.$(PANEL).$(`button=${name}`); }
 
 async function start(first: WorkspaceConversionUpdate) {
   await viewport(1366, 768);
@@ -104,7 +105,7 @@ async function start(first: WorkspaceConversionUpdate) {
   // The Conversion surface is its own destination since M7.2.
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
   await showConversion();
-  await browser.$(RUNNING).waitForDisplayed({ timeout: 15_000 });
+  await browser.$(PANEL).waitForDisplayed({ timeout: 15_000 });
 }
 
 describe("M6.8 cancellation scopes, skip and truthful progress", () => {
@@ -116,15 +117,15 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
   it("offers two stop scopes that name themselves, and no third", async () => {
     await start(running(MID_RUN, 1));
 
-    expect(await browser.$(RUNNING).getText()).toContain("Converting item 2 of 3");
+    expect(await browser.$(PANEL).getText()).toContain("Converting item 2 of 3");
     // Two scopes, and exactly two. Each says which one it is: two controls both
     // called "Stop" would be the ambiguity this pair exists to avoid.
     const scoped = await browser.execute(() =>
       [...document.querySelectorAll(".conversion-running .conversion-actions button")].map((node) => node.textContent));
     expect(scoped).toEqual(["Stop queue", "Stop this file"]);
-    // Named at the control, not in a legend somewhere else.
-    expect(await browser.$("#conversion-cancel-item-scope").getText())
-      .toContain("Stop this file ends sample-2.raw and carries on with the rest of the queue.");
+    // Named at the control, as its description rather than a paragraph on screen.
+    expect(await browser.$("#conversion-cancel-item-scope").getProperty("textContent"))
+      .toContain("Ends sample-2.raw; the rest of the queue continues.");
     // Nothing that would suspend the run or take a row out of the bound plan.
     for (const absent of ["Pause", "Resume", "Remove"]) {
       expect(await (await button(absent)).isExisting()).toBe(false);
@@ -145,14 +146,14 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     // The queue was not stopped.
     expect(await requests(STOP_QUEUE)).toEqual([]);
 
-    await browser.waitUntil(async () => (await browser.$(RUNNING).getText()).includes("Converting item 3 of 3"));
+    await browser.waitUntil(async () => (await browser.$(PANEL).getText()).includes("Converting item 3 of 3"));
     const states = await browser.execute(() =>
       [...document.querySelectorAll(".conversion-running .conversion-queue-list > li")].map((node) => node.getAttribute("data-item-state")));
     expect(states).toEqual(["finalized", "cancelled", "running"]);
     // The control comes back for the next item rather than staying refused
     // (refused through aria-disabled since PM9.4 R11).
     expect(await isRefused(`${RUNNING} .conversion-actions button:last-child`)).toBe(false);
-    await capture("one-file-ended-queue-continues", RUNNING);
+    await capture("one-file-ended-queue-continues", PANEL);
   });
 
   it("skips only a waiting row, and says who decided", async () => {
@@ -162,7 +163,7 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     // ended by the other action, and a finished one has nothing to skip.
     const offered = await browser.execute(() =>
       [...document.querySelectorAll(".conversion-running .conversion-queue-list > li")]
-        .map((node) => node.querySelector(".conversion-queue-skip")?.textContent ?? null));
+        .map((node) => node.querySelector(".conversion-queue-skip")?.getAttribute("aria-label") ?? null));
     expect(offered).toEqual([null, null, "Skip sample-3.raw"]);
     await capture("skip-offered-on-waiting-row-only", `${RUNNING} .conversion-queue-list`);
 
@@ -176,7 +177,7 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     // Said in words, and it names who decided rather than reusing either
     // neighbouring state's sentence.
     expect(await browser.$(`${RUNNING} .conversion-queue-list > li:nth-child(3) .conversion-queue-status`).getText())
-      .toBe("Skipped — you chose not to convert this one");
+      .toBe("Skipped by you");
     // The row keeps its place and its name: this is an outcome, not a removal.
     expect(await browser.$$(`${RUNNING} .conversion-queue-list > li`).length).toBe(3);
     expect(await browser.$(`${RUNNING} .conversion-queue-list > li:nth-child(3)`).getText()).toContain("sample-3.raw");
@@ -186,14 +187,14 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
   it("withdraws both narrower scopes while the whole queue is stopping", async () => {
     await start(stopping(MID_RUN, 1));
 
-    expect(await browser.$(RUNNING).getText()).toContain("Stopping queue…");
+    expect(await browser.$(PANEL).getText()).toContain("Stopping queue…");
     // Neither narrower action is offered: once the queue is ending there is no
     // "carry on" left for either of them to preserve.
     expect(await (await button("Stop this file")).isExisting()).toBe(false);
     expect(await browser.$(`${RUNNING} .conversion-queue-skip`).isExisting()).toBe(false);
     // And nothing predicts how the item under way will end.
-    expect(await browser.$(RUNNING).getText()).not.toContain("Cancelled");
-    await capture("stopping-withdraws-narrower-scopes", RUNNING);
+    expect(await browser.$(PANEL).getText()).not.toContain("Cancelled");
+    await capture("stopping-withdraws-narrower-scopes", PANEL);
   });
 
   it("counts every item a completed queue held, including the two the user decided", async () => {
@@ -214,7 +215,7 @@ describe("M6.8 cancellation scopes, skip and truthful progress", () => {
     expect(states.slice(0, 3)).toEqual([
       "Converted",
       "Cancelled",
-      "Skipped — you chose not to convert this one",
+      "Skipped by you",
     ]);
     await capture("counts-partition-the-queue", PANEL);
   });

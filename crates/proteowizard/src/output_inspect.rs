@@ -347,6 +347,9 @@ fn walk_xml<R: BufRead>(
                 if opens && depth >= limits.max_depth {
                     return Err(limit(MzmlLimitKind::Depth));
                 }
+                // Every element answers to the attribute limits, as in the
+                // mzML scanner, not only the ones a visitor captures from.
+                capture(start, limits, [])?;
                 visit(Node::Open(start))?;
                 if opens {
                     depth += 1;

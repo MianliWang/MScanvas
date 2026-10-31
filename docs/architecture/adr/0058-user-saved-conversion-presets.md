@@ -71,6 +71,15 @@ about them.
   the document epoch and runs off the async runtime, like the preference pair.
   A preset is addressed by its name; no command takes a path, a file name or a
   document. Request payloads refuse unknown fields.
+
+  > **Amended 2026-10-30 by the owner's decision A0064
+  > ([ADR 0064](0064-m10-automation-route.md#owner-decision-2026-10-30)).**
+  > Presets no longer stay in the app only: a method can leave the app as a
+  > plan file, exported and imported as JSON. An imported plan is validated by
+  > the same constructor as a preset (decision 5) and never runs without
+  > review. The four commands above are unchanged. Still open, for the slice
+  > that implements export and import: the file's format and size cap, and the
+  > commands that write and read it.
 - **Bounds:**
   - 512 KiB per document, checked on read and on write;
   - 200 presets;
