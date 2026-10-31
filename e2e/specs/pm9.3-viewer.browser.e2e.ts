@@ -850,12 +850,24 @@ async function observeViewer(label: string) {
           .filter((node) => node.getClientRects().length > 0)
           .map((node) => node.getBoundingClientRect())
           .some((box) => box.left < text.right - 1 && box.right > text.left + 1 && box.top < text.bottom - 1 && box.bottom > text.top + 1);
-        // A fact that does not fit wraps onto the line the head's fixed
-        // height hides, which `cut` cannot see (FE-2 review).
+        // A fact that does not fit wraps onto a line the head's height hides,
+        // which `cut` cannot see (FE-2 review): dropped is outside the box.
         const facts = [...summary.querySelectorAll<HTMLElement>(":scope > span")];
-        const dropped = facts.filter((fact) => fact.offsetTop > facts[0]!.offsetTop).map((fact) => (fact.textContent ?? "").trim());
-        return { cut: summary.scrollWidth > summary.clientWidth + 1, covered, dropped };
+        const dropped = facts
+          .filter((fact) => fact.getBoundingClientRect().bottom > text.bottom + 0.5 || fact.getBoundingClientRect().right > text.right + 0.5)
+          .map((fact) => (fact.textContent ?? "").trim());
+        return { cut: summary.scrollWidth > summary.clientWidth + 1, covered, facts: facts.map((fact) => (fact.textContent ?? "").trim()), dropped };
       })(),
+      // Head buttons past their plot region's right edge, where the next
+      // column covers them (FE-2 review), by name and overshoot in px.
+      headOverflow: [".chromatogram-panel", ".spectrum-panel"].flatMap((css) => {
+        const panel = document.querySelector<HTMLElement>(css);
+        if (panel === null || panel.getClientRects().length === 0) return [];
+        const right = panel.getBoundingClientRect().right;
+        return [...panel.querySelectorAll<HTMLElement>(":scope > .plot-head button")]
+          .filter((button) => button.getClientRects().length > 0 && button.getBoundingClientRect().right > right + 0.5)
+          .map((button) => `${css} ${(button.getAttribute("aria-label") ?? button.textContent ?? "").trim()} ${String(Math.round(button.getBoundingClientRect().right - right))}`);
+      }),
       // Which acquisition the evidence belongs to, where the shell names it
       // (ADR 0006's Run identity; the Workbench's identity row, spec 3.2).
       identity: (() => {
@@ -1799,6 +1811,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
           [1440, 900],
           [1366, 768],
           [1280, 800],
+          [1280, 720],
           [1152, 720],
         ] as const) {
           await metrics(width, height);
@@ -1820,13 +1833,30 @@ describe("PM9.3 viewer contracts, rendered", () => {
         // From 1366x768 up, with the panels each width opens by default, the
         // head says every fact whole: FE-2's card took 26 px from the spectrum
         // and the scan list gives them back. Narrower, the facts drop from the
-        // end and are recorded above. At 1050 px and below the card's insets
-        // cost the spectrum 34 px that the list, at its 300 px floor, cannot
-        // give back (an open question for the owner).
+        // end and are recorded above.
         expect(
           defaults
             .filter((frame) => frame.css.width >= 1366 && (frame.spectrumHeading?.dropped.length ?? 0) > 0)
             .map((frame) => `${frame.label} ${JSON.stringify(frame.spectrumHeading)}`),
+        ).toEqual([]);
+        // At 1050 px and below Details is a folded drawer, so the head says
+        // the representation the file does not report, on its second line
+        // where the first is full (ADR 0029; FE-2 review).
+        const representation = (locale === "en" ? en : zh).viewerRepresentationNotReported;
+        const narrow = defaults.filter((frame) => frame.css.width <= 1050 && frame.spectrumHeading !== null);
+        expect(narrow.length).toBeGreaterThan(0);
+        expect(
+          narrow
+            .filter((frame) => !frame.spectrumHeading!.facts.includes(representation) || frame.spectrumHeading!.dropped.includes(representation))
+            .map((frame) => `${frame.label} ${JSON.stringify(frame.spectrumHeading)}`),
+        ).toEqual([]);
+        // No head button runs past its region into the next column: with the
+        // default panels, and with Details open from 1280 px up, where the
+        // viewer column is as wide as before the card (FE-2 review).
+        expect(
+          [...defaults, ...detailsOpen.filter((frame) => frame.css.width >= 1280)].flatMap((frame) =>
+            frame.headOverflow.map((button) => `${frame.label} ${button}`),
+          ),
         ).toEqual([]);
         await metrics(960, 640);
         await frames();

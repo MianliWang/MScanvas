@@ -8,13 +8,13 @@
 /* One left edge for the header, the notices and the workspace card: v5.11's
    24 px, and 16 px where the window is 1050 px or narrower (PM9 UI-01). One
    row down to 960 px, in both languages. */
-.workbench-header { grid-area: header; display: flex; flex-wrap: nowrap; align-items: center; gap: 0 24px; min-height: 0; height: 56px; padding: 0 24px; }
+.workbench-header { grid-area: header; display: flex; flex-wrap: nowrap; align-items: center; gap: 0 20px; min-height: 0; height: 56px; padding: 0 24px; }
 .workbench-home { display: inline-flex; flex: none; align-items: center; gap: 9px; min-height: 36px; padding: 0; border: 0; background: transparent; color: var(--color-text-primary); }
 .workbench-mark { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 6px; background: var(--color-accent); color: #fff; }
 .workbench-home strong { font-size: 18px; font-weight: 750; letter-spacing: -0.4px; white-space: nowrap; }
 /* Three destinations, one tab style: text, an underline when current. */
 .workbench-navigation { display: flex; flex: none; align-self: stretch; gap: 1px; }
-.workbench-navigation > button { position: relative; display: inline-flex; align-items: center; padding: 0 13px; border: 0; background: transparent; color: var(--color-text-secondary); font-size: 13px; white-space: nowrap; }
+.workbench-navigation > button { position: relative; display: inline-flex; align-items: center; padding: 0 14px; border: 0; background: transparent; color: var(--color-text-secondary); font-size: 13px; white-space: nowrap; }
 .workbench-navigation > button:hover { background: var(--color-surface-subtle); color: var(--color-text-primary); }
 .workbench-navigation > button[aria-current="page"] { color: var(--color-accent); font-weight: 650; }
 /* The bold label's width, held by an invisible copy with no accessible text,
@@ -89,6 +89,14 @@
 .workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr); grid-template-areas: "roster main"; }
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }
 .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
+/* Below the 1366 anchor the card's 26 px come out of Details, not the viewer:
+   with the roster and Details open the viewer column is as wide as before the
+   card, so the plot heads' tools stay inside their regions wherever they did
+   (FE-2 review). */
+@media (min-width: 1051px) and (max-width: 1365px) {
+  .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 219px; }
+  .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr) 219px; }
+}
 .workbench-shell .workspace-sidebar { grid-area: roster; display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--color-border); background: #fbfcfe; }
 /* Each region positions its own out-of-flow accessible text, so none of it is
    placed against the shell below the window (PM9 L22). Each region stays the
@@ -151,13 +159,13 @@
 .row-drag-handle { cursor: grab; touch-action: none; }
 .row-drag-handle:hover, .row-menu-trigger:hover { background: var(--color-surface-selected); color: var(--color-accent-hover); }
 .workbench-shell .grouped-roster .dataset-row:hover { background: var(--color-row-hover); }
-/* Highlighted rows take the blue-soft fill. The viewed row is v5.11's final
-   rule: a lighter fill, no border and the 2 px accent bar at its start, and its
-   facts say "Viewed acquisition" in words, so it is not told by shade alone.
-   Viewed and highlighted at once keeps the highlight's fill. */
-.workbench-shell .grouped-roster .dataset-row.is-selected { background: var(--color-surface-selected); }
+/* v5.11's final row rules. The viewed row: a lighter fill, no border and the
+   2 px accent bar at its start, and its facts say "Viewed acquisition" in
+   words, so it is not told by shade alone. A highlighted row: the picked fill
+   and its border, which win over the viewed row's (they come later), so a row
+   both viewed and highlighted keeps the bar, the fill and the border. */
 .workbench-shell .grouped-roster .dataset-row.is-active { border-color: transparent; background: #f5f9ff; box-shadow: inset 2px 0 var(--color-accent); }
-.workbench-shell .grouped-roster .dataset-row.is-active.is-selected { background: var(--color-surface-selected); }
+.workbench-shell .grouped-roster .dataset-row.is-selected { border-color: #c3d9f5; background: #eaf2ff; }
 .grouped-roster .is-drop-target { background: #dcecff !important; outline: 2px solid var(--color-accent); outline-offset: -2px; }
 .grouped-roster [data-drag-source="true"] { opacity: 0.35; }
 .roster-drag-overlay { display: inline-block; padding: 8px 12px; border: 1px solid var(--color-accent); border-radius: 6px; color: var(--color-text-primary); background: white; box-shadow: 0 4px 16px rgb(23 35 55 / 0.16); font-size: 13px; white-space: nowrap; pointer-events: none; }
@@ -218,8 +226,9 @@
 /* The scan list gives the card's 26 px back to the spectrum where it has room
    to spare (FE-2): the spectrum column, and what its head can say, stay as
    wide as before the card. At 300 px, with Details open and at 1050 px and
-   below, the list is at its floor: narrower, its MS-level filter and its
-   precursor column are cut. */
+   below, the list is at its floor: any narrower and its MS-level filter and
+   its precursor column are cut (the four columns' floors are 292 px). Details gives the 26 px back from 1051 to
+   1365 px; at 1050 px and below the spectrum's facts take a second line. */
 .viewer-lower { display: grid; grid-template-columns: 354px minmax(0, 1fr); min-width: 0; min-height: 0; }
 .viewer-view[data-view="spectra"] > .viewer-lower { border-top: 1px solid var(--color-border); }
 .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
@@ -249,7 +258,8 @@
 .spectrum-scan { min-width: 4ch; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
 /* One line that drops whole facts from its end, never a cut word: a fact that
    does not fit wraps onto a second line the fixed height hides (P5, the point
-   count first, then the representation). */
+   count first, then the representation). At 1050 px and below the second line
+   shows (the 1050 px block). */
 .spectrum-head-facts { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: 0 8px; min-width: 0; height: 18px; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .spectrum-head-facts > span { flex: none; }
 .plot-tools { flex: none; flex-wrap: nowrap; gap: 4px; margin-left: auto; }
@@ -473,4 +483,8 @@
   .workbench-shell .workspace-sidebar { left: 0; }
   .workbench-inspector { right: 0; }
   .viewer-lower, .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
+  /* Details is a drawer here, so the head is where a representation the file
+     does not report is said (ADR 0029): a fact that does not fit takes a second
+     line inside the head's 36 px, whole; a third stays hidden. */
+  .spectrum-head-facts { height: auto; max-height: 36px; }
 }

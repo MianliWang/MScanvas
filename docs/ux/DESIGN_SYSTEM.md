@@ -87,7 +87,8 @@ underline and one logo/name Home target. Workbench and Conversion & results are
 real mounted surfaces. Existing export controls stay with their scientific panel;
 no future navigation target is exposed. Wide workbench regions are 240px / flex /
 245px in one card, the reference's own (FE-2 draft, pending the owner's verdict;
-the record said a 280px roster, main rendered 264px, flat). Below 1050px, auxiliary panels
+the record said a 280px roster, main rendered 264px, flat); from 1051px to 1365px
+Details is 219px, so the card does not narrow the viewer column. Below 1050px, auxiliary panels
 fold into reachable header actions before displacing evidence. Header actions do
 not scroll; the roster owns its scroll, and the evidence region owns the retained
 plots/table/export flow. Hidden surfaces expose no tab stops.
@@ -227,7 +228,8 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
 - **Page tabs (G4).** Room for two more page tabs at 960 px: each new English
   label is at most 80 px at 13 px ("Features", "Statistics"; not "Features and
   annotation"). The header has no fallback, so a longer label scrolls the page
-  sideways. PM9.1's FE-2 case holds the room.
+  sideways. PM9.1's FE-2 case holds the room. (FE-2 draft, pending the owner's
+  verdict on short labels or icon-only header actions at 960 px.)
 - **The header's second line.** What gives way is computed, not left to
   flex-shrink ratios (UI-48): the drop hint first and whole, its gap with it;
   then each context item by rank, lowest first, down to its floor; an
@@ -236,8 +238,12 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
 - **Roster width.** 240 px at every width that shows the roster beside the
   evidence, v5.11's measured column at 1366 (FE-2 draft, pending the owner's
   verdict; the record said 280 px, against the reference's 285 px at 1920,
-  UI-14, and main rendered 264 px). One
-  fixed width across 1051–2560 px keeps the viewer column's measured floors.
+  UI-14, and main rendered 264 px). The card's insets cost the viewer column
+  26 px; they come back from the scan list (354 px beside the spectrum with
+  Details closed) and, from 1051 to 1365 px, from Details (219 px), so with the
+  roster open the spectrum is as wide as before the card. At 1050 px and
+  below it is 34 px narrower, and the spectrum's facts take a second line
+  inside the head (ADR 0029).
 - **Refused primaries.** A refused primary action (`aria-disabled`) gives up
   the accent: subtle surface, secondary text, strong border and a not-allowed
   cursor. It does not fade, so its focus ring keeps full contrast, and it stays
