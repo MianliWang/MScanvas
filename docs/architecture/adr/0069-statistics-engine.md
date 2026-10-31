@@ -232,7 +232,7 @@ The crate forbids `unsafe` code. No input panics it.
 | Quantity | Tolerance | Worst measured |
 | --- | --- | --- |
 | log2 fold change, t, df | 1e-12 · max(1, \|x\|) | 3.6e-15, 8.8e-15, 2.5e-16 |
-| p (smallest 7.3e-32), for df up to 2e4 and any \|t\| | 1e-10 relative | 1.0e-13 |
+| p (smallest 7.3e-32), for df up to 2e4, t near 0 included (checked from \|t\| = 1e-8) | 1e-10 relative | 1.0e-13 |
 | q from BH on the same p (ties, p = 0 and p = 1) | 1e-14 relative | 1.3e-16 |
 | q in the volcano (carries the p error) | 1e-10 relative | 1.0e-13 |
 | QC detection rate, missing fraction | exact | exact |
