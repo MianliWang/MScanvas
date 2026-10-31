@@ -85,9 +85,10 @@ begins inside the window. See
 The implemented shell uses a white header, quiet gray background, blue active
 underline and one logo/name Home target. Workbench and Conversion & results are
 real mounted surfaces. Existing export controls stay with their scientific panel;
-no future navigation target is exposed. Wide workbench regions are 280px / flex /
-245px: the roster is wider than the approximate 240px reference to keep wrapped
-names and separate selection controls legible. Below 1050px, auxiliary panels
+no future navigation target is exposed. Wide workbench regions are 240px / flex /
+245px in one card, the reference's own (FE-2 draft, pending the owner's verdict;
+the record said a 280px roster, main rendered 264px, flat); from 1051px to 1365px
+Details is 219px, so the card does not narrow the viewer column. Below 1050px, auxiliary panels
 fold into reachable header actions before displacing evidence. Header actions do
 not scroll; the roster owns its scroll, and the evidence region owns the retained
 plots/table/export flow. Hidden surfaces expose no tab stops.
@@ -221,17 +222,28 @@ Decided in the bounded rework of [PM9 baseline §12](../phases/pm9/baseline.md#1
 Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
 
 - **Shell insets.** The header, the notices and the content share one left
-  edge: 16 px at every width (UI-01). The header no longer uses 20 px, or 12 px
-  below 1050 px.
+  edge (UI-01): 24 px, and 16 px at 1050 px and below, the content being one
+  card inset by that edge (FE-2 draft, pending the owner's verdict; it was
+  16 px at every width, and the content ran edge to edge, with no card).
+- **Page tabs (G4).** Room for two more page tabs at 960 px: each new English
+  label is at most 80 px at 13 px ("Features", "Statistics"; not "Features and
+  annotation"). The header has no fallback, so a longer label scrolls the page
+  sideways. PM9.1's FE-2 case holds the room. (FE-2 draft, pending the owner's
+  verdict on short labels or icon-only header actions at 960 px.)
 - **The header's second line.** What gives way is computed, not left to
   flex-shrink ratios (UI-48): the drop hint first and whole, its gap with it;
   then each context item by rank, lowest first, down to its floor; an
   operation's status never. The floor is 5.5em, and 7em for a project with
   unsaved changes, which leads with that fact ("Unsaved changes: …", UI-03).
-- **Roster width.** 280 px at every width that shows the roster beside the
-  evidence, against the v5.11 reference's 285 px at 1920 (UI-14). This is
-  intentional: one fixed width across 1051–2560 px keeps the viewer column's
-  measured floors, and the 5 px change no task.
+- **Roster width.** 240 px at every width that shows the roster beside the
+  evidence, v5.11's measured column at 1366 (FE-2 draft, pending the owner's
+  verdict; the record said 280 px, against the reference's 285 px at 1920,
+  UI-14, and main rendered 264 px). The card's insets cost the viewer column
+  26 px; they come back from the scan list (354 px beside the spectrum with
+  Details closed) and, from 1051 to 1365 px, from Details (219 px), so with the
+  roster open the spectrum is as wide as before the card. At 1050 px and
+  below it is 34 px narrower, and the spectrum's facts take a second line
+  inside the head (ADR 0029).
 - **Refused primaries.** A refused primary action (`aria-disabled`) gives up
   the accent: subtle surface, secondary text, strong border and a not-allowed
   cursor. It does not fade, so its focus ring keeps full contrast, and it stays
@@ -294,7 +306,7 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   has the column's full width (UI-25). At 1050 px and below, where Details
   takes the surface's place, label and value stay side by side.
 - **Counts.** A count keeps its word in either language: no-break spaces in
-  the resources and `word-break: keep-all` (UI-16). Where the 280 px roster
+  the resources and `word-break: keep-all` (UI-16). Where the 240 px roster
   cannot hold the organizing buttons and the count on one line, the count
   takes the band's second line, whole (UI-15, UI-17).
 - **Measured once (UI-45), at 1366×768 with a spectrum selected.** No
@@ -308,7 +320,9 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   ranges, the scan table's sort headers and result count -- and a roster row's
   folder context. It sits under the reference's 12 px caption; raising it is a
   type-scale decision, not a defect fix, and would reflow the headers PM9.3
-  measured.
+  measured. Superseded by FE-2 (draft, pending the owner's verdict): the
+  "Showing" ranges, plot readouts, ticks, axis titles and a roster row's facts
+  are at the reference's 12 px; the census above predates it.
 
 ## PM9.7 freeze decisions (2026-10-14)
 

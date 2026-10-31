@@ -1,26 +1,28 @@
-/* The shell (direction A, 2.1): one 48 px header row, the notices track, the
-   workspace card and the 28 px status bar. The shell never scrolls; each
-   region scrolls itself. Every in-flow region names its area, so the live
-   regions, the drop overlay and anything else out of flow never take a track. */
-.workbench-shell { grid-template-rows: 48px auto minmax(0, 1fr) 28px; grid-template-areas: "header" "notices" "content" "status"; }
+/* The shell (v5.11's frame, owner decision FE-2): one 56 px header row, the
+   notices track, the workspace card and the 30 px status bar. The shell never
+   scrolls; each region scrolls itself. Every in-flow region names its area, so
+   the live regions, the drop overlay and anything else out of flow never take
+   a track. */
+.workbench-shell { grid-template-rows: 56px auto minmax(0, 1fr) 30px; grid-template-areas: "header" "notices" "content" "status"; }
 .workbench-shell [hidden] { display: none !important; }
-/* One left edge for the header, the notices and the content: 16 px at every
-   width (PM9 UI-01). One row down to 960 px, in both languages. */
-.workbench-header { grid-area: header; display: flex; flex-wrap: nowrap; align-items: center; gap: 0 16px; min-height: 0; height: 48px; padding: 0 16px; }
+/* One left edge for the header, the notices and the workspace card: v5.11's
+   24 px, and 16 px where the window is 1050 px or narrower (PM9 UI-01). One
+   row down to 960 px, in both languages. */
+.workbench-header { grid-area: header; display: flex; flex-wrap: nowrap; align-items: center; gap: 0 20px; min-height: 0; height: 56px; padding: 0 24px; }
 .workbench-home { display: inline-flex; flex: none; align-items: center; gap: 9px; min-height: 36px; padding: 0; border: 0; background: transparent; color: var(--color-text-primary); }
-.workbench-mark { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 7px; background: var(--color-accent); color: #fff; }
-.workbench-home strong { font-size: 17px; font-weight: 750; letter-spacing: -0.02em; white-space: nowrap; }
+.workbench-mark { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 6px; background: var(--color-accent); color: #fff; }
+.workbench-home strong { font-size: 18px; font-weight: 750; letter-spacing: -0.4px; white-space: nowrap; }
 /* Three destinations, one tab style: text, an underline when current. */
 .workbench-navigation { display: flex; flex: none; align-self: stretch; gap: 1px; }
 .workbench-navigation > button { position: relative; display: inline-flex; align-items: center; padding: 0 14px; border: 0; background: transparent; color: var(--color-text-secondary); font-size: 13px; white-space: nowrap; }
-.workbench-navigation > button:hover { color: var(--color-text-primary); }
-.workbench-navigation > button[aria-current="page"] { color: var(--color-accent-hover); font-weight: 650; }
+.workbench-navigation > button:hover { background: var(--color-surface-subtle); color: var(--color-text-primary); }
+.workbench-navigation > button[aria-current="page"] { color: var(--color-accent); font-weight: 650; }
 /* The bold label's width, held by an invisible copy with no accessible text,
    so the current tab's weight never moves the tabs after it. */
 .workbench-tab-label { display: inline-flex; flex-direction: column; align-items: center; }
 .workbench-tab-label::after { height: 0; overflow: hidden; visibility: hidden; font-weight: 650; content: attr(data-label) / ""; }
-/* v5.11's underline: 3 px, inset 13 px, along the header's foot. */
-.workbench-navigation > button[aria-current="page"]::after { position: absolute; right: 13px; bottom: 0; left: 13px; height: 3px; border-radius: 3px 3px 0 0; background: var(--color-accent); content: ""; }
+/* v5.11's underline: 2 px, inset 13 px, along the header's foot. */
+.workbench-navigation > button[aria-current="page"]::after { position: absolute; right: 13px; bottom: 0; left: 13px; height: 2px; border-radius: 2px 2px 0 0; background: var(--color-accent); content: ""; }
 /* The nav buttons fill the row, so the ring is drawn inside them. */
 .workbench-navigation > button:focus-visible { outline-offset: -2px; }
 /* In the tab's right padding and out of flow, so a dot that comes and goes
@@ -37,7 +39,7 @@
 .status-tag { display: inline-flex; align-items: center; padding: 0 6px; border: 1px solid var(--color-warning); border-radius: 4px; color: var(--color-warning); font-size: 11px; font-weight: 600; line-height: 16px; white-space: nowrap; }
 
 /* Notices: v5.11's .note, one under another in the track. */
-.workbench-shell .shell-notices { grid-area: notices; display: flex; flex-direction: column; gap: 6px; max-height: min(24vh, 180px); overflow: auto; padding: 12px 16px 0; }
+.workbench-shell .shell-notices { grid-area: notices; display: flex; flex-direction: column; gap: 6px; max-height: min(24vh, 180px); overflow: auto; padding: 12px 24px 0; }
 /* With nothing to show -- ProteoWizard usable, no other notice -- the track
    keeps no height at all (PM9 L10). */
 .workbench-shell .shell-notices:not(:has(> .notice:not([data-backend-mode="popover"]))) { padding: 0; }
@@ -48,13 +50,14 @@
 .shell-notices > .notice { align-items: center; }
 .notice-dismiss { margin-left: auto; }
 
-/* The status bar: 28 px, never wrapping; the drop notice gives way first
-   (whole or gone: StatusBar.tsx hides it), then the project name's ellipsis. */
+/* The status bar: v5.11's 30 px, never wrapping; the drop notice gives way
+   first (whole or gone: StatusBar.tsx hides it), then the project name's
+   ellipsis. */
 .workbench-status { grid-area: status; min-width: 0; }
-.workbench-status .ui-status-bar { height: 28px; min-height: 0; flex-wrap: nowrap; gap: 12px; padding: 0 16px; overflow: hidden; background: #fafcff; }
+.workbench-status .ui-status-bar { height: 30px; min-height: 0; flex-wrap: nowrap; gap: 12px; padding: 0 24px; overflow: hidden; }
 .workbench-status .ui-status-bar__start { flex: 0 1 auto; flex-wrap: nowrap; gap: 6px; overflow: hidden; }
 .workbench-status .ui-status-bar__end { flex: 0 1000 auto; flex-wrap: nowrap; gap: 12px; overflow: hidden; }
-.workbench-status .ui-button { min-height: 22px; max-width: 100%; padding: 0 8px; font-weight: 500; }
+.workbench-status .ui-button { min-height: 24px; max-width: 100%; padding: 0 8px; font-weight: 500; }
 /* The bar clips its overflow, so the ring is drawn inside each control. */
 .workbench-status .ui-button:focus-visible { outline-offset: -2px; }
 /* Only the project name gives way to an ellipsis; an operation's status, the
@@ -75,12 +78,25 @@
 /* The notice gives way; its one recovery does not. */
 .workbench-status .drop-reconnect { flex: none; }
 
-/* Flat (direction A 2.7, GOALS V12): no outer card. The regions run edge to
-   edge between the header and the status bar and are divided by hairlines. */
-.workbench-shell .workspace-layout { grid-area: content; position: relative; display: grid; gap: 0; margin: 0; padding: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; background: var(--color-surface); }
-.workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 264px minmax(0, 1fr); grid-template-areas: "roster main"; }
+/* v5.11's .workspace-grid (FE-2): one card on the page's grey, inset 24 px
+   from the window's sides like the header's content, with a 240 px roster and
+   a 245 px Details column, so the main column is v5.11's 831 px at 1366. Its
+   top and bottom insets are 8 px: every pixel of height there comes out of
+   the spectrum. Inside the card the regions stay divided by hairlines, never
+   boxed again (GOALS V12); the first run's dashed drop target is a cue, not a
+   region, as v5.11's own dashed .module-empty is inside its cards. */
+.workbench-shell .workspace-layout { grid-area: content; position: relative; display: grid; gap: 0; margin: 8px 24px; padding: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr); grid-template-areas: "roster main"; }
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }
-.workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 264px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
+.workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
+/* Below the 1366 anchor the card's 26 px come out of Details, not the viewer:
+   with the roster and Details open the viewer column is as wide as before the
+   card, so the plot heads' tools stay inside their regions wherever they did
+   (FE-2 review). */
+@media (min-width: 1051px) and (max-width: 1365px) {
+  .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 219px; }
+  .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr) 219px; }
+}
 .workbench-shell .workspace-sidebar { grid-area: roster; display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--color-border); background: #fbfcfe; }
 /* Each region positions its own out-of-flow accessible text, so none of it is
    placed against the shell below the window (PM9 L22). Each region stays the
@@ -98,11 +114,12 @@
 /* Roster column (v5.11 `.roster`): head, search, list, footer. The card that
    holds it and the border beside it belong to the shell. */
 .workbench-shell .dataset-roster-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; background: #fbfcfe; }
-.roster-head { flex: none; display: grid; gap: 8px; padding: 12px 12px 10px; }
+.roster-head { flex: none; display: grid; gap: 8px; padding: 14px 12px 10px; }
 .roster-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.roster-title h2 { margin: 0; color: var(--color-text-primary); font-size: 13px; font-weight: 650; line-height: 1.4; }
-.roster-count-tag { margin-left: auto; padding: 0 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-/* Two text-only actions on one row at the 264 px column in either language
+.roster-title h2 { margin: 0; color: var(--color-text-primary); font-size: 14px; font-weight: 650; line-height: 1.4; }
+/* v5.11's count: muted text at the title row's end, not a pill. */
+.roster-count-tag { margin-left: auto; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Two text-only actions on one row at the 240 px column in either language
    (direction A 2.1); a longer label wraps rather than clips. */
 .roster-acquire { display: flex; flex-wrap: wrap; gap: 4px; }
 .roster-acquire > .ui-button { padding-inline: 8px; }
@@ -111,40 +128,44 @@
    The browser's own clear glyph would be a second, unnamed one. */
 .roster-search { position: relative; flex: none; margin: 0 12px 10px; }
 .roster-search > .ui-icon { position: absolute; top: 8.5px; left: 10px; color: var(--color-text-secondary); pointer-events: none; }
-.roster-search > input { width: 100%; min-height: 32px; padding: 4px 34px 4px 32px; border: 1px solid var(--color-border-strong); border-radius: 5px; background: var(--color-surface); color: var(--color-text-primary); font: inherit; font-size: 13px; }
+.roster-search > input { width: 100%; min-height: 32px; padding: 4px 34px 4px 32px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-input); background: var(--color-surface); color: var(--color-text-primary); font: inherit; font-size: 13px; }
 .roster-search > input::placeholder { color: var(--color-text-secondary); }
 .roster-search > input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 .roster-search > .ui-icon-button { position: absolute; top: 1px; right: 1px; }
 .grouped-roster { flex: 1 1 auto; min-height: 80px; margin: 0; padding: 4px 8px 8px; border-top: 1px solid var(--color-border); overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
-/* v5.11 `.group-label`: small, muted, the name first; the count, the group
-   checkbox and its menu on the right, in columns that line up across groups. */
+/* v5.11's group head: the name in ink at 13 px first; the count,
+   the group checkbox and its menu on the right, in columns that line up
+   across groups. */
 .roster-group-header { display: grid; grid-template-columns: minmax(0, 1fr) 24px 26px; align-items: center; min-height: 36px; padding: 6px 2px 2px; color: var(--color-text-secondary); }
 .group-disclosure-cell { min-width: 0; }
-.group-disclosure { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; min-height: 28px; padding: 2px 4px; border: 0; border-radius: 5px; background: transparent; color: var(--color-text-secondary); font-size: 11px; font-weight: 650; text-align: left; }
+.group-disclosure { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 28px; padding: 2px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-primary); font-size: 13px; font-weight: 600; text-align: left; }
 .group-disclosure:hover { background: var(--color-row-hover); color: var(--color-text-primary); }
 .group-disclosure > span:nth-child(2) { flex: 1; overflow-wrap: anywhere; }
-.group-disclosure > span:first-child { display: inline-flex; flex: 0 0 auto; }
-.group-count { color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.group-disclosure > span:first-child { display: inline-flex; flex: 0 0 auto; color: var(--color-text-secondary); }
+.group-count { color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 /* v5.11 `.data-row`. Spacing comes from padding, never margin: the window
    measures each row's box, and a margin would drift every row below it. */
-.workbench-shell .grouped-roster .dataset-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px; align-items: center; height: auto; margin: 0; padding: 4px 2px 4px 4px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; }
+.workbench-shell .grouped-roster .dataset-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px; align-items: center; height: auto; margin: 0; padding: 4px 2px 4px 4px; border: 1px solid transparent; border-radius: 6px; font-size: 13px; }
 .workbench-shell .dataset-roster-panel[data-density="comfortable"] .dataset-row { min-height: 44px; }
 .workbench-shell .dataset-roster-panel[data-density="compact"] .dataset-row { min-height: 32px; padding-top: 1px; padding-bottom: 1px; }
 .grouped-roster input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 3px; accent-color: var(--color-accent); }
 .workbench-shell .grouped-roster .dataset-row-label { display: block; min-width: 0; }
 .workbench-shell .grouped-roster .dataset-row-context { display: block; overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.35; }
 /* One line that loses its middle, never a word broken across two (MiddleEllipsis). */
-.workbench-shell .grouped-roster .dataset-row-name { display: flex; max-width: 100%; overflow: hidden; color: var(--color-text-primary); font-size: 12px; font-weight: 600; line-height: 1.35; white-space: nowrap; }
-.dataset-row-facts { display: flex; flex-wrap: wrap; gap: 0 6px; color: var(--color-text-secondary); font-size: 11px; font-weight: 400; line-height: 1.45; }
+.workbench-shell .grouped-roster .dataset-row-name { display: flex; max-width: 100%; overflow: hidden; color: var(--color-text-primary); font-size: 13px; font-weight: 500; line-height: 1.35; white-space: nowrap; }
+.dataset-row-facts { display: flex; flex-wrap: wrap; gap: 0 6px; color: var(--color-text-secondary); font-size: 12px; font-weight: 400; line-height: 1.45; }
 .roster-row-controls { display: flex; align-items: center; }
-.row-drag-handle, .row-menu-trigger { display: inline-grid; place-items: center; width: 24px; min-height: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--color-text-secondary); }
+.row-drag-handle, .row-menu-trigger { display: inline-grid; place-items: center; width: 24px; min-height: 28px; padding: 0; border: 0; border-radius: var(--radius-input); background: transparent; color: var(--color-text-secondary); }
 .row-drag-handle { cursor: grab; touch-action: none; }
 .row-drag-handle:hover, .row-menu-trigger:hover { background: var(--color-surface-selected); color: var(--color-accent-hover); }
 .workbench-shell .grouped-roster .dataset-row:hover { background: var(--color-row-hover); }
-/* Highlighted rows take the blue-soft fill; the viewed row adds the border, and
-   its facts say "Viewed acquisition" in words, so it is not told by shade alone. */
-.workbench-shell .grouped-roster .dataset-row.is-selected { background: var(--color-surface-selected); }
-.workbench-shell .grouped-roster .dataset-row.is-active { border-color: var(--color-selected-border); background: var(--color-surface-selected); box-shadow: none; }
+/* v5.11's final row rules. The viewed row: a lighter fill, no border and the
+   2 px accent bar at its start, and its facts say "Viewed acquisition" in
+   words, so it is not told by shade alone. A highlighted row: the picked fill
+   and its border, which win over the viewed row's (they come later), so a row
+   both viewed and highlighted keeps the bar, the fill and the border. */
+.workbench-shell .grouped-roster .dataset-row.is-active { border-color: transparent; background: #f5f9ff; box-shadow: inset 2px 0 var(--color-accent); }
+.workbench-shell .grouped-roster .dataset-row.is-selected { border-color: #c3d9f5; background: #eaf2ff; }
 .grouped-roster .is-drop-target { background: #dcecff !important; outline: 2px solid var(--color-accent); outline-offset: -2px; }
 .grouped-roster [data-drag-source="true"] { opacity: 0.35; }
 .roster-drag-overlay { display: inline-block; padding: 8px 12px; border: 1px solid var(--color-accent); border-radius: 6px; color: var(--color-text-primary); background: white; box-shadow: 0 4px 16px rgb(23 35 55 / 0.16); font-size: 13px; white-space: nowrap; pointer-events: none; }
@@ -184,12 +205,12 @@
    the tabs share one line. */
 .workbench-evidence[data-evidence="loaded"] { padding: 0; }
 .viewer-file { display: grid; flex: 1 1 auto; grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr); grid-template-rows: 36px minmax(0, 1fr); min-width: 0; min-height: 0; }
-.viewer-file-name { grid-row: 1; grid-column: 1; min-width: 0; margin: 0; padding: 0 16px 0 12px; overflow: hidden; color: var(--color-text-primary); font-size: 14px; font-weight: 600; line-height: 36px; text-overflow: ellipsis; white-space: nowrap; }
+/* The name as v5.11's preview title, the tabs as its subtabs: muted, and the
+   current one in the accent with its underline. */
+.viewer-file-name { grid-row: 1; grid-column: 1; min-width: 0; margin: 0; padding: 0 16px 0 12px; overflow: hidden; color: var(--color-text-primary); font-size: 16px; font-weight: 650; line-height: 36px; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-tabs { display: contents; }
 .viewer-tabs > .ui-tablist { grid-row: 1; grid-column: 2; gap: 2px; overflow: visible; border-bottom: 0; }
-.viewer-tabs .ui-tab { height: 36px; min-height: 0; padding: 2px 10px 0; color: var(--color-text-secondary); font-size: 13px; }
-.viewer-tabs .ui-tab:hover { color: var(--color-text-primary); }
-.viewer-tabs .ui-tab[aria-selected="true"] { color: var(--color-text-primary); font-weight: 600; }
+.viewer-tabs .ui-tab { height: 36px; min-height: 0; padding: 2px 10px 0; font-size: 13px; }
 /* The view scrolls inside its panel only when a window is too short for the
    plots' floors (a notice open at 960x640); the tab row stays put. */
 .viewer-tabs > .ui-tabpanel { display: flex; grid-row: 2; grid-column: 1 / -1; flex-direction: column; min-height: 0; overflow: auto; border-top: 1px solid var(--color-border); }
@@ -202,7 +223,13 @@
    view rather than sliding the lower row over the chromatogram's foot. */
 .viewer-view { display: grid; flex: 1 1 auto; grid-template-rows: max-content minmax(240px, 1fr); min-width: 0; min-height: 0; }
 .viewer-view[data-view="scans"] { grid-template-rows: minmax(360px, 1fr); }
-.viewer-lower { display: grid; grid-template-columns: 380px minmax(0, 1fr); min-width: 0; min-height: 0; }
+/* The scan list gives the card's 26 px back to the spectrum where it has room
+   to spare (FE-2): the spectrum column, and what its head can say, stay as
+   wide as before the card. At 300 px, with Details open and at 1050 px and
+   below, the list is at its floor: any narrower and its MS-level filter and
+   its precursor column are cut (the four columns' floors are 292 px). Details gives the 26 px back from 1051 to
+   1365 px; at 1050 px and below the spectrum's facts take a second line. */
+.viewer-lower { display: grid; grid-template-columns: 354px minmax(0, 1fr); min-width: 0; min-height: 0; }
 .viewer-view[data-view="spectra"] > .viewer-lower { border-top: 1px solid var(--color-border); }
 .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
 .workbench-shell .viewer-view[data-view="scans"] > .viewer-lower { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) minmax(240px, 1.2fr); }
@@ -220,7 +247,7 @@
 /* 36 px, so a focus ring (offset 2, width 2) around a 30 px control stays
    inside the region that holds it. */
 .plot-head { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 6px; height: 36px; min-width: 0; padding: 0 8px 0 12px; }
-.plot-head h2 { flex: none; margin: 0 4px 0 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.plot-head h2 { flex: none; margin: 0 4px 0 0; font-size: 13px; font-weight: 650; white-space: nowrap; }
 .plot-head .ui-button { min-height: 30px; padding-block: 3px; }
 .plot-head .ui-icon-button.ui-button--sm { width: 30px; }
 /* A plot region never clips: its overlays and its controls' rings stay whole. */
@@ -231,7 +258,8 @@
 .spectrum-scan { min-width: 4ch; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
 /* One line that drops whole facts from its end, never a cut word: a fact that
    does not fit wraps onto a second line the fixed height hides (P5, the point
-   count first, then the representation). */
+   count first, then the representation). At 1050 px and below the second line
+   shows (the 1050 px block). */
 .spectrum-head-facts { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: 0 8px; min-width: 0; height: 18px; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .spectrum-head-facts > span { flex: none; }
 .plot-tools { flex: none; flex-wrap: nowrap; gap: 4px; margin-left: auto; }
@@ -259,10 +287,11 @@
    svg is text. */
 .plot-frame { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 14px minmax(0, 1fr) 14px; flex: 1 1 auto; min-width: 0; min-height: 0; padding: 0 16px 0 6px; }
 .plot-frame > svg { display: block; grid-column: 2; grid-row: 2; width: 100%; height: 100%; min-height: 0; padding: 0; }
-.plot-axis-title { min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
+/* Axis titles and ticks at v5.11's 12 px chart text, in its muted ink. */
+.plot-axis-title { min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .plot-axis-title-y { grid-column: 1 / -1; grid-row: 1; justify-self: start; max-width: 100%; padding-left: 2px; }
 .plot-axis-title-x { flex: none; max-width: 50%; }
-.plot-x-ticks, .plot-y-ticks { position: relative; min-width: 0; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+.plot-x-ticks, .plot-y-ticks { position: relative; min-width: 0; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none; }
 .plot-x-ticks { grid-column: 2; grid-row: 3; }
 /* A fixed width, wide enough for the longest label the ticks write ("-1.5e+6"):
    sized from the labels, the drawing would move when a gesture redraws them,
@@ -270,7 +299,7 @@
 .plot-y-ticks { grid-column: 1; grid-row: 2; width: calc(7ch + 8px); }
 /* The chromatogram's value labels sit in its drawing's own left gutter. */
 .chromatogram-y-ticks { grid-column: 2; justify-self: start; width: 6.4%; }
-.plot-tick { position: absolute; color: var(--color-text-tertiary); line-height: 14px; white-space: nowrap; }
+.plot-tick { position: absolute; color: var(--color-text-secondary); line-height: 14px; white-space: nowrap; }
 .plot-x-ticks .plot-tick { top: 0; transform: translateX(-50%); }
 .plot-y-ticks .plot-tick { right: 5px; transform: translateY(-50%); }
 .plot-gridlines line { stroke: var(--color-chart-grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -294,12 +323,12 @@
 .workbench-shell :is(.chromatogram-svg, .spectrum-plot, .plot-range-actions .ui-button, .plot-status .ui-button):focus-visible { outline-offset: -2px; }
 /* One line under the ticks: what range is on screen (and, on the
    chromatogram, which scan is selected or hovered), then the position title. */
-.plot-foot { display: flex; flex: none; align-items: center; gap: 12px; height: 16px; min-width: 0; padding: 0 16px 0 12px; color: var(--color-text-secondary); font-size: 11px; line-height: 16px; }
+.plot-foot { display: flex; flex: none; align-items: center; gap: 12px; height: 16px; min-width: 0; padding: 0 16px 0 12px; color: var(--color-text-secondary); font-size: 12px; line-height: 16px; }
 .plot-foot > p { margin: 0; }
-.plot-readout { display: flex; flex: 1 1 auto; gap: 12px; min-width: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plot-readout { display: flex; flex: 1 1 auto; gap: 12px; min-width: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .plot-readout > span { flex: none; }
 .plot-readout > span:last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.workbench-shell .plot-foot :is(.chromatogram-axis-caption, .chromatogram-readout, .spectrum-viewport-range) { margin: 0; font-size: 11px; line-height: 16px; }
+.workbench-shell .plot-foot :is(.chromatogram-axis-caption, .chromatogram-readout, .spectrum-viewport-range) { margin: 0; font-size: 12px; line-height: 16px; }
 .workbench-shell .plot-foot .spectrum-viewport-range { display: block; overflow: hidden; text-overflow: ellipsis; }
 .plot-foot .chromatogram-readout[data-idle] { display: none; }
 /* The readout is the plot's description always, and on screen only while the
@@ -310,7 +339,7 @@
 /* The range on screen, in the plot head beside Fit all (P4). */
 .plot-head .plot-range { flex: 0 1 auto; min-width: 7em; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 /* The selected scan's label at the top of its accent rule (P7). */
-.chromatogram-cursor-label { position: absolute; grid-column: 2; grid-row: 2; top: 2px; margin-left: 4px; padding: 0 4px; border-radius: 3px; background: rgb(255 255 255 / 0.88); color: var(--color-accent-hover); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 16px; white-space: nowrap; pointer-events: none; }
+.chromatogram-cursor-label { position: absolute; grid-column: 2; grid-row: 2; top: 2px; margin-left: 4px; padding: 0 4px; border-radius: 3px; background: rgb(255 255 255 / 0.88); color: var(--color-accent-hover); font-size: 12px; font-variant-numeric: tabular-nums; line-height: 16px; white-space: nowrap; pointer-events: none; }
 .chromatogram-cursor-label[data-side="left"] { margin-left: -4px; transform: translateX(-100%); }
 /* The range editor and a pending band's two actions, over the drawing's top
    right: opening them never moves the plot. */
@@ -351,12 +380,12 @@
    and the MS-level filter, then the table. */
 .workbench-shell .spectrum-table-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .scan-head { display: flex; flex: none; align-items: center; gap: 8px; height: 36px; min-width: 0; padding: 0 8px 0 12px; }
-.scan-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.scan-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 650; white-space: nowrap; }
 /* The count stays whole beside its title; the search gives way first. */
 .scan-head .scan-result-count { flex: none; max-width: 40%; margin: 0 auto 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .plot-search { position: relative; flex: 0 1 180px; min-width: 64px; }
 .plot-search > .ui-icon { position: absolute; top: 7px; left: 8px; color: var(--color-text-secondary); pointer-events: none; }
-.scan-head input, .scan-head select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: 5px; padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
+.scan-head input, .scan-head select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-input); padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
 .scan-head select { flex: none; max-width: 40%; }
 .scan-head .plot-search > input { width: 100%; padding-left: 28px; }
 .scan-hidden-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 0; padding: 4px 8px 4px 12px; font-size: 12px; }
@@ -398,10 +427,11 @@
 [data-drawer="details"] .inspector-panel > .inspector-section:first-of-type { padding-right: 48px; }
 .preview-metadata { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .preview-metadata > .inspector-section { max-width: 720px; }
-:is(.workbench-inspector, .preview-metadata) .inspector-section { padding: 14px 14px 16px; border-bottom: 1px solid var(--color-border); }
+/* v5.11's .inspector: 16 px in from the column's edges. */
+:is(.workbench-inspector, .preview-metadata) .inspector-section { padding: 16px; border-bottom: 1px solid var(--color-border); }
 :is(.workbench-inspector, .preview-metadata) .inspector-section :is(h2, h3) { margin: 0 0 8px; color: var(--color-text-secondary); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
 :is(.workbench-inspector, .preview-metadata) .inspector-section h4 { margin: 12px 0 6px; font-size: 12px; font-weight: 650; }
-.workbench-inspector .inspector-section h2.preview-file-identity { margin: 0; color: var(--color-text-primary); font-size: 14px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.workbench-inspector .inspector-section h2.preview-file-identity { margin: 0; color: var(--color-text-primary); font-size: 16px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
 :is(.workbench-inspector, .preview-metadata) .metadata-list { gap: 0; }
 :is(.workbench-inspector, .preview-metadata) .metadata-list > div { padding: 7px 0; border-bottom: 1px solid #edf1f5; }
 :is(.workbench-inspector, .preview-metadata) .metadata-list dt { color: var(--color-text-secondary); }
@@ -440,7 +470,10 @@
 /* At 1050 px and below the roster and Details are drawers over the card (spec
    3.1): absolute, 300 px, modal while open, with the scrim behind them. */
 @media (max-width: 1050px) {
-  .workbench-header { gap: 0 8px; }
+  .workbench-header { gap: 0 8px; padding: 0 16px; }
+  .workbench-shell .shell-notices { padding: 12px 16px 0; }
+  .workbench-status .ui-status-bar { padding: 0 16px; }
+  .workbench-shell .workspace-layout { margin: 8px 16px; }
   .workbench-navigation > button { padding: 0 12px; }
   .workbench-shell .workspace-layout,
   .workbench-shell[data-roster-open="true"] .workspace-layout,
@@ -450,4 +483,8 @@
   .workbench-shell .workspace-sidebar { left: 0; }
   .workbench-inspector { right: 0; }
   .viewer-lower, .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
+  /* Details is a drawer here, so the head is where a representation the file
+     does not report is said (ADR 0029): a fact that does not fit takes a second
+     line inside the head's 36 px, whole; a third stays hidden. */
+  .spectrum-head-facts { height: auto; max-height: 36px; }
 }
