@@ -3,17 +3,23 @@
 **Outcome: MEASURED.** On two public centroided LC-MS runs, pyOpenMS 3.5.0's
 `MassTraceDetection` → `ElutionPeakDetection` → `FeatureFindingMetabo` stayed
 far inside today's analysis worker limits of 600 s and a 4 GiB Job commit cap.
-At noise thresholds 1e4 and 1e5, the slowest single run took 94.8 s. The
-highest peak commit was 0.95 GiB and the highest peak working set 0.88 GiB.
-Three findings set the budgets:
+At noise thresholds 1e4 and 1e5, the slowest single run took 94.8 s. On the
+engine's own path the highest peak commit was 0.95 GiB and the highest peak
+working set 0.88 GiB. The M9 adapter's source check keeps a copy of every MS1
+spectrum; that alone took A's commit to 1.55 GiB before any feature stage
+(section 5.4). Three findings set the budgets:
 
-- **Memory follows the MS1 peak count, not the file size.** Loading costs about
-  18 bytes per MS1 centroid peak. The feature stages add roughly 70–200 bytes per
+- **Memory is modelled per MS1 peak.** Loading cost 17–18 bytes of commit per
+  MS1 centroid peak on both files, consistent with a 16-byte in-memory peak. The
+  two files store a similar number of bytes per peak on disk, so they do not
+  contrast a per-peak model with a per-byte one: the per-peak model is inferred
+  from the in-memory layout. The feature stages add roughly 70–200 bytes per
   peak at or above the noise threshold, which is a small term at 1e4 and 1e5.
 - **Time is mostly the engine import and the mzML load.** The three feature
-  stages took 5.4 s or less at 1e4 and 1e5. At 1e3 they took up to 69 s
-  single-threaded on the Orbitrap file.
-- **The import is the outlier.** It usually takes 2–9 s. Once, in the first
+  stages took 5.4 s or less at 1e4 and 1e5. At 1e3 on the Orbitrap file they
+  took 6.8–11.9 s on one thread and 6.3–8.3 s on four, in three interleaved
+  runs each. One earlier run on a busy host took 69 s (section 5.3).
+- **The import is the outlier.** It usually takes 1.4–8.7 s. Once, in the first
   smoke run, it took 167 s, and the worker's budget runs from launch.
 
 The 1–2 GiB Orbitrap file the research gate asked for was not used. The two runs
@@ -58,6 +64,7 @@ This record names no absolute path:
 | --- | --- |
 | `<data>` | the directory holding the two downloaded files, read-only |
 | `<runs>` | per-run output directories, each created new and empty |
+| `<runs_overhead>`, `<runs_check>` | the same, for the adapter source-pass runs of section 5.4 |
 | `<tools>` | the scratch directory holding the measurement scripts |
 | `<runtime>` | the provisioned development runtime, `.tmp/m91-runtime/` in a checkout |
 
@@ -111,7 +118,7 @@ Why these two:
 | Load | Shared developer machine. Other agent lanes were active, so wall times carry their noise and CPU times are the steadier figure |
 | Engine runtime | The existing development provision, not provisioned again: `cpython-3.13.15-embed-amd64+pyopenms-3.5.0` |
 | Runtime manifest SHA-256 | `6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295`, equal to `RUNTIME_MANIFEST_SHA256` in `apps/desktop/src-tauri/src/project/recipe.rs` |
-| Runtime check | A read-only check after the runs found all 4,628 manifest files present and equal, and no extra file: `RESULT MATCH`. The runs wrote nothing into the runtime |
+| Runtime check | A read-only check after the runs found all 4,628 manifest files present and equal, and no extra file: `RESULT MATCH`. It was repeated after the review-round runs with the same result. The runs wrote nothing into the runtime |
 | pyOpenMS | `3.5.0`, as the runtime reports it |
 
 ### 4.2 The child: one file, one setting
@@ -128,7 +135,10 @@ Why these two:
 
 At each stage boundary it prints one JSON line with the time and its own
 `GetProcessMemoryInfo` counters. The OS keeps the peak counters exactly, so growth
-between samples is never missed.
+between samples is never missed. The review-round child `ff_stage_cpu.py` is
+`ff_stage.py` with one added field on every boundary line, the process's CPU
+time so far (`time.process_time()`, all threads); a file comparison shows no
+other change.
 
 Parameters are the engine defaults except as listed. All of them were read back
 from the engine after they were set:
@@ -155,10 +165,11 @@ from the engine after they were set:
 - **Priority and limits.** The child runs at below-normal priority, as the
   worker's Job sets it. There is **no** Job memory cap, so the peak is measured
   rather than cut off.
-- **Identity.** The runner holds the process handle it got from `CreateProcess`.
-  It checks that the handle's creation time is at or after the launch, so a
-  reused PID is never sampled. Every run passed, with the creation time 1.2–3.3
-  ms after the launch.
+- **Identity.** The runner samples through the process handle it got from
+  `CreateProcess`, so a reused PID is never sampled. As a cross-check it
+  requires the handle's creation time to lie no more than 1 s before the
+  launch reading (`run_u1.py` compares against the launch minus 1 s). Every
+  run passed, with the creation time 0.8–3.3 ms after the launch.
 - **Sampling.** Every 100 ms it reads the child's working set and commit through
   that handle, and the system's free memory.
 - **Gate.** Before each launch it admits at 8 GiB or more free and 80 % or less
@@ -166,41 +177,58 @@ from the engine after they were set:
 - **Totals.** Wall time runs from launch to exit. CPU time comes from
   `GetProcessTimes`. The process peaks come from the OS counters after exit.
 
-Exact commands, run from `<tools>`. The runner interpreter for the
-third-to-fifth repetitions was MSYS2 MinGW CPython 3.14.3. It was not recorded
-for the earlier batches; the runner uses only the standard library and does not
-touch the child's measurements.
+Commands, run from `<tools>`. Every runner call has the second form below. A
+setting is written `<OMP>:<noise>`, one call may list several, and each run
+writes `<out>\<label>_omp<OMP>_noise<noise>\`. The runner interpreter for
+repetitions 3–8 and the adapter runs was MSYS2 MinGW CPython 3.14.3. It was not
+recorded for the first batches; the runner uses only the standard library and
+does not touch the child's measurements.
 
 ```text
 <runtime>\cpython-3.13.15-embed\python.exe -I -B -X utf8 census.py <data>\<file>.mzML <out>.json
-python -I -B run_u1.py <runtime>\cpython-3.13.15-embed\python.exe <tools>\ff_stage.py <data>\<file>.mzML <runs>\rep<k> <label><k> 1:100000 4:100000 1:10000 4:10000
-python -I -B run_u1.py <runtime>\cpython-3.13.15-embed\python.exe <tools>\adapter_overhead.py <data>\<file>.mzML <runs_overhead>\rep<k> O<label><k> 1:100000
+<runner-python> -I -B run_u1.py <runtime>\cpython-3.13.15-embed\python.exe <tools>\<child> <data>\<file>.mzML <out> <label> <setting>...
 ```
 
-A setting is written `<OMP>:<noise>`. Repetitions 3–5 interleaved the two files
-and rotated the order of the settings, so slow periods on the host spread across
-settings.
+The calls, batch by batch:
+
+| Batch | Time | Child | Calls |
+| --- | --- | --- | --- |
+| First | 12:03–12:20 | `ff_stage.py` | One call per file with all six settings in the order `1:100000 4:100000 1:10000 4:10000 1:1000 4:1000`: `<out>` `<runs>\mtbls1785` with label `A`, then `<runs>\mtbls1861` with label `B`. A second call for A (`<runs>\mtbls1785_rep2`, label `A2`) finished `1:100000` and `4:100000` and was interrupted in `1:10000` (section 5.5). These are the only 1e3 runs without stage CPU |
+| Repetitions 3–5 | 19:06–19:15 | `ff_stage.py`, then `adapter_overhead.py` | `batch_reps.sh`, one call per setting, `<out>` `<runs>\rep<k>`, labels `A<k>` and `B<k>`. Setting order: rep 3 `1:100000 4:100000 1:10000 4:10000`; rep 4 `4:10000 1:10000 4:100000 1:100000`; rep 5 `1:10000 4:100000 4:10000 1:100000`. Within a setting A ran first, except in rep 4. Then `adapter_overhead.py` at `1:100000`, `<out>` `<runs_overhead>\rep<k>`, labels `OA<k>` and `OB<k>`, for k 1 and 2, A first |
+| Review round | 19:48–19:53 | `ff_stage_cpu.py`, `adapter_check.py` | `batch_r2.sh`, noise 1e3 only, one call per setting, `<out>` `<runs>\rep<k>` for k 6–8, labels `A<k>` and `B<k>`. Order, as file and OMP: rep 6 A1 B1 A4 B4; rep 7 B4 A4 B1 A1; rep 8 A4 B1 A1 B4. `adapter_check.py` at `1:100000` ran twice per file between them: `<runs_check>\rep1` (labels `CA1`, `CB1`) after rep 6, `<runs_check>\rep2` (`CB2`, `CA2`) after rep 7 |
+
+Interleaving the files and rotating the order spread slow periods on the host
+across settings.
 
 Script SHA-256 (the scripts stay outside the repository):
 
 | Script | SHA-256 |
 | --- | --- |
 | `ff_stage.py` | `57d22e00f70842a3ad05dcf89da994556acb6c065939a31a8c1af4ec0a886069` |
+| `ff_stage_cpu.py` | `43bb480c282225ccc3e0c4be102b689bd3d9d72530d733153eda355d1685a312` |
 | `run_u1.py` | `660b238d228ff73a30d4060ff2b30144c3557962ace5e57980789c17f48f2059` |
 | `adapter_overhead.py` | `f70d3a7ed8751e0250e2eab1cfe9fb27b6d84f7714719846333be955609237a9` |
+| `adapter_check.py` | `ce847c6743dee9e12bb03f0e2b6981dd0b96d3ff733603f87c1588de0145750a` |
 | `census.py` | `4fe52a94fa3cb34fdac028073ec382f5334a2009aa1c9ec191908fda73444109` |
+| `batch_reps.sh` | `1e974b3abe709aa397c455e8dcf7efdb174696fc78be13d0b50856bea3c14d22` |
+| `batch_r2.sh` | `af2ce5adba37f91dee52b35cf545d19d287d26c04ba0653788be4c6717166838` |
+| `u1_tables.py`, tables of 5.1–5.3 | `6d39b096b4ecb267cfdc9d8a99aab6fc1c2e620ff4f001b1e51333508c65f3f1` |
+| `u1_extra.py`, 5.4 and 5.5 | `bfd40254defaf0fc0a056cf2ad48da0994ccec347b9546a486991460f6373215` |
+| `u1_r2.py`, review-round tables and the time estimates of 6.2 | `28a6591ffa711d437074c5bdfe405e047f1c42cb69a53d429d6c217f034e1159` |
+| `calc_r2.py`, the commit estimates of 6.1 and 7 | `8874cd86726969a90183cdf6bd3a9bce6e72107fb63cd8901b555cc1aa6650f6` |
 
 `ff_stage.py` and `run_u1.py` were last modified before the first timed run and
-were not changed afterwards. `adapter_overhead.py` was written before its own
-runs.
+were not changed afterwards. Each other measurement script was written before
+the first run that used it.
 
 ## 5. Results
 
 Runs took place on 2026-10-30 (UTC-4): two smoke runs at 11:37 and 11:57, the
-first batches from 12:03 to 12:20, and the interleaved repetitions and adapter
-runs from 19:06 to 19:15. Every timed run exited 0 and was neither stopped nor capped. Feature and
-trace counts were identical across repetitions of a setting, and no feature had
-zero intensity.
+first batches from 12:03 to 12:20, the interleaved repetitions and adapter
+runs from 19:06 to 19:15, and the review round's 1e3 repetitions and adapter
+check runs from 19:48 to 19:53. Every one of the 60 timed runs exited 0 and was
+neither stopped nor capped. Feature and trace counts were identical across
+repetitions of a setting, and no feature had zero intensity.
 
 ### 5.1 The required settings: noise 1e4 and 1e5, OMP 1 and 4
 
@@ -226,7 +254,8 @@ A cell without a range had the same value, at this rounding, in every run.
   was spent waiting on a busy host, not computing.
 - **The three feature stages together** took at most 5.4 s in any run at 1e4 or
   1e5.
-- **Highest peaks:** 0.88 GiB working set and 0.95 GiB commit, both on A.
+- **Highest peaks:** 0.88 GiB working set and 0.95 GiB commit, both on A, on
+  the engine's path. The M9 adapter's MS1 copy would add to them (section 5.4).
 
 ### 5.2 Peak memory inside each stage
 
@@ -241,44 +270,73 @@ boundary readings.
 | A | 1e5 | 4 | 0.09 / 0.16 | 0.87 / 0.94 | 0.87 / 0.93 | 0.88 / 0.95 | 0.87 / 0.94 | 0.87 / 0.94 | 0.87 / 0.94 |
 | A | 1e4 | 1 | 0.09 / 0.06 | 0.87 / 0.84 | 0.87 / 0.84 | 0.88 / 0.86 | 0.87 / 0.84 | 0.87 / 0.84 | 0.87 / 0.84 |
 | A | 1e4 | 4 | 0.09 / 0.16 | 0.87 / 0.94 | 0.87 / 0.93 | 0.88 / 0.95 | 0.88 / 0.94 | 0.88 / 0.94 | 0.88 / 0.94 |
-| A | 1e3 | 1 | 0.09 / 0.06 | 0.87 / 0.84 | 0.87 / 0.84 | 0.91 / 0.88 | 0.91 / 0.88 | 0.93 / 0.91 | 0.93 / 0.91 |
+| A | 1e3 | 1 | 0.09 / 0.06 | 0.86 / 0.84 | 0.86 / 0.84 | 0.90 / 0.88 | 0.91 / 0.88 | 0.93 / 0.91 | 0.93 / 0.90 |
 | A | 1e3 | 4 | 0.09 / 0.16 | 0.87 / 0.94 | 0.87 / 0.93 | 0.91 / 0.98 | 0.91 / 0.98 | 0.94 / 1.00 | 0.94 / 1.00 |
 | B | 1e5 | 1 | 0.09 / 0.06 | 0.50 / 0.48 | 0.50 / 0.48 | 0.51 / 0.49 | 0.51 / 0.48 | 0.51 / 0.48 | 0.51 / 0.48 |
 | B | 1e5 | 4 | 0.09 / 0.16 | 0.50 / 0.57 | 0.50 / 0.57 | 0.51 / 0.58 | 0.51 / 0.57 | 0.51 / 0.57 | 0.51 / 0.57 |
 | B | 1e4 | 1 | 0.09 / 0.06 | 0.50 / 0.48 | 0.50 / 0.48 | 0.54 / 0.51 | 0.55 / 0.53 | 0.60 / 0.58 | 0.53 / 0.50 |
 | B | 1e4 | 4 | 0.09 / 0.16 | 0.50 / 0.57 | 0.50 / 0.57 | 0.54 / 0.61 | 0.56 / 0.62 | 0.59 / 0.66 | 0.53 / 0.60 |
-| B | 1e3 | 1 | 0.09 / 0.06 | 0.50 / 0.48 | 0.50 / 0.48 | 0.70 / 0.68 | 0.79 / 0.77 | 1.06 / 1.04 | 0.70 / 0.69 |
-| B | 1e3 | 4 | 0.09 / 0.16 | 0.50 / 0.57 | 0.50 / 0.57 | 0.70 / 0.78 | 0.80 / 0.87 | 1.05 / 1.13 | 0.72 / 0.80 |
+| B | 1e3 | 1 | 0.09 / 0.06 | 0.50 / 0.48 | 0.50 / 0.48 | 0.70 / 0.68 | 0.79 / 0.77 | 1.06 / 1.05 | 0.70 / 0.68 |
+| B | 1e3 | 4 | 0.09 / 0.16 | 0.50 / 0.57 | 0.50 / 0.57 | 0.70 / 0.78 | 0.80 / 0.87 | 1.04 / 1.11 | 0.70 / 0.79 |
 
 - **The load sets the floor.** After it, the feature stages add 1–2 % of commit
-  at 1e5 and 2–21 % at 1e4. At 1e3 they add 8 % on A and 117 % on B.
+  at 1e5 and 2–21 % at 1e4. At 1e3 they add 8 % on A and 118 % on B.
 - **Four threads cost about 0.1 GiB of commit,** from the import on. The working
   set is unchanged. The cap counts commit, so the 0.1 GiB counts against it.
 
-### 5.3 A lower threshold: noise 1e3 (one run per setting)
+### 5.3 A lower threshold: noise 1e3 (four runs per setting)
 
-| File | OMP | Wall s | CPU s | Import s | Load s | MTD s | EPD s | FFM s | Store s | Peak WS GiB | Peak commit GiB | Traces → after EPD | Features |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A | 1 | 38.4 | 19.0 | 6.5 | 24.5 | 1.2 | 1.4 | 1.8 | 0.2 | 0.93 | 0.91 | 5,733 → 6,295 | 4,840 |
-| A | 4 | 26.2 | 27.4 | 5.1 | 15.7 | 1.9 | 0.6 | 1.2 | 0.2 | 0.94 | 1.00 | 5,733 → 6,295 | 4,840 |
-| B | 1 | 101.5 | 24.6 | 18.3 | 9.9 | 8.4 | 6.6 | 54.0 | 1.3 | 1.06 | 1.04 | 7,665 → 21,251 | 20,617 |
-| B | 4 | 46.1 | 32.1 | 6.5 | 7.9 | 6.1 | 9.1 | 13.8 | 1.3 | 1.05 | 1.13 | 7,665 → 21,251 | 20,617 |
+Each setting ran once in the first batch and three times, interleaved, in the
+review round with `ff_stage_cpu.py`. Review-round cells are medians with the
+range over the three runs. Stage CPU is the process's CPU time between the
+stage's boundaries; the first batch did not record it.
 
+| File | OMP | Runs | Wall s | CPU s | Import s | Load s | MTD+EPD+FFM s | Their CPU s | FFM s | FFM CPU s | Peak WS GiB | Peak commit GiB | Traces → after EPD | Features |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 1 | review, 3 | 12.2 (9.7–13.1) | 11.6 (9.5–12.5) | 1.6 (1.6–2.3) | 7.9 (6.2–8.8) | 1.4 (1.4–1.9) | 1.4 (1.4–1.8) | 0.6 (0.5–0.7) | 0.5 (0.5–0.7) | 0.93 | 0.91 | 5,733 → 6,295 | 4,840 |
+| A | 4 | review, 3 | 8.2 (7.3–10.0) | 21.8 (19.9–26.2) | 1.7 (1.4–2.2) | 4.4 (4.0–5.9) | 1.2 (1.0–1.6) | 2.7 (2.6–3.5) | 0.4 (0.4–0.7) | 1.4 (1.3–1.9) | 0.94 | 1.00 (1.00–1.01) | 5,733 → 6,295 | 4,840 |
+| B | 1 | review, 3 | 16.3 (11.2–17.3) | 15.5 (10.8–16.5) | 1.9 (1.7–2.4) | 2.4 (1.9–2.6) | 10.3 (6.8–11.9) | 9.8 (6.5–11.2) | 5.4 (3.8–7.1) | 5.2 (3.7–6.6) | 1.06 | 1.05 | 7,665 → 21,251 | 20,617 |
+| B | 4 | review, 3 | 11.6 (11.5–16.3) | 22.9 (21.1–28.6) | 2.1 (1.6–2.6) | 2.3 (1.5–4.0) | 7.3 (6.3–8.3) | 12.8 (11.3–14.6) | 3.4 (2.7–3.6) | 8.3 (6.9–8.9) | 1.03 (1.03–1.04) | 1.11 | 7,665 → 21,251 | 20,617 |
+| A | 1 | first, 1 | 38.4 | 19.0 | 6.5 | 24.5 | 4.4 | not recorded | 1.8 | not recorded | 0.93 | 0.91 | 5,733 → 6,295 | 4,840 |
+| A | 4 | first, 1 | 26.2 | 27.4 | 5.1 | 15.7 | 3.7 | not recorded | 1.2 | not recorded | 0.94 | 1.00 | 5,733 → 6,295 | 4,840 |
+| B | 1 | first, 1 | 101.5 | 24.6 | 18.3 | 9.9 | 69.0 | not recorded | 54.0 | not recorded | 1.06 | 1.04 | 7,665 → 21,251 | 20,617 |
+| B | 4 | first, 1 | 46.1 | 32.1 | 6.5 | 7.9 | 29.0 | not recorded | 13.8 | not recorded | 1.05 | 1.13 | 7,665 → 21,251 | 20,617 |
+
+- **The first-batch 1e3 runs were slowed by the host, not by the work.** B at
+  OMP 1 took 101.5 s, 54.0 s of it in FFM, while the whole process used 24.6 s
+  of CPU, so FFM spent at least 29 s waiting for a processor. The review-round
+  runs, on a quieter host, took 11.2–17.3 s.
 - **On B, 1e3 is where the feature stages start to cost.** EPD split 7,665
-  traces into 21,251, and FFM took 54 s on one thread and 13.8 s on four.
+  traces into 21,251. The three stages took 10.3 s on one thread and 7.3 s on
+  four, for 9.8 and 12.8 s of CPU.
+- **Four threads at 1e3** made whole runs about 1.5 times faster on A (12.2
+  against 8.2 s) and 1.4 times on B (16.3 against 11.6 s), for 88 % and 47 %
+  more CPU time. On A most of the gain is the load, 7.9 against 4.4 s. On B the
+  ranges of the whole runs overlap: 11.2–17.3 against 11.5–16.3 s.
 - **On A's QTOF scale, 1e3 is the realistic setting.** It gives 4,840 features.
   At 1e4 and 1e5, A keeps only 475 and 55.
 
 ### 5.4 The source passes the M9 adapter adds
 
-`adapter_v1.py` does more than the engine before any analysis:
+`run()` in `adapter_v1.py` does five things to the source before any analysis:
 
 1. SHA-256 over the whole source;
 2. a load of **all** MS levels;
 3. SHA-256 again;
-4. an expat count of the spectra.
+4. an expat count of the spectra;
+5. a list of every MS1 spectrum with its position,
+   `ms1 = [(i, s) for i, s in enumerate(exp) if s.getMSLevel() == 1]` (line
+   412), then `check_source` over it (line 413). `check_source` reads every MS1
+   spectrum's arrays and tests each value with `math.isfinite` in Python. `run()`
+   keeps the list to the end; lines 510 and 591 use it.
 
-`adapter_overhead.py` repeats exactly those steps, two runs per file, at OMP 1.
+`adapter_overhead.py` repeats steps 1–4, two runs per file, at OMP 1.
+`adapter_check.py` repeats steps 1–5, two runs per file in the review round. Its
+`check_source` is a copy of `adapter_v1.py` lines 292–322, compared equal. Before
+step 5 it also runs a lean check that the adapter does not have: one spectrum at
+a time by index (`exp.getSpectrum(i)`), finite tests with numpy, nothing kept.
+
+Steps 1–4:
 
 | Run | Wall s | CPU s | SHA-256 before s | Import s | Load, all levels s | SHA-256 after s | Spectrum count s | Spectra (count agrees, digest unchanged) | `getSize()` | Peak WS GiB | Peak commit GiB |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -287,8 +345,27 @@ boundary readings.
 | B, 1 | 13.0 | 11.6 | 1.2 | 2.7 | 4.1 | 0.7 | 3.9 | 6,862 (yes, yes) | 24,984,611 | 0.50 | 0.48 |
 | B, 2 | 12.0 | 11.5 | 0.6 | 2.5 | 3.7 | 0.7 | 4.1 | 6,862 (yes, yes) | 24,984,611 | 0.51 | 0.48 |
 
-- **The two hashes and the count add 6–8 s per file.** The hashes ran on a file
-  already in the OS cache.
+Step 5, with the lean check before it (`adapter_check.py`):
+
+| Run | Wall s | CPU s | Import s | Load, all levels s | Steps 1, 3, 4 s | Lean check s | MS1 list s | MS1 list commit GiB | `check_source` s (CPU s) | Commit before → after step 5 GiB | Peak WS GiB | Peak commit GiB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A, 1 | 27.9 | 26.4 | 2.1 | 9.2 | 4.7 | 0.7 | 0.5 | +0.72 | 10.2 (9.9) | 0.84 → 1.55 | 1.58 | 1.55 |
+| A, 2 | 27.2 | 26.3 | 1.5 | 8.1 | 6.2 | 0.9 | 0.4 | +0.72 | 9.6 (9.2) | 0.84 → 1.55 | 1.58 | 1.55 |
+| B, 1 | 20.8 | 18.2 | 2.5 | 3.2 | 5.2 | 0.4 | 0.3 | +0.36 | 8.8 (7.6) | 0.47 → 0.84 | 0.87 | 0.84 |
+| B, 2 | 16.7 | 16.1 | 2.1 | 3.6 | 3.8 | 0.5 | 0.3 | +0.36 | 6.1 (6.0) | 0.47 → 0.84 | 0.87 | 0.84 |
+
+- **The two hashes and the count took 3.8–8.2 s per file** over the eight runs.
+  The hashes ran on a file already in the OS cache.
+- **Step 5 holds a second copy of every MS1 spectrum.** The list added 15.8–15.9
+  bytes of commit per MS1 peak, 0.72 GiB on A and 0.36 GiB on B, and it stays
+  for the rest of the run, so the engine would start from that higher floor.
+  `check_source` itself added about 1 MiB. Neither file was refused.
+- **`check_source` took 6.1–10.2 s,** 190–310 ns of CPU per MS1 peak, most of it
+  the per-value Python loop. With the list, step 5 took 6.4–10.7 s.
+- **The lean check took 0.4–0.9 s and added no commit.** It covers only the
+  finite test. The other tests of `check_source` (retention-time order, drift
+  time and extra arrays, sorted m/z) need no Python loop over the peaks; they
+  were not timed on their own.
 - **Loading every MS level costs about as much as loading MS1 alone, on these
   two files only.** A has no MS2. B's 3,079 MS2 spectra hold 224,943 peaks,
   0.9 % of its total. A data-dependent run with dense MS2 would not behave like
@@ -296,9 +373,10 @@ boundary readings.
 
 ### 5.5 The import, and the host
 
-- **The import is usually short.** Over the 40 child runs, including the two
-  smoke runs below, `import pyopenms` took 2.0–8.7 s in 34 of them. It took
-  10.7, 16.7, 18.3, 28.2, 71.9 and 167.1 s in the other six.
+- **The import is usually short.** Over the 52 child runs, including the two
+  smoke runs below, `import pyopenms` took 1.4–8.7 s in 46 of them. It took
+  10.7, 16.7, 18.3, 28.2, 71.9 and 167.1 s in the other six. The eight adapter
+  runs of section 5.4 imported in 1.5–3.0 s.
 - **The 167.1 s import happened once.** It was the first smoke run, at 11:37.
   The input was a 44-spectrum mzML derived
   from the public Thermo files of the
@@ -310,12 +388,13 @@ boundary readings.
 - **One plausible cause is on-access scanning** of the runtime's 4,628 files
   (349 MB) on their first read after a while. This is not verified.
   [M9.0](M9_0_TARGETED_MS1_ROUTE_EVIDENCE.md) recorded a 2.8 s cold import.
-- **The load varies with the host, too.** It took 7.7–30.1 s on A and
-  3.4–42.0 s on B.
-- **The memory gate never came close.** At launch, free memory was at least
-  17.1 GiB, with at most 73.1 % used. During runs the lowest free reading was
-  15.49 GiB and the highest use 75.7 %. Every child's handle creation time came
-  1.2–3.3 ms after its launch.
+- **The load varies with the host, too.** It took 4.0–30.1 s on A and
+  1.5–42.0 s on B. The review-round loads, on a quieter host, took 4.0–8.8 s on
+  A and 1.5–4.0 s on B.
+- **The memory gate never came close.** Over all 60 timed runs, free memory at
+  launch was at least 17.1 GiB, with at most 73.1 % used. During runs the
+  lowest free reading was 15.49 GiB and the highest use 75.7 %. Every child's
+  handle creation time came 0.8–3.3 ms after its launch.
 - **An interrupted run left one empty directory.** It belongs to an earlier
   attempt's second repetition (A, OMP 1, 1e4) and holds no result, so it is not
   counted.
@@ -333,62 +412,88 @@ From the OMP 1 medians:
 - **Feature stages:** 10–20 MiB, plus roughly 70–200 bytes per MS1 peak at or
   above the noise threshold. On B the term grew faster than linearly from 1e4
   to 1e3.
+- **The M9 adapter's MS1 list:** 15.8–15.9 bytes per MS1 peak more, held to the
+  end of the run (section 5.4). The figures below leave it out. They describe a
+  U1 that keeps no such copy, which section 7 makes a precondition.
 
 As a single figure per MS1 peak, from the import to the end of FFM:
 
 | Case | Commit bytes per MS1 peak | MS1 peaks that would fill 4 GiB with OMP 4 [estimate] |
 | --- | --- | --- |
-| A, 1e3 to 1e5 | 17.7–18.9 | about 218 M |
+| A, 1e3 to 1e5 | 17.7–18.8 | about 219 M |
 | B, 1e5 | 18.7 | about 220 M |
 | B, 1e4 | 22.6 | about 183 M |
-| B, 1e3 | 42.8 | about 96 M |
+| B, 1e3 | 42.9 | about 96 M |
 
-Bytes on disk are a poor proxy, because encoding sets the ratio:
+Bytes on disk should be a poor proxy, because encoding sets the ratio. These two
+files cannot show it, since they hold a similar number of bytes per peak:
 
 - **These two files:** 19.7 bytes per peak on disk for A (zlib, 64-bit) and
   22.6 for B (uncompressed, 64-bit). At load, commit came to about 0.9 × the
-  file size.
+  file size, so here bytes and peaks predict the load equally well.
 - **Denser encodings:** zlib with 32-bit intensities, or MS-Numpress, can store a
   peak in under 10 bytes. A 1 GiB file of that kind could hold over 100 M MS1
   peaks [estimate]. A file with heavy MS2 holds fewer MS1 peaks than its size
   suggests.
 
-So the 4 GiB commit cap holds with a wide margin for files like A and B up to
-about 1 GiB, at every measured threshold. At 1e4 and above, it holds for files
-like these up to about 2 GiB [estimate]. A 2 GiB file as dense as B, run at 1e3
-with four threads, would reach about 3.9 GiB, within 3 % of the cap [estimate].
+So, on the engine's path, the 4 GiB commit cap holds with a wide margin for
+files like A and B up to about 1 GiB, at every measured threshold. At 1e4 and
+above, it holds for files like these up to about 2 GiB [estimate]. A 2 GiB file
+as dense as B, run at 1e3 with four threads, would reach about 3.9 GiB, within
+3 % of the cap [estimate]. With the M9 copy kept, the same file would reach
+about 5.3 GiB [estimate].
 
 The research estimated 1.5–9 GiB for one 1–2 GiB file. The measured files
 support only the lower part of that range:
 
-- the highest commit measured was 1.13 GiB, on the 0.53 GiB file;
+- the highest commit measured on the engine's path was 1.13 GiB, on the
+  0.53 GiB file; with the M9 copy, A reached 1.55 GiB before any feature stage;
 - extrapolated to 2 GiB files encoded like these, the commit comes to about
-  1.9–3.9 GiB [estimate];
+  1.9–3.9 GiB on the engine's path, and 1.4–1.6 GiB more with the M9 copy
+  [estimate];
 - reaching the upper part would take a denser encoding, a lower threshold, or
   both.
 
 ### 6.2 Time: the import and the load, not the algorithm
 
 - **At 1e4 and 1e5,** MTD + EPD + FFM took 5.4 s or less. The wall time is the
-  import plus the load, plus the adapter's own 6–8 s of source passes.
-- **At 1e3 on B,** the feature stages took 69 s on one thread and 29 s on four.
-  The traces EPD keeps grow faster than the peaks above the threshold.
-- **Four threads did shorten the load on A** (median 10.3 against 14.9 s at
-  1e5), at about 60 % more CPU time. They did not shorten it on B, whose arrays
-  are uncompressed. What makes A's load parallel was not checked.
+  import plus the load, plus the source passes: 3.8–8.2 s for the hashes and the
+  count, and 6.4–10.7 s more for the M9 adapter's MS1 list and `check_source`.
+- **At 1e3 on B,** the feature stages took 6.8–11.9 s on one thread and
+  6.3–8.3 s on four, on a quieter host. The traces EPD keeps grow faster than
+  the peaks above the threshold. One first-batch run on a busy host took 69 s
+  (section 5.3).
+- **Four threads shortened the load on A** (median 10.3 against 14.9 s at 1e5,
+  4.4 against 7.9 s at 1e3), at 60–90 % more CPU time. They did not shorten it
+  on B, whose arrays are uncompressed. What makes A's load parallel was not
+  checked.
 
 The 600 s budget runs from launch. A sum of each stage's worst observation is a
 pessimistic bound:
 
 - 167 s import;
 - 42 s load;
-- 69 s for the feature stages (B, 1e3, OMP 1);
-- 8 s of adapter source passes;
+- 69 s for the feature stages (B, 1e3, OMP 1, on a busy host);
+- 19 s of M9 source passes: 8 s for the hashes and the count, 11 s for the MS1
+  list and `check_source`;
 - about 1 s to store.
 
-That comes to about 290 s. Doubling every data-dependent term, for a file with
-about twice A's MS1 peaks, gives about 410 s [estimate]. Both are under 600 s.
+That comes to about 300 s. Doubling every data-dependent term, for a file with
+about twice A's MS1 peaks, gives about 430 s [estimate]. Both are under 600 s.
 FFM's scaling above B's 1e3 trace count was not measured.
+
+That sum covers the measured files and twice A. It does not cover the admission
+limits of section 7: the 1e4 tier admits about three times A's MS1 peaks.
+Scaling to 80 M peaks at 1e3 and 150 M at 1e4, with the lean source check of
+section 5.4 [estimates]:
+
+- the review-round timings, which ran on a quieter host, give about 80–90 s;
+- every worst observation scaled the same way, including the busy-host 69 s
+  and 42 s, with the feature stages growing as on B from 1e4 to 1e3 (exponent
+  1.3 in the peaks above the threshold), gives about 530–650 s.
+
+So on a busy host a file near either limit could run out of the 600 s budget.
+The worker then stops it with a typed timeout, and the run fails closed.
 
 ## 7. Recommended per-recipe budgets
 
@@ -398,18 +503,30 @@ Recommendations for the owner and the U1 recipe record. Nothing here changes
 | Recipe | Wall budget | Job commit cap | Threads | Admission before the load |
 | --- | --- | --- | --- | --- |
 | Targeted MS1 (M9, today) | 600 s, unchanged | 4 GiB, unchanged | `OMP_NUM_THREADS=1`, unchanged | as today |
-| U1 single-file feature detection | **600 s.** It covers the 290 s pessimistic sum about twice. | **4 GiB**, with the admission rule | **`OMP_NUM_THREADS=4`.** It halves the wall time where the feature stages cost (1e3), and the extra 0.1 GiB is in the admission figure | **Refuse, typed, above 150 M MS1 centroid peaks at a `noise_threshold_int` of 1e4 or more, and above 80 M below 1e4.** Refuse a threshold below 1e3 until a lower value is measured |
+| U1 single-file feature detection | **600 s.** It covers the 300 s pessimistic sum for the measured files twice. Near the admission limits it covers the quieter-host estimate several times, but not every busy-host worst case (section 6.2) | **4 GiB**, with the admission rule | **`OMP_NUM_THREADS=1`, as in M9.** Four threads made the measured 1e3 runs 1.4–1.5 times faster for 47–88 % more CPU time and 0.1 GiB more commit; the measured files do not need the gain | **Refuse, typed, above 150 M MS1 centroid peaks at a `noise_threshold_int` of 1e4 or more, and above 80 M below 1e4.** Refuse a threshold below 1e3 until a lower value is measured. **Precondition:** U1's source check keeps no copy of the MS1 spectra |
 
 How the U1 limits follow from the data:
 
 - **Two tiers, from the worst density measured at each threshold.** Each
-  includes 0.16 GiB fixed for four threads:
-  - at 1e3, B used 42.8 bytes per MS1 peak, so 80 M peaks predict about
-    3.35 GiB;
+  includes the 58 MiB of commit after a one-thread import:
+  - at 1e3, B used 42.9 bytes per MS1 peak, so 80 M peaks predict about
+    3.25 GiB;
   - at 1e4, B used 22.6 bytes per MS1 peak, so 150 M peaks predict about
-    3.32 GiB.
+    3.22 GiB.
 
-  Either tier leaves 16–17 % headroom under the cap.
+  Either tier leaves 19–20 % headroom under the cap. With four threads, 0.1 GiB
+  more leaves 16–17 %.
+- **The tiers hold only without the M9 copy.** The M9 adapter's step 5 adds
+  15.9 bytes per MS1 peak for the whole run (section 5.4). With it, 80 M peaks
+  at 1e3 predict about 4.4 GiB and 150 M at 1e4 about 5.4 GiB, both over the
+  cap. So U1's source check reads one spectrum at a time by index and keeps
+  nothing, as the lean check did in 0.4–0.9 s with no added commit. If U1 keeps
+  the copy instead, the tiers must drop to about 55 M at 1e3 and 85 M at 1e4 to
+  keep at least that headroom [estimate].
+- **Why one thread.** Four threads shortened the measured runs by seconds,
+  mostly in A's zlib load, against a budget of minutes. They cost CPU time on a
+  machine the worker shares with the user, and commit the cap counts. Four
+  threads are the alternative if a measured file needs the time.
 - **What passes.** A (48 M) and B (25 M) pass both tiers. At 1e4 and above, so
   does a 2 GiB file at A's density, about 109 M peaks. At 1e3, a file of about
   1.6 × A still passes. A 2 GiB file is refused there.
@@ -418,7 +535,7 @@ How the U1 limits follow from the data:
   of its peaks at 1e3, 4 % at 1e4. A denser biological Orbitrap run could exceed
   the headroom, and the Job cap is the backstop for that case.
 - **Counting before the load.** The adapter already parses the whole file with
-  expat to count spectra, in 4–6 s here. The same pass can sum the MS1
+  expat to count spectra, in 2.6–6.1 s here. The same pass can sum the MS1
   spectra's `defaultArrayLength` before the engine loads anything. Today that
   count runs after the load, so the order would change.
 - **The 1e3 floor.** It is the lowest threshold measured. The engine's default
@@ -470,5 +587,7 @@ All per-run outputs are outside the repository:
 - per file: the census JSON;
 - a provenance note beside the data.
 
-None of it is committed. The runs can be repeated from section 4 with the
-scripts whose digests are listed there.
+None of it is committed. The scripts sit in a scratch directory that is not
+kept. Section 4 records each script's SHA-256 and how it was called, so a kept
+copy can be checked against this record. Once the scratch directory is cleared,
+repeating the runs means writing the scripts again from sections 4.2 and 4.3.
