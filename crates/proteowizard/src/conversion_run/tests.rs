@@ -17,6 +17,7 @@ use crate::conversion::{
 use crate::finalized_output::OutputDrift;
 use crate::intent::CompressionIntent;
 
+mod advanced;
 mod live_recovery;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -202,6 +203,9 @@ struct FakeRunner<'a> {
     /// wrote files without announcing them would not be standing in for the
     /// measured one -- it would be standing in for an injector.
     declared: Vec<&'a str>,
+    /// What the owned Job counted when the run ended. `Some(0)` by default,
+    /// which with ownership established before execution confirms the tree.
+    final_active_processes: Option<u32>,
 }
 
 impl<'a> FakeRunner<'a> {
@@ -215,7 +219,15 @@ impl<'a> FakeRunner<'a> {
             stderr_truncated: false,
             stderr: "",
             declared: Vec::new(),
+            final_active_processes: Some(0),
         }
+    }
+
+    /// A runner whose owned Job still counted a process when it ended, so its
+    /// tree is not confirmed gone.
+    const fn leaving_a_process(mut self) -> Self {
+        self.final_active_processes = Some(1);
+        self
     }
 
     /// A runner that announces exactly these output basenames, in the line
@@ -284,7 +296,7 @@ impl ProcessRunner for FakeRunner<'_> {
             elapsed: Duration::from_millis(7),
             termination: self.termination,
             max_active_processes: Some(1),
-            final_active_processes: Some(0),
+            final_active_processes: self.final_active_processes,
             peak_job_memory_bytes: Some(1_024),
             total_owned_processes: Some(1),
             tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
@@ -504,10 +516,16 @@ fn a_plan_derives_a_deterministic_mzml_name_and_fixes_every_other_decision() {
 
     let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
 
-    assert_eq!(plan.output_file_name(), OsStr::new("样本 01.mzML"));
+    assert_eq!(
+        plan.output_file_name(),
+        OsStr::new("样本 01-converted.mzML")
+    );
     assert_eq!(plan.format(), OpenFormat::MzMl);
     assert_eq!(plan.conflict_policy(), ConflictPolicy::Fail);
-    assert_eq!(plan.intent().compression().stable_id(), "zlib");
+    assert_eq!(
+        plan.intent().expect("a row plan").compression().stable_id(),
+        "zlib"
+    );
     assert_eq!(plan.source().kind(), ConversionSourceKind::MzmlFile);
     // The plan judges its output with the same limits that read its source.
     assert_eq!(plan.scan_limits(), plan.source().scan_limits());
@@ -602,12 +620,12 @@ fn a_conversion_runs_in_a_private_staging_directory_and_finalizes_into_the_root(
     assert_eq!(
         entry_names(&root),
         vec![
-            OsString::from("sample.mzML"),
+            OsString::from("sample-converted.mzML"),
             OsString::from("unrelated.txt")
         ]
     );
     assert_eq!(
-        fs::read_to_string(root.join("sample.mzML")).expect("read finalized output"),
+        fs::read_to_string(root.join("sample-converted.mzML")).expect("read finalized output"),
         output_document()
     );
     assert_eq!(
@@ -641,13 +659,14 @@ fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml()
     // below the staging root, because the ownership marker lives in the root and
     // the integrity contract insists the output directory hold one entry.
     let staging = canonical_root
-        .join("sample.mzML.mscanvas-staging")
+        .join("sample-converted.mzML.mscanvas-staging")
         .join("output");
     // And the suffix must not be one the output snapshot reads as an
     // interrupted write, decided by that rule rather than by restating it.
     let probe = directory.path().join("suffix-probe");
     fs::create_dir(&probe).expect("create the suffix probe directory");
-    fs::create_dir(probe.join("sample.mzML.mscanvas-staging")).expect("create the probe entry");
+    fs::create_dir(probe.join("sample-converted.mzML.mscanvas-staging"))
+        .expect("create the probe entry");
     assert!(
         !fs_guard::snapshot_output_directory(&probe)
             .expect("snapshot the suffix probe directory")
@@ -663,7 +682,10 @@ fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml()
     assert_eq!(argv[1], OsStr::new("--mzML"));
     // The compression the integrity contract is entitled to assume and the flag
     // the backend is actually given are two facts, and they must agree.
-    assert_eq!(plan.intent().compression(), CompressionIntent::Zlib);
+    assert_eq!(
+        plan.intent().expect("a row plan").compression(),
+        CompressionIntent::Zlib
+    );
     assert_eq!(argv[2], OsStr::new("--zlib"));
     assert_eq!(argv[3], OsStr::new("--outdir"));
     assert_eq!(
@@ -672,7 +694,7 @@ fn the_planned_command_writes_into_the_staging_directory_and_never_names_mzxml()
         "the backend writes into the private staging directory, not the destination root"
     );
     assert_eq!(argv[5], OsStr::new("--outfile"));
-    assert_eq!(argv[6], OsStr::new("sample.mzML"));
+    assert_eq!(argv[6], OsStr::new("sample-converted.mzML"));
     assert!(
         !argv.iter().any(|value| value == OsStr::new("--mzXML")),
         "{argv:?}"
@@ -699,7 +721,7 @@ fn an_existing_destination_is_refused_or_skipped_and_never_overwritten() {
         let source = write_source(directory.path(), "sample.mzML");
         let root = directory.path().join("out");
         fs::create_dir(&root).expect("create destination root");
-        let destination = root.join("sample.mzML");
+        let destination = root.join("sample-converted.mzML");
         fs::write(&destination, b"the result of an earlier run").expect("write destination");
 
         let plan = plan_into(open_source(&source), &root, conflict);
@@ -713,7 +735,10 @@ fn an_existing_destination_is_refused_or_skipped_and_never_overwritten() {
             fs::read(&destination).expect("read destination"),
             b"the result of an earlier run"
         );
-        assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+        assert_eq!(
+            entry_names(&root),
+            vec![OsString::from("sample-converted.mzML")]
+        );
     }
 }
 
@@ -723,7 +748,7 @@ fn an_existing_staging_target_fails_without_disturbing_what_is_in_it() {
     let source = write_source(directory.path(), "sample.mzML");
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create destination root");
-    let mut staging_name = OsString::from("sample.mzML");
+    let mut staging_name = OsString::from("sample-converted.mzML");
     staging_name.push(STAGING_SUFFIX);
     let staging = root.join(&staging_name);
     fs::create_dir(&staging).expect("create the pre-existing staging directory");
@@ -785,7 +810,10 @@ fn an_existing_staging_target_fails_without_disturbing_what_is_in_it() {
     let report = run_conversion(&plan, &capabilities(), &runner);
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     assert_eq!(runner.calls(), 1);
-    assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+    assert_eq!(
+        entry_names(&root),
+        vec![OsString::from("sample-converted.mzML")]
+    );
 }
 
 #[test]
@@ -1066,7 +1094,7 @@ fn a_destination_taken_during_the_run_is_left_exactly_as_it_arrived() {
     fs::create_dir(&root).expect("create destination root");
 
     let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
-    let raced = root.join("sample.mzML");
+    let raced = root.join("sample-converted.mzML");
     let act = move |spec: &CommandSpec| {
         fs::write(staged_destination(spec), output_document()).expect("write staged output");
         fs::write(&raced, b"something else took this name").expect("take the destination");
@@ -1080,11 +1108,14 @@ fn a_destination_taken_during_the_run_is_left_exactly_as_it_arrived() {
         ConversionRunOutcome::Failed(ConversionRunFailure::DestinationAppearedDuringRun)
     );
     assert_eq!(
-        fs::read(root.join("sample.mzML")).expect("read the raced destination"),
+        fs::read(root.join("sample-converted.mzML")).expect("read the raced destination"),
         b"something else took this name",
         "finalization never replaces what already holds the name"
     );
-    assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+    assert_eq!(
+        entry_names(&root),
+        vec![OsString::from("sample-converted.mzML")]
+    );
 }
 
 #[test]
@@ -1154,13 +1185,16 @@ fn a_unicode_name_with_a_space_survives_planning_staging_and_finalization() {
     let report = run_conversion(&plan, &capabilities(), &runner);
 
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
-    assert_eq!(entry_names(&root), vec![OsString::from("样本 01.mzML")]);
     assert_eq!(
-        fs::read_to_string(root.join("样本 01.mzML")).expect("read finalized output"),
+        entry_names(&root),
+        vec![OsString::from("样本 01-converted.mzML")]
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("样本 01-converted.mzML")).expect("read finalized output"),
         output_document()
     );
     let argv = runner.argv();
-    assert_eq!(argv[6], OsStr::new("样本 01.mzML"));
+    assert_eq!(argv[6], OsStr::new("样本 01-converted.mzML"));
     assert_eq!(argv.len(), 7, "the name stays one argv value: {argv:?}");
 }
 
@@ -1186,7 +1220,7 @@ fn a_panic_in_the_runner_preserves_staging_without_confirmed_process_disposition
     assert!(unwound.is_err(), "the panic must not be swallowed");
     assert_eq!(
         entry_names(&root),
-        vec![OsString::from("sample.mzML.mscanvas-staging")]
+        vec![OsString::from("sample-converted.mzML.mscanvas-staging")]
     );
     assert_eq!(
         fs::read_to_string(
@@ -1367,8 +1401,9 @@ fn an_output_name_that_leaves_no_room_for_a_staging_name_is_refused_when_planned
     let root = base.join("out");
     fs::create_dir(&root).expect("create destination root");
 
-    // ".mzML" is five units, and the staging suffix is seventeen more.
-    let longest_stageable = 255 - 17 - 5;
+    // ".mzML" is five units, an mzML source adds "-converted" (ten), and the
+    // staging suffix is seventeen more.
+    let longest_stageable = 255 - 17 - 10 - 5;
     for (stem_length, expected) in [(longest_stageable, true), (longest_stageable + 1, false)] {
         let name = format!("{}.mzML", "n".repeat(stem_length));
         let source = base.join(&name);
@@ -1781,7 +1816,7 @@ fn a_staging_directory_that_cannot_be_removed_never_changes_the_outcome() {
         Some("staging_not_removed")
     );
     assert!(
-        !root.join("sample.mzML").exists(),
+        !root.join("sample-converted.mzML").exists(),
         "nothing was finalized into the destination root"
     );
 
@@ -1789,7 +1824,7 @@ fn a_staging_directory_that_cannot_be_removed_never_changes_the_outcome() {
     // marker, so a cleanup that gives up part-way leaves the proof that this
     // area is MSCanvas's. Without that order the residue would be permanently
     // unreclaimable.
-    let staging = root.join("sample.mzML.mscanvas-staging");
+    let staging = root.join("sample-converted.mzML.mscanvas-staging");
     assert!(
         staging.join(".mscanvas-staging-owner").is_file(),
         "the ownership marker did not survive the failed cleanup"
@@ -1806,7 +1841,10 @@ fn a_staging_directory_that_cannot_be_removed_never_changes_the_outcome() {
     let report = run_conversion(&plan, &capabilities(), &runner);
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     assert_eq!(report.residue(), None);
-    assert_eq!(entry_names(&root), vec![OsString::from("sample.mzML")]);
+    assert_eq!(
+        entry_names(&root),
+        vec![OsString::from("sample-converted.mzML")]
+    );
 }
 
 // --- Handle-bound finalization ---
@@ -1870,7 +1908,7 @@ fn the_object_that_receives_the_final_name_is_the_object_that_was_validated() {
     });
 
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
-    let finalized = fixture.root.join("sample.mzML");
+    let finalized = fixture.root.join("sample-converted.mzML");
     let valid = report.finalized().expect("a finalized conversion");
     assert_eq!(
         valid.output().byte_length(),
@@ -1887,7 +1925,7 @@ fn the_object_that_receives_the_final_name_is_the_object_that_was_validated() {
     assert_eq!(report.residue(), None);
     assert_eq!(
         entry_names(&fixture.root),
-        vec![OsString::from("sample.mzML")]
+        vec![OsString::from("sample-converted.mzML")]
     );
 
     // The witness and the finalized name are the same object: a write through
@@ -1924,7 +1962,7 @@ fn a_staging_path_replaced_after_validation_never_reaches_the_final_name() {
         fs::write(&staged, &decoy).expect("write a different document at that name");
     });
 
-    let finalized = fixture.root.join("sample.mzML");
+    let finalized = fixture.root.join("sample-converted.mzML");
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     let finalized_bytes = fs::read_to_string(&finalized).expect("read the finalized output");
     assert_eq!(
@@ -1946,7 +1984,7 @@ fn a_staging_path_replaced_after_validation_never_reaches_the_final_name() {
     // The replacement stayed in the staging area and was discarded with it.
     assert_eq!(
         entry_names(&fixture.root),
-        vec![OsString::from("sample.mzML")]
+        vec![OsString::from("sample-converted.mzML")]
     );
 }
 
@@ -2001,7 +2039,7 @@ fn a_destination_taken_after_validation_is_never_replaced() {
         let fixture = fixture("sample.mzML", conflict);
         let act = convert_faithfully;
         let runner = FakeRunner::new(&act);
-        let finalized = fixture.root.join("sample.mzML");
+        let finalized = fixture.root.join("sample-converted.mzML");
         let neighbour = fixture.root.join("neighbour.txt");
         fs::write(&neighbour, b"an unrelated file").expect("write neighbour");
 
@@ -2038,7 +2076,7 @@ fn a_destination_taken_after_validation_is_never_replaced() {
             entry_names(&fixture.root),
             vec![
                 OsString::from("neighbour.txt"),
-                OsString::from("sample.mzML")
+                OsString::from("sample-converted.mzML")
             ],
             "occupant: {occupant}"
         );
@@ -2069,7 +2107,7 @@ fn a_reparse_destination_taken_after_validation_is_never_replaced_or_followed() 
         let sentinel = outside.path().join("keep.txt");
         fs::write(&sentinel, b"the existing directory belongs to its owner")
             .expect("write the independent target's sentinel");
-        let final_name = fixture.root.join("sample.mzML");
+        let final_name = fixture.root.join("sample-converted.mzML");
         let mut junction = None;
         let act = convert_faithfully;
         let runner = FakeRunner::new(&act);
@@ -2103,7 +2141,7 @@ fn a_reparse_destination_taken_after_validation_is_never_replaced_or_followed() 
         );
         assert_eq!(
             entry_names(&fixture.root),
-            vec![OsString::from("sample.mzML")]
+            vec![OsString::from("sample-converted.mzML")]
         );
         assert_eq!(report.residue(), None, "the staging area was cleaned");
         assert_eq!(runner.calls(), 1, "the occupation arrived after validation");
@@ -2144,7 +2182,7 @@ fn the_admitted_destination_root_cannot_be_moved_out_from_under_a_run() {
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     assert_eq!(
         entry_names(&fixture.root),
-        vec![OsString::from("sample.mzML")]
+        vec![OsString::from("sample-converted.mzML")]
     );
     assert!(!elsewhere.exists());
 }
@@ -2156,7 +2194,7 @@ fn a_failed_finalization_produces_no_result_and_leaves_no_staging_behind() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
     let act = convert_faithfully;
     let runner = FakeRunner::new(&act);
-    let finalized = fixture.root.join("sample.mzML");
+    let finalized = fixture.root.join("sample-converted.mzML");
     let staged = staged_output_of(&fixture.plan);
 
     let report = run_admitted_seamed(&fixture.plan, &capabilities(), &runner, || {
@@ -2171,7 +2209,7 @@ fn a_failed_finalization_produces_no_result_and_leaves_no_staging_behind() {
     );
     assert_eq!(
         entry_names(&fixture.root),
-        vec![OsString::from("sample.mzML")]
+        vec![OsString::from("sample-converted.mzML")]
     );
     assert_eq!(fs::read(&finalized).expect("read the occupant"), b"taken");
     // The validated reading is released whether or not it was finalized, so the
@@ -2194,6 +2232,7 @@ fn a_validated_output_describes_itself_without_a_path_or_a_handle() {
         &staging,
         OsStr::new("sample.mzML"),
         ConversionIntent::SHIPPED,
+        None,
         MzmlScanLimits::default(),
     ) {
         VerifiedConversion::Valid(validated) => validated,
@@ -2283,7 +2322,7 @@ fn a_unicode_name_with_a_space_survives_the_object_bound_rename() {
     });
 
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
-    let finalized = fixture.root.join("样本 01.mzML");
+    let finalized = fixture.root.join("样本 01-converted.mzML");
     assert_eq!(
         fs::read_to_string(&finalized).expect("read the finalized output"),
         output_document()
@@ -2328,7 +2367,8 @@ fn a_validated_object_cannot_be_written_to_while_it_is_held() {
     );
     assert!(report.finalized().is_some(), "{:?}", report.outcome());
     assert_eq!(
-        fs::read_to_string(fixture.root.join("sample.mzML")).expect("read the finalized output"),
+        fs::read_to_string(fixture.root.join("sample-converted.mzML"))
+            .expect("read the finalized output"),
         output_document()
     );
 }
@@ -2585,7 +2625,7 @@ fn a_reparse_entry_inside_the_owned_tree_is_refused_and_never_followed() {
 #[test]
 fn reclamation_trusts_only_the_admitted_marker_object() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
-    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    let staging = fixture.root.join("sample-converted.mzML.mscanvas-staging");
     let marker = staging.join(".mscanvas-staging-owner");
 
     // No marker at all.
@@ -2636,7 +2676,7 @@ fn reclamation_trusts_only_the_admitted_marker_object() {
 #[test]
 fn a_link_at_the_staging_name_is_never_reclaimed_through() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
-    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    let staging = fixture.root.join("sample-converted.mzML.mscanvas-staging");
     let outside = fixture
         .root
         .parent()
@@ -2689,7 +2729,9 @@ fn reclamation_covers_absent_owned_empty_and_repeated_attempts() {
     let root = directory.path().join("out");
     fs::create_dir(&root).expect("create the destination root");
     let plan = plan_into(open_source(&source), &root, ConflictPolicy::Fail);
-    let staging = plan.destination_root().join("sample.mzML.mscanvas-staging");
+    let staging = plan
+        .destination_root()
+        .join("sample-converted.mzML.mscanvas-staging");
 
     // Absent is nothing to reclaim.
     plan.reclaim_staging_area()
@@ -2758,7 +2800,7 @@ fn a_cleanup_that_cannot_finish_keeps_the_outcome_and_stays_reclaimable() {
         report.residue().is_some(),
         "an unremovable tree reported nothing"
     );
-    let staging = fixture.root.join("sample.mzML.mscanvas-staging");
+    let staging = fixture.root.join("sample-converted.mzML.mscanvas-staging");
     assert!(
         staging.join(".mscanvas-staging-owner").is_file(),
         "the residue lost the proof a later attempt needs"
@@ -3902,10 +3944,11 @@ fn a_vendor_source_replaced_or_rewritten_before_the_run_is_refused() {
 
 // --- Capability binding -----------------------------------------------------
 
-/// One successful conversion is evidence about the build it ran on. A vendor
-/// family is refused on every other build, before a staging area exists.
+/// ADR 0055's relaxed gate (2026-10-29): a Thermo acquisition converts on any
+/// build that reports its release, and on none that does not, which is refused
+/// before a staging area exists.
 #[test]
-fn a_vendor_family_runs_only_on_a_build_it_has_evidence_for() {
+fn a_thermo_acquisition_converts_on_any_build_that_reports_its_release() {
     let directory = TestDirectory::new();
     let source = write_thermo_source(directory.path(), "acquisition.raw");
 
@@ -3939,41 +3982,91 @@ fn a_vendor_family_runs_only_on_a_build_it_has_evidence_for() {
     assert_eq!(calls, 1);
     assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
 
-    // A later release is not this release.
-    let (outcome, calls, entries) = attempt(&capabilities_reporting("3.0.26204", Some("a09eea9")));
+    // A later release, a different revision, no revision, and the measured
+    // strings out of a different binary: each is unverified, and each converts.
+    for installed in [
+        capabilities_reporting("3.0.26204", Some("a09eea9")),
+        capabilities_reporting(EVIDENCED_RELEASE, Some("deadbee")),
+        capabilities_reporting(EVIDENCED_RELEASE, None),
+        capabilities_reporting_for(
+            EVIDENCED_RELEASE,
+            Some(EVIDENCED_REVISION),
+            EXECUTABLE_SHA256,
+        ),
+    ] {
+        let (outcome, calls, entries) = attempt(&installed);
+        assert_eq!(outcome, "finalized");
+        assert_eq!(calls, 1);
+        assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
+    }
+
+    // Help that declares no release at all leaves nothing to name in the label.
+    let (outcome, calls, entries) = attempt(&capabilities());
     assert_eq!(outcome, "source_family_not_evidenced");
-    assert_eq!(calls, 0, "an unevidenced build launched a backend");
+    assert_eq!(calls, 0, "a build without a release launched a backend");
     assert!(
         entries.is_empty(),
-        "an unevidenced build created {entries:?}"
+        "a build without a release created {entries:?}"
     );
+}
 
-    // The right release built from a different revision is a different build.
-    let (outcome, ..) = attempt(&capabilities_reporting(EVIDENCED_RELEASE, Some("deadbee")));
-    assert_eq!(outcome, "source_family_not_evidenced");
+/// The gate's whole table: verified on the measured build, labelled with the
+/// release on any other build that reports one, and refused otherwise. SCIEX is
+/// never relaxed, and mzML is never gated.
+#[test]
+fn the_provider_build_admission_is_measured_unverified_or_refused() {
+    use ConversionSourceKind::{MzmlFile, SciexWiffBundle, ShimadzuLcdFile, ThermoRawFile};
+    let unverified = |release: &str| ProviderBuildAdmission::Unverified {
+        release: release.to_owned(),
+    };
 
-    // A build that will not say which it is cannot be matched against evidence
-    // recorded for a specific one.
-    let (outcome, ..) = attempt(&capabilities_reporting(EVIDENCED_RELEASE, None));
-    assert_eq!(outcome, "source_family_not_evidenced");
+    let measured = evidenced_capabilities();
+    for kind in [MzmlFile, ThermoRawFile, ShimadzuLcdFile, SciexWiffBundle] {
+        assert_eq!(
+            provider_build_admission(&measured, kind),
+            ProviderBuildAdmission::Evidenced,
+            "{kind:?}"
+        );
+    }
 
-    // Help that declares no release at all is the case every existing test
-    // fixture is in, and it is refused for the same reason.
-    let (outcome, ..) = attempt(&capabilities());
-    assert_eq!(outcome, "source_family_not_evidenced");
-
-    // The right release and the right revision out of a different binary. Two
-    // strings from a help banner say what a build calls itself; the evidence was
-    // taken against an artifact, and an installation with the vendor libraries
-    // missing or replaced would answer these two identically.
-    let (outcome, calls, entries) = attempt(&capabilities_reporting_for(
+    // The measured release and revision from another executable: the label is
+    // bound to the whole row, not to the banner.
+    let substituted = capabilities_reporting_for(
         EVIDENCED_RELEASE,
         Some(EVIDENCED_REVISION),
         EXECUTABLE_SHA256,
-    ));
-    assert_eq!(outcome, "source_family_not_evidenced");
-    assert_eq!(calls, 0);
-    assert!(entries.is_empty());
+    );
+    let later = capabilities_reporting("3.0.26204", Some("a09eea9"));
+    let no_revision = capabilities_reporting("3.0.26204", None);
+    for (installed, release) in [
+        (&substituted, EVIDENCED_RELEASE),
+        (&later, "3.0.26204"),
+        (&no_revision, "3.0.26204"),
+    ] {
+        for kind in [ThermoRawFile, ShimadzuLcdFile] {
+            let admission = provider_build_admission(installed, kind);
+            assert_eq!(admission, unverified(release), "{kind:?}");
+            assert!(admission.admits());
+            assert_eq!(admission.unverified_release(), Some(release));
+        }
+        assert_eq!(
+            provider_build_admission(installed, SciexWiffBundle),
+            ProviderBuildAdmission::Refused
+        );
+        assert_eq!(
+            provider_build_admission(installed, MzmlFile),
+            ProviderBuildAdmission::Evidenced
+        );
+    }
+
+    let silent = capabilities();
+    for kind in [ThermoRawFile, ShimadzuLcdFile, SciexWiffBundle] {
+        let admission = provider_build_admission(&silent, kind);
+        assert_eq!(admission, ProviderBuildAdmission::Refused, "{kind:?}");
+        assert!(!admission.admits());
+        assert_eq!(admission.unverified_release(), None);
+    }
+    assert!(provider_build_admission(&silent, MzmlFile).admits());
 }
 
 /// The gate is about the vendor family, not about conversion in general: an
@@ -4214,6 +4307,7 @@ fn an_output_whose_acquisition_no_longer_matches_is_refused() {
         &staging,
         OsStr::new("acquisition.mzML"),
         ConversionIntent::SHIPPED,
+        None,
         MzmlScanLimits::default(),
     );
 
@@ -4847,9 +4941,10 @@ fn a_compound_file_run_that_left_more_than_the_planned_output_finalizes_nothing(
 }
 
 /// The build gate is per family, and the second row was added rather than the
-/// first widened. A build with no evidence for this family launches nothing.
+/// first widened. Under ADR 0055's relaxed gate the family converts, unverified,
+/// on any build that reports its release, and on none that does not.
 #[test]
-fn the_compound_file_family_runs_only_on_a_build_it_has_evidence_for() {
+fn the_compound_file_family_converts_on_any_build_that_reports_its_release() {
     assert!(ConversionSourceKind::ShimadzuLcdFile.requires_provider_build_evidence());
     assert_eq!(
         ConversionSourceKind::ShimadzuLcdFile.stable_id(),
@@ -4903,8 +4998,8 @@ fn the_compound_file_family_runs_only_on_a_build_it_has_evidence_for() {
     assert_eq!(calls, 1);
     assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
 
-    // A later release, a different revision, a build that will not say, and the
-    // same two strings out of a different binary. Each is a different build.
+    // A later release, a different revision, no revision, and the same two
+    // strings out of a different binary. Each is unverified and converts.
     for installed in [
         capabilities_reporting("3.0.26204", Some("a09eea9")),
         capabilities_reporting(EVIDENCED_RELEASE, Some("deadbee")),
@@ -4916,13 +5011,19 @@ fn the_compound_file_family_runs_only_on_a_build_it_has_evidence_for() {
         ),
     ] {
         let (outcome, calls, entries) = attempt(&installed);
-        assert_eq!(outcome, "source_family_not_evidenced");
-        assert_eq!(calls, 0, "an unevidenced build launched a backend");
-        assert!(
-            entries.is_empty(),
-            "an unevidenced build created {entries:?}"
-        );
+        assert_eq!(outcome, "finalized");
+        assert_eq!(calls, 1);
+        assert_eq!(entries, vec![OsString::from("acquisition.mzML")]);
     }
+
+    // A build that cannot report its release converts nothing.
+    let (outcome, calls, entries) = attempt(&capabilities());
+    assert_eq!(outcome, "source_family_not_evidenced");
+    assert_eq!(calls, 0, "a build without a release launched a backend");
+    assert!(
+        entries.is_empty(),
+        "a build without a release created {entries:?}"
+    );
 }
 
 /// The measured spelling for this family, which agrees with the other vendor
@@ -5979,6 +6080,50 @@ fn a_cancelled_multi_output_run_publishes_nothing_and_cleans_staging() {
     assert_eq!(entry_names(&fixture.destination_root).len(), before);
 }
 
+/// A set whose backend exited cleanly with its owned tree unconfirmed
+/// publishes no member, and fails as the quarantine's unaccounted process.
+#[test]
+fn a_multi_output_run_with_an_unconfirmed_tree_publishes_nothing() {
+    let fixture = SetFixture::new("unconfirmed");
+    let source = fixture.directory.path().join("acquisition.bin");
+    let act = |spec: &CommandSpec| {
+        let output_directory = set_command_output_directory(spec);
+        for index in 1..=2 {
+            fs::write(
+                output_directory.join(format!("sample_{index:02}.mzML")),
+                output_document(),
+            )
+            .expect("write a backend output");
+        }
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act)
+        .declaring(&["sample_01.mzML", "sample_02.mzML"])
+        .leaving_a_process();
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &fixture.destination_root,
+        ConflictPolicy::Fail,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        None,
+    );
+    let MultiOutputOutcome::RefusedBeforePublication(failure) = run.report.outcome() else {
+        panic!("an unconfirmed tree publishes nothing");
+    };
+    assert!(matches!(
+        failure,
+        MultiOutputFailure::Backend(BackendExecutionFailure::NotTerminated)
+    ));
+    assert!(failure.leaves_an_owned_process_unaccounted());
+    // The staging area is kept while a process may still write to it; no
+    // member took its final name.
+    for name in ["sample_01.mzML", "sample_02.mzML"] {
+        assert!(!fixture.destination_root.join(name).exists());
+    }
+}
+
 /// Nothing in the run's debug output names a path, and the retained set's
 /// debug is a count rather than a handle dump.
 #[test]
@@ -6530,6 +6675,93 @@ fn a_cancellation_with_no_owned_job_accounting_is_a_failure() {
     );
 }
 
+/// A clean exit whose owned tree is not confirmed gone is never judged or
+/// finalized, so the desktop's owned-process quarantine sees it: a faithful
+/// document is staged, and it does not take its name.
+#[test]
+fn a_clean_exit_with_an_unconfirmed_tree_is_neither_judged_nor_finalized() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let recovery = cancellation.recovery_observer();
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act).leaving_a_process();
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("an unrequested run settles as a completed attempt: {attempt:?}");
+    };
+    assert_eq!(
+        report.outcome(),
+        &ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+            BackendExecutionFailure::NotTerminated
+        ))
+    );
+    assert!(report.leaves_an_owned_process_unaccounted());
+    // Read where the provider returned, not after a judgement that never ran.
+    assert_eq!(
+        report.staged_content().phase(),
+        Some(StagedObservationPhase::ProviderReturned)
+    );
+    assert!(attempt.finalized().is_none());
+    assert!(!fixture.root.join(&fixture.plan.output_file_name).exists());
+    assert_eq!(
+        recovery.retained().map(|retained| retained.status()),
+        Some(StagingRecoveryStatus::ProcessUnconfirmed)
+    );
+}
+
+/// A non-zero exit does not hide an unconfirmed tree behind `backend_rejected`.
+#[test]
+fn a_rejected_exit_with_an_unconfirmed_tree_is_still_unaccounted() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        convert_faithfully(spec)?;
+        Ok(1)
+    };
+    let runner = FakeRunner::new(&act).leaving_a_process();
+
+    let attempt = run_conversion_cancellable(
+        &fixture.plan,
+        &capabilities(),
+        &runner,
+        ConversionCancellation::new(),
+    );
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("an unrequested run settles as a completed attempt: {attempt:?}");
+    };
+    assert_eq!(
+        report.outcome(),
+        &ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+            BackendExecutionFailure::NotTerminated
+        ))
+    );
+    assert!(report.leaves_an_owned_process_unaccounted());
+    assert!(!fixture.root.join(&fixture.plan.output_file_name).exists());
+}
+
+/// The same run with a stop requested is a failed cancellation, never a
+/// finalized output.
+#[test]
+fn a_stop_under_a_clean_exit_with_an_unconfirmed_tree_is_a_failed_cancellation() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = convert_faithfully;
+    let runner = CancellingRunner::new(&act)
+        .requesting(cancellation.request_handle())
+        .leaving_active_processes(Some(1));
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::CancellationFailed(failure) = &attempt else {
+        panic!("an unconfirmed tree under a stop is a failed cancellation: {attempt:?}");
+    };
+    assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
+    assert!(attempt.finalized().is_none());
+    assert!(!fixture.root.join(&fixture.plan.output_file_name).exists());
+}
+
 /// A refusal inside the runner is not a terminated process, and the report says
 /// so rather than attributing process facts to a process that never existed.
 ///
@@ -6703,7 +6935,7 @@ fn an_unrequested_non_ordinary_termination_is_still_not_a_cancellation() {
 #[test]
 fn a_cancellable_attempt_never_disturbs_an_existing_destination() {
     let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
-    let destination = fixture.root.join("sample.mzML");
+    let destination = fixture.root.join("sample-converted.mzML");
     fs::write(&destination, b"the user's own file").expect("occupy the destination");
     let act = convert_faithfully;
     let runner = CancellingRunner::new(&act);

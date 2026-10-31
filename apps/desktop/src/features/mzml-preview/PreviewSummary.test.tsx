@@ -5,12 +5,15 @@
  * in both, and neither has a `<details>` element.
  */
 
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { createFakePreferencesApi, storedRecord } from "../../test/preferenceFixtures";
 import { buildPreview, buildSpectrum } from "../../test/previewFixtures";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { UI_RESOURCES } from "../preferences/i18n";
+import { PreferencesApiProvider } from "../preferences/preferencesApi";
+import { SessionPreferencesProvider } from "../preferences/SessionPreferencesProvider";
 import { PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { initialSpectrumViewportState } from "./viewer/spectrumViewport";
 
@@ -37,6 +40,29 @@ describe("the Details inspector", () => {
     // own facts are the Metadata tab's.
     expect(screen.queryByText("Timing")).toBeNull();
     expect(screen.queryByText(en.summarySpectra)).toBeNull();
+    expect(document.querySelector("[data-not-verified]")).toBeNull();
+  });
+
+  it("labels an output MSCanvas did not verify beside its name, not in it", () => {
+    renderDetails({ file: { ...preview.file, notVerifiedByMscanvas: { unverifiedSettings: true, unverifiedBuildRelease: null } } });
+
+    expect(screen.getByRole("heading", { level: 2 }).textContent).not.toContain(en.m74CnvNotVerified);
+    expect(document.querySelector("[data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
+  });
+
+  it("labels it in zh-CN too, naming the build where the build is why", async () => {
+    const preferences = createFakePreferencesApi({ stored: storedRecord({ appearance: { locale: "zh-CN" } }) });
+    rtlRender(
+      <PreferencesApiProvider value={preferences}>
+        <SessionPreferencesProvider>
+          <PreviewSummary chromatogramScanCount={null} spectrum={null} spectrumViewport={initialSpectrumViewportState}
+            file={{ ...preview.file, notVerifiedByMscanvas: { unverifiedSettings: false, unverifiedBuildRelease: "3.0.26204" } }} />
+        </SessionPreferencesProvider>
+      </PreferencesApiProvider>,
+    );
+
+    await waitFor(() => { expect(document.querySelector("[data-not-verified]")?.textContent).toContain(UI_RESOURCES["zh-CN"].m74CnvNotVerified); });
+    expect(document.querySelector("[data-not-verified]")?.textContent).toContain("3.0.26204");
   });
 
   it("says no spectrum is selected, then shows the selected spectrum's facts", () => {

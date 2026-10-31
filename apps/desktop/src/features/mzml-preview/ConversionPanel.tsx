@@ -12,12 +12,15 @@ import type {
   ConversionQueuePlanItem,
   ConversionReport,
   DestinationPolicy,
+  NotVerifiedByMscanvas,
+  PreviewError,
 } from "./contracts";
 import { SOURCE_KIND_LABEL } from "./contracts";
 import type { ConversionAvailability } from "./conversionAvailability";
 import { axisValueLabel, changedAxes, ConversionSettings } from "./ConversionSettings";
 import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
 import { OutputOpenActions } from "./OutputOpenActions";
+import { NotVerifiedTag, notVerifiedOf } from "./NotVerifiedTag";
 import { STAGING_STATUS_ID, StagingRecoveryActions } from "./StagingRecoveryActions";
 import { ADOPTION_REFUSAL_LABEL, ConversionItemJudgements } from "./ConversionItemJudgements";
 import type { ConversionRefusal } from "./conversionNoticeRegistry";
@@ -399,20 +402,24 @@ export function ConversionPanel({
     >
       <div className="conversion-main">
         {conversion.failure === null ? null : (
-          <div className="notice notice-danger conversion-notice" role="status">
+          <div className="notice notice-danger conversion-notice">
             {/* Both halves. The summary says what happened; the detail is where a
                 refusal puts the part the user has to act on -- above all that a
                 failed export left a temporary file in their folder. Rendering
                 only the summary hid the one thing they could do about it.
                 Led by the name of the control whose request failed, because this
-                sits above all of them (PM9.4 O4). */}
-            <span>
-              <strong>{t("m74CnvRequestFailed", { action: requestLabel(conversion.failure, t) })}</strong>
-              {conversionErrorMessage(conversion.failure.error, t)}
-              {conversion.failure.error.detail === null ? null : (
-                <span className="notice-detail">{ownedErrorDetail(conversion.failure.error, t)}</span>
-              )}
-            </span>
+                sits above all of them (PM9.4 O4). Only the sentences are live:
+                a windowed name list changes as it scrolls. */}
+            <div className="conversion-notice-text">
+              <div role="status">
+                <strong>{t("m74CnvRequestFailed", { action: requestLabel(conversion.failure, t) })}</strong>
+                {conversionErrorMessage(conversion.failure.error, t)}
+                {conversion.failure.error.detail === null || collidingNames(conversion.failure.error) !== null ? null : (
+                  <span className="notice-detail">{ownedErrorDetail(conversion.failure.error, t)}</span>
+                )}
+              </div>
+              <CollisionNames error={conversion.failure.error} />
+            </div>
             <IconButton size="sm" icon={<Icon name="close" />} label={t("m74CnvDismiss")} onClick={conversion.dismissError} />
           </div>
         )}
@@ -578,6 +585,8 @@ function requestLabel(failure: ConversionRequestFailure, t: UiMessage): string {
 
 /** The status lines of the adoption and the export, which the actions they refuse point at. */
 const ADOPT_STATUS_ID = "conversion-adopt-status";
+/** Where Add says how many of its outputs are not verified by MSCanvas. */
+const ADOPT_LABEL_ID = "conversion-adopt-not-verified";
 const DIAGNOSTICS_STATUS_ID = "conversion-diagnostics-status";
 
 /** What each finished-queue action points at while it is refused, or `null` while it is not. */
@@ -609,6 +618,18 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
   const duplicates =
     adoption?.outcomes.filter((outcome) => outcome.kind === "alreadyInWorkspace") ?? [];
   const refused = adoption?.outcomes.filter((outcome) => outcome.kind === "refused") ?? [];
+  // Every refused output and why, windowed (ADR 0057 decision 3).
+  const refusedNames = useMemo(() => (adoption?.outcomes ?? []).flatMap((outcome) => outcome.kind !== "refused" ? [] : [{
+    key: `${String(outcome.itemIndex)}-${String(outcome.memberIndex)}`,
+    text: t("m74CnvNotAdded", { name: outcome.outputFileName, reason: t(ADOPTION_REFUSAL_LABEL[outcome.reason as keyof typeof ADOPTION_REFUSAL_LABEL] ?? "m74CnvAdoptUnverified") }),
+  }]), [adoption, t]);
+  // Labelled outputs keep their label in the roster and the project (ADR 0055
+  // decision 2), so the action that adds them says so first. A SCIEX set is
+  // verified by construction and carries none.
+  const labelled = conversion.state.status === "terminal"
+    ? conversion.state.queue.items.filter((item) => item.state === "finalized" &&
+      item.adoption.kind !== "nothingToAdopt" && itemNotVerified(item) !== null).length
+    : 0;
 
   // Nothing to offer. Each item's row and the queue's counts already say why,
   // including a partial set whose finalized files stay in the folder.
@@ -633,21 +654,7 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
             ? ""
             : t("m74CnvAdoptionSummary", { added: String(added.length), duplicates: String(duplicates.length), refused: String(refused.length) })}
       </p>
-      {adoption !== null ? (
-        <>
-          {refused.slice(0, 3).map((outcome) => (
-            <p
-              className="quiet-text"
-              key={`${String(outcome.itemIndex)}-${String(outcome.memberIndex)}`}
-            >
-              {t("m74CnvNotAdded", { name: outcome.outputFileName, reason: t((outcome.kind === "refused" ? ADOPTION_REFUSAL_LABEL[outcome.reason as keyof typeof ADOPTION_REFUSAL_LABEL] : undefined) ?? "m74CnvAdoptUnverified") })}
-            </p>
-          ))}
-          {refused.length > 3 ? (
-            <p className="quiet-text">{t("m74CnvMoreRefused", { count: refused.length - 3 })}</p>
-          ) : null}
-        </>
-      ) : null}
+      {refusedNames.length === 0 ? null : <NameList names={refusedNames} label={t("m74CnvAdoptionRefusedNames")} />}
       {/* Offered again after a partial result, not replaced by it. An output
           refused because the workspace was full becomes admissible the moment
           rows are removed, and one the user removes afterwards is admissible
@@ -674,13 +681,18 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
             variant={primary ? "primary" : "secondary"}
             className="conversion-wide-action"
             refused={!conversion.canAdopt}
-            aria-describedby={refusedBy ?? undefined}
+            aria-describedby={[labelled === 0 ? null : ADOPT_LABEL_ID, refusedBy].filter(Boolean).join(" ") || undefined}
             onClick={() => conversion.adopt()}
           >
             {eligibleOutputCount === 1
               ? t("m74CnvAddOne")
               : t("m74CnvAddMany")}
           </Button>
+          {labelled === 0 ? null : (
+            <span className="not-verified-tag" data-not-verified="" id={ADOPT_LABEL_ID}>
+              {t("m74CnvAddNotVerified", { labelled: formatCount(labelled) })}
+            </span>
+          )}
         </div>
       </>
     </div>
@@ -1032,6 +1044,8 @@ function PlanSummary(props: PlanProps & {
   const held = configuration.configuration;
   const changed = summary === null || held === null || held.configuration !== "ready" ? []
     : changedAxes(held.catalog, held.shipped, summary.intent);
+  const unlabelled = summary?.items.filter((item) => notVerifiedOf(item) === null).length ?? 0;
+  const excludedNames = useMemo(() => resolvedScope.excluded.map((row) => ({ key: row.handle, text: row.fileName })), [resolvedScope.excluded]);
   return (
     <div className="conversion-plan-summary">
       {/* Native radios drawn as a segmented pair, so the group keeps the
@@ -1062,14 +1076,7 @@ function PlanSummary(props: PlanProps & {
         <div className="conversion-excluded-group">
           <Disclosure label={t("m74CnvExcludedNames", { count: resolvedScope.excludedCount })}
             regionProps={{ className: "conversion-excluded" }}>
-            <ul>
-              {resolvedScope.excluded.slice(0, EXCLUDED_LISTED).map((row) => (
-                <li key={row.handle}>{row.fileName}</li>
-              ))}
-            </ul>
-            {resolvedScope.excluded.length > EXCLUDED_LISTED ? (
-              <p className="quiet-text">{t("moreNotListed", { count: resolvedScope.excluded.length - EXCLUDED_LISTED })}</p>
-            ) : null}
+            <NameList names={excludedNames} label={t("m74CnvExcludedNames", { count: resolvedScope.excludedCount })} />
           </Disclosure>
         </div>
       )}
@@ -1102,6 +1109,14 @@ function PlanSummary(props: PlanProps & {
               <div>
                 <dt>{t("m74CnvBuild")}</dt>
                 <dd>{buildRelease}</dd>
+              </div>
+            )}
+            {/* Before Run, in the summary Convert is described by (ADR 0055
+                decision 3), counted so a long plan says it without a scroll. */}
+            {unlabelled === summary.items.length ? null : (
+              <div data-plan-not-verified="">
+                <dt>{t("m74CnvVerification")}</dt>
+                <dd>{t("m74CnvNotVerifiedCount", { labelled: formatCount(summary.items.length - unlabelled), planned: formatCount(summary.items.length) })}</dd>
               </div>
             )}
             <div>
@@ -1177,6 +1192,8 @@ function PlanList({ items }: { readonly items: readonly ConversionQueuePlanItem[
                 </span>
               </span>
             )}
+            {/* ADR 0055's label, on the row it is about. */}
+            <NotVerifiedTag label={notVerifiedOf(item)} />
           </li>
         );
       })}
@@ -1191,12 +1208,44 @@ const PLAN_PENDING_ID = "conversion-plan-pending";
 /** Where an over-capacity scope's counts are named, for Convert to point at. */
 const CAPACITY_REFUSAL_ID = "conversion-capacity-refusal";
 
+/** One name in a `NameList`, keyed uniquely within it. */
+interface ListedName {
+  readonly key: string;
+  readonly text: string;
+}
 
 /**
- * How many excluded rows are named before the rest are only counted. The
- * count beside them stays exact; the roster names every row.
+ * Every name a sentence is about, windowed past `LIST_WINDOW_THRESHOLD` like
+ * every conversion list (ADR 0057 decision 3), so 1,024 stay one scroll box.
  */
-const EXCLUDED_LISTED = 20;
+function NameList({ names, label }: { readonly names: readonly ListedName[]; readonly label: string }): ReactElement {
+  const keys = useMemo(() => names.map((name) => name.key), [names]);
+  const { listProps, rows, spacer } = useListWindow(keys, 20);
+  return (
+    <ul aria-label={label} className="conversion-name-list" {...listProps}>
+      {rows.map(({ key, index, style, ref }) => {
+        const name = names[index];
+        return name === undefined ? null : (
+          <li key={key} ref={ref} style={style} data-window-key={key} aria-setsize={names.length} aria-posinset={index + 1} title={name.text}>{name.text}</li>
+        );
+      })}
+      {spacer}
+    </ul>
+  );
+}
+
+/** The names a collision refusal lists, or `null` for any other error. */
+function collidingNames(error: PreviewError): readonly string[] | null {
+  return error.context?.kind === "outputNameCollision" ? error.context.names : null;
+}
+
+/** Every name two queued items would both write, under the refusal that says so. */
+function CollisionNames({ error }: { readonly error: PreviewError }): ReactElement | null {
+  const t = useUiMessages();
+  const names = collidingNames(error);
+  const listed = useMemo(() => (names ?? []).map((name) => ({ key: name, text: name })), [names]);
+  return names === null || names.length === 0 ? null : <NameList names={listed} label={t("m74CnvCollisionNames")} />;
+}
 
 /** The queue's status line, where the keyboard goes when its control leaves (R11). */
 const QUEUE_STATUS_ID = "conversion-queue-status";
@@ -1211,7 +1260,9 @@ const QUEUE_STATUS_ID = "conversion-queue-status";
  */
 function PlanPending({ plan, noBackend }: { readonly plan: ConversionPlanView; readonly noBackend: boolean }): ReactElement {
   const t = useUiMessages();
-  return (
+  // The names follow the sentence rather than sit in it: Convert is described
+  // by the sentence alone, not by whichever names the window has mounted.
+  return (<>
     <div className="conversion-plan-pending" id={PLAN_PENDING_ID}>
       {plan.startPlan === "absent" ? <span>{t("m74CnvNoEligible")}</span>
       : plan.startPlan === "failed" && plan.error !== null ? (
@@ -1226,7 +1277,8 @@ function PlanPending({ plan, noBackend }: { readonly plan: ConversionPlanView; r
         <span>{t("m74CnvNoticePlanReading")}</span>
       )}
     </div>
-  );
+    {plan.startPlan === "failed" && plan.error !== null ? <CollisionNames error={plan.error} /> : null}
+  </>);
 }
 
 /**
@@ -1342,9 +1394,11 @@ function QueueState({
         ) : null}
 
         {queue.error === null ? null : (
-          <p className="notice notice-danger" role="status">
-            {conversionErrorMessage(queue.error, t)}
-          </p>
+          <div className="notice notice-danger">
+            {/* The sentence is live; the windowed names beside it are not. */}
+            <p role="status">{conversionErrorMessage(queue.error, t)}</p>
+            <CollisionNames error={queue.error} />
+          </div>
         )}
 
         <RunList items={queue.items} follow={current?.datasetHandle ?? null} renderRow={(item, index, row) => {
@@ -1410,6 +1464,12 @@ function QueueState({
                     </Button>
                   ) : null}
                 </span>
+                {/* Waiting, running and settled alike, even when every check
+                    passed (ADR 0055 decision 3), on its own line under the
+                    names so neither is cut for it. */}
+                {itemNotVerified(item) === null ? null : (
+                  <span className="conversion-run-label"><NotVerifiedTag label={itemNotVerified(item)} /></span>
+                )}
                 {compact ? null : <div className="conversion-run-detail">
                   {/* Why there is no Skip here, at the row that does not have
                       one. Two rows both read "Waiting" during a rerun and only
@@ -1981,6 +2041,15 @@ function singleReportOf(item: ConversionQueueItem): ConversionReport | null {
   return item.result?.kind === "single" ? item.result.report : null;
 }
 
+/**
+ * The label an item runs under: the one bound at BEGIN, or its report's where
+ * a fixture predates that field. Either one is enough to label the row.
+ */
+function itemNotVerified(item: ConversionQueueItem): NotVerifiedByMscanvas | null {
+  const report = singleReportOf(item);
+  return item.notVerifiedByMscanvas ?? (report === null ? null : notVerifiedOf(report));
+}
+
 /** The group report of this item's latest attempt, if it ran a set. */
 function setReportOf(item: ConversionQueueItem): ConversionOutputSetReport | null {
   return item.result?.kind === "outputSet" ? item.result.report : null;
@@ -2136,7 +2205,9 @@ function failureSentence(report: ConversionReport, t: UiMessage): string {
   // would leave every one of them falling through to the generic sentence and
   // never say that a file was produced and then discarded.
   if (report.outcome === "output_rejected") {
-    return t("m74CnvSingleRejected");
+    // Named on its own: Thermo's picker wrote no record of the scope asked
+    // for (ADR 0059), which the generic sentence would not say.
+    return t(report.detailedOutcome === "picker_scope_record_mismatch" ? "m74CnvPickerScopeMismatch" : "m74CnvSingleRejected");
   }
   // The two failures that happen strictly *after* the check returned a valid
   // output. A file was written and judged, and only giving it its final name

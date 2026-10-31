@@ -16,6 +16,26 @@ All notable changes will be documented here once versioned releases begin.
   identifiers, as its SVG already does. No path, no handle and
   no other key is written; the pixels and Copy plot are unchanged
   ([ADR 0053](docs/architecture/adr/0053-png-text-metadata.md)).
+- **Beta-1 projects open, and are upgraded when you save a change.** A project
+  saved by beta 1 opens as it is. Opening it writes nothing, and Save with
+  nothing unsaved writes nothing. The first Save after a change writes the new
+  project format (schema 5), and so does Save As onto the project's own file.
+  Beta 1 cannot open a project in the new format, and reinstalling beta 1 does
+  not undo that
+  ([ADR 0055](docs/architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+  risks).
+
+  **To be able to go back to beta 1, keep a copy of the `.mscanvas` file
+  before you save it in this version.** Beta 1's roll back reinstalls the
+  program; it does not convert a project back.
+
+### Known limitations
+
+- **A beta-1 project close to the 4 MiB size limit opens but cannot be
+  saved.** The new format adds 37 bytes per referenced file, so a beta-1
+  project whose size plus 37 bytes per file exceeds 4 MiB is refused as too
+  large on every Save after a change and on every Save As. The original file
+  is left untouched, and nothing in it is lost.
 
 ## 0.1.0-beta.1 — 2026-10-28 (prerelease)
 

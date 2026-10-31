@@ -21,6 +21,7 @@ compile_error!(
 mod attempt;
 mod cancellation;
 mod capability;
+mod chain;
 mod command;
 mod compound_file;
 mod conversion;
@@ -33,11 +34,13 @@ mod fs_guard;
 mod intent;
 mod mzml;
 mod mzml_reader;
+mod output_inspect;
 mod preview;
 mod process;
 mod sciex_completeness;
 mod sciex_wiff;
 mod sha256;
+mod structured;
 
 pub use attempt::{
     OperationRunIdentity, ProcessAttemptOutcome, StagedObservationPhase, StagedOutputEvidence,
@@ -49,17 +52,26 @@ pub use capability::{
     NamedGrammarDeclaration, OptionArgument, OptionDeclaration, ProviderBuild, RawHelpHashes,
     Sha256Digest, Sha256DigestParseError, TicCapability,
 };
+pub use chain::{
+    ActivationType, AnalyzerKind, ChargeStatePredictor, ChromatogramStep, DeisotopeMethod,
+    Demultiplex, DemultiplexOptimization, FilterRequirement, Fraction, IntRange, IntSet, Lockmass,
+    MassUnit, MzTolerance, MzToleranceUnit, NativeId, NonNegative, Orientation, Polarity, Positive,
+    PrecursorTarget, Real, ScanFilterMatch, ScanFilterText, SelectionMode, SpectrumStep,
+    StructuredIntentError, ThresholdCriterion, TitleKeyword, TitleLiteral, TitlePart,
+    TitleTemplate, Turbocharger, ZeroSampleMode,
+};
 pub use command::{
     BackendTool, CommandSpec, InputSpelling, OpenFormat, PlanError, PreviewOperation,
     SourceIdentity, WorkerLimits, build_msaccess_command_with_capabilities,
     build_msconvert_command_for_source, build_msconvert_command_with_capabilities,
 };
 pub use conversion::{
-    AdvisoryObservation, BinaryArrayMismatchKind, ConversionIntegrityOutcome,
+    AdvancedOutputChecks, AdvisoryObservation, BinaryArrayMismatchKind, ConversionIntegrityOutcome,
     ConversionOutputInspection, ConversionOutputRejection, ConversionSourceError,
-    ConversionSourceFacts, DocumentPart, DocumentSide, IntegrityProperty, SourceObjectFacts,
-    ValidConversion, ValidationMode, capture_conversion_source, conversion_output_file_name,
-    inspect_conversion_output, verify_mzml_conversion,
+    ConversionSourceFacts, DocumentPart, DocumentSide, EncodingReport, IntegrityProperty,
+    IntensityNumpress, PickerLevels, RequestedChanges, RequestedMzmlEncoding, RoleEncodingReport,
+    SourceObjectFacts, ValidConversion, ValidationMode, capture_conversion_source,
+    conversion_output_file_name, inspect_conversion_output, verify_mzml_conversion,
 };
 pub use conversion_run::artifact::{
     LocalFileWriteError, LocalFileWriteFailure, write_new_local_file,
@@ -76,9 +88,9 @@ pub use conversion_run::{
     CancellationFailure, CancellationReport, ConflictPolicy, ConversionAttempt, ConversionPlan,
     ConversionPlanError, ConversionRunFailure, ConversionRunOutcome, ConversionRunReport,
     ConversionSource, ConversionSourceKind, ConversionSourceRejection, OwnedTreeDisposition,
-    StagedContentObservation, StagingReclaimError, StagingRecovery, StagingRecoveryObserver,
-    StagingRecoveryStatus, StagingResidue, provider_build_is_evidenced, run_conversion,
-    run_conversion_cancellable,
+    ProviderBuildAdmission, StagedContentObservation, StagingReclaimError, StagingRecovery,
+    StagingRecoveryObserver, StagingRecoveryStatus, StagingResidue, provider_build_admission,
+    provider_build_is_evidenced, run_conversion, run_conversion_cancellable,
 };
 pub use diagnostics::{
     BackendTextExcerpt, ExcerptSuppression, MAX_DIAGNOSTIC_STREAM_EXCERPT_BYTES, Redactor,
@@ -101,11 +113,11 @@ pub use intent::{
     NumericPrecision, OutputFormat, ProcessingIntent, ProviderFeature, SpectrumPopulation,
 };
 pub use mzml::{
-    ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet, EffectiveProcessing,
-    MzmlChromatogramRecord, MzmlFacts, MzmlLimitKind, MzmlMalformedKind, MzmlRoot, MzmlScanError,
-    MzmlScanLimits, MzmlSpectrumRecord, NumericPrecisionMarker, NumericPrecisionSet,
-    ProcessingAlgorithm, ProcessingHistory, RepresentationMarker, RetentionTimeUnitMarker,
-    UnsafeXmlKind, inspect_file, inspect_reader,
+    ArrayEncoding, ArrayEncodingTally, ArrayKind, ArrayKindSet, CompressionMarker, CompressionSet,
+    EffectiveProcessing, MzmlChromatogramRecord, MzmlFacts, MzmlLimitKind, MzmlMalformedKind,
+    MzmlRoot, MzmlScanError, MzmlScanLimits, MzmlSpectrumRecord, NumericPrecisionMarker,
+    NumericPrecisionSet, PickerScopeRecord, ProcessingAlgorithm, ProcessingHistory,
+    RepresentationMarker, RetentionTimeUnitMarker, UnsafeXmlKind, inspect_file, inspect_reader,
 };
 pub use mzml_reader::{
     ArrayProblem, ArrayRole, ArrayUnit, BinaryDataType, MAX_DECODED_ARRAY_BYTES,
@@ -114,6 +126,11 @@ pub use mzml_reader::{
     MzmlSpectrumRow, MzmlSpectrumTable, ReaderLimitKind, RequiredValue, RetentionTimeUnit,
     read_selected_spectrum, read_selected_spectrum_from, read_spectrum_table,
     read_spectrum_table_from,
+};
+pub use output_inspect::{
+    FinalOutputVerdict, IntermediateFacts, MzxmlEncoding, MzxmlPrecision, NonMzmlFormat,
+    OutputCheckRefusal, admit_intermediate, inspect_final_output, scan_intermediate,
+    scan_intermediate_reader,
 };
 pub use preview::{
     MAX_PREVIEW_TEXT_BYTES, MetadataEntry, MetadataResult, MetadataSection, MetadataSectionKind,
@@ -134,3 +151,9 @@ pub use sciex_completeness::{
 };
 pub use sciex_wiff::sciex_wiff_companion_path;
 pub use sha256::Sha256Error;
+pub use structured::{
+    IntegrityRoute, IntensityArray, LinearTolerance, Lowering, MAX_CHAIN_STEPS, Mz5Encoding,
+    MzArray, MzMlEncoding, MzMlbEncoding, MzMlbIntensityArray, MzMlbMzArray, MzMlbPlainArray,
+    MzXmlEncoding, OutputEncoding, Precision, Prediction, ProviderRequirement, SourceBlock,
+    StructuredIntent, StructuredIntentParts, Switch, Tier, Truncation,
+};

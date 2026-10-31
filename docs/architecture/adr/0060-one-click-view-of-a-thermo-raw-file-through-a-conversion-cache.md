@@ -205,6 +205,10 @@ It lowers, after the source, to `--mzML --zlib`. That is exactly the argv the
     replaces profile peaks with centroids" or "Lossy: removes spectra".
   - Advanced-tier intents are not in the menu. That includes "MS2 and up"
     vendor centroiding while it stays labelled. They go through Conversion.
+    *2026-10-30, later: "MS2 and up" is now a verified row with a Thermo RAW
+    domain ([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)),
+    so it joins the menu through the table as "MS1 and up" does. Every other
+    vendor scope stays advanced and out of the menu.*
   - The choice applies to that one view. It is never remembered, and View
     never starts from it. This is ADR 0058's reasoning against restoring a
     last-used preset: a lossy step must not come back without being chosen.
