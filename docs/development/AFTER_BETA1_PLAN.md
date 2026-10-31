@@ -565,13 +565,60 @@ writer and Rust's ownership of files.
   data unless Delete the application data is selected, which the bundled
   template says removes both (not yet observed); decide whether the uninstaller
   should remove the key by default, and check the selected path.
+  - *2026-10-30, read (not run) from `Section Uninstall` of the NSIS template
+    embedded in the locked `@tauri-apps/cli-win32-x64-msvc` 2.12.4 binary; no
+    installer hooks are configured; not observed for the checked path:* under
+    `installMode` `currentUser` the registry root is HKCU. Every uninstall
+    deletes by name the executable, the two bundled resources and
+    `uninstall.exe`, then the install folder only if it is then empty
+    (`RMDir` without `/r`), and the uninstall entry; one that is not an update
+    also deletes the Start menu and desktop shortcuts that point at this
+    install and the `Run` value. Only with Delete the application data checked
+    -- a box on the confirm page, which `/S` and `/P` skip and `/UPDATE`
+    ignores -- does it also delete `HKCU\Software\MSCanvas contributors\MSCanvas`
+    (the install location and the installer language), then the parent key if
+    it is empty, and `%APPDATA%\org.mscanvas.desktop` and
+    `%LOCALAPPDATA%\org.mscanvas.desktop` recursively (preferences, presets,
+    WebView2 data, and the view cache once it ships). Whether to change this
+    is OWNER_DECISIONS_V511 DEF-2, open until the view cache ships; its
+    recommendation is to always remove the cache folder (except on
+    `/UPDATE`) and keep the key, presets and preferences opt-in. A
+    release-path change, so the owner's.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
   scratch; batch history session-only; whole target lists stored per plan.
+  - *2026-10-30:* a run whose new plan alone takes the document past the
+    bound is refused `oversized` before its worker starts and records nothing,
+    after its own source and preflight checks (a batch member those refuse
+    still stops only itself; `oversized` stops the batch).
+    The bound and what a run records are unchanged; a run that fits with its
+    plan, or reruns a recorded one, is still measured after its attempt (a
+    run record is about 4.7 kB of a member's 54.8 kB). In the M9 closure's
+    measurement the fifth batch's thirteenth member is now refused before its
+    worker.
 - Defects and gaps: Save As does not reserve the result-store name; the M9.1
   Save As pre-copy refusal has no dedicated test; a recoverable queue-level
   refusal leaves later items showing "Waiting".
+  - *2026-10-30, fixed:* Save As claims the result-store name before it
+    publishes the document, with an empty store when there is no result, so no
+    other writer can take it (accepted 2026-10-30, OWNER_DECISIONS_V511
+    DEF-1). So every new project's
+    first save, and every Save As to a new name, now creates
+    `<name>.mscanvas.payloads`, also for a project that never runs targeted
+    MS1; a document publish that fails after it leaves that empty folder, and
+    a retry to the same name is refused `destinationStoreExists` until the
+    folder is removed or another name is chosen. The store is assembled under
+    a fixed-length pending name, so a document name its store name still fits
+    is not refused for the pending name's length. The next release's
+    `INSTALL_AND_SUPPORT.md` Projects row ("when the project holds stored
+    results") needs updating; the beta-1 text is right for beta-1. The
+    pre-copy refusal has a
+    test that counts copies; a recoverable queue-level refusal settles the rows
+    it kept from starting as Not run, as a stop does, and a retry reruns the
+    failures only, as its label and the panel say; those rows are converted by
+    a new queue (before, a retry converted them; accepted 2026-10-30,
+    OWNER_DECISIONS_V511 DEF-1).
 - PM9 options left to the owner: the request-error banner beside its control
   (PM9.4 O4), Retry bound to an operation id (PM9.4 F1), Rust-projected
   parameter bounds for exact range wording (PM9.5 F1).
