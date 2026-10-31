@@ -304,7 +304,8 @@ and of G16, cross-session staging ownership, unchanged.
   included, and no instance records while it is off. An instance whose run
   was removed stops recording it at its next write, whether or not recording
   is on again by then. A write already under way when Off removes the files
-  can land just after; the next start or list while it is off removes it. A
+  can land just after; the next start or list while it is off removes it, and
+  if recording is on again before either, it stays. A
   run whose first write never landed has no file to miss, so an Off and an On
   in another instance before that write lands do not stop it. On records
   from the next run onwards.
