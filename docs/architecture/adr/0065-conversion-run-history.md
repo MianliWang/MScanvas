@@ -5,8 +5,11 @@ that can be done now to be built, with open details following the
 recommendations; this record states them. The Rust side is implemented on
 branch `be/run-history`, stacked on `be/integrate`
 (`apps/desktop/src-tauri/src/run_history.rs`, fed from
-`preview/service/run_recording.rs`). No interface calls it yet. The questions
-for the owner are listed [at the end](#open-questions-for-the-owner).
+`preview/service/run_recording.rs`). No interface calls it yet, and the
+application does not attach the store to the queue, so nothing is recorded in
+the product: recording source paths with no list, Clear or Off the user can
+reach would break section 7's promise. The interface slice attaches it. The
+questions for the owner are listed [at the end](#open-questions-for-the-owner).
 Related: [0013](0013-serial-conversion-queue.md) (the serial queue and its
 *No persistence*), [0015](0015-user-visible-queue-stop.md) (stop),
 [0016](0016-explicit-converted-output-adoption.md) (adoption's object check),
@@ -44,8 +47,9 @@ Three existing rules bound the answer:
   history". This ADR does not change RUN-009, and history carries no backend
   text.
 - Section 7.6 of the [after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md#76-refused-or-not-adopted)
-  keeps automatic retry, adoption, preview and relink refused. History must
-  not become a way around any of them.
+  keeps retry of a stopped queue, automatic adoption, preview, retry and
+  relink, and rerun to replace a damaged result refused. History must not
+  become a way around any of them.
 
 MSCanvas is not single-instance. ADR 0061's review found that one document,
 read at start and later replaced whole, lets a later writer drop another
@@ -69,12 +73,18 @@ One run is one queue: its first pass and every retry of it in place.
   one, and the canonical structured intent in every case. Per item, whether
   ADR 0055's verified tier held for that family on that build.
 - **Build:** the ProteoWizard release the run was bound to, bounded and
-  redacted like every backend label. Per item, whether the build is evidenced
-  for that family. The interface's "not verified by MSCanvas" and
-  "unverified build" labels follow from these.
+  redacted like every backend label. Per item, whether the build is the
+  measured one for that family, so no "unverified build" label applies (a
+  build with no evidence for the family never runs, so is never recorded).
+  The interface's "not verified by MSCanvas" and "unverified build" labels
+  follow from these.
 - **Outputs:** each output's file name, byte length, SHA-256, and its check
   dispositions (mode, fully verified, verified, unverified, inapplicable,
-  advisory). A SCIEX set also records each member's own state.
+  advisory). A SCIEX set also records each member's own state, its
+  sample-completeness finding by stable identifier (not posed, not
+  established with its reason, or established with its method and sample
+  count), and whether it could be adopted whole. A fully finalized set that
+  could not is a failed item with no failure code, and these say why.
 - **Outcomes:** each item's state and attempts, its outcome identifier, and a
   failure by stable code. A failure that ended the whole queue is also
   recorded by its code.
@@ -106,11 +116,13 @@ kind are:
 Project operations follow the same rule: refused before it started, nothing
 recorded.
 
-**When it is written.** The record is written at three points:
+**When it is written.** The record is written at four points:
 
 1. when the pass binds a build, as `running`;
-2. after each item settles;
-3. at the terminal transition: `completed`, `stopped` or `stopFailed`.
+2. when an item starts, before its process is launched, with that item
+   `running`;
+3. after each item settles;
+4. at the terminal transition: `completed`, `stopped` or `stopFailed`.
 
 A refusal that ends a running queue is terminal too, with its code.
 
@@ -120,6 +132,13 @@ A refusal that ends a running queue is terminal too, with its code.
   workspace, mutation or slot lock is held across filesystem work.
 - A write that fails never changes the conversion. The list says that this
   session could not record (`problem`), and nothing else.
+- Windows refuses to replace a name another process holds open, which any
+  list, read or start in another instance briefly does. A refused replace is
+  tried again a few times over about 200 ms. One still refused is owed: this
+  session's own list and read show the run as it is in memory, and its next
+  write, list or read makes the write. Only a session that ends while it
+  still owes one leaves the earlier state on disk, which then reads as
+  interrupted.
 - A retry in place reopens the same record: `passes` increases, and it is
   `running` again until it ends. A retry refused before it binds a build
   leaves the ended record as it was.
@@ -175,13 +194,19 @@ A refusal that ends a running queue is terminal too, with its code.
 - **Runs in progress:** a run still being written, by this or another
   instance, is never pruned.
 - **When:** pruning runs at start and after each run ends.
-- **Oversized runs:** a run whose items would exceed 16 MiB is recorded
-  without them (`itemsOmitted`). Its run-level facts are kept, and the list
-  says so. Nothing is truncated: 1,024 items with long paths and full SCIEX
-  output sets normally stay well under the bound.
+- **Oversized runs:** a run whose document, final newline included, would
+  exceed 16 MiB is recorded without its items (`itemsOmitted`). Its run-level
+  facts are kept, and so are its items' counts (items, finalized, failed) and
+  whether every item was verified, taken before they were left out, so the
+  list's summary means the same. Nothing is truncated. 1,024 single-output
+  items with long paths stay well under the bound; SCIEX items of 24 outputs
+  each do not. By estimate (about 0.9 KiB per output with its checks, not
+  measured on a real set), such a queue passes the bound at about 740 items.
 - **Set-aside files** are not counted, and Clear is what reclaims them.
-- **Runs this build cannot judge** (a later schema, or unreadable) are counted
-  but never pruned; see section 6.
+- **Runs this build cannot judge** (a later schema, or unreadable) are neither
+  pruned nor counted. A later build bounds its own runs; counting them here
+  would let them alone push out every run this build records, the newest
+  included. See section 6.
 
 *Alternatives:*
 
@@ -201,17 +226,23 @@ its end was recorded.
 - It holds that owner's lock while it re-reads the record and rewrites it, so
   a second instance starting at the same moment cannot interleave.
 - An owner that finished in the meantime is seen to have finished.
-- A list reports a gone owner's run as interrupted even before a start has
-  written that down. It does the same for a run of its own session that is
-  not the run being recorded: one whose end could not be written, or whose
-  worker left without a terminal answer.
+- A list or read reports a gone owner's run as interrupted, its items
+  included, even before a start has written that down. It does the same for a
+  run of its own session that is not the run being recorded: one whose end
+  could not be written, or whose worker left without a terminal answer.
+- While recording is off, a gone owner's run is removed instead, by the next
+  start or list (section 7).
 
 **What the record then says:**
 
 - The item that was running becomes `interrupted`. Its outcome is unknown: a
   file may or may not exist at its final name, and the interface claims
-  neither.
-- Items that never started become `notRun`.
+  neither. An item is written `running` before its process is launched, so
+  an item whose process ever ran is never read as not run.
+- Items this pass never started become `notRun`, except an item a retry pass
+  had moved back to pending. That one failed in an earlier pass and this pass
+  never reached it, so it becomes `failed` again, with that failure's code,
+  which the record still holds.
 - There is no end time, because when it actually stopped is not known.
   `interruptedAtMs` is the time of detection.
 
@@ -224,13 +255,21 @@ and of G16, cross-session staging ownership, unchanged.
 
 - **Malformed:** kept aside through a hard link
   (`set-aside-<ms>-<name>`) and taken off its name. A hard link refuses an
-  existing name, so nothing is replaced. The list counts it as `unreadable`.
+  existing name, so nothing is replaced. Every list counts each run kept
+  aside as `unreadable`, whether a start or a list found it, until Clear
+  removes it.
 - **Newer schema:** left exactly where it is and never rewritten. The list
-  counts it as `newer`. Pruning never removes it: a later build's run may be
-  one its live instance is still writing. It still counts toward the bounds,
-  so this build's own oldest ended runs make room.
-- **Unreadable** (a sharing or permission refusal): skipped, counted, and
-  never pruned, for the same reason.
+  counts it as `newer`. Neither pruning nor Clear removes it, and pruning does
+  not count it: a later build's run may be one its live instance is still
+  writing. Off removes it, since any build that honours the switch forgets
+  it anyway.
+- **Unreadable** (a sharing or permission refusal): skipped and counted,
+  treated as a newer one for the same reason.
+- **Schema discipline:** every record type refuses unknown fields, and a
+  record of this schema version that does not parse is malformed and kept
+  aside. So any change to a record's shape must raise `schemaVersion`: an
+  older build would otherwise set aside a newer build's run while that build
+  is still writing it.
 
 ### 7. Privacy
 
@@ -243,10 +282,15 @@ and of G16, cross-session staging ownership, unchanged.
   is not part of the diagnostics export (RUN-009 is unchanged).
 - **The off switch** is a marker file, so every running instance honours it.
   Off forgets every stored run, including this session's run in progress, and
-  no instance records while it is off. On records from the next run onwards.
+  no instance records while it is off. Another live instance's run in
+  progress is forgotten by that instance at its next write. If that instance
+  ends first, the next start or list removes the run rather than writing it
+  as interrupted. On records from the next run onwards.
 - **Clear** forgets every ended run and everything kept aside. It keeps runs
   still in progress, so their end or interruption can still be recorded, and
-  says how many it kept.
+  says how many it kept. A run this build cannot judge counts as one of them,
+  since it may be. A retry of a run Clear forgot starts a new run rather
+  than writing the old one back.
 - **Source data:** neither Clear nor Off touches a source acquisition or an
   output.
 - **What they cannot reach:** a write that crashed between creating its
@@ -283,11 +327,18 @@ rendered QA.
     and the plan summary says so before Run.
   - The destination is decided again through the ordinary plan, picker or
     policy.
+  - It never replaces a recorded or existing output. The ordinary conflict
+    policy decides, and nothing is overwritten. A changed or missing output
+    is not a reason to re-run over it (plan section 7.6).
+  - It is not a retry of a stopped queue, which stays refused.
 - **Not offered:**
   - resuming an interrupted run;
   - adopting outputs automatically;
   - relinking a moved source;
   - showing backend text.
+- **Out of scope:** adoption history. Section 7.6 gives "surviving queue and
+  adoption history" to RUN-007. This record keeps the queue's half only.
+  What was adopted into a workspace is left to a later decision.
 
 ### 9. The Tauri boundary
 
@@ -307,7 +358,8 @@ in `AHEAD_OF_THEIR_INTERFACE` in the command-surface test:
 
 ## Consequences
 
-- RUN-007's conversion half has a Rust side. The interface is a later slice.
+- RUN-007's conversion half has a Rust side. The interface is a later slice,
+  and it is what attaches the store to the queue.
 - ADR 0013's *No persistence* still holds for the queue itself: a restart does
   not restore a queue, and nothing can resume one. Its record survives the
   restart.
@@ -336,3 +388,6 @@ in `AHEAD_OF_THEIR_INTERFACE` in the command-surface test:
 4. Is the advanced intent stored, so a re-run can reproduce it (recommended),
    or only the verified row's identifier?
 5. Does Clear keep runs in progress (recommended), or forget them too?
+6. Is the store attached to the queue in the same slice that gives the user
+   the list, Clear and Off (recommended), or earlier, recording before the
+   user can see or stop it?

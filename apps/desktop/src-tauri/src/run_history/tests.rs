@@ -60,7 +60,29 @@ fn item(state: &str) -> ItemProgress {
         outcome: None,
         failure: None,
         outputs: Vec::new(),
+        completeness: None,
+        set_adoptable: None,
     }
+}
+
+/// A later build's run, oldest of all by name.
+fn write_newer(scratch: &Scratch, index: u64) -> String {
+    let name = file_name_of(&format!("{index:013}-{}", "d".repeat(32)));
+    fs::write(
+        history_directory(scratch).join(&name),
+        br#"{"schemaVersion":99}"#,
+    )
+    .expect("write a later build's run");
+    name
+}
+
+fn active_id(history: &ConversionHistory) -> String {
+    history
+        .locked()
+        .active
+        .as_ref()
+        .map(|active| active.record.run_id.clone())
+        .expect("a run is being recorded")
 }
 
 fn progress(state: RunState, items: &[&str]) -> RunProgress {
@@ -194,6 +216,18 @@ fn a_retry_pass_reopens_the_same_run() {
     let listed = runs(&history);
     assert_eq!(listed.len(), 1, "a retry is the same queue, not a new run");
     assert_eq!((listed[0].passes, listed[0].finalized_count), (2, 1));
+
+    // A run Clear forgot is not written back by its retry, which starts anew.
+    assert_eq!(
+        history.clear(),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+    history.begin(3, start(1), progress(RunState::Running, &["running"]));
+    let after = runs(&history);
+    assert_eq!(after.len(), 1);
+    assert_ne!(after[0].run_id, listed[0].run_id);
 }
 
 #[test]
@@ -257,11 +291,17 @@ fn two_instances_append_without_dropping_each_others_runs() {
 fn a_run_whose_session_ended_is_interrupted_and_a_live_one_is_left_alone() {
     let scratch = Scratch::new("history-interrupted");
     let ended = open(&scratch);
-    ended.begin(
-        1,
-        start(3),
-        progress(RunState::Running, &["finalized", "running", "pending"]),
+    // A retry pass: the last item failed in the first and this pass had not
+    // reached it again.
+    let mut retrying = progress(
+        RunState::Running,
+        &["finalized", "running", "pending", "pending"],
     );
+    retrying.passes = 2;
+    retrying.items[3].attempts = 1;
+    retrying.items[3].failure = Some("provider_exit_nonzero".to_owned());
+    ended.begin(1, start(4), retrying);
+    let ended_run = active_id(&ended);
     let live = open(&scratch);
     live.begin(1, start(1), progress(RunState::Running, &["running"]));
     let live_run = runs(&live)
@@ -274,12 +314,22 @@ fn a_run_whose_session_ended_is_interrupted_and_a_live_one_is_left_alone() {
     // What a process ending does to its lock, without ending this one.
     drop(ended);
 
+    let expected = ["finalized", "interrupted", "notRun", "failed"];
+    let states = |history: &ConversionHistory| -> Vec<String> {
+        items(history, &ended_run)
+            .into_iter()
+            .map(|item| item.progress.state)
+            .collect()
+    };
+    // Told so before any start has written it down, items included.
+    assert_eq!(states(&live), expected);
+
     let later = open(&scratch);
     let listed = runs(&later);
     assert_eq!(listed.len(), 2);
     let interrupted = listed
         .iter()
-        .find(|run| run.run_id != live_run)
+        .find(|run| run.run_id == ended_run)
         .expect("the ended session's run");
     assert_eq!(interrupted.state, RunState::Interrupted);
     assert!(interrupted.interrupted_at_ms.is_some());
@@ -287,11 +337,12 @@ fn a_run_whose_session_ended_is_interrupted_and_a_live_one_is_left_alone() {
         interrupted.ended_at_ms, None,
         "when it stopped is not known"
     );
-    let states: Vec<String> = items(&later, &interrupted.run_id)
-        .into_iter()
-        .map(|item| item.progress.state)
-        .collect();
-    assert_eq!(states, ["finalized", "interrupted", "notRun"]);
+    assert_eq!(states(&later), expected);
+    assert_eq!(
+        items(&later, &ended_run)[3].progress.failure.as_deref(),
+        Some("provider_exit_nonzero"),
+        "the earlier pass's failure is still what it says"
+    );
 
     assert_eq!(
         listed
@@ -320,26 +371,13 @@ fn a_run_whose_session_ended_is_interrupted_and_a_live_one_is_left_alone() {
 fn the_oldest_ended_runs_are_pruned_and_a_run_in_progress_never_is() {
     let scratch = Scratch::new("history-prune-count");
     let history = open(&scratch);
-    let active_id = |history: &ConversionHistory| {
-        history
-            .locked()
-            .active
-            .as_ref()
-            .map(|active| active.record.run_id.clone())
-            .expect("a run is being recorded")
-    };
     // A second instance's run in progress, which this one must not prune.
     let other = open(&scratch);
     other.begin(1, start(1), progress(RunState::Running, &["running"]));
     let in_progress = active_id(&other);
     // A later build's run, oldest by name: this build cannot judge it, so it
-    // never removes it, and it still counts.
-    let newer = file_name_of(&format!("{:013}-{}", 1, "d".repeat(32)));
-    fs::write(
-        history_directory(&scratch).join(&newer),
-        br#"{"schemaVersion":99}"#,
-    )
-    .expect("write a later build's run");
+    // neither removes nor counts it.
+    let newer = write_newer(&scratch, 1);
     let mut ended = Vec::new();
     for key in 0..(MAX_RUNS as u64 + 3) {
         history.begin(key, start(1), progress(RunState::Running, &["running"]));
@@ -347,18 +385,51 @@ fn the_oldest_ended_runs_are_pruned_and_a_run_in_progress_never_is() {
         history.update(key, progress(RunState::Completed, &["finalized"]));
     }
     let kept = run_files(&scratch);
-    assert_eq!(kept.len(), MAX_RUNS);
+    assert_eq!(
+        kept.len(),
+        MAX_RUNS + 1,
+        "this build's 200, and the later one"
+    );
     assert!(kept.contains(&file_name_of(&in_progress)));
     assert!(kept.contains(&newer));
     assert!(kept.contains(&file_name_of(ended.last().expect("the newest"))));
-    // 205 runs for 200 places. The one still being written and the later
-    // build's are passed over, so five ended runs went.
+    // 204 of this build's runs for 200 places. The one still being written is
+    // passed over, so four ended runs went.
     assert_eq!(
         ended
             .iter()
             .filter(|id| !kept.contains(&file_name_of(id)))
             .count(),
-        5
+        4
+    );
+}
+
+#[test]
+fn runs_this_build_cannot_judge_never_push_out_the_run_it_just_recorded() {
+    let scratch = Scratch::new("history-prune-unjudged");
+    fs::create_dir_all(history_directory(&scratch)).expect("the history directory");
+    // A later build's whole history, more than this build's bounds.
+    for index in 0..=MAX_RUNS as u64 {
+        write_newer(&scratch, index + 1);
+    }
+    let history = open(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let recorded = active_id(&history);
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+    assert!(runs(&history).iter().any(|run| run.run_id == recorded));
+    drop(history);
+
+    // Nor does the next start's prune.
+    let again = open(&scratch);
+    let RunHistoryListDto::Listed { runs, newer, .. } = again.list() else {
+        panic!("listed");
+    };
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].run_id, recorded);
+    assert_eq!(
+        newer,
+        MAX_RUNS + 1,
+        "and the later build's are all still there"
     );
 }
 
@@ -387,7 +458,7 @@ fn the_byte_bound_prunes_the_oldest_and_an_oversized_run_drops_only_its_items() 
             build_release: None,
             conflict_policy: "fail".to_owned(),
             failure: None,
-            items_omitted: false,
+            omitted: None,
             items: vec![RunItem {
                 source: item_source,
                 progress: item(FINALIZED_ITEM),
@@ -414,11 +485,47 @@ fn the_byte_bound_prunes_the_oldest_and_an_oversized_run_drops_only_its_items() 
         .find(|run| run.started_at_ms > 2_000)
         .expect("the oversized run is listed");
     assert!(newest.items_omitted);
-    assert_eq!(newest.item_count, 0);
-    assert!(
-        !newest.settings_verified,
-        "nothing is claimed of items not kept"
+    // Counted before they were left out, so the summary means the same.
+    assert_eq!(
+        (newest.item_count, newest.settings_verified),
+        (1, true),
+        "the run's items are counted, not lost"
     );
+    history.update(9, progress(RunState::Completed, &["finalized"]));
+    let ended = runs(&history)
+        .into_iter()
+        .find(|run| run.run_id == newest.run_id)
+        .expect("still listed");
+    assert_eq!((ended.item_count, ended.finalized_count), (1, 1));
+}
+
+#[test]
+fn a_document_one_byte_over_the_bound_with_its_newline_drops_its_items() {
+    // The newline is part of the document the bound is checked against: a
+    // body of exactly the bound would otherwise be written one byte over it,
+    // and then read as corrupt and kept aside.
+    let scratch = Scratch::new("history-exact-bound");
+    let history = open(&scratch);
+    let mut exact = start(1);
+    exact.items[0].display_name = String::new();
+    history.begin(1, exact.clone(), progress(RunState::Running, &["running"]));
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    let room = MAX_RECORD_BYTES - fs::metadata(&path).expect("written").len();
+    drop(history);
+    fs::remove_file(&path).expect("remove the measuring run");
+
+    let history = open(&scratch);
+    // Same-length identifiers and times, so the body is exactly the bound.
+    exact.items[0].display_name = "z".repeat(usize::try_from(room + 1).expect("fits"));
+    history.begin(1, exact, progress(RunState::Running, &["running"]));
+    let run_id = active_id(&history);
+    let listed = runs(&history);
+    let run = listed
+        .iter()
+        .find(|run| run.run_id == run_id)
+        .expect("listed, not kept aside");
+    assert!(run.items_omitted);
+    assert_eq!(run.item_count, 1);
 }
 
 #[test]
@@ -452,14 +559,33 @@ fn a_corrupt_run_is_set_aside_and_a_newer_one_is_left_in_place() {
         fs::read(directory.join("notes.txt")).expect("read"),
         b"not ours to read"
     );
-    let RunHistoryListDto::Listed {
-        runs, newer: count, ..
-    } = history.list()
-    else {
-        panic!("listed");
-    };
-    assert!(runs.is_empty());
-    assert_eq!(count, 1);
+    // Kept aside at start, before any list, and still counted by every list.
+    for _ in 0..2 {
+        let RunHistoryListDto::Listed {
+            runs,
+            newer: count,
+            unreadable,
+            ..
+        } = history.list()
+        else {
+            panic!("listed");
+        };
+        assert!(runs.is_empty());
+        assert_eq!((unreadable, count), (1, 1));
+    }
+    // A name that only begins like one kept aside is not this store's.
+    fs::write(directory.join(format!("{SET_ASIDE_PREFIX}notes.txt")), b"x").expect("write");
+    assert_eq!(
+        history.clear(),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 1
+        },
+        "the later build's run is kept"
+    );
+    let names = entries(&directory);
+    assert!(!names.contains(aside));
+    assert!(names.contains(&newer));
+    assert!(names.contains(&format!("{SET_ASIDE_PREFIX}notes.txt")));
 }
 
 #[test]
@@ -469,15 +595,18 @@ fn clear_keeps_a_run_in_progress_and_off_forgets_everything_for_every_instance()
     history.begin(1, start(1), progress(RunState::Running, &["running"]));
     history.update(1, progress(RunState::Completed, &["finalized"]));
     history.begin(2, start(1), progress(RunState::Running, &["running"]));
+    // A later build's run, which may be one its instance is still writing.
+    let newer = write_newer(&scratch, 1);
 
     assert_eq!(
         history.clear(),
         RunHistoryWriteDto::Done {
-            kept_in_progress: 1
+            kept_in_progress: 2
         }
     );
     assert_eq!(runs(&history).len(), 1);
     assert_eq!(runs(&history)[0].state, RunState::Running);
+    assert!(run_files(&scratch).contains(&newer));
 
     let other = open(&scratch);
     assert_eq!(
@@ -509,6 +638,91 @@ fn clear_keeps_a_run_in_progress_and_off_forgets_everything_for_every_instance()
     );
     history.begin(6, start(1), progress(RunState::Running, &["running"]));
     assert_eq!(run_files(&scratch).len(), 1);
+}
+
+#[test]
+fn off_forgets_a_run_whose_instance_ended_before_its_next_write() {
+    let scratch = Scratch::new("history-off-dead-instance");
+    let turning_off = open(&scratch);
+    let ending = open(&scratch);
+    ending.begin(1, start(1), progress(RunState::Running, &["running"]));
+    assert_eq!(
+        turning_off.set_enabled(false),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 1
+        },
+        "a live instance's run is its own to forget, at its next write"
+    );
+    // It never makes one.
+    drop(ending);
+    let _ = open(&scratch);
+    assert!(
+        run_files(&scratch).is_empty(),
+        "a start forgets it rather than writing it as interrupted"
+    );
+
+    // And so does a list, where no start comes between.
+    let again = open(&scratch);
+    assert_eq!(
+        again.set_enabled(true),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+    let ending = open(&scratch);
+    ending.begin(1, start(1), progress(RunState::Running, &["running"]));
+    assert_eq!(
+        again.set_enabled(false),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 1
+        }
+    );
+    drop(ending);
+    let RunHistoryListDto::Listed {
+        runs, recording, ..
+    } = again.list()
+    else {
+        panic!("listed");
+    };
+    assert!(!recording && runs.is_empty());
+    assert!(run_files(&scratch).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn an_end_a_reader_held_off_is_written_by_the_next_call() {
+    let scratch = Scratch::new("history-held-reader");
+    let history = open(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    // A reader with every sharing right, as another instance's list holds it:
+    // Windows still refuses to replace a name that is open.
+    let reader = fs::File::open(&path).expect("open the run");
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+    assert_eq!(
+        read_record(&path).map(|record| record.map(|record| record.state)),
+        Ok(Some(RunState::Running)),
+        "the replace was refused while the reader held it"
+    );
+    // Not lost meanwhile: this session says what it knows.
+    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert_eq!(
+        (runs[0].state, problem),
+        (RunState::Completed, Some("notWritten"))
+    );
+
+    drop(reader);
+    let RunHistoryListDto::Listed { problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert_eq!(problem, None);
+    assert_eq!(
+        read_record(&path).map(|record| record.map(|record| record.state)),
+        Ok(Some(RunState::Completed)),
+        "the owed write was made"
+    );
 }
 
 #[test]

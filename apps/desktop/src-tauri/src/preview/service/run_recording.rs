@@ -14,18 +14,23 @@ use super::super::conversion::{
 };
 use super::super::dto::{
     ConversionAttemptResultDto, ConversionQueueItemDto, ConversionQueueTerminalReasonDto,
-    ConversionValidationDto, WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
+    ConversionSampleCompletenessDto, ConversionValidationDto, WorkspaceConversionStateDto,
+    WorkspaceConversionUpdateDto,
 };
 use super::super::selection::source_kind_dto;
 use super::PreviewService;
 use crate::run_history::{
     ConversionHistory, ItemProgress, ItemSource, OutputChecks, RunOutput, RunProgress, RunSettings,
-    RunStart, RunState, SourceMember,
+    RunStart, RunState, SetCompleteness, SourceMember,
 };
 
 impl PreviewService {
     /// Gives this session a run history. Set once, at start; a second call is
     /// ignored.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "attached by the run history interface slice")
+    )]
     pub(crate) fn attach_run_history(&self, history: Arc<ConversionHistory>) {
         let _ = self.run_history.set(history);
     }
@@ -191,11 +196,20 @@ fn run_progress(operation: u64, update: &WorkspaceConversionUpdateDto) -> Option
 /// Stable identifiers and measurements only: an error's `kind` and never its
 /// sentences, and nothing a backend wrote.
 fn item_progress(item: &ConversionQueueItemDto) -> ItemProgress {
-    let (outcome, failure, outputs) = match &item.result {
-        Some(ConversionAttemptResultDto::Single { report }) => (
-            Some(report.outcome.clone()),
-            report.detailed_outcome.clone(),
-            report
+    let mut progress = ItemProgress {
+        state: wire_id(&item.state),
+        attempts: item.attempts,
+        outcome: None,
+        failure: item.error.as_ref().map(|error| error.kind.clone()),
+        outputs: Vec::new(),
+        completeness: None,
+        set_adoptable: None,
+    };
+    match &item.result {
+        Some(ConversionAttemptResultDto::Single { report }) => {
+            progress.outcome = Some(report.outcome.clone());
+            progress.failure = progress.failure.or(report.detailed_outcome.clone());
+            progress.outputs = report
                 .output_file_name
                 .iter()
                 .map(|file_name| RunOutput {
@@ -205,12 +219,19 @@ fn item_progress(item: &ConversionQueueItemDto) -> ItemProgress {
                     sha256: report.output.as_ref().map(|output| output.sha256.clone()),
                     checks: report.validation.as_ref().map(checks),
                 })
-                .collect(),
-        ),
-        Some(ConversionAttemptResultDto::OutputSet { report }) => (
-            Some(report.group_outcome.clone()),
-            report.detailed_outcome.clone(),
-            report
+                .collect();
+        }
+        Some(ConversionAttemptResultDto::OutputSet { report }) => {
+            progress.outcome = Some(report.group_outcome.clone());
+            // Where a publication stopped part way, what the filesystem said.
+            progress.failure = progress
+                .failure
+                .or(report.detailed_outcome.clone())
+                .or(report
+                    .partial
+                    .as_ref()
+                    .map(|partial| partial.failure_kind.clone()));
+            progress.outputs = report
                 .members
                 .iter()
                 .map(|member| RunOutput {
@@ -220,21 +241,27 @@ fn item_progress(item: &ConversionQueueItemDto) -> ItemProgress {
                     sha256: member.output.as_ref().map(|output| output.sha256.clone()),
                     checks: member.validation.as_ref().map(checks),
                 })
-                .collect(),
-        ),
-        None => (None, None, Vec::new()),
-    };
-    ItemProgress {
-        state: wire_id(&item.state),
-        attempts: item.attempts,
-        outcome,
-        failure: item
-            .error
-            .as_ref()
-            .map(|error| error.kind.clone())
-            .or(failure),
-        outputs,
+                .collect();
+            progress.completeness = Some(match &report.completeness {
+                ConversionSampleCompletenessDto::NotPosed => SetCompleteness::NotPosed,
+                ConversionSampleCompletenessDto::NotEstablished { reason } => {
+                    SetCompleteness::NotEstablished {
+                        reason: reason.clone(),
+                    }
+                }
+                ConversionSampleCompletenessDto::Established {
+                    method,
+                    sample_count,
+                } => SetCompleteness::Established {
+                    method: method.clone(),
+                    sample_count: *sample_count,
+                },
+            });
+            progress.set_adoptable = Some(report.complete_set_adoptable);
+        }
+        None => {}
     }
+    progress
 }
 
 fn checks(validation: &ConversionValidationDto) -> OutputChecks {

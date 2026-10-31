@@ -1806,7 +1806,9 @@ async fn adopt_workspace_conversion_outputs(
 /// The session's conversion run history.
 type SharedRunHistory = Arc<run_history::ConversionHistory>;
 
-/// Every recorded conversion run, newest first, without items. Reads only.
+/// Every recorded conversion run, newest first, without items. Writes only to
+/// keep the store in order: a corrupt run is kept aside, a write this session
+/// still owes is made, and while recording is off what is stored is forgotten.
 #[tauri::command]
 async fn list_conversion_runs(
     ipc_request: tauri::ipc::Request<'_>,
@@ -1819,7 +1821,8 @@ async fn list_conversion_runs(
     off_the_async_runtime(move || history.list()).await
 }
 
-/// One recorded run's items, by the identifier a list gave. Reads only.
+/// One recorded run's items, by the identifier a list gave. Writes only a
+/// write this session still owes.
 #[tauri::command]
 async fn read_conversion_run(
     run_id: String,
@@ -2697,12 +2700,14 @@ pub fn run() {
             )));
             // And conversion runs (ADR 0065), under the same binding. Opening
             // marks the runs of sessions that ended mid-run as interrupted.
-            let run_history = SharedRunHistory::new(run_history::ConversionHistory::open(
+            //
+            // Not attached to the queue, so nothing is recorded yet: until the
+            // interface gives the user the list, Clear and Off, recording
+            // source paths would be a store they can neither see nor turn off.
+            // The interface slice attaches it, once the owner accepts ADR 0065.
+            app.manage(SharedRunHistory::new(run_history::ConversionHistory::open(
                 preferences.sibling_directory(),
-            ));
-            app.state::<SharedService>()
-                .attach_run_history(Arc::clone(&run_history));
-            app.manage(run_history);
+            )));
             app.manage(SharedPreferences::new(preferences));
             // A ProteoWizard folder an earlier session remembered is where this
             // one's discovery starts. Nothing is launched here: the first
