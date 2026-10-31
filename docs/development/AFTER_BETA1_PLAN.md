@@ -195,6 +195,36 @@ there is capacity, no decompilation, and every other point as recommended):
    ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
    [PR #162](https://github.com/MianliWang/MScanvas/pull/162)).
 
+**Owner direction, 2026-10-30** (later the same day), verbatim:
+"我们需要把这些后端功能都计划好来做，只有msconvert的其实只能算初版，但是也算是能用的MVP了"
+("We need to plan all of these backend functions and build them. A version
+with only msconvert really counts only as a first version, but it does count
+as a usable MVP.") Every function of the owner's v5.11 demo that MSCanvas
+lacks is to be planned and built, the analysis pages and the viewer subtabs
+included; the converter, viewer and figure product is the MVP. The plan is the
+[roadmap for the v5.11 functions and analysis](ROADMAP_V511_AND_ANALYSIS.md),
+and the questions it needs answered are in
+[OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md). Both stay drafts until the
+owner answers. The governance amendment that un-defers analysis in `AGENTS.md`
+and `PROJECT_PROPOSAL.md` is decision G1 there, with its exact wording. The
+same day the owner rejected the frontend options shown so far
+("这几个前端选项我都不满意", none of these frontend options satisfies me);
+FE-1 and FE-2 there ask what #164 still merges for and how the new look is
+chosen.
+
+**Owner decisions, 2026-10-30** (on the roadmap's decisions). Shown the 20
+decisions there that block work now, the owner replied, verbatim:
+"全部按推荐，继续" ("all as recommended, continue"). Earlier the same day the
+owner approved S-1, the statistics crates `nalgebra` and `statrs`, verbatim:
+"批准" ("approved"). These 21 are the whole of section 3 of
+[OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md), and its section 1b gives
+each answer and what it leaves open. They include FE-1 (#164 merges as the
+functional base, with the export palette reverted), FE-2 (the owner's own v5.11
+demo is the frontend's target, one real screen first), G1 (the governance
+wording, applied by N-10), M161 and A0060 (ADR 0060's open questions 1 and 8).
+The other 32 decisions there stay open, each asked before the slice it gates.
+The roadmap and the decisions document are therefore no longer drafts.
+
 ## 3. Parallel execution rules
 
 - **Lanes by disjoint files.** Each lane works in its own git worktree with
@@ -612,3 +642,14 @@ None can be delivered by engineering alone; each waits for one input.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted.
+- *2026-10-30:* the decisions the
+  [v5.11 and analysis roadmap](ROADMAP_V511_AND_ANALYSIS.md) needs, 53 in
+  all, are in [OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md). Its
+  section 3 lists the 21 that block work now, among them the governance
+  amendment (G1), what #164 still merges for (FE-1), the new look (FE-2,
+  which answers the frontend's target above), #161's merge (M161),
+  M10's route (A0064) and the analysis runtime's distribution (B-1, the
+  questions of ADR 0066).
+- *Answered 2026-10-30* (section 2): those 21, as recommended. This answers
+  the frontend's target and ADR 0060's open question 8 in the first item
+  above (FE-2 and A0060). The other 32 stay open.
