@@ -1429,9 +1429,6 @@ function QueueState({
                       {itemOutputSummary(item, set, t)}
                     </span>
                   )}
-                  {/* Waiting, running and settled alike, even when every
-                      check passed (ADR 0055 decision 3). */}
-                  <NotVerifiedTag label={itemNotVerified(item)} />
                 </span>
                 <span className="conversion-run-aside">
                   <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
@@ -1463,6 +1460,12 @@ function QueueState({
                     </Button>
                   ) : null}
                 </span>
+                {/* Waiting, running and settled alike, even when every check
+                    passed (ADR 0055 decision 3), on its own line under the
+                    names so neither is cut for it. */}
+                {itemNotVerified(item) === null ? null : (
+                  <span className="conversion-run-label"><NotVerifiedTag label={itemNotVerified(item)} /></span>
+                )}
                 {compact ? null : <div className="conversion-run-detail">
                   {/* Why there is no Skip here, at the row that does not have
                       one. Two rows both read "Waiting" during a rerun and only

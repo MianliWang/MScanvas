@@ -688,6 +688,8 @@ button:disabled,
 /* A list of names under a sentence (excluded rows, refused outputs, colliding
    names): its own scroll box once windowed, like every conversion list. */
 .conversion-name-list {
+  /* Under its sentence, never beside it, inside a flex notice too. */
+  flex-basis: 100%;
   min-width: 0;
   margin: 0;
   padding-left: 1.2em;
@@ -1023,6 +1025,8 @@ button:disabled,
 }
 
 .conversion-run-detail:empty { display: none; }
+.conversion-run-label { min-width: 0; grid-column: 2 / -1; }
+.conversion-plan-list .not-verified-tag { margin-left: 2.2em; }
 
 .conversion-queue-attempts,
 .conversion-queue-facts,
