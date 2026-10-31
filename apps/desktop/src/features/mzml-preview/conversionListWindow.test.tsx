@@ -199,6 +199,42 @@ describe("conversion lists at the queue's full size", () => {
     await expectReachesItsEnd(list, names.at(-1)!);
   }, 60_000);
 
+  it("lists the names a refused BEGIN collided on beside the banner's sentence, never in Convert's description", async () => {
+    const names = ROWS.map((row) => row.fileName.replace(/\.raw$/u, ".mzML"));
+    renderApp(createFakePreviewApi({
+      initialDatasets: ROWS,
+      availability: availableBackend,
+      conversionPlan: planEvery,
+      conversionRefusal: () => ({
+        outcome: "refused",
+        error: previewError({
+          kind: "queue_output_name_collision",
+          summary: "Two or more selected acquisitions would produce the same converted filename.",
+          detail: names.join(", ").slice(0, 400),
+          retryable: false,
+          context: { kind: "outputNameCollision", names },
+        }),
+      }),
+    }));
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(within(panel).getByRole("radio", { name: "All workspace rows" }));
+    const convert = await waitFor(() => {
+      const control = panel.querySelector<HTMLElement>("button.conversion-start");
+      expect(control).not.toBeNull();
+      expect(control).not.toHaveAttribute("aria-disabled");
+      return control!;
+    }, { timeout: 15_000 });
+    fireEvent.click(convert);
+    const list = await within(panel).findByRole("list", { name: en.m74CnvCollisionNames }, { timeout: 15_000 });
+    expect(list.closest(".conversion-notice")).not.toBeNull();
+    expectWindowed(list);
+    expect(list.closest("[role='status'],[aria-live]")).toBeNull();
+    expect(list.closest(".conversion-notice")!.querySelector("[role='status']")?.textContent).toContain(en.m74ErrorNameCollision);
+    const description = (panel.querySelector("button.conversion-start")?.getAttribute("aria-describedby") ?? "").split(/\s+/u)
+      .map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+    expect(names.filter((name) => description.includes(name))).toEqual([]);
+  }, 60_000);
+
   it("windows 1,024 excluded rows", async () => {
     const mzml = ROWS.map((row) => ({ ...row, fileName: row.fileName.replace(/\.raw$/u, ".mzML"), sourceKind: "mzml" as const }));
     renderApp(createFakePreviewApi({ initialDatasets: mzml, availability: availableBackend }));
