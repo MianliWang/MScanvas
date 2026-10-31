@@ -960,7 +960,7 @@ describe("looking at the roster through a search and a sort", () => {
     // A search that matches nothing leaves nothing to focus. Clearing it brings
     // the rows back, and the list draws the first of them with the tab stop --
     // but until the state says so too, everything the focused row is for is
-    // dead: `Preview focused` stays disabled, Enter reads nothing and Space
+    // dead: Enter reads nothing and Space
     // toggles nothing, until the user presses an arrow or clicks a row.
     const nothing = search(view(...ROWS), "zzz");
     expect(nothing.focused).toBeNull();

@@ -8,7 +8,7 @@ import {
 import { ipcTable, VENDOR_ROW } from "../support/fixtures";
 import { cdp } from "../support/cdp";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
-import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion, waitUntilOffered } from "../support/conversion";
+import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion, startAnother, waitUntilOffered } from "../support/conversion";
 import {
   availableBackend, completeCatalog, queueItem, queueOf, settledAt, shippedIntent,
 } from "../../apps/desktop/src/test/previewFixtures";
@@ -59,7 +59,8 @@ async function setInnerViewport(width: number, height: number) {
   console.log("M6.6 measured inner viewport", { width, height, frame });
 }
 
-async function openWorkspace(overrides: Record<string, unknown> = {}) {
+/** `finished`: the slot holds a finished queue, whose next conversion opens on request. */
+async function openWorkspace(overrides: Record<string, unknown> = {}, finished = false) {
   await setInnerViewport(1_366, 768);
   await installIpcBoundary({
     ...ipcTable(), inspect_backend: { ...availableBackend, authority: AUTHORITY },
@@ -78,17 +79,13 @@ async function openWorkspace(overrides: Record<string, unknown> = {}) {
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
   await checkMembers([VENDOR_ROW.handle]);
   await showConversion();
+  if (finished) await startAnother();
   await waitUntilOffered(CONVERT);
 }
 
-/** The bound queue's facts, in their disclosure since M7.4 (`e495464`). */
+/** The bound queue's facts, always on screen in the summary column since the v5.11 rebuild. */
 async function openBoundDetails() {
-  const details = '.conversion-running .conversion-bound-details';
-  await browser.$(details).waitForExist({ timeout: 15_000 });
-  await browser.execute((css: string) => {
-    const node = document.querySelector<HTMLDetailsElement>(css);
-    if (node !== null) node.open = true;
-  }, details);
+  await browser.$('.conversion-running .conversion-bound-details').waitForExist({ timeout: 15_000 });
 }
 
 async function requests(command: string) {
@@ -97,7 +94,7 @@ async function requests(command: string) {
 
 async function requestedDestination() {
   return browser.execute(() => {
-    const term = [...document.querySelectorAll(".conversion-plan dt")]
+    const term = [...document.querySelectorAll(".conversion-plan-summary dt")]
       .find((element) => element.textContent === "Requested destination");
     return term?.nextElementSibling?.textContent ?? null;
   });
@@ -177,7 +174,10 @@ describe("M6.6 destination and conflict review", () => {
     await browser.waitUntil(async () => (await requests(DESCRIBE)).length === before + 1);
     expect(await browser.$(destination("sourceSibling")).isSelected()).toBe(true);
     expect(await isRefused(CONVERT)).toBe(true);
-    await scrollNestedIntoView("#conversion-plan-pending");
+    // The wait is said once, by the lane notice Convert points at.
+    await scrollNestedIntoView("#conversion-availability-plan-reading");
+    expect(await browser.$("#conversion-availability-plan-reading").getText()).toBe(en.m74CnvNoticePlanReading);
+    expect(await browser.$(CONVERT).getAttribute("aria-describedby")).toContain("conversion-availability-plan-reading");
     expect(await requestedDestination()).toBeNull();
     expect((await requests(DESCRIBE)).at(-1)).toEqual({ request: {
       handles: [VENDOR_ROW.handle], intentId: shippedIntent.id, conflictPolicy: "fail",
@@ -253,7 +253,8 @@ describe("M6.6 destination and conflict review", () => {
     } });
     await browser.$('.conversion-running [aria-label="Queue destination"]').waitForExist();
     await openBoundDetails();
-    expect(await browser.$(".conversion-running").getText()).toContain("No destination bound");
+    // Unbound, the queue's destination says it is chosen after Convert.
+    expect(await browser.$('.conversion-running [aria-label="Queue destination"]').getText()).toContain("One local folder, chosen after Convert");
     const cancelled = { ...IDLE, sequence: 2 };
     await setInvokeResult("get_workspace_conversion_state", cancelled);
     await setInvokeResult(RESOLVE, cancelled);
@@ -272,17 +273,15 @@ describe("M6.6 destination and conflict review", () => {
       destinationPolicy: { kind: "namedSubfolder", name: "Original" }, conflictPolicy: "skip" };
     await openWorkspace({ get_workspace_conversion_state: {
       ...IDLE, sequence: 1, state: { status: "terminal", reason: "completed", operationId: "1", queue },
-    } });
+    } }, true);
     const actual = await browser.$('.conversion-running [aria-label="Queue destination"]');
     await openBoundDetails();
     await scrollNestedIntoView('.conversion-running [aria-label="Queue destination"]');
     expect(await actual.getText()).toContain("Original");
-    expect(await actual.getText()).toContain("Bound when this queue started; revalidated before each attempt");
     await captureView("bound-queue", '.conversion-running [aria-label="Queue destination"]');
     expect(await requestedDestination()).toBe("One local folder, chosen after Convert");
     await scrollNestedIntoView("#conversion-conflict-scope");
-    expect(await browser.$("#conversion-conflict-scope").getText()).toContain("a partial collision fails that item");
-    expect(await browser.$("#conversion-conflict-scope").getText()).toContain("never overwritten or automatically renamed");
+    expect(await browser.$("#conversion-conflict-scope").getText()).toContain("never overwritten or renamed");
     expect(await browser.$$(`${PANEL} input[type="checkbox"]`)).toHaveLength(0);
   });
 

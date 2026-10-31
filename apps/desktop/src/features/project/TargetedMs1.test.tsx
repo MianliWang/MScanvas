@@ -224,37 +224,39 @@ describe("the setup", () => {
     expect(document.activeElement).toBe(control);
   });
 
-  it("keeps the recipe's scope and caveats before Run and its read path one disclosure away (PM9.5 O1)", async () => {
+  it("keeps the recipe's scope and caveats before Run, with no read-path narration (PM9.5 O1)", async () => {
     mount(layered());
     const setup = await openSetup();
     const run = query("[data-targeted-run]");
 
     // Experimental, not a validated method, not identification, Not detected
     // not an absence, positive-mode centroided MS1 and [M+H]+: all read before
-    // Run, none of it folded away.
+    // Run, none of it folded away. Which of the two lines carries a caveat is
+    // wording; that the pair carries every one of them is the rule.
     for (const text of [en.targetedExperimental, en.targetedDomain]) {
       const shown = within(setup).getByText(text);
       expect(shown.closest("details")).toBeNull();
       expect(precedes(shown, run)).toBe(true);
     }
-    expect(en.targetedDomain).toContain("not identification");
-    expect(en.targetedDomain).toContain(`${en.targetedOutcomeNotDetected} is not proof`);
-    expect(en.targetedDomain).toContain("positive-mode, centroided MS1");
-    expect(en.targetedDomain).toContain("[M+H]+");
+    const caveats = `${en.targetedExperimental} ${en.targetedDomain}`;
+    expect(caveats).toContain("not identification");
+    expect(caveats).toMatch(/not a validated quantitative method/i);
+    expect(caveats).toContain(`${en.targetedOutcomeNotDetected} is not proof`);
+    expect(caveats).toContain("positive-mode, centroided MS1");
+    expect(caveats).toContain("[M+H]+");
+    // The no-modify promise is said before Run, not only by the run's phases.
+    expect(caveats).toContain("The source file is never changed.");
     // The same caveats, in the words zh-CN already uses for them.
-    expect(zh.targetedDomain).toContain("这不是鉴定");
-    expect(zh.targetedDomain).toContain(`${zh.targetedOutcomeNotDetected}并不证明`);
-    expect(zh.targetedDomain).toContain("正离子模式、已质心化的 MS1");
-    expect(zh.targetedDomain).toContain("[M+H]+");
+    const zhCaveats = `${zh.targetedExperimental} ${zh.targetedDomain}`;
+    expect(zhCaveats).toContain("这不是鉴定");
+    expect(zhCaveats).toContain(`${zh.targetedOutcomeNotDetected}并不证明`);
+    expect(zhCaveats).toContain("正离子模式、已质心化的 MS1");
+    expect(zhCaveats).toContain("[M+H]+");
+    expect(zhCaveats).toContain("来源文件不会被更改。");
 
-    // How the source is read is a closed native disclosure: a Tab stop of its
-    // own, opened by the reader, with the read path's whole sentence inside.
-    const disclosure = query<HTMLDetailsElement>("[data-targeted-read-path]");
-    expect(disclosure.open).toBe(false);
-    expect(within(disclosure).getByText(en.targetedReadPath)).toBeTruthy();
-    const summary = disclosure.querySelector("summary");
-    expect(summary?.textContent).toBe(en.targetedReadPathSummary);
-    expect(precedes(disclosure, run)).toBe(true);
+    // How the source is read is not narrated in the setup; the run's Details
+    // records the source view it actually used.
+    expect(document.querySelector("[data-targeted-read-path]")).toBeNull();
   });
 
   it("sets the open setup apart from the project's sections at the same heading level (PM9.5 O3)", async () => {
@@ -267,8 +269,9 @@ describe("the setup", () => {
     expect(setup.className).toContain("targeted-setup");
 
     // jsdom lays nothing out, so the stylesheet is held to its word: the setup
-    // carries the accent bar and a heading in primary text above a section's
-    // quiet 13px, still below the surface's 16px h2.
+    // carries the accent bar; its heading is a section title in primary text,
+    // on the type scale's one section size (16px, V2), below the page head's
+    // 18px h2.
     const style = document.createElement("style");
     style.textContent = projectStyles;
     document.head.append(style);
@@ -280,11 +283,12 @@ describe("the setup", () => {
       expect(rule(".targeted-setup")?.style.getPropertyValue("box-shadow")).toContain(
         "var(--color-accent)",
       );
-      const setupHeading = rule(".targeted-setup > .project-section-head h3")?.style;
-      expect(setupHeading?.getPropertyValue("font-size")).toBe("14px");
-      expect(setupHeading?.getPropertyValue("color")).toBe("var(--color-text-primary)");
-      expect(rule(".project-section h3")?.style.getPropertyValue("font-size")).toBe("13px");
-      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("16px");
+      const sectionHeading = rule(".project-section h3")?.style;
+      // The page title outranks every section title (rendered review): 17px
+      // bold over 14px.
+      expect(sectionHeading?.getPropertyValue("font-size")).toBe("14px");
+      expect(sectionHeading?.getPropertyValue("color")).toBe("var(--color-text-primary)");
+      expect(rule(".project-header h2")?.style.getPropertyValue("font-size")).toBe("17px");
     } finally {
       style.remove();
     }
@@ -536,6 +540,23 @@ describe("a stored result", () => {
     return api;
   }
 
+  it("opens a stored result in the main region and folds no Details over it", async () => {
+    const reveal = vi.fn();
+    mount(targetedProject(), "en", () => undefined, reveal);
+    await screen.findByText(en.projectReferences);
+    const control = query(`[data-project-inspect-artifact="${ARTIFACT}"]`);
+    expect(control.textContent).toBe(en.projectDetails);
+
+    // The report is the answer to the press, and it is drawn here; at one
+    // column Details would be a drawer over it, so it is not asked for. Its
+    // lineage stays one press away, beside the report.
+    await press(control);
+    expect(query(`[data-targeted-report="${ARTIFACT}"]`)).toBeTruthy();
+    expect(control.getAttribute("aria-current")).toBe("true");
+    expect(reveal).not.toHaveBeenCalled();
+    expect(query("[data-project-inspect-hint]")).toBeTruthy();
+  });
+
   it("reads one bounded page of rows and says each outcome in words", async () => {
     const api = await inspectResult();
     const report = query(`[data-targeted-report="${ARTIFACT}"]`);
@@ -556,17 +577,23 @@ describe("a stored result", () => {
     expect(within(report).getByText(en.targetedMeaning)).toBeTruthy();
     expect(query("[data-targeted-no-selection]").textContent).toBe(en.targetedChooseRow);
     // The history names the result by its outcome counts, in the report's own
-    // words, not by the stored label.
-    expect(query(`[data-project-artifact="${ARTIFACT}"]`).textContent).toContain(
-      `1 ${en.targetedOutcomeDetected} · 1 ${en.targetedOutcomeNotDetected}`,
-    );
+    // words, not by the stored label -- each count an item of its own.
+    expect(
+      [...query(`[data-project-artifact="${ARTIFACT}"]`).children].map((each) => each.textContent),
+    ).toEqual([`1 ${en.targetedOutcomeDetected}`, `1 ${en.targetedOutcomeNotDetected}`]);
   });
 
   it("draws the chosen target through the shared figure renderer, with every value in a table", async () => {
     const api = await inspectResult();
     await screen.findByText(en.targetedRowsCaption);
+    // The target's name is text; the row's one control is Details, named for
+    // the target it opens.
+    const row = query(`[data-targeted-row="${DETECTED}"]`);
+    expect(within(row).getByText("Caffeine").closest("button")).toBeNull();
+    expect(within(row).getAllByRole("button")).toHaveLength(1);
     const choose = query(`[data-targeted-choose="${DETECTED}"]`);
-    expect(choose.getAttribute("aria-label")).toBe("Show the evidence for Caffeine");
+    expect(choose.textContent).toBe(en.projectDetails);
+    expect(choose.getAttribute("aria-label")).toBe("Details for Caffeine");
     await press(choose);
     expect(choose.getAttribute("aria-pressed")).toBe("true");
     expect(api.readTargetedMs1Evidence).toHaveBeenCalledWith(ARTIFACT, DETECTED);
@@ -591,7 +618,9 @@ describe("a stored result", () => {
     );
     expect(plot.getAttribute("data-targeted-figure")).toBe(`spec-${DETECTED}-1200x640-light`);
     expect(plot.getAttribute("src")).toMatch(/^blob:/u);
-    expect(document.querySelector("[data-targeted-plot] svg")).toBeNull();
+    // The drawing is an image, never DOM SVG; the only inline SVG is the
+    // points disclosure's own chevron icon.
+    expect(document.querySelector("[data-targeted-plot] svg:not(.ui-icon)")).toBeNull();
     expect(document.querySelector("figcaption")?.textContent).toContain("M 195.0877, M+1 196.0911");
     expect(document.querySelectorAll(".targeted-points tbody tr")).toHaveLength(6);
 
@@ -691,8 +720,6 @@ describe("a stored result", () => {
       "targetedSetupTitle",
       "targetedExperimental",
       "targetedDomain",
-      "targetedReadPathSummary",
-      "targetedReadPath",
       "targetedReportTitle",
       "targetedMeaning",
       "targetedIntensityNote",
@@ -707,9 +734,7 @@ describe("a stored result", () => {
       "targetedNewRunsAvailable",
       "targetedReuseNote",
       "targetedTableExports",
-      "targetedTableExportHelp",
       "targetedFigureExports",
-      "targetedFigureExportHelp",
     ] as const) {
       expect(document.body.textContent, key).toContain(zh[key]);
       expect(document.body.textContent, key).not.toContain(en[key]);
@@ -720,7 +745,6 @@ describe("a stored result", () => {
     const domain = within(query("[data-targeted-setup]")).getByText(zh.targetedDomain);
     expect(domain.closest("details")).toBeNull();
     expect(precedes(domain, query("[data-targeted-run]"))).toBe(true);
-    expect(within(query("[data-targeted-read-path]")).getByText(zh.targetedReadPath)).toBeTruthy();
   });
 });
 
@@ -902,19 +926,24 @@ describe("a stored result reused (M9.2)", () => {
       },
     });
     await chooseDetected();
-    const disclosure = query<HTMLDetailsElement>("[data-targeted-figure-export]");
-    await act(async () => {
-      disclosure.open = true;
-      disclosure.dispatchEvent(new Event("toggle"));
-    });
+    const region = query("[data-targeted-figure-export]");
+    const toggle = query(`[aria-controls="${region.id}"]`);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(region.hidden).toBe(true);
+    await press(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     await type(query(`[data-targeted-figure-export] input[id$="-heightPx"]`), "");
     await press(query(`[data-targeted-choose="${ABSENT}"]`));
     // Drawn at the last size that was one, not left waiting on the text.
     const image = await screen.findByRole("img");
     expect(image.getAttribute("data-targeted-figure")).toBe(`spec-${ABSENT}-1200x640-light`);
     expect(document.querySelector("[data-targeted-figure-loading]")).toBeNull();
-    expect(query<HTMLDetailsElement>("[data-targeted-figure-export]").open).toBe(true);
-    expect(button("svg").disabled).toBe(true);
+    // Open as the user left it, for the next target too.
+    expect(query("[data-targeted-figure-export]").hidden).toBe(false);
+    // Refused, not disabled: focusable, and its reason is the size problem.
+    expect(button("svg").disabled).toBe(false);
+    expect(button("svg").getAttribute("aria-disabled")).toBe("true");
+    expect(described(button("svg"))).toEqual([en.invalidHeight]);
   });
 
   it("says a figure output only under the target it was for", async () => {
@@ -1015,15 +1044,14 @@ describe("a stored result reused (M9.2)", () => {
     const release = api.holdOnce("exportTargetedMs1Table");
     await press(button("csv"));
     expect(status("table").textContent).toBe("Choose where to save the CSV file.");
-    // The pressed control keeps focus across the native picker: marked, not
-    // disabled. Every other output is disabled.
-    expect(button("csv").disabled).toBe(false);
+    // Every output is refused, never native-disabled (B4): each stays a Tab
+    // stop and the table's refusals point at the line that says what runs.
     for (const operation of ["csv", "tsv", "svg", "png"]) {
       expect(button(operation).getAttribute("aria-disabled"), operation).toBe("true");
+      expect(button(operation).disabled, operation).toBe(false);
     }
-    for (const operation of ["tsv", "svg", "png"]) {
-      expect(button(operation).disabled, operation).toBe(true);
-    }
+    expect(button("tsv")).toHaveAccessibleDescription("Choose where to save the CSV file.");
+    for (const operation of ["tsv", "svg", "png"]) await press(button(operation));
     await press(button("csv"));
     expect(api.exportTargetedMs1Table).toHaveBeenCalledTimes(1);
     await press(button("svg"));
@@ -1064,13 +1092,20 @@ describe("a stored result reused (M9.2)", () => {
     const api = await inspectResult();
     await chooseDetected();
     await type(query(`[data-targeted-figure-export] input[id$="-pngDpi"]`), "high");
-    expect(button("png").disabled).toBe(true);
-    expect(button("svg").disabled).toBe(false);
+    // Refused, focusable, each pointing at the problem that closes it.
+    expect(button("png").getAttribute("aria-disabled")).toBe("true");
+    expect(button("png").disabled).toBe(false);
+    expect(described(button("png"))).toEqual([en.invalidDpi]);
+    expect(button("svg").getAttribute("aria-disabled")).toBeNull();
+    const pngCalls = vi.mocked(api.exportTargetedMs1Figure).mock.calls.length;
+    await press(button("png"));
+    expect(vi.mocked(api.exportTargetedMs1Figure).mock.calls.length).toBe(pngCalls);
 
     const drawn = vi.mocked(api.previewTargetedMs1Figure).mock.calls.length;
     await type(query(`[data-targeted-figure-export] input[id$="-heightPx"]`), "");
     for (const operation of ["svg", "png"]) {
-      expect(button(operation).disabled, operation).toBe(true);
+      expect(button(operation).getAttribute("aria-disabled"), operation).toBe("true");
+      expect(described(button(operation)), operation).toEqual([en.invalidHeight]);
     }
     // The last drawing stays while the size is being typed; nothing new is asked.
     expect(vi.mocked(api.previewTargetedMs1Figure).mock.calls.length).toBe(drawn);
@@ -1240,9 +1275,9 @@ describe("rows the fixtures do not cover by default", () => {
       ],
     });
     await screen.findByText(en.projectReferences);
-    expect(query(`[data-project-artifact="${ARTIFACT}"]`).textContent).toContain(
-      `1 ${en.targetedOutcomeDetected} · 1 ${en.targetedOutcomeFailed}`,
-    );
+    expect(
+      [...query(`[data-project-artifact="${ARTIFACT}"]`).children].map((each) => each.textContent),
+    ).toEqual([`1 ${en.targetedOutcomeDetected}`, `1 ${en.targetedOutcomeFailed}`]);
     expect(query(`[data-project-artifact="${ARTIFACT}"]`).textContent).not.toContain(
       en.targetedOutcomeNotDetected,
     );
@@ -1457,10 +1492,10 @@ describe("the task as one path (PM9.5)", () => {
     api.set(targetedProject());
     await press(query("[data-targeted-run]"));
     const open = query(`[data-targeted-open-result="${ARTIFACT}"]`);
-    expect(open.className).toBe("primary-button");
+    expect(open.classList.contains("ui-button--primary")).toBe(true);
     const run = query("[data-targeted-run]");
     expect(run.textContent).toBe(en.targetedRunAgain);
-    expect(run.className).toBe("secondary-button");
+    expect(run.classList.contains("ui-button--secondary")).toBe(true);
     expect(described(run)).toEqual([en.targetedRunAgainNote]);
 
     await press(open);
@@ -1499,15 +1534,19 @@ describe("the task as one path (PM9.5)", () => {
     expect(query("[data-targeted-run-block] [data-targeted-details-hint]")).toBeTruthy();
     expect(reveal).not.toHaveBeenCalled();
     // Inspecting anything else withdraws it: it names only this run's answer.
+    // (A row's Details asks the shell for the region -- that is its job, and
+    // this mount keeps it folded; what follows is about Show run alone.)
     await press(query(`[data-project-inspect-layer="${LAYER}"]`));
     expect(document.querySelector("[data-targeted-details-hint]")).toBeNull();
+    expect(reveal).toHaveBeenCalledTimes(1);
+    reveal.mockClear();
 
     const show = query(`[data-targeted-show-run="${RUN}"]`);
     show.focus();
     await press(show);
-    const hint = within(query("[data-targeted-run-block]")).getByText(en.provenanceInDetails)
-      .parentElement!;
-    expect(hint.hasAttribute("data-targeted-details-hint")).toBe(true);
+    const hint = query("[data-targeted-run-block] [data-targeted-details-hint]");
+    // The button says where the answer went; no sentence restates it.
+    expect(hint.textContent).toBe(en.provenanceShowDetails);
     expect(precedes(show, hint)).toBe(true);
     // The press only inspects: the keyboard stays on it, Details stays folded
     // and the run is the one inspected.
@@ -1602,7 +1641,7 @@ describe("the task as one path (PM9.5)", () => {
     const base = targetedProject();
     api.set({ ...base, inputs: two.inputs, layers: [base.layers[0], other] });
     await press(query("[data-targeted-run]"));
-    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).className).toBe("primary-button");
+    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).classList.contains("ui-button--primary")).toBe(true);
 
     api.setTargeted({
       batchResolution: {
@@ -1624,9 +1663,9 @@ describe("the task as one path (PM9.5)", () => {
     await press(query("[data-targeted-review]"));
     const run = query("[data-targeted-run]");
     expect(run.textContent).toBe(en.targetedRunBatch.replace("{{count}}", "2"));
-    expect(run.className).toBe("primary-button");
+    expect(run.classList.contains("ui-button--primary")).toBe(true);
     expect(run.getAttribute("aria-disabled")).toBeNull();
-    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).className).toBe("secondary-button");
+    expect(query(`[data-targeted-open-result="${ARTIFACT}"]`).classList.contains("ui-button--secondary")).toBe(true);
   });
 });
 
@@ -1695,7 +1734,9 @@ describe("a stored result in its report and in the history (PM9.6)", () => {
     await opened();
     await press(query(`[data-project-inspect-layer="${LAYER}"]`));
     expect(document.querySelector("[data-targeted-report]")).toBeNull();
-    await press(query(`[data-project-inspect-run="${RUN}"]`));
+    // The run, reached from the layer it used, opens no report either.
+    await press(query(`#workbench-inspector [data-provenance-link="${RUN}"]`));
+    expect(details().querySelector("[data-provenance]")?.getAttribute("data-provenance")).toBe("run");
     expect(document.querySelector("[data-targeted-report]")).toBeNull();
   });
 
@@ -1758,8 +1799,4 @@ describe("a stored result in its report and in the history (PM9.6)", () => {
     expect(zh.targetedPayloadCorrupt).toContain("重新打开项目");
   });
 
-  it("names the history's note for targeted runs, in both languages (R4)", () => {
-    expect(en.projectCaptureMeaning).toContain("targeted MS1 run");
-    expect(zh.projectCaptureMeaning).toContain("靶向 MS1 运行");
-  });
 });

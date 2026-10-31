@@ -414,6 +414,18 @@ undelivered item out of M9 rather than leaving it implied:
 | Runtime packaging | M7.6-style release work on the new product (§15) |
 | CLI, skills, MCP | M10, not started |
 
+*2026-10-30 (owner decision G1 in
+[OWNER_DECISIONS_V511.md](../development/OWNER_DECISIONS_V511.md)):* the
+owner's direction of that day is the future decision this table names for
+analysis. A second recipe, multi-layer comparison and overlay, alignment,
+cross-acquisition comparison, merged tables, heatmaps, PCA and the XIC are
+planned under milestone M11 of
+[`PROJECT_PROPOSAL.md`](../../PROJECT_PROPOSAL.md) section 18, each with its
+own record and behind the promotion gate of the
+[analysis capability map](ANALYSIS_CAPABILITY_MAP.md); none is designed or
+validated yet. Normalization still needs its own admission (S-3), and drift
+and batch correction stay later (S-4); both decisions are open.
+
 ## 13. Remaining limits
 
 | Limit | Consequence now | Correctness or safety affected? | Prerequisite / owner | Earliest stage |

@@ -33,7 +33,7 @@ import {
   setInvokeResult,
 } from "../support/harness";
 import { ipcTable, VENDOR_ROW } from "../support/fixtures";
-import { CONVERT, checkMembers, isRefused, showConversion } from "../support/conversion";
+import { CONVERT, checkMembers, isRefused, showConversion, startAnother } from "../support/conversion";
 import {
   admittedIntents,
   availableBackend,
@@ -220,8 +220,9 @@ async function advanced(): Promise<void> {
   const ready = `${SETTINGS}[data-settings-state="ready"]`;
   await browser.$(ready).waitForExist({ timeout: 30_000 });
   if ((await browser.$(ready).getAttribute("data-settings-view")) === "advanced") return;
+  // Advanced is a disclosure under Basic (direction A 2.2).
   await browser.execute((css: string) => {
-    [...document.querySelectorAll<HTMLButtonElement>(`${css} .compact-choices button`)][1]?.click();
+    document.querySelector<HTMLButtonElement>(`${css} .conversion-advanced > .ui-button`)?.click();
   }, ready);
   await browser.waitUntil(async () => (await browser.$(ready).getAttribute("data-settings-view")) === "advanced", {
     timeout: 15_000,
@@ -275,32 +276,49 @@ async function requestsTo(command: string): Promise<Record<string, unknown>[]> {
 }
 
 /** The state each choice of one axis is in, by value. */
+/**
+ * One axis's group. The paired precisions are Advanced's (a disclosure under
+ * Basic, direction A 2.2); Basic's two width pairs carry the same axis name.
+ */
+function axisGroup(axis: string): string {
+  return axis === "precision" ? '.conversion-advanced [data-axis="precision"]' : `[data-axis="${axis}"]`;
+}
+
 async function axisStates(axis: string): Promise<Record<string, string>> {
   await advanced();
-  return browser.execute((dimension: string) => {
-    const group = document.querySelector(`[data-axis="${dimension}"]`);
+  return browser.execute((css: string) => {
+    const group = document.querySelector(css);
     const states: Record<string, string> = {};
-    for (const choice of group?.querySelectorAll(".conversion-setting-choice") ?? []) {
+    // A tile or a segment, whichever the axis is drawn as (direction A 2.2).
+    for (const choice of group?.querySelectorAll(".conversion-setting-choice, .conversion-segment") ?? []) {
       const input = choice.querySelector("input");
       states[input?.getAttribute("value") ?? ""] =
         choice.getAttribute("data-choice-state") ?? "";
     }
     return states;
-  }, axis) as Promise<Record<string, string>>;
+  }, axisGroup(axis)) as Promise<Record<string, string>>;
 }
 
-/** Chooses one value of one axis, the way a reader does. */
+/**
+ * Chooses one value of one axis, the way a reader does: once it is offered
+ * (a refused value is `aria-disabled`, never native disabled), by its label,
+ * which is the target whether the axis is a tile or a segmented track.
+ */
 async function chooseAxisValue(axis: string, value: string): Promise<void> {
   await advanced();
-  const control = await browser.$(`[data-axis="${axis}"] input[value="${value}"]`);
-  await control.waitForEnabled({ timeout: 30_000 });
-  await control.click();
+  const input = `${axisGroup(axis)} input[value="${value}"]`;
+  await browser.$(input).waitForExist({ timeout: 30_000 });
+  await browser.waitUntil(async () => !(await isRefused(input)), {
+    timeout: 30_000,
+    timeoutMsg: `${axis} ${value} was never offered`,
+  });
+  await browser.$(`${axisGroup(axis)} label:has(> input[value="${value}"])`).click();
 }
 
 /** What the plan summary says about one of its named facts. */
 async function planFact(term: string): Promise<string | null> {
   return browser.execute((label: string) => {
-    const list = document.querySelector(".conversion-plan dl.metadata-list");
+    const list = document.querySelector(".conversion-plan-summary dl.metadata-list");
     for (const group of list?.querySelectorAll("div") ?? []) {
       if (group.querySelector("dt")?.textContent?.trim() === label) {
         return group.querySelector("dd")?.textContent?.trim() ?? null;
@@ -388,7 +406,7 @@ async function pressCheckAgain(): Promise<void> {
 }
 
 async function pressLinkButton(label: string): Promise<void> {
-  const buttons = await browser.$$("button.link-button");
+  const buttons = await browser.$$(".conversion-panel button.ui-button");
   for (const button of buttons) {
     if ((await button.getText()).trim() === label) {
       await button.click();
@@ -434,9 +452,11 @@ describe("M6.4 — E1: a healthy configuration and a plan bound to it", () => {
     expect(await axisStates("processing")).toMatchObject({
       no_additional_centroiding: "selected",
     });
-    expect(await planFact("Peaks")).toBe("No additional centroiding");
-    expect(await planFact("Stored precision")).toBe("m/z 64-bit · intensity 32-bit");
-    expect(await planFact("Output")).toBe("mzML");
+    // The rail lists only what differs from the shipped settings (C11): the
+    // shipped combination repeats nothing from the form beside it.
+    expect(await planFact("Peaks")).toBe(null);
+    expect(await planFact("Stored precision")).toBe(null);
+    expect(await planFact("Output")).toBe(null);
 
     expect(await isRefused(CONVERT)).toBe(false);
     expect(await reasons()).toEqual([]);
@@ -469,8 +489,9 @@ describe("M6.4 — E2: one axis moves, and only that axis", () => {
     expect(await axisStates("processing")).toMatchObject({
       no_additional_centroiding: "selected",
     });
-    expect(await planFact("Peaks")).toBe("No additional centroiding");
-    expect(await planFact("Spectra")).toBe("All spectra");
+    // Untouched axes are the shipped ones, so the rail does not list them (C11).
+    expect(await planFact("Peaks")).toBe(null);
+    expect(await planFact("Spectra")).toBe(null);
   });
 
   it("refuses an unmeasured combination by naming the combination, not the value", async () => {
@@ -493,14 +514,14 @@ describe("M6.4 — E2: one axis moves, and only that axis", () => {
       const input = document.querySelector(
         '[data-axis="population"] input[value="ms1_only"]',
       );
-      const id = input?.getAttribute("aria-describedby") ?? "";
-      return document.getElementById(id)?.textContent ?? "";
+      // The group's refusal, then the value's own note where it has one.
+      const ids = (input?.getAttribute("aria-describedby") ?? "").split(" ");
+      return ids.map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
     });
     // The sentence is about the combination the choice would produce. A refusal
     // that said "MS1 spectra only is not supported" would be false: it appears
     // in rows this build runs perfectly well.
-    expect(note).toContain("Not available with the other settings you have chosen");
-    expect(note).toContain("has not qualified that combination");
+    expect(note).toContain("Not validated with these settings.");
   });
 });
 
@@ -548,7 +569,7 @@ describe("M6.4 — E3: the selected row survives a replacement and is told the t
     const statement = await browser.execute(
       () =>
         (document.body.textContent ?? "").split(
-          "The conversion settings you chose cannot run with this ProteoWizard installation.",
+          "These settings cannot run with this ProteoWizard installation.",
         ).length - 1,
     );
     expect(statement).toBe(1);
@@ -615,12 +636,15 @@ describe("M6.4 — E4: a genuine dead end offers one explicit way out", () => {
     expect(await axisStates("processing")).toMatchObject({
       unscoped_default_centroiding: "selected",
     });
-    const reason = await browser.execute(
-      () => document.querySelector(".conversion-settings-recovery p")?.textContent ?? "",
-    );
-    expect(reason).toBe(
-      "No single change to one of these settings reaches a combination this build can run.",
-    );
+    // The recovery is its own labelled control; no paragraph restates it.
+    const recovery = await browser.execute(() => {
+      const root = document.querySelector(".conversion-settings-recovery");
+      return {
+        paragraph: root?.querySelector("p") != null,
+        control: root?.querySelector("button")?.textContent?.trim() ?? null,
+      };
+    });
+    expect(recovery).toEqual({ paragraph: false, control: "Use the settings MSCanvas ships" });
 
     // Activated from the keyboard, because a recovery only a pointer can reach
     // is not a recovery.
@@ -629,7 +653,7 @@ describe("M6.4 — E4: a genuine dead end offers one explicit way out", () => {
       plannedAs(shippedIntent, B),
     );
     await browser.execute(() => {
-      const control = [...document.querySelectorAll("button.link-button")].find(
+      const control = [...document.querySelectorAll(".conversion-panel button.ui-button")].find(
         (candidate) => candidate.textContent?.trim() === "Use the settings MSCanvas ships",
       );
       (control as HTMLElement | undefined)?.focus();
@@ -759,7 +783,8 @@ describe("M6.4 — E7: a recheck that resolves the same build changes nothing", 
     });
 
     expect(await settingsState()).toBe("ready");
-    expect(await planFact("Peaks")).toBe("No additional centroiding");
+    // The plan is still there: its destination is still said.
+    expect(await planFact("Requested destination")).not.toBe(null);
     expect(await callsTo("read_conversion_configuration")).toBe(readsBefore);
     expect(await callsTo("describe_workspace_conversion_queue")).toBe(plansBefore);
   });
@@ -903,7 +928,8 @@ describe("M6.4 — E10: what BEGIN bound is not what the controls show next", ()
       timeoutMsg: "the finished queue never offered a rerun",
     });
 
-    // The reader moves the controls to the *next* conversion's settings.
+    // The reader opens the *next* conversion and moves its settings.
+    await startAnother();
     await setInvokeResult(
       "describe_workspace_conversion_queue",
       plannedAs(intentOf(FLAT_32), A),
@@ -1048,6 +1074,10 @@ describe("M6.4 — E11: the banner stops naming a build it has left", () => {
         timeout: 30_000,
         timeoutMsg: "the banner never disclaimed the reading the poll superseded",
       });
+      // A superseded reading is not a verdict, so it puts nothing new in the
+      // track; its disclaimer and every way out are in the ProteoWizard
+      // details, which the status bar's item opens.
+      await showBackendBanner();
 
       const notice = await boxOf('[data-backend-reading="superseded"]');
       expect(notice.height).toBeGreaterThan(0);
@@ -1124,7 +1154,7 @@ describe("M6.4 — one lane fact, many refused actions, one notice", () => {
     expect(await describedBy(CONVERT)).toContain(notice);
 
     const retryDescribedBy = await browser.execute(() => {
-      const control = [...document.querySelectorAll("button.link-button")].find(
+      const control = [...document.querySelectorAll(".conversion-panel button.ui-button")].find(
         (candidate) => candidate.textContent?.trim() === "Read the settings again",
       );
       return (control?.getAttribute("aria-describedby") ?? "").split(" ").filter((id) => id !== "");
@@ -1162,13 +1192,14 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
   const REFUSED = '[data-axis="processing"] input[value="unscoped_default_centroiding"]';
 
   /**
-   * The id of the note the refused choice names. Minted by `useId` since M7.4
-   * (`e495464`), so it is read from the control rather than written here, and
-   * looked up as an attribute: a minted id need not be a valid `#` selector.
+   * The id of the refusal note the refused choice names first; its own lossy
+   * note follows. Minted by `useId` since M7.4 (`e495464`), so it is read from
+   * the control rather than written here, and looked up as an attribute: a
+   * minted id need not be a valid `#` selector.
    */
   async function noteId(): Promise<string> {
     await advanced();
-    const id = await browser.execute((css: string) => document.querySelector(css)?.getAttribute("aria-describedby") ?? "", REFUSED);
+    const id = await browser.execute((css: string) => (document.querySelector(css)?.getAttribute("aria-describedby") ?? "").split(" ")[0] ?? "", REFUSED);
     expect(id).not.toBe("");
     return id;
   }
@@ -1177,8 +1208,8 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
   async function refusalNote(): Promise<string> {
     await advanced();
     return browser.execute((css: string) => {
-      const id = document.querySelector(css)?.getAttribute("aria-describedby") ?? "";
-      return document.getElementById(id)?.textContent ?? "";
+      const ids = (document.querySelector(css)?.getAttribute("aria-describedby") ?? "").split(" ");
+      return ids.map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
     }, REFUSED) as Promise<string>;
   }
 
@@ -1205,15 +1236,14 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
     expect(await axisStates("processing")).toMatchObject({
       unscoped_default_centroiding: "unavailable",
     });
-    expect(await browser.$(REFUSED).isEnabled()).toBe(false);
+    expect(await isRefused(REFUSED)).toBe(true);
 
     // The sentence is about the combination, and it is not the grammar one. A
     // reader told the installed build does not offer this would go looking for
     // another ProteoWizard release and find one that behaves identically.
     const note = await refusalNote();
-    expect(note).toContain("Not available with the other settings you have chosen");
-    expect(note).toContain("MSCanvas has not measured that combination");
-    expect(note).not.toContain("installed ProteoWizard build");
+    expect(note).toContain("Not measured with your other settings");
+    expect(note).not.toContain("ProteoWizard build");
 
     // Nothing else moved, and no other axis is blamed for it. 64-bit intensity,
     // all spectra and zlib all appear in rows this catalog runs.
@@ -1232,28 +1262,40 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
     expect(await browser.$(".conversion-settings-recovery").isExisting()).toBe(false);
     expect(await isRefused(CONVERT)).toBe(false);
 
-    // Keyboard: the refused value is out of the tab order rather than focusable
-    // and inert, the way out takes focus, and the sentence is associated with
-    // the control it is about rather than only placed near it.
+    // Keyboard: the refused value is refused rather than disabled (B4) -- it
+    // takes focus and carries its reason, and pressing it changes nothing --
+    // the way out takes focus, and the sentence is associated with the control
+    // it is about rather than only placed near it.
     const keyboard = await browser.execute(() => {
       const group = document.querySelector('[data-axis="processing"]');
       const inputs = [...(group?.querySelectorAll("input") ?? [])] as HTMLInputElement[];
       const refused = inputs.find((input) => input.value === "unscoped_default_centroiding");
       const wayOut = inputs.find((input) => input.value === "no_additional_centroiding");
+      refused?.focus();
+      const refusedFocused = document.activeElement === refused;
+      refused?.click();
+      const refusedChecked = refused?.checked ?? null;
       wayOut?.focus();
       return {
         refusedDisabled: refused?.disabled ?? null,
+        refusedAriaDisabled: refused?.getAttribute("aria-disabled") ?? null,
+        refusedFocused,
+        refusedChecked,
         refusedDescribedBy: refused?.getAttribute("aria-describedby") ?? null,
         wayOutDisabled: wayOut?.disabled ?? null,
         wayOutFocused: document.activeElement === wayOut,
       };
     });
-    expect(keyboard.refusedDisabled).toBe(true);
+    expect(keyboard.refusedDisabled).toBe(false);
+    expect(keyboard.refusedAriaDisabled).toBe("true");
+    expect(keyboard.refusedFocused).toBe(true);
+    expect(keyboard.refusedChecked).toBe(false);
     expect(keyboard.wayOutDisabled).toBe(false);
     expect(keyboard.wayOutFocused).toBe(true);
+    expect(await axisStates("processing")).toMatchObject({ unscoped_default_centroiding: "unavailable" });
     // Described by the note whose sentence refusalNote() read above.
     const NOTE_ID = await noteId();
-    expect(keyboard.refusedDescribedBy).toBe(NOTE_ID);
+    expect(keyboard.refusedDescribedBy?.split(" ")[0]).toBe(NOTE_ID);
 
     // The new sentence is laid out rather than clipped, and showing it does not
     // make the document scroll sideways at this viewport.
@@ -1316,7 +1358,7 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
       // The note is still the source-evidence one, still laid out rather than
       // clipped, still inside the panel, and still not a cause of sideways
       // scrolling.
-      expect(await refusalNote()).toContain("MSCanvas has not measured that combination");
+      expect(await refusalNote()).toContain("Not measured with your other settings");
       const NOTE_ID = await noteId();
       const noteBox = await boxOf(`[id="${NOTE_ID}"]`);
       const panelBox = await boxOf(SETTINGS);
@@ -1408,14 +1450,14 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
         const text = (node: Element | null) => node?.textContent?.trim() ?? "";
         return {
           banner: text(document.querySelector(selector)),
-          plan: text(document.querySelector(".empty-state")),
+          plan: text(document.querySelector("#conversion-plan-pending")),
           body: document.body.textContent ?? "",
         };
       }, banner);
-      expect(sentences.banner).toContain("has not measured the conversion settings you chose");
+      expect(sentences.banner).toContain("have not been measured");
       expect(sentences.banner).not.toContain("ProteoWizard installation");
-      expect(sentences.plan).toContain("has not measured the conversion settings you chose");
-      expect(sentences.plan).not.toContain("installed ProteoWizard does not offer");
+      // Said once, in the notice Convert points at, not again as the plan.
+      expect(sentences.plan).toBe("");
       expect(sentences.body).not.toContain(
         "The installed ProteoWizard does not offer the conversion settings you chose",
       );
@@ -1432,7 +1474,7 @@ describe("M6.4 — CNV-D2: a combination this product has no source evidence for
           (id: string) => document.getElementById(id)?.textContent ?? "",
           noticeId,
         ),
-      ).toContain("has not measured the conversion settings you chose");
+      ).toContain("has not measured these settings");
       expect(await describedBy(CONVERT)).toContain(noticeId);
 
       // Laid out rather than clipped, inside the panel, and not a cause of
