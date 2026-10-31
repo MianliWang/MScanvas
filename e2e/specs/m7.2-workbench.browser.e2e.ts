@@ -100,11 +100,11 @@ async function highlightContext(backToRow = false): Promise<string> {
   const text = await browser.$(".roster-menu-context").getText();
   await browser.keys("Escape");
   await browser.$(".roster-menu-context").waitForExist({ reverse: true });
-  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true));
+  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true), { timeoutMsg: "list menu did not return focus to its trigger" });
   if (backToRow) {
     const tabStop = '.grouped-roster [data-handle][tabindex="0"]';
     await browser.execute(selector => document.querySelector<HTMLElement>(selector)?.focus(), tabStop);
-    await browser.waitUntil(() => browser.execute(selector => document.activeElement?.matches(selector) === true, tabStop));
+    await browser.waitUntil(() => browser.execute(selector => document.activeElement?.matches(selector) === true, tabStop), { timeoutMsg: "tab-stop row did not take focus" });
   }
   return text;
 }
