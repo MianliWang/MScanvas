@@ -2357,7 +2357,7 @@ impl ConversionSlot {
                     item.diagnostic_identity(operation, index),
                     &mut settlement,
                 )
-                .map(Arc::new);
+                .map(|ticket| Arc::new(ticket.labelled(item.not_verified.as_ref())));
                 item.error = None;
                 item.report = None;
                 item.set_state = Some(settlement.state());
@@ -2387,15 +2387,18 @@ impl ConversionSlot {
                     item.set_state = None;
                     item.set_run = None;
                 }
-                item.diagnostic = Some(Arc::new(ConversionFailureDiagnosticTicket::of_refusal(
-                    item.diagnostic_identity(operation, index),
-                    retryable,
-                    &error,
-                    // The same facts the row just recorded. One origin, so the
-                    // saved document cannot describe an attempt the queue is
-                    // describing differently.
-                    attempt,
-                )));
+                item.diagnostic = Some(Arc::new(
+                    ConversionFailureDiagnosticTicket::of_refusal(
+                        item.diagnostic_identity(operation, index),
+                        retryable,
+                        &error,
+                        // The same facts the row just recorded. One origin, so the
+                        // saved document cannot describe an attempt the queue is
+                        // describing differently.
+                        attempt,
+                    )
+                    .labelled(item.not_verified.as_ref()),
+                ));
                 item.report = None;
                 item.error = Some(error);
             }
@@ -2428,7 +2431,7 @@ impl ConversionSlot {
                     diagnostics,
                     stopped_set,
                 )
-                .map(Arc::new);
+                .map(|ticket| Arc::new(ticket.labelled(item.not_verified.as_ref())));
                 item.report = None;
                 item.error = None;
                 item.published.clear();

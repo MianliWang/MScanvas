@@ -11460,10 +11460,11 @@ fn a_queue_whose_items_would_share_an_output_name_is_refused_before_anything_run
     let fixture = TestFile::new("queue-collision");
     let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
     // Different folders, same basename -- so the same planned output name.
+    // A comma in it, which the bounded detail cannot keep apart.
     let nested = fixture.directory.join("nested");
     fs::create_dir_all(&nested).expect("create the nested folder");
-    let one = add_one_acquisition(&service, &fixture.thermo_raw("run.raw"));
-    let other = nested.join("run.raw");
+    let one = add_one_acquisition(&service, &fixture.thermo_raw("run, final.raw"));
+    let other = nested.join("run, final.raw");
     fs::write(&other, thermo_raw_bytes()).expect("write the twin");
     let two = add_one_acquisition(&service, &other);
 
@@ -11471,7 +11472,14 @@ fn a_queue_whose_items_would_share_an_output_name_is_refused_before_anything_run
         .conversion_queue_plan_now(&[one.clone(), two.clone()])
         .expect_err("two items cannot write one name");
     assert_eq!(error.kind, "queue_output_name_collision");
-    assert_eq!(error.detail.as_deref(), Some("run.mzML"));
+    assert_eq!(error.detail.as_deref(), Some("run, final.mzML"));
+    // On the wire the names are a list, each one whole (ADR 0057 decision 3).
+    let wire = serde_json::to_value(&error).expect("the error serializes");
+    assert_eq!(wire["context"]["kind"], "outputNameCollision");
+    assert_eq!(
+        wire["context"]["names"],
+        serde_json::json!(["run, final.mzML"])
+    );
 
     // And no reservation exists to claim.
     let document = current_document(&service);
@@ -18790,6 +18798,84 @@ fn a_diagnostic_is_kept_only_for_the_latest_attempt_worth_diagnosing() {
         .eligible_item_count,
         0
     );
+}
+
+/// An attempt with no report of its own -- a refusal, a stop that could not
+/// be confirmed -- exports the label `BEGIN` bound to its row, so on a build
+/// with no measured row the export names the release the queue row names
+/// (ADR 0055 decision 3), and never reads as a measured build.
+#[test]
+fn a_refusal_and_an_unconfirmed_stop_export_the_label_their_row_shows() {
+    let label = super::selection::NotVerifiedByMscanvas::of(false, Some("3.0.26204".to_owned()));
+    let mut items = vec![test_queue_item(), test_queue_item_named(1, "two.raw")];
+    for item in &mut items {
+        item.set_not_verified(label.clone());
+    }
+    let mut slot = ConversionSlot::default();
+    let queue = ConversionQueue::new(
+        0,
+        ConversionConflictPolicyDto::Fail,
+        BoundIntent::Row(ConversionIntent::SHIPPED),
+        DestinationPolicy::CustomFolder,
+        items,
+    )
+    .expect("two items are a queue");
+    let _ = slot.begin(queue).expect("reservation");
+    let operation = slot
+        .claim(&reservation_handle(&slot), 0)
+        .expect("claim the reservation");
+    assert!(
+        slot.start_running(operation, test_bindings(&["file-0", "file-1"]))
+            .is_ok()
+    );
+    let first = slot.start_item(operation, 0).expect("the item starts");
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Refused {
+            attempt: AttemptFacts::NOTHING_RAN,
+            retryable: true,
+            error: PreviewErrorDto::new("file_unreadable", "unreadable", true),
+        },
+    ));
+    slot.release_attempt(operation, 0, first);
+    let second = slot.start_item(operation, 1).expect("the item starts");
+    assert!(slot.settle_item(
+        operation,
+        1,
+        ItemOutcome::Stopped {
+            attempt: stopped_attempt_facts(),
+            set: None,
+            facts: CancellationFacts {
+                process_launched: Some(true),
+                owned_tree: mscanvas_proteowizard::OwnedTreeDisposition::Unconfirmed,
+                elapsed: Duration::from_millis(7),
+                termination: None,
+                staging_residue: None,
+            },
+            diagnostics: None,
+        },
+    ));
+    slot.release_attempt(operation, 1, second);
+    slot.finish(operation, None, TerminalReason::StopFailed);
+
+    let (queue, provider, _round, tickets) = slot
+        .terminal_diagnostics(operation)
+        .expect("a stop-failed queue is exportable");
+    assert_eq!(tickets[1].describes(), ItemState::CancellationFailed);
+    let rendered =
+        super::diagnostics::payload::render(&super::diagnostics::DiagnosticsExportRequest {
+            queue,
+            provider,
+            tickets,
+        });
+    let document: serde_json::Value = serde_json::from_slice(&rendered.bytes).expect("valid JSON");
+    let items = document["items"].as_array().expect("an item array");
+    assert_eq!(items.len(), 2);
+    for item in items {
+        assert_eq!(item["unverifiedBuildRelease"], "3.0.26204", "{item}");
+        assert_eq!(item["unverifiedSettings"], false, "{item}");
+    }
 }
 
 /// A backend that fails after printing a great deal of text that needs
