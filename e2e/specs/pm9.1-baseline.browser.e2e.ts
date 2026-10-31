@@ -1976,10 +1976,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           evidence.push({ label: `ui-rework-edges-${locale}-${String(width)}`, ...edges });
           expect(edges.notice).not.toBe(null);
           expect(Math.abs((edges.notice ?? 0) - edges.header)).toBeLessThanOrEqual(1);
-          // Flat since direction A (2.7): the regions run edge to edge, divided
-          // by hairlines, with no outer card inset from the header's edge.
-          expect(edges.content ?? -1).toBeGreaterThanOrEqual(0);
-          expect(edges.content ?? 99).toBeLessThanOrEqual(1);
+          // v5.11's frame since FE-2: the workspace card is inset by the
+          // header's own edge, 24 px and 16 px at 1050 px and below, and its
+          // first column starts inside the card's 1 px border.
+          expect(edges.header).toBe(width > 1050 ? 24 : 16);
+          expect(Math.abs((edges.content ?? -99) - edges.header)).toBeLessThanOrEqual(1);
         }
         expect(await unexpectedConsole()).toEqual([]);
       });
@@ -2246,8 +2247,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(seen.undeclared).toEqual([]);
       // No small button below v5.11's 30 px (spec 1.4).
       expect(seen.shortButtons).toEqual({});
-      // v5.11's blue, the rebuild's one focus colour (spec 1.3).
-      expect(seen.focus).toBe("#1769e0");
+      // v5.11's final blue, the one focus colour (FE-2).
+      expect(seen.focus).toBe("#1769d1");
       // One focus colour: Settings no longer declares its own (UI-46).
       await browser.$(".settings-entry").click();
       await browser.$(".settings-dialog").waitForDisplayed();
