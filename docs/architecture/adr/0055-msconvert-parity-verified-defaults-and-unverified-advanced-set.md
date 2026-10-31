@@ -470,9 +470,12 @@ previewable**, because the viewer reads mzML only, and the queue item says so.
 >   is answered during run 1, between the runs and during run 2; between the
 >   runs, what it states about the attempt's processes is what run 1's own
 >   ending established, and the staged reading is run 1's directory at
->   `provider_returned`. Run 2 is never launched while run 1's owned tree is
->   not confirmed gone: the attempt fails `backend_not_terminated` and the
->   staging area is kept.
+>   `provider_returned`. While run 1's owned tree is not confirmed gone,
+>   nothing of its output is judged and run 2 is never launched: the attempt
+>   settles in `intermediate`, `backend_not_terminated` (or
+>   `cancellation_failed` where a stop was requested), and the staging area
+>   is kept. A stop between the runs settles in `target` only once the
+>   intermediate passed its checks.
 > - **Not built:**
 >   - mzXML stays refused (`intent_not_checkable`). Its comparison exists in
 >     the output inspectors but is not wired into a run;

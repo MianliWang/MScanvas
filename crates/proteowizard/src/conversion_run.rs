@@ -3835,6 +3835,9 @@ fn attempt_redactor(plan: &ConversionPlan, staging_output: &Path, executable: &P
     let mut redactor = Redactor::new();
     redactor.add_path(plan.source.canonical_path(), "<source>");
     redactor.add_path(plan.destination_root(), "<destination>");
+    // The area's root, which is not the parent of decision 6's run 2 output
+    // directory, one level deeper.
+    redactor.add_path(&plan.staging_directory(), "<staging>");
     if let Some(staging_root) = staging_output.parent() {
         redactor.add_path(staging_root, "<staging>");
     }

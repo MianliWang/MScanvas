@@ -570,24 +570,92 @@ fn a_stop_that_beats_run_two_to_its_launch_reports_run_one_as_the_launched_tree(
     assert_eq!(report.step(), Some(ConversionStep::Target));
     assert!(report.owned_tree().confirms_a_terminated_tree());
     assert!(report.backend_was_run());
-    // Run 2's directory, which no provider was handed.
+    // Run 1's directory, still holding the intermediate, as for any stop
+    // answered between the runs.
+    let staged = report.staged_content();
     assert_eq!(
-        report.staged_content().phase(),
-        Some(StagedObservationPhase::ProviderNotInvoked)
+        staged.phase(),
+        Some(StagedObservationPhase::ProviderReturned)
+    );
+    assert!(
+        staged
+            .observation()
+            .is_some_and(|observed| observed.non_empty_file_observed())
     );
     assert_eq!(report.residue(), None);
     assert!(fixture.root_entries().is_empty());
 }
 
+/// Nothing of run 1's output is judged while its tree is unconfirmed, so an
+/// intermediate the format would refuse (MS1 only, for mgf) cannot hide it.
 #[test]
 fn run_two_never_launches_while_run_one_leaves_its_tree_unconfirmed() {
+    for source in [two_level_source(), source_document()] {
+        let fixture = Fixture::new(&source);
+        let cancellation = ConversionCancellation::new();
+        let observer = cancellation.recovery_observer();
+        let first = writes(intermediate_of(&source).into_bytes());
+        let second = writes(written(NonMzmlFormat::Mgf));
+        let runner = TwoRuns {
+            first: FakeRunner::new(&first).leaving_a_process(),
+            second: FakeRunner::new(&second),
+        };
+        let attempt = run_conversion_cancellable(
+            &fixture.plan(OutputEncoding::Mgf, ConflictPolicy::Fail),
+            &capabilities_from(CAPTURED_HELP),
+            &runner,
+            cancellation,
+        );
+        let ConversionAttempt::Completed(report) = attempt else {
+            panic!("{attempt:?}");
+        };
+        assert_eq!(
+            report.outcome(),
+            &ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+                BackendExecutionFailure::NotTerminated
+            ))
+        );
+        assert!(report.leaves_an_owned_process_unaccounted());
+        assert_eq!(runner.second.calls(), 0);
+        // The intermediate was never checked, so the attempt never reached
+        // run 2's step.
+        assert_eq!(report.step(), Some(ConversionStep::Intermediate));
+        assert_eq!(
+            report.staged_content().phase(),
+            Some(StagedObservationPhase::ProviderReturned)
+        );
+        // Unconfirmed process disposition refuses cleanup.
+        assert_eq!(
+            report.residue(),
+            Some(StagingResidue::NotRemoved {
+                kind: io::ErrorKind::WouldBlock
+            })
+        );
+        assert_eq!(
+            observer.retained().map(|recovery| recovery.status()),
+            Some(StagingRecoveryStatus::ProcessUnconfirmed)
+        );
+        assert!(!fixture.root.join("sample.mgf").exists());
+    }
+}
+
+/// A stop requested during run 1, which then left its tree unconfirmed, is
+/// never answered as a clean stop.
+#[test]
+fn a_stop_after_run_one_left_its_tree_unconfirmed_is_a_failed_cancellation() {
     let fixture = Fixture::new(&two_level_source());
     let cancellation = ConversionCancellation::new();
+    let request = cancellation.request_handle();
     let observer = cancellation.recovery_observer();
     let first = writes(intermediate_of(&two_level_source()).into_bytes());
+    let first_act = |spec: &CommandSpec| {
+        let code = first(spec)?;
+        request.request();
+        Ok(code)
+    };
     let second = writes(written(NonMzmlFormat::Mgf));
     let runner = TwoRuns {
-        first: FakeRunner::new(&first).leaving_a_process(),
+        first: FakeRunner::new(&first_act).leaving_a_process(),
         second: FakeRunner::new(&second),
     };
     let attempt = run_conversion_cancellable(
@@ -596,25 +664,14 @@ fn run_two_never_launches_while_run_one_leaves_its_tree_unconfirmed() {
         &runner,
         cancellation,
     );
-    let ConversionAttempt::Completed(report) = attempt else {
+    let ConversionAttempt::CancellationFailed(failure) = attempt else {
         panic!("{attempt:?}");
     };
-    assert_eq!(
-        report.outcome(),
-        &ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
-            BackendExecutionFailure::NotTerminated
-        ))
-    );
-    assert!(report.leaves_an_owned_process_unaccounted());
+    assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
+    assert_eq!(failure.step(), Some(ConversionStep::Intermediate));
     assert_eq!(runner.second.calls(), 0);
-    assert_eq!(report.step(), Some(ConversionStep::Target));
     assert_eq!(
-        report.staged_content().phase(),
-        Some(StagedObservationPhase::ProviderReturned)
-    );
-    // Unconfirmed process disposition refuses cleanup.
-    assert_eq!(
-        report.residue(),
+        failure.residue(),
         Some(StagingResidue::NotRemoved {
             kind: io::ErrorKind::WouldBlock
         })
@@ -623,6 +680,34 @@ fn run_two_never_launches_while_run_one_leaves_its_tree_unconfirmed() {
         observer.retained().map(|recovery| recovery.status()),
         Some(StagingRecoveryStatus::ProcessUnconfirmed)
     );
+    assert!(!fixture.root.join("sample.mgf").exists());
+}
+
+/// Run 2 writes one level deeper than a direct run; the staging area's root
+/// is still `<staging>` in what it said, never a name under `<destination>`.
+#[test]
+fn run_two_text_names_the_staging_area_as_staging() {
+    let fixture = Fixture::new(&two_level_source());
+    let said = format!(
+        "cannot write {}\n",
+        fixture.root.join("sample.mgf.mscanvas-staging").display()
+    );
+    let first = writes(intermediate_of(&two_level_source()).into_bytes());
+    let failing = |_: &CommandSpec| -> Result<i32, ProcessError> { Ok(1) };
+    let runner = TwoRuns {
+        first: FakeRunner::new(&first),
+        second: FakeRunner::new(&failing).complaining(&said),
+    };
+    let mut report = run_conversion(
+        &fixture.plan(OutputEncoding::Mgf, ConflictPolicy::Fail),
+        &capabilities_from(CAPTURED_HELP),
+        &runner,
+    );
+    assert_eq!(report.outcome().detailed_stable_id(), "backend_rejected");
+    let text = report.take_backend_text().expect("run 2's account");
+    let stderr = text.stderr().text().expect("redacted, not withheld");
+    assert!(stderr.contains("<staging>"), "{stderr}");
+    assert!(!stderr.contains("mscanvas-staging"), "{stderr}");
 }
 
 #[test]

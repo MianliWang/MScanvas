@@ -54,7 +54,8 @@ impl FinalizedFile {
         self.byte_length
     }
 
-    /// The digest of the bytes that were checked and published.
+    /// The digest of the whole published file. The checks read only its
+    /// signature and first record (see [`FinalizedFile::verdict`]).
     #[must_use]
     pub const fn sha256(&self) -> Sha256Digest {
         self.sha256
@@ -69,6 +70,10 @@ impl FinalizedFile {
 
     /// How run 1's intermediate was judged: what was verified of the data the
     /// format was written from. The intermediate itself was discarded.
+    ///
+    /// Never a claim about the final file: an unfiltered intent can leave the
+    /// intermediate fully verified while this file, written by run 2, is
+    /// verified only as far as [`FinalizedFile::verdict`] says.
     #[must_use]
     pub const fn intermediate(&self) -> &ValidConversion {
         &self.intermediate
@@ -135,6 +140,28 @@ fn run_intermediate(
     // boundary, and carried into run 2.
     let identity = Some(OperationRunIdentity::mint());
     let output = launch(context, &command, staging, identity)?;
+    // Nothing of run 1's output is judged, and no further backend work done,
+    // while its own tree is not confirmed gone: the one state
+    // `OwnedTreeDisposition::Unconfirmed` forbids both in. A stop already
+    // requested is answered as one that could not be confirmed.
+    if !OwnedTreeDisposition::of(&output).no_owned_process_survives() {
+        return Err(Box::new(
+            if context
+                .cancellation
+                .is_some_and(ConversionCancellation::is_requested)
+            {
+                stopped_before_target(&output, staging, identity)
+            } else {
+                failed_before_target(
+                    ConversionRunFailure::Backend(BackendExecutionFailure::NotTerminated),
+                    &output,
+                    staging,
+                    StagedObservationPhase::ProviderReturned,
+                    identity,
+                )
+            },
+        ));
+    }
     let executable = command.executable.clone();
     let refuse = |failure| {
         Box::new(StagedResult::failed_after_run(
@@ -241,23 +268,7 @@ fn run_target(
         .cancellation
         .is_some_and(ConversionCancellation::is_requested)
     {
-        return stopped_before_target(
-            &first,
-            staging,
-            StagedObservationPhase::ProviderReturned,
-            identity,
-        );
-    }
-    // No further backend work while run 1's own tree is not confirmed gone:
-    // the one state `OwnedTreeDisposition::Unconfirmed` forbids it in.
-    if !OwnedTreeDisposition::of(&first).no_owned_process_survives() {
-        return failed_before_target(
-            ConversionRunFailure::Backend(BackendExecutionFailure::NotTerminated),
-            &first,
-            staging,
-            StagedObservationPhase::ProviderReturned,
-            identity,
-        );
+        return stopped_before_target(&first, staging, identity);
     }
     let _directory = match context
         .recovery
@@ -306,12 +317,7 @@ fn run_target(
                 }
             ) =>
         {
-            return stopped_before_target(
-                &first,
-                &target_staging,
-                StagedObservationPhase::ProviderNotInvoked,
-                identity,
-            );
+            return stopped_before_target(&first, staging, identity);
         }
         Err(settled) => return *settled,
     };
@@ -382,7 +388,7 @@ fn run_target(
 
 /// The final file's checks, through the handle that will rename it: exactly
 /// the expected entry, non-empty and regular, then the format's signature and
-/// first record, then the digest of the bytes those checks read.
+/// first record, then the digest of the whole file.
 fn inspect_target(
     directory: &Path,
     name: &OsStr,
@@ -442,16 +448,19 @@ fn failed_before_target(
 /// Never `NoneLaunched`: run 1 launched. What the stop can say about the
 /// attempt's processes is what run 1's own ending established, decided by the
 /// one origin; where that does not establish that none survives, the stop is
-/// unconfirmed. `observed` is read at `phase`, as in [`failed_before_target`].
+/// unconfirmed. The staged reading is run 1's directory, `staging`, at
+/// `ProviderReturned`.
 fn stopped_before_target(
     first: &ProcessOutput,
-    observed: &Path,
-    phase: StagedObservationPhase,
+    staging: &Path,
     identity: Option<OperationRunIdentity>,
 ) -> StagedResult {
     let backend = Some(BackendRunFacts::from(first));
     let owned_tree = OwnedTreeDisposition::of(first);
-    let staged = StagedOutputEvidence::of(phase, observe_staged_content(observed));
+    let staged = StagedOutputEvidence::of(
+        StagedObservationPhase::ProviderReturned,
+        observe_staged_content(staging),
+    );
     let process = backend.map_or(
         ProcessAttemptOutcome::Indeterminate,
         ProcessAttemptOutcome::of,
