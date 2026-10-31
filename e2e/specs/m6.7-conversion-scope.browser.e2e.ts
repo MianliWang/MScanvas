@@ -1,4 +1,5 @@
 /** M6.7 browser evidence: production React, mocked Tauri boundary only. */
+import { metrics } from "../support/cdp";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, holdInvoke, horizontalOverflow, installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
@@ -28,9 +29,9 @@ function planned(indices: readonly number[], destinationPolicy = policy, conflic
   } };
 }
 async function viewport(width: number, height: number) {
-  await browser.setWindowSize(width, height);
-  const frame = await browser.execute(() => ({ width: outerWidth - innerWidth, height: outerHeight - innerHeight }));
-  await browser.setWindowSize(width + frame.width, height + frame.height);
+  // Emulated rather than a resized OS window: a CI runner's display can be
+  // smaller than the window asked for, which left M6.7 at 1350x617 (2026-10-30).
+  await metrics(width, height);
   expect(await browser.execute(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width, height });
   console.log("M6.7 measured inner viewport", { width, height });
 }
@@ -41,7 +42,19 @@ async function reveal(selector: string) {
     window.scrollTo(x, y);
   }, selector);
 }
-async function click(selector: string) { await reveal(selector); await browser.$(selector).click(); }
+/**
+ * A pointer press on what a person sees. The scope radios are visually hidden
+ * inside their segment labels since the rebuild (spec 5.1), so a press on one
+ * is a press on its label.
+ */
+async function click(selector: string) {
+  await reveal(selector);
+  const hiddenRadio = await browser.execute((target: string) => {
+    const node = document.querySelector(target);
+    return node instanceof HTMLInputElement && node.type === "radio" && node.classList.contains("visually-hidden") && node.closest("label") !== null;
+  }, selector);
+  await (hiddenRadio ? browser.$(selector).parentElement() : browser.$(selector)).click();
+}
 async function capture(name: string, selector: string) {
   await reveal(selector);
   const directory = process.env.MSCANVAS_QA_ARTIFACTS ?? resolve("test-results", "m6.7-browser");
@@ -122,12 +135,15 @@ describe("M6.7 explicit selected/all review", () => {
     await click('input[name="conversion-conflict-policy"][value="skip"]'); await ready();
     const before = (await requests(DESCRIBE)).length;
     await holdInvoke(DESCRIBE);
-    await browser.$("select#dataset-roster-sort").selectByAttribute("value", "name-desc");
+    // The execution order is the Conversion summary's own control (rebuild spec 5).
+    await browser.$("select#conversion-order").selectByAttribute("value", "name-desc");
     await browser.waitUntil(async () => (await requests(DESCRIBE)).length > before);
     expect(await isRefused(CONVERT)).toBe(true);
     expect(await names()).toEqual([]);
     expect(await requests(BEGIN)).toEqual([]);
-    await capture("order-review-withdrawn", "#conversion-plan-pending");
+    // The withdrawn review is said by the lane notice Convert points at.
+    expect(await browser.$(CONVERT).getAttribute("aria-describedby")).toContain("conversion-availability-plan-reading");
+    await capture("order-review-withdrawn", "#conversion-availability-plan-reading");
     await setInvokeResult(DESCRIBE, planned([3, 2, 1], { kind: "namedSubfolder", name: "Converted" }, "skip"));
     await releaseInvokeHold(DESCRIBE); await ready();
     expect(await names()).toEqual(["sample-3.raw", "sample-2.raw", "sample-1.raw"]);

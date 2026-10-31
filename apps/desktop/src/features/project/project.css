@@ -1,18 +1,17 @@
 /*
- * The project surface.
+ * The project surface, in direction A's language: flat. A head row with the
+ * project's name and its file actions, then sections that are a heading over
+ * a hairline, rows separated by hairlines, states as tags and notices as
+ * tinted wells. No card inside the shell's card (V12). Built from the shared
+ * tokens only; every control is a components/ui Button, styled by ui.css.
  *
- * Built from the same tokens as every other region: the page background, the
- * white surface, the 6px/8px radii, the 4/8/12/16 spacing scale, the 36px and
- * 32px control minimums, and the same 2px focus outline with offset. Nothing
- * here introduces a colour, a radius or a density of its own.
- *
- * The verification tone is a left accent and a coloured word, never colour
- * alone: each row also carries its outcome in text, and `data-verification`
- * carries it for anything reading the state rather than looking at it.
+ * A state is never colour alone: each tag says it in words, and the rows carry
+ * `data-verification` / `data-outcome` for anything reading rather than
+ * looking.
  */
 
 /* Like the other surfaces: the containing block of its own out-of-flow
-   accessible text (PM9 L22), and a column of its title and the surface. */
+   accessible text (PM9 L22), and a column that scrolls by itself. */
 .workbench-project {
   position: relative;
   display: flex;
@@ -25,70 +24,146 @@
   scrollbar-gutter: stable;
 }
 
-/* Every control on this surface, including the link-styled ones inside a
-   notice. A text link is a smaller affordance, not a smaller target: at its
-   natural line height the Dismiss control measured 19.5px, which is under the
-   24px WCAG 2.2 floor and well under the compact 32px this design system sets.
-   One rule rather than three, so a control added later cannot miss it. */
-.project-surface button {
-  min-height: 32px;
-}
-
+/* The shell's workspace card is the outer box; the surface is its padding.
+   A line of reading width, so a row's actions stay near its name. */
 .project-surface {
   display: flex;
+  flex: 1 0 auto;
   flex-direction: column;
   gap: 16px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 8px 16px 24px;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 1px 2px rgb(23 35 55 / 0.03);
-  padding: 16px;
-  flex: 1 0 auto;
+  font-size: 13px;
 }
 
+/* Head: the project's name, its state, and the project's file actions. */
 .project-header {
   display: flex;
+  min-height: 40px;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px 16px;
 }
 
+.project-title {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+/* The page title outranks every section title (rendered review). */
 .project-header h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.3;
   color: var(--color-text-primary);
+  overflow-wrap: anywhere;
 }
 
-.project-privacy {
-  margin: 4px 0 0;
-  max-width: 62ch;
-  font-size: 12px;
-  color: var(--color-text-tertiary);
+/* "Not saved yet": the document's state, and why Save waits. */
+.project-head-state {
+  font-size: 13px;
+  color: var(--color-text-secondary);
 }
 
 .project-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
+/* Tags: a state in words, tinted by tone. */
+.project-tag,
+.project-proposal {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
 
+.project-tag.is-matching,
+.project-tag.is-attached,
+.project-tag.is-completed {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.project-tag.is-different,
+.project-tag.is-warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.project-tag.is-unavailable,
+.project-tag.is-failed {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.project-proposal {
+  background: var(--color-surface-selected);
+  color: var(--color-accent-hover);
+  white-space: normal;
+}
+
+/* A section's item count, beside its title. */
+.project-count {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Notices: what is happening, what is asked, what went wrong. Tinted wells,
+   not boxes. */
 .project-busy,
 .project-unsaved,
-.project-problem {
+.project-problem,
+.project-notice {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 8px 12px;
   margin: 0;
   padding: 8px 12px;
   border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
   font-size: 13px;
+  line-height: 1.5;
+}
+
+.project-busy > p,
+.project-unsaved > p,
+.project-problem > p {
+  flex: 1 1 18em;
+  margin: 0;
+}
+
+.project-busy > p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
 }
 
 .project-busy {
-  background: var(--color-accent-soft);
+  background: var(--color-surface-selected);
   color: var(--color-text-primary);
 }
 
@@ -102,224 +177,254 @@
   color: var(--color-danger);
 }
 
-.project-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+/* A refusal's dismiss control keeps the notice's own colour. */
+.project-problem > .ui-icon-button {
+  color: inherit;
 }
 
-.project-section h3 {
+.project-inspect-hint {
+  display: flex;
   margin: 0;
-  font-size: 13px;
-  color: var(--color-text-secondary);
-}
-
-.project-section-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-/* A refused action's reason, under the actions it belongs to (PM9 UI-24). */
-.project-action-reason {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  text-align: end;
 }
 
 .project-note,
 .project-empty {
   margin: 0;
   max-width: 72ch;
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-}
-
-.project-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.project-row,
-.project-run {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
-  border-left-width: 3px;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-subtle);
-  /* Wrapping rather than truncation: a file name is the thing a reader is
-     looking for, and the roster made the same choice for the same reason. */
-  overflow-wrap: anywhere;
-}
-
-.project-row.is-unchecked {
-  border-left-color: var(--color-border-strong);
-}
-
-.project-row.is-matching {
-  border-left-color: var(--color-success);
-}
-
-.project-row.is-different {
-  border-left-color: var(--color-warning);
-}
-
-.project-row.is-unavailable {
-  border-left-color: var(--color-danger);
-}
-
-.project-row-select {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  cursor: pointer;
-}
-
-.project-row-label {
   font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+/* A section: its heading and actions over a hairline, then its rows. */
+.project-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-section-head {
+  display: flex;
+  min-height: 40px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.project-section-title {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.project-section h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--color-text-primary);
 }
 
-.project-row-facts,
-.project-run-head,
-.project-run-relationship {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
+/* A refused action's reason, on its own line under the control (B4). */
+.project-action-reason {
   margin: 0;
   font-size: 12px;
   color: var(--color-text-secondary);
 }
 
-.project-row.is-matching .project-verification {
-  color: var(--color-success);
+/* Under the head's actions, at their end. */
+.project-head-reason {
+  flex-basis: 100%;
+  text-align: end;
 }
 
-.project-row.is-different .project-verification {
-  color: var(--color-warning);
+/* The open setup is the task in hand, not one more project section (PM9.5
+   O3): the accent bar a viewed row carries, along its top edge. Still an h3
+   under the surface's h2, on the one section-title size (V2). */
+.targeted-setup {
+  padding-top: 8px;
+  box-shadow: inset 0 3px 0 var(--color-accent);
 }
 
-.project-row.is-unavailable .project-verification {
-  color: var(--color-danger);
+/* Rows: hairlines, not boxes. A row is its name and states, then its actions
+   at the end of the same line; a narrow column wraps the actions under it. */
+.project-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-/* A layer's availability, in the same two-tone pattern as the check outcomes:
-   the word beside it says the same thing, and the row carries
-   `data-layer-availability` for anything reading rather than looking. */
-.project-availability.is-attached,
-.provenance-current.is-attached {
-  color: var(--color-success);
+.project-row {
+  display: flex;
+  min-height: 28px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--color-chart-grid);
+  /* Wrapping rather than truncation: a file name is the thing a reader is
+     looking for, and the roster made the same choice. */
+  overflow-wrap: anywhere;
 }
 
-.project-availability.is-detached,
-.provenance-current.is-detached {
-  color: var(--color-text-tertiary);
+.project-row:last-child {
+  border-bottom: 0;
+}
+
+.project-row-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 20rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+/* A box and the name it ticks stay together, and a long name wraps beside
+   its box rather than leaving it alone on a line. */
+.project-row-label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.project-row-label > input {
+  flex: none;
+  margin: 0;
+}
+
+/* A name is text, not a control: the row's Details is its one way in. */
+.project-row-name {
+  min-width: 8rem;
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.project-row-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
 }
 
 .project-row-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  margin-left: auto;
 }
 
-
-.project-proposal {
-  font-size: 12px;
-  color: var(--color-text-primary);
-  background: var(--color-accent-soft);
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
+/* What follows a row's line -- a refusal's reason, a failure, what a run
+   used and left -- is a line of its own. */
+.project-row > p {
+  flex-basis: 100%;
 }
 
-.project-run[data-outcome="completed"] {
-  border-left-color: var(--color-success);
-}
-
-.project-run[data-outcome="failed"] {
-  border-left-color: var(--color-danger);
-}
-
-.project-run[data-outcome="cancelled"] {
-  border-left-color: var(--color-border-strong);
-}
-
-.project-run-operation {
-  color: var(--color-text-primary);
-}
-
-.project-run-version {
+.project-row-reason,
+.project-qc-reason {
   margin: 0;
   font-size: 12px;
-  color: var(--color-text-tertiary);
+  text-align: end;
+  color: var(--color-text-secondary);
 }
 
-/* At the narrow end the action rows stack rather than shrinking their targets:
-   a 32px control that reflows is still reachable, one squeezed to 24px is not. */
-@media (width <= 1050px) {
-  .project-header,
-  .project-section-head {
-    flex-direction: column;
-    align-items: stretch;
-  }
+.project-run-when {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-run-relationship,
+.project-artifact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+}
+
+.project-run-relationship {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.project-run-failure {
+  margin: 0;
+  font-size: 12px;
+}
+
+.project-run-failure,
+.project-artifact-unavailable {
+  color: var(--color-danger);
 }
 
 /*
- * The provenance region.
- *
- * The same tokens as the project surface beside it, at the contextual region's
- * own density. Two kinds of fact are kept visually apart: a current file state
- * carries the check tones the project rows already use, and everything under a
- * history heading is quiet text. Neither is colour alone -- each row says in
- * words what it is.
+ * The provenance region, in Details (v5.11 .inspector): the object's kind and
+ * name, then sections under a hairline, facts as label-and-value rows.
+ * Current file state carries the check tones; history is quiet text.
  */
-.provenance {
+.panel.provenance {
   display: flex;
+  min-height: 100%;
   flex-direction: column;
   gap: 4px;
+  padding: 16px 14px;
+  border: 0;
+  border-radius: 0;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: 12px;
-  min-height: 100%;
+  box-shadow: none;
 }
 
+/* Close Details: only while Details is a drawer over the project, where the
+   header's toggle is out of the way; as a column it needs none. */
+.panel.provenance { position: relative; }
+.panel.provenance > .provenance-close { display: none; }
+[data-drawer="details"] .panel.provenance > .provenance-close { position: absolute; top: 8px; right: 8px; display: inline-flex; }
+[data-drawer="details"] .panel.provenance { padding-right: 46px; }
+
+/* The object's kind, in plain sentence case (V4). */
 .provenance-kind {
   margin: 0;
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-text-tertiary);
+  font-weight: 500;
+  color: var(--color-text-secondary);
 }
 
 .provenance-name {
   margin: 0 0 4px;
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
 }
 
 .provenance-section-label {
-  margin: 12px 0 0;
+  margin: 12px 0 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
   font-size: 12px;
-  color: var(--color-text-secondary);
+  font-weight: 600;
+  color: var(--color-text-primary);
 }
 
 .provenance-current-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 6px 8px;
   margin: 0;
 }
 
@@ -327,7 +432,7 @@
 .provenance-note {
   margin: 0;
   font-size: 12px;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 
 .provenance-list {
@@ -341,37 +446,50 @@
 
 .provenance-link {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  overflow-wrap: anywhere;
+  gap: 0 8px;
 }
 
-/* Every control on this surface, including the link-styled ones. A text link
-   is a smaller affordance, not a smaller target. */
-.provenance button {
-  min-height: 32px;
-  text-align: left;
+/* A related record is a full-width quiet button with its name on one line;
+   the whole name is the tooltip and, with the relationship, the accessible
+   name (PM9 UI-25). What follows it -- an outcome, a current state -- starts
+   under the name's own text. */
+.provenance-related.ui-button {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  justify-content: flex-start;
+  color: var(--color-text-primary);
+}
+
+.provenance-link-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provenance-link > :not(.provenance-related) {
+  padding-left: 10px;
+}
+
+.provenance-link.is-gone {
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 /* In Details (245 px) a long name is bounded to three lines rather than
-   running down the column; the whole name is its tooltip and, for a link, its
-   accessible name (PM9 UI-25). Wider surfaces keep it whole. */
-.workbench-inspector .provenance-name,
-.workbench-inspector .provenance-link-name {
+   running down the column; the whole name is its tooltip (PM9 UI-25). */
+.workbench-inspector .provenance-name {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
 }
 
-.provenance-link.is-gone {
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-}
-
-/* Current state, in the tones the project rows already use for the same four
-   outcomes. The word beside it says the same thing. */
+/* Current state, in the tones the project rows use for the same outcomes. */
 .provenance-current,
 .provenance-outcome,
 .provenance-stored {
@@ -379,7 +497,8 @@
   color: var(--color-text-secondary);
 }
 
-.provenance-current.is-matching {
+.provenance-current.is-matching,
+.provenance-current.is-attached {
   color: var(--color-success);
 }
 
@@ -391,128 +510,20 @@
   color: var(--color-danger);
 }
 
-/* The name of the object being inspected, in the list it was chosen from. */
-.project-row-label[aria-current="true"],
-.project-run-operation[aria-current="true"] {
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.project-row-label,
-.project-run-operation {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.project-row-label {
-  font-size: 13px;
-  color: var(--color-text-primary);
-}
-
-.project-inspect-hint {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-subtle);
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-/*
- * The QC summary report (M8.5).
- *
- * Small tables of exact values, in the surface's own quiet tones. No grade and
- * no status colour: this report defines no threshold, so nothing here is
- * green or red. Numbers use tabular figures so a column reads down cleanly,
- * and every cell wraps rather than pushing the surface sideways -- a source
- * name is whatever an instrument wrote, and a retention time can be long.
- */
-.qc-report {
-  padding: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-subtle);
-  overflow-wrap: anywhere;
-}
-
-.qc-report-of {
-  margin: 0;
-  font-size: 13px;
-  color: var(--color-text-primary);
-}
-
-.qc-report-when {
-  color: var(--color-text-tertiary);
-}
-
-.qc-report-tables {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 12px 24px;
-}
-
-.qc-report-table {
-  border-collapse: collapse;
-  font-size: 12px;
-  color: var(--color-text-primary);
-  max-width: 100%;
-}
-
-.qc-report-table caption {
-  text-align: left;
-  padding-bottom: 4px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-.qc-report-table th,
-.qc-report-table td {
-  padding: 4px 12px 4px 0;
-  text-align: left;
-  vertical-align: top;
-  border-top: 1px solid var(--color-border);
-}
-
-.qc-report-table thead th {
-  border-top: none;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-}
-
-.qc-report-table tbody th {
-  font-weight: 400;
-  color: var(--color-text-secondary);
-}
-
-.qc-report-table td {
-  font-variant-numeric: tabular-nums;
-}
-
-/* Why a layer's QC summary cannot be captured, under its row. */
-.project-qc-reason {
-  margin: 0;
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-}
-
-/* The build that produced a snapshot's preview, in Details. */
+/* Facts (v5.11 .inspector dl): a label and its value per row, a hairline
+   between rows. */
 .provenance-facts {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 2px 12px;
+  gap: 0 12px;
   margin: 0;
   font-size: 12px;
+}
+
+.provenance-facts dt,
+.provenance-facts dd {
+  padding: 5px 0;
+  border-bottom: 1px solid #edf1f5;
 }
 
 .provenance-facts dt {
@@ -539,66 +550,117 @@
   white-space: nowrap;
 }
 
-/* In the 245 px Details column a fact is its label over its value. Beside a
-   column as wide as the list's longest label, a long value had 41-64 px and a
-   real module path left its digest none (PM9 UI-25). A label breaks anywhere,
-   as a module path must. At 1050 px and below Details takes the surface's
-   place and keeps label and value side by side. */
+/* In the 245 px Details column a fact is its label over its value: beside a
+   column as wide as the longest label, a digest had no room (PM9 UI-25). At
+   1050 px and below Details is a 300 px drawer and keeps them side by side. */
 @media (width > 1050px) {
   .workbench-inspector .provenance-facts {
     grid-template-columns: minmax(0, 1fr);
-    row-gap: 0;
   }
 
   .workbench-inspector .provenance-facts dt {
+    padding-bottom: 0;
+    border-bottom: 0;
     overflow-wrap: anywhere;
   }
 
-  /* Facts are set apart from one another, not from the section label above. */
-  .workbench-inspector .provenance-facts dd + dt,
-  .workbench-inspector .targeted-member + .targeted-member > dt {
-    margin-top: 6px;
+  .workbench-inspector .provenance-facts dd {
+    padding-top: 1px;
   }
 }
 
+/* A `<div>` grouping a label with its value keeps the two-column grid. */
+.targeted-member {
+  display: contents;
+}
+
 /*
- * The targeted MS1 recipe (M9.1): a setup, a report of one stored result, and
- * one target's extracted points.
- *
- * The same quiet report tones as the QC summary. The only colours added are
- * the chart tokens the viewer already uses for its two series, so M and M+1
- * read the way two traces read elsewhere. Outcomes carry a word and a shape,
- * never colour alone; a failure is never drawn in an absence's style.
+ * The QC summary report (M8.5): small tables of exact values, in quiet tones.
+ * No grade and no status colour: this report defines no threshold.
  */
-.targeted-setup,
-.targeted-report {
-  padding: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-subtle);
+.qc-report {
   overflow-wrap: anywhere;
 }
 
-/* The open setup is the task in hand, not one more project section (PM9.5
-   O3): the accent bar a viewed row carries, along its top edge so it never
-   meets the experimental notice's bar, and its heading in primary text a step
-   above a section's. Still an h3 under the surface's 16px h2. */
-.targeted-setup {
-  box-shadow: inset 0 3px 0 var(--color-accent);
-}
-
-.targeted-setup > .project-section-head h3 {
-  font-size: 14px;
+/* What a report is of and when it was recorded: separate items, not a
+   dot-joined string (W4). */
+.qc-report-of {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 13px;
   color: var(--color-text-primary);
 }
 
+.qc-report-when {
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.qc-report-tables {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 24px;
+}
+
+.qc-report-table {
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.qc-report-table caption {
+  padding-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--color-text-secondary);
+}
+
+.qc-report-table th,
+.qc-report-table td {
+  padding: 5px 12px 5px 0;
+  border-top: 1px solid #edf1f5;
+  text-align: left;
+  vertical-align: top;
+}
+
+.qc-report-table thead th {
+  border-top: none;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.qc-report-table tbody th {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.qc-report-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The targeted MS1 recipe (M9.1, M9.4): a setup, a report of one stored
+ * result, and one target's extracted points. Outcomes carry a word and a
+ * shape, never colour alone; a failure is never drawn in an absence's style.
+ */
+.targeted-report {
+  overflow-wrap: anywhere;
+}
+
+/* A required disclosure, as a tinted well rather than a box (V12, W2). */
 .targeted-experimental {
   margin: 0;
   max-width: 72ch;
-  padding: 6px 8px;
-  border-left: 3px solid var(--color-warning);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
   background: var(--color-warning-soft);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-primary);
 }
 
@@ -614,19 +676,21 @@
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
+  font-weight: 600;
   color: var(--color-text-secondary);
 }
 
 .targeted-parameters input,
 .targeted-targets textarea {
-  min-height: 32px;
+  min-height: 30px;
   padding: 4px 8px;
   border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-input);
   background: var(--color-surface);
   color: var(--color-text-primary);
   font: inherit;
   font-size: 13px;
+  font-weight: 400;
 }
 
 .targeted-parameters input {
@@ -634,17 +698,11 @@
 }
 
 .targeted-targets textarea {
+  box-sizing: border-box;
   width: 100%;
   max-width: 72ch;
-  box-sizing: border-box;
   font-family: var(--font-mono);
   resize: vertical;
-}
-
-.targeted-targets textarea:focus-visible,
-.project-surface summary:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
 }
 
 .targeted-review {
@@ -657,14 +715,73 @@
   font-family: var(--font-mono);
 }
 
-/* The row table scrolls inside itself, so 200 targets never push the page. */
+/* A data disclosure: its button, then the region it shows. */
+.targeted-disclosure,
+.targeted-export {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.targeted-disclosure > [id],
+.targeted-export-region {
+  align-self: stretch;
+  min-width: 0;
+}
+
+.targeted-export-region:not([hidden]) {
+  display: flex;
+  max-width: 720px;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.targeted-output-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Present whether or not it has anything to say, so the live region exists
+   before the first result; empty text collapses. */
+.targeted-output {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.targeted-output:empty {
+  display: none;
+}
+
+/* The results table's own output, on the rows' head. */
+.targeted-table-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+
+.targeted-table-export-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.targeted-table-export > .targeted-output {
+  flex-basis: 100%;
+}
+
+/* The row table scrolls inside itself, so 200 targets never push the page.
+   Flat: hairline rows of 28 px under a 30 px head that stays in view; the
+   row's Details is a compact control that fits the row (V9, V10). */
 .targeted-rows {
   max-height: 320px;
   overflow: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  padding: 0 8px;
 }
 
 .targeted-rows .qc-report-table {
@@ -672,7 +789,41 @@
 }
 
 .targeted-rows caption {
-  padding-top: 4px;
+  padding-top: 0;
+}
+
+.targeted-rows :is(th, td) {
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  vertical-align: middle;
+}
+
+.targeted-rows thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 30px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.targeted-rows tbody th {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.targeted-row-action {
+  width: 1%;
+  padding-right: 0;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.targeted-row-action > .ui-button {
+  min-height: 24px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .targeted-rows tr.is-chosen > * {
@@ -700,14 +851,21 @@
 }
 
 .targeted-selected h4 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
   margin: 0;
   font-size: 13px;
   color: var(--color-text-primary);
 }
 
 .targeted-plot {
-  margin: 0;
+  display: flex;
   max-width: 720px;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
 }
 
 /* The figure is Rust's drawing, shown as an image at its own aspect ratio and
@@ -720,111 +878,28 @@
   border-radius: var(--radius-sm);
 }
 
-.targeted-export {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 720px;
-  font-size: 12px;
-}
-
-.targeted-export summary {
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.targeted-export[open] {
-  padding-bottom: 4px;
-}
-
-.targeted-points,
-.targeted-modules {
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-.targeted-points summary,
-.targeted-modules summary {
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-}
-
-/* `display: flex` drops the native disclosure marker, which left these
-   summaries reading as plain text; they draw their own, turning with the
-   disclosure. The empty alternative keeps it out of the accessible name. */
-.targeted-points summary::before,
-.targeted-modules summary::before {
-  content: "\25B6" / "";
-  margin-right: 6px;
-  font-size: 0.7em;
-}
-
-.targeted-points[open] > summary::before,
-.targeted-modules[open] > summary::before {
-  content: "\25BC" / "";
-}
-
-/* A `<div>` grouping a label with its value keeps the two-column grid. */
-.targeted-member {
-  display: contents;
-}
-
-/* A table keeps its label beside its value rather than stretching across the
-   section, and the row table fills its own scroller. */
-.targeted-setup .qc-report-table {
-  align-self: flex-start;
-}
-
-/* A refused action on the Project surface reads as refused, as the header's
-   panel toggles do: it fades, but never while it holds the focus ring, so the
-   ring keeps full contrast (PM9.7 F1). Its reason is reachable from the
-   control itself: a description, and a tooltip. */
-.project-surface .secondary-button[aria-disabled="true"]:not(:focus-visible) {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
-/* Run is the one control here whose unavailability decides the next step, so
-   an inert control reads as inert: Run through the refused-primary treatment
-   every primary shares (PM9 UI-24), the rest here by fading. Scoped to this
-   setup: the rest of the surface keeps its own treatment. */
-.targeted-setup button[aria-disabled="true"]:not(.primary-button):not(:focus-visible) {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
 /* The fixed engine profile, as text: it wraps rather than scrolling sideways. */
 .targeted-profile {
-  margin: 4px 0 0;
   max-width: 72ch;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--color-text-primary);
 }
 
-/*
- * A batch of independent targeted MS1 analyses (M9.4): which acquisitions,
- * and each one's execution state as the batch runs and as it ended.
- *
- * The same quiet report tones. Execution states carry a word and a shape,
- * never colour alone, and nothing here is drawn as a finding: a member's
- * targets are in its own result.
- */
+/* Which acquisitions a request is for. */
 .targeted-members {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 4px;
   margin: 0;
-  padding: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
 }
@@ -839,8 +914,8 @@
 /* A long project's layers scroll inside the group, not the page. */
 .targeted-member-list {
   display: flex;
-  flex-direction: column;
   max-height: 168px;
+  flex-direction: column;
   margin: 0;
   padding: 0;
   overflow: auto;
@@ -849,9 +924,9 @@
 
 .targeted-member-list label {
   display: flex;
+  min-height: 30px;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
   font-size: 13px;
   color: var(--color-text-primary);
   cursor: pointer;
@@ -878,20 +953,46 @@
   display: block;
 }
 
-.targeted-batch {
+/* The targeted task as one path (PM9.5): the request, its review, Run, then
+   the run or batch it started, each under its own heading. */
+.targeted-review-area {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
 }
 
+.targeted-review-area h4,
+.targeted-run h4,
 .targeted-batch h4 {
   margin: 0;
   font-size: 13px;
   color: var(--color-text-primary);
+}
+
+/* A review's tables scroll inside themselves: 200 targets or 16 acquisitions
+   never push Run out of reach. */
+.targeted-review-scroll {
+  max-width: 100%;
+  max-height: 320px;
+  align-self: flex-start;
+  overflow: auto;
+}
+
+.targeted-setup .qc-report-table {
+  align-self: flex-start;
+}
+
+/* One run's or one batch's own block: a tinted well, not a box (V12). */
+.targeted-run,
+.targeted-batch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
 }
 
 /* Sixteen members scroll inside the section, never sideways across the page. */
@@ -920,62 +1021,8 @@
 }
 
 /*
- * The targeted task as one path (PM9.5): the request, its review, Run, then
- * the run or batch it started, each under its own heading.
- */
-.targeted-review-area {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border);
-}
-
-.targeted-review-area h4,
-.targeted-run h4 {
-  margin: 0;
-  font-size: 13px;
-  color: var(--color-text-primary);
-}
-
-/* A review's tables scroll inside themselves: 200 targets or 16 acquisitions
-   never push Run out of reach. */
-.targeted-review-scroll {
-  align-self: flex-start;
-  max-width: 100%;
-  max-height: 320px;
-  overflow: auto;
-}
-
-/* One run's own block, in the batch panel's quiet tones. */
-.targeted-run {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-}
-
-/* The setup's text controls meet the 32 px compact minimum (DESIGN_SYSTEM). */
-.targeted-setup .link-button {
-  min-height: 32px;
-}
-
-/* A member's action stays on one line beside its name. */
-.targeted-batch td:last-child .link-button {
-  white-space: nowrap;
-}
-
-/*
- * A stored result and its history (PM9.6).
- *
- * The outcome counts are one line of label and value, every count kept, so
- * the rows they summarize start on the first screen. A failed run says why
- * under its outcome, and a stored result the project found missing or
- * damaged says so beside its counts; both in the danger tone the run's
- * border and the report's own refusal already use.
+ * A stored result's outcome counts (PM9.6): one line of label and value,
+ * every count kept, so the rows they summarize start on the first screen.
  */
 .targeted-summary {
   display: flex;
@@ -1010,14 +1057,4 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
-}
-
-.project-run-failure {
-  margin: 0;
-  font-size: 12px;
-  color: var(--color-danger);
-}
-
-.project-artifact-unavailable {
-  color: var(--color-danger);
 }

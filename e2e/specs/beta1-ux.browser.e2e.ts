@@ -66,7 +66,8 @@ function word(locale: Locale, key: string): string {
 function say(locale: Locale, key: string, values: Record<string, string | number> = {}): string {
   return word(locale, key)
     .replace(/\$t\((\w+)\)/gu, (_, nested: string) => word(locale, nested))
-    .replace(/\{\{(\w+)\}\}/gu, (_, name: string) => String(values[name] ?? `{{${name}}}`));
+    // A `{{count, number}}` placeholder formats the number (the counts here stay below 1,000).
+    .replace(/\{\{(\w+)(?:, number)?\}\}/gu, (_, name: string) => String(values[name] ?? `{{${name}}}`));
 }
 
 // ---------------------------------------------------------------- the world
@@ -257,11 +258,14 @@ async function open(table: Record<string, unknown>, locale: Locale, width: numbe
 }
 
 async function navigate(name: string) {
-  await browser.execute((label: string) => {
-    [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
-      .find((button) => (button.textContent ?? "").trim() === label)
-      ?.click();
+  const found = await browser.execute((label: string) => {
+    const target = [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
+      .find((button) => (button.textContent ?? "").trim() === label);
+    target?.click();
+    return target !== undefined;
   }, name);
+  // Workbench, Conversion and Project are all header tabs (direction A).
+  if (!found) throw new Error(`no header tab named ${name}`);
   await frames();
 }
 
@@ -271,13 +275,18 @@ async function shot(name: string) {
   await browser.saveScreenshot(join(OUTPUT, `${name}.png`));
 }
 
-/** The shown button inside `scope` whose trimmed text is `name`, marked so WebDriver can address it. */
+/**
+ * The shown button inside `scope` whose name is `name`, marked so WebDriver can
+ * address it. The name is its trimmed text or its `aria-label` (a row's short
+ * "Skip" is named "Skip <file>").
+ */
 async function mark(scope: string, name: string, tag: string): Promise<string | null> {
   return browser.execute(
     (css: string, label: string, attribute: string) => {
       document.querySelectorAll(`[${attribute}]`).forEach((node) => node.removeAttribute(attribute));
       const button = [...document.querySelectorAll<HTMLButtonElement>(`${css} button`)].find(
-        (candidate) => (candidate.textContent ?? "").trim() === label && candidate.getClientRects().length > 0,
+        (candidate) => [candidate.getAttribute("aria-label"), (candidate.textContent ?? "").trim()].includes(label)
+          && candidate.getClientRects().length > 0,
       );
       if (button === undefined) return null;
       button.setAttribute(attribute, "");
@@ -339,7 +348,7 @@ function control(selector: string) {
       text: (button.textContent ?? "").trim(),
       disabled: button.disabled,
       ariaDisabled: button.getAttribute("aria-disabled"),
-      primary: button.classList.contains("primary-button"),
+      primary: button.classList.contains("primary-button") || button.classList.contains("ui-button--primary"),
       described: (button.getAttribute("aria-describedby") ?? "")
         .split(/\s+/u)
         .filter(Boolean)
@@ -359,13 +368,13 @@ function shellPanels() {
   });
 }
 
-/** The empty evidence column's guidance: the help line under "Inspect an acquisition". */
+/** The empty evidence column's guidance: a help line in the message under the first run's heading. */
 function guidance(heading: string) {
   return browser.execute((title: string) => {
-    const state = [...document.querySelectorAll(".empty-state")].find(
+    const state = [...document.querySelectorAll(".ui-empty-state")].find(
       (node) => (node.querySelector("strong")?.textContent ?? "").trim() === title,
     );
-    const help = state?.querySelector("span") ?? null;
+    const help = state?.querySelector(".ui-empty-state__message > span") ?? null;
     return help === null ? null : { text: (help.textContent ?? "").trim(), shown: help.getClientRects().length > 0 };
   }, heading);
 }
@@ -392,8 +401,9 @@ async function tabToStart(limit = 40): Promise<boolean> {
 async function pressByKeyboard(scope: string, name: string) {
   const found = await browser.execute(
     (css: string, label: string) => {
+      // By its text or its aria-label (an icon-only Dismiss has only the label).
       const button = [...document.querySelectorAll<HTMLButtonElement>(`${css} button`)].find(
-        (candidate) => (candidate.textContent ?? "").trim() === label,
+        (candidate) => [candidate.getAttribute("aria-label"), (candidate.textContent ?? "").trim()].includes(label),
       );
       button?.focus();
       return button !== undefined && document.activeElement === button;
@@ -432,7 +442,7 @@ describe("Beta 1 UX changes, rendered", () => {
 
       // Every primary under the surface, hidden or not: one, shown, and it is New project.
       const primaries = await browser.execute(() =>
-        [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .primary-button")].map((button) => ({
+        [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .ui-button--primary")].map((button) => ({
           text: (button.textContent ?? "").trim(),
           shown: button.getClientRects().length > 0,
         })),
@@ -463,7 +473,7 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(await control(add!)).toMatchObject({ primary: false });
       expect(
         await browser.execute(() =>
-          [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .primary-button")].map((button) => (button.textContent ?? "").trim()),
+          [...document.querySelectorAll<HTMLButtonElement>("#workbench-project .ui-button--primary")].map((button) => (button.textContent ?? "").trim()),
         ),
       ).toEqual([words.projectNew]);
       await shot(`f2-empty-project-1366-${locale}`);
@@ -471,46 +481,63 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it(`PM9.7-F3 the empty Workbench names the folded route to Add files…, and it is the route that exists, ${locale}`, async () => {
+    it(`PM9.7-F3 the empty Workbench offers Add files… itself while the roster is folded, and once when it is open, ${locale}`, async () => {
       await open(emptyTable(locale), locale, 960, 640);
       await toggleOperable();
-      const expected = say(locale, "emptyEvidenceHelp");
-      const toggleText = await browser.$(ROSTER_TOGGLE).getText();
-      expect(toggleText).toBe(words.rosterToggle);
+      /** The visible buttons of the empty state under `evidenceFirstRun`, in order. */
+      const offered = () => browser.execute((title: string) => {
+        const state = [...document.querySelectorAll(".ui-empty-state")].find(
+          (node) => (node.querySelector("strong")?.textContent ?? "").trim() === title && node.getClientRects().length > 0,
+        );
+        return state === undefined ? null : [...state.querySelectorAll("button")]
+          .filter((button) => button.getClientRects().length > 0)
+          .map((button) => (button.textContent ?? "").trim());
+      }, words.evidenceFirstRun);
+      /** How many Add files… buttons a person can see anywhere in the shell. */
+      const addsOnScreen = () => browser.execute((label: string) =>
+        [...document.querySelectorAll<HTMLButtonElement>(".workbench-shell button")]
+          .filter((button) => (button.textContent ?? "").trim() === label && button.getClientRects().length > 0).length,
+      words.addFiles);
 
-      const folded = await guidance(words.emptyEvidence);
-      await shot(`f3-empty-workbench-960-${locale}`);
-      expect(folded).toEqual({ text: expected, shown: true });
-      expect(folded!.text).not.toContain("$t(");
-      expect(folded!.text).toContain(toggleText);
-      expect(folded!.text).toContain(words.addFiles);
-      // Folded, and nothing unfolds it: no Add files… is on screen anywhere.
-      await browser.pause(1_000);
+      // Folded at 960: the empty evidence holds the route itself, as buttons,
+      // and no sentence is left explaining the interface (rebuild spec 3.6).
+      await browser.waitUntil(async () => (await offered())?.includes(words.addFiles) === true, {
+        timeout: 30_000,
+        timeoutMsg: "the empty Workbench never offered Add files…",
+      });
       expect(await shellPanels()).toMatchObject({ roster: "false", toggle: "false" });
-      expect(await mark(".workbench-shell", words.addFiles, "data-beta1-add")).toBeNull();
+      expect(await offered()).toEqual([words.addFiles, words.addFolder, words.projectOpen]);
+      expect(await guidance(words.evidenceFirstRun)).toBeNull();
+      expect(await addsOnScreen()).toBe(1);
+      const add = await mark("#workbench-evidence", words.addFiles, "data-beta1-add");
+      expect(add).not.toBeNull();
+      expect(await control(add!)).toMatchObject({ primary: true, ariaDisabled: null });
+      expect(await tabsTo(add!)).not.toBeNull();
+      await shot(`f3-empty-workbench-960-${locale}-add-focused`);
 
-      // Tab reaches the header toggle, Enter unfolds it, and Add files… is then a Tab stop.
+      // Tab reaches the header toggle, Enter unfolds it, and Add files… is then
+      // the roster's, offered once and still a Tab stop.
       expect(await tabsTo(ROSTER_TOGGLE)).not.toBeNull();
-      await shot(`f3-empty-workbench-960-${locale}-toggle-focused`);
       await browser.keys(["Enter"]);
       await browser.waitUntil(async () => (await shellPanels()).roster === "true", {
         timeoutMsg: "Enter on Acquisitions did not unfold the roster",
       });
-      const add = await mark(".workbench-shell", words.addFiles, "data-beta1-add");
-      expect(add).not.toBeNull();
-      expect(await tabsTo(add!)).not.toBeNull();
+      await frames();
+      expect(await addsOnScreen()).toBe(1);
+      const rosterAdd = await mark("#workbench-roster", words.addFiles, "data-beta1-add");
+      expect(rosterAdd).not.toBeNull();
+      expect(await tabsTo(rosterAdd!)).not.toBeNull();
       await shot(`f3-empty-workbench-960-${locale}-expanded-add-focused`);
-      // The sentence is unchanged by the unfold (at 960 px the roster takes the
-      // evidence column's place, so it is read from the document here).
-      expect((await guidance(words.emptyEvidence))?.text).toBe(expected);
 
-      // With room for both, the guidance, the toggle and Add files… are on screen together.
+      // With room for both, the roster's Add files… is the one on screen, and
+      // the empty evidence keeps only what the roster does not offer.
       await open(emptyTable(locale), locale, 1366, 768);
       await toggleOperable();
       expect(await shellPanels()).toMatchObject({ roster: "true", toggle: "true" });
-      const expanded = await guidance(words.emptyEvidence);
-      expect(expanded).toEqual({ text: expected, shown: true });
-      expect(await mark(".workbench-shell", words.addFiles, "data-beta1-add")).not.toBeNull();
+      await browser.waitUntil(async () => (await offered()) !== null, { timeout: 30_000 });
+      expect(await offered()).toEqual([words.projectOpen]);
+      expect(await addsOnScreen()).toBe(1);
+      expect(await mark("#workbench-roster", words.addFiles, "data-beta1-add")).not.toBeNull();
       await shot(`f3-empty-workbench-1366-${locale}-expanded`);
       expect(await unexpectedConsole()).toEqual([]);
     });
@@ -565,7 +592,7 @@ describe("Beta 1 UX changes, rendered", () => {
         timeoutMsg: "with the mzML row checked, Convert's description was not the route alone",
       });
       await shot(`o3-conversion-mzml-checked-960-${locale}`);
-      expect(await browser.$(".conversion-excluded > summary").getText()).toBe(say(locale, "m74CnvExcludedNames", { count: 1 }));
+      expect(await browser.$(".conversion-excluded-group > button").getText()).toBe(say(locale, "m74CnvExcludedNames", { count: 1 }));
       expect(await browser.$(CONVERSION_SURFACE).getText()).not.toContain(words.m74CnvNoEligible);
       expect(await tabToStart()).toBe(true);
       await browser.keys(["Enter"]);
@@ -582,7 +609,7 @@ describe("Beta 1 UX changes, rendered", () => {
       await waitUntilOffered(CONVERT);
 
       // O2: the exact count, closed, outside the live scope summary.
-      const summary = ".conversion-excluded > summary";
+      const summary = ".conversion-excluded-group > button";
       await shot(`o2-excluded-closed-1366-${locale}`);
       expect(await browser.$(summary).getText()).toBe(say(locale, "m74CnvExcludedNames", { count: 2 }));
       expect(await browser.$("#conversion-scope-summary").getText()).toContain(
@@ -590,7 +617,7 @@ describe("Beta 1 UX changes, rendered", () => {
       );
       expect(await browser.execute((css: string) => {
         const node = document.querySelector(css);
-        return { open: node?.closest("details")?.open ?? null, live: node?.closest("[aria-live]") !== null };
+        return { open: node === null ? null : node.getAttribute("aria-expanded") === "true", live: node?.closest("[aria-live]") !== null };
       }, summary)).toEqual({ open: false, live: false });
       const asked = (await requests(DESCRIBE)).length;
 
@@ -605,9 +632,9 @@ describe("Beta 1 UX changes, rendered", () => {
       await browser.keys(["Enter"]);
       await frames();
       const listed = await browser.execute(() => {
-        const details = document.querySelector<HTMLDetailsElement>(".conversion-excluded");
+        const details = document.querySelector<HTMLElement>(".conversion-excluded");
         return {
-          open: details?.open ?? null,
+          open: details === null ? null : !details.hidden,
           names: [...(details?.querySelectorAll("li") ?? [])].map((item) => (item.textContent ?? "").trim()),
           // Long names wrap inside the disclosure rather than overflow it.
           overflow: [...(details?.querySelectorAll("li") ?? [])].some(
@@ -620,7 +647,10 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(listed).toEqual({ open: true, names: [OPEN.fileName, LONG.fileName], overflow: false, documentOverflow: 0 });
       await browser.keys([" "]);
       await frames();
-      expect(await browser.execute(() => document.querySelector<HTMLDetailsElement>(".conversion-excluded")?.open ?? null)).toBe(false);
+      expect(await browser.execute(() => {
+        const details = document.querySelector<HTMLElement>(".conversion-excluded");
+        return details === null ? null : !details.hidden;
+      })).toBe(false);
 
       // Read only: no new plan, the plan names the vendor row alone, and the mzML rows stay checked.
       expect((await requests(DESCRIBE)).length).toBe(asked);
@@ -631,11 +661,11 @@ describe("Beta 1 UX changes, rendered", () => {
         [OPEN.handle, LONG.handle, FIRST.handle]),
       ).toEqual([true, true, true]);
 
-      // O6/O7: a ready review explains neither Stop nor Skip, and says output-only for an output-only plan.
-      const review = await browser.$(".conversion-plan").getText();
+      // O6/O7: a ready review explains no Stop, and claims no check before one
+      // has run; the short rail repeats nothing (C11).
+      const review = await browser.$(".conversion-panel").getText();
       expect(review).not.toContain(words.m74CnvStopQueue);
-      expect(review).not.toContain(words.m74CnvSkipExplanation);
-      expect(await browser.$("#conversion-validation-disclosure").getText()).toBe(words.m74CnvOutputOnly);
+      expect(review).not.toContain(words.m74CnvOutputOnly);
 
       // O5: the ellipsis promises the custom folder's picker, and only that.
       expect((await control(CONVERT))?.text).toBe(say(locale, "m74CnvConvertSelected", { count: 1 }));
@@ -657,17 +687,17 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it(`PM9.4-O4/O6 a running queue explains Skip where it is offered, and a failed Stop is named in the banner, ${locale}`, async () => {
+    it(`PM9.4-O4/O6 a running queue offers Skip on the row it is about, and a failed Stop is named in the banner, ${locale}`, async () => {
       await open(conversionWorld(locale, VENDOR_AND_MZML, STARTED), locale, 1366, 768);
       await showConversion();
       await browser.$(".conversion-running").waitForExist({ timeout: 15_000 });
 
-      // O6: Skip is explained beside the row that offers it.
+      // O6: Skip is offered on the row it skips, and its name says which; no
+      // separate sentence restates it.
       const skip = await mark(CONVERSION_SURFACE, say(locale, "m74CnvSkip", { name: SECOND.fileName }), "data-beta1-skip");
       expect(skip).not.toBeNull();
-      expect(await browser.$("#conversion-skip-scope").getText()).toBe(words.m74CnvSkipExplanation);
-      expect((await control(skip!))?.described).toContain(words.m74CnvSkipExplanation);
-      await shot(`o6-running-skip-explained-1366-${locale}`);
+      expect(await browser.$("#conversion-skip-scope").isExisting()).toBe(false);
+      await shot(`o6-running-skip-offered-1366-${locale}`);
 
       // O4: the request fails; the one banner leads with the control's name.
       await setInvokeRejection("stop_workspace_conversion_queue", {
@@ -685,7 +715,7 @@ describe("Beta 1 UX changes, rendered", () => {
           role: banner.getAttribute("role"),
           lead: banner.querySelector("strong")?.textContent ?? null,
           text: (banner.textContent ?? "").trim(),
-          dismiss: [...banner.querySelectorAll("button")].map((button) => (button.textContent ?? "").trim()),
+          dismiss: [...banner.querySelectorAll("button")].map((button) => button.getAttribute("aria-label") ?? (button.textContent ?? "").trim()),
         })),
       CONVERSION_SURFACE);
       const lead = say(locale, "m74CnvRequestFailed", { action: words.m74CnvStopQueue });
@@ -701,7 +731,7 @@ describe("Beta 1 UX changes, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it(`PM9.5-O1/O2/O3 the setup's caveats, its read-path disclosure, its heading and the local Details hint, ${locale}`, async () => {
+    it(`PM9.5-O1/O2/O3 the setup's caveats, no read-path disclosure, its heading and the local Details hint, ${locale}`, async () => {
       await open(targetedTable(locale), locale, 1366, 768);
       await navigate(words.projectSurface);
       await browser.$(`[data-project-targeted="${LAYERS[0]}"]`).waitForDisplayed();
@@ -715,7 +745,6 @@ describe("Beta 1 UX changes, rendered", () => {
         const root = document.querySelector(css)!;
         const experimental = root.querySelector<HTMLElement>("[data-targeted-experimental]");
         const domain = experimental?.nextElementSibling as HTMLElement | null;
-        const disclosure = root.querySelector<HTMLDetailsElement>("[data-targeted-read-path]");
         const run = root.querySelector("[data-targeted-run]");
         const follows = (a: Element | null | undefined, b: Element | null | undefined) =>
           a != null && b != null && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
@@ -728,10 +757,9 @@ describe("Beta 1 UX changes, rendered", () => {
           domain: (domain?.textContent ?? "").trim(),
           shown: [experimental, domain].map((node) => node != null && node.getClientRects().length > 0),
           inDisclosure: [experimental, domain].map((node) => node?.closest("details") != null),
-          order: follows(experimental, domain) && follows(domain, disclosure) && follows(disclosure, run),
+          order: follows(experimental, domain) && follows(domain, run),
           boxes: { experimental: box(experimental), domain: box(domain), innerHeight },
-          disclosureOpen: disclosure?.open ?? null,
-          readPathShown: disclosure?.querySelector("p")?.checkVisibility() ?? false,
+          readPath: root.querySelector("[data-targeted-read-path]") !== null,
         };
       }, setup);
       expect(caveats).toMatchObject({
@@ -740,41 +768,15 @@ describe("Beta 1 UX changes, rendered", () => {
         shown: [true, true],
         inDisclosure: [false, false],
         order: true,
-        disclosureOpen: false,
-        readPathShown: false,
+        // O1 as revised: how the source is read is no longer a disclosure here.
+        readPath: false,
       });
       // The two caveats the domain sentence now carries, in each language.
-      expect(words.targetedDomain).toContain(locale === "en" ? "It is not identification" : "这不是鉴定");
+      expect(words.targetedExperimental).toContain(locale === "en" ? "not identification" : "这不是鉴定");
       expect(words.targetedDomain).toContain(locale === "en" ? "Not detected is not proof" : "未检出并不证明");
       // And on the first screen of the opened setup.
       expect(caveats.boxes.domain!.bottom).toBeLessThanOrEqual(caveats.boxes.innerHeight);
       expect(caveats.boxes.experimental!.top).toBeGreaterThanOrEqual(0);
-
-      // O1: the read path waits in a disclosure Tab reaches and Enter/Space open.
-      const readPath = "[data-targeted-read-path] > summary";
-      expect(await browser.$(readPath).getText()).toBe(words.targetedReadPathSummary);
-      let reached = false;
-      await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), `${setup} .project-section-head h3`);
-      for (let step = 0; step < 10 && !reached; step += 1) {
-        await browser.keys(["Tab"]);
-        reached = await focusedOn(readPath);
-      }
-      expect(reached).toBe(true);
-      await browser.keys(["Enter"]);
-      await frames();
-      const opened = await browser.execute(() => {
-        const details = document.querySelector<HTMLDetailsElement>("[data-targeted-read-path]");
-        const text = details?.querySelector("p");
-        return { open: details?.open ?? null, text: (text?.textContent ?? "").trim(), shown: text?.checkVisibility() ?? false };
-      });
-      await shot(`pm95-o1-read-path-open-1366-${locale}`);
-      expect(opened).toEqual({ open: true, text: words.targetedReadPath, shown: true });
-      await browser.keys([" "]);
-      await frames();
-      expect(await browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-targeted-read-path]")?.open ?? null)).toBe(false);
-      await browser.keys([" "]);
-      await frames();
-      expect(await browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-targeted-read-path]")?.open ?? null)).toBe(true);
 
       // O3: the open setup is set apart -- an accent bar along its top, its h3
       // in primary text a step above a project section's -- and still an h3.
@@ -801,14 +803,17 @@ describe("Beta 1 UX changes, rendered", () => {
           other: other === null ? null : { fontSize: getComputedStyle(other).fontSize, color: getComputedStyle(other).color },
         };
       }, setup);
+      // A section title at the project's one section size, below the 17px
+      // page title (rendered review).
       expect(styles).toMatchObject({ tag: "H3", fontSize: "14px" });
       expect(styles.color).toBe(styles.primaryText);
       expect(styles.shadow).toContain("inset");
       expect(styles.shadow).toContain(styles.accent);
       expect(styles.shadow).toMatch(/\b0px 3px 0px\b/u);
       expect(styles.other).not.toBeNull();
-      expect(styles.other!.fontSize).toBe("13px");
-      expect(styles.other!.color).not.toBe(styles.color);
+      // Every section title shares that size and primary text (V2, rebuild
+      // spec 1.3); the setup stays apart by its accent bar alone.
+      expect(styles.other).toEqual({ fontSize: styles.fontSize, color: styles.color });
 
       // O2: a run that left no result, then Show run with Details folded.
       await browser.execute(
@@ -844,11 +849,12 @@ describe("Beta 1 UX changes, rendered", () => {
         const button = node?.querySelector("button");
         return {
           sameBlock: node?.closest(".targeted-run") === document.querySelector(press)?.closest(".targeted-run") && node?.closest(css) !== null,
-          sentence: (node?.querySelector("span")?.textContent ?? "").trim(),
+          sentence: node?.querySelector("span")?.textContent ?? null,
           button: (button?.textContent ?? "").trim(),
         };
       }, block, showRun);
-      expect(hint).toEqual({ sameBlock: true, sentence: words.provenanceInDetails, button: words.provenanceShowDetails });
+      // The button names where the answer went; no sentence restates it.
+      expect(hint).toEqual({ sameBlock: true, sentence: null, button: words.provenanceShowDetails });
       // Nothing unfolded and the keyboard stayed on the press.
       expect(await focusedOn(showRun)).toBe(true);
       expect(await shellPanels()).toMatchObject({ details: "false" });

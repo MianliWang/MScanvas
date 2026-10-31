@@ -183,9 +183,9 @@ describe("what the surviving element says", () => {
   it("phrases a shared fact about the fact, not about either action", () => {
     const [notice] = conversionNotices([action(startOn({ laneClaimed: true }))]);
     expect(notice?.reason).toBe("conversion-running");
-    expect(said(notice?.reason)).toBe("A conversion currently owns the ProteoWizard lane.");
+    expect(said(notice?.reason)).toBe("A conversion is running.");
     // And in Simplified Chinese, rather than falling back to the English.
-    expect(said(notice?.reason, "zh-CN")).toBe("ProteoWizard 正用于转换。");
+    expect(said(notice?.reason, "zh-CN")).toBe("正在进行转换。");
   });
 
   it("says the same thing whether one action points at it or three", () => {
@@ -241,7 +241,8 @@ describe("what the surviving element says", () => {
     const [failed] = conversionNotices([
       action(conversionAvailability(CLEAR, { kind: "start", targetCount: 1, plan: "failed" })),
     ]);
-    expect(said(failed?.reason)).toContain("Try describing it again.");
+    // The way forward is the plan's own Describe again control, beside it.
+    expect(said(failed?.reason)).toBe("This conversion could not be described.");
     const [empty] = conversionNotices([
       action(conversionAvailability(CLEAR, {
         kind: "retry",

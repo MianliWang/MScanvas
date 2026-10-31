@@ -7,6 +7,11 @@
  * the pixel, and whether what the shipped bundle sends across the boundary is
  * the pair on screen with the range and the traces the user chose.
  *
+ * Since the rebuild (spec 3.4, 6) the linked figure is "Linked figure…" in the
+ * chromatogram head's ⋯ menu, which opens the Export figure dialog for the
+ * pair. The menu item says why it is closed, or what to repair, in its own
+ * text; the dialog is modal and portaled to the body.
+ *
  * The Tauri backend is mocked at `invoke` and nothing else is, so every claim
  * about which command was called with which argument is a claim about the
  * shipped frontend.
@@ -14,38 +19,45 @@
 
 import { ALLOWED_CONSOLE_SUBSTRINGS, boxOf, consoleEntries, ipcCalls } from "../support/harness";
 import { SELECTED_RETENTION_TIME } from "../support/fixtures";
-import { CHROMATOGRAM, PLOT, openTheViewer, pointAt, revealThePlot } from "../support/viewer";
+import {
+  CHROMATOGRAM,
+  type OpenViewerOptions,
+  PLOT,
+  openTheViewer,
+  pointAt,
+  revealThePlot,
+  selectTheSpectrum,
+} from "../support/viewer";
+import {
+  FIGURE_DIALOG,
+  answerFigurePreviews,
+  closeFigureDialog,
+  figureActions,
+  openFigureDialog,
+  openPlotMenu,
+  plotMenuItem,
+} from "../support/figure";
 
 /** Enough scans that a range can hold some of them and not others. */
 const SCANS = 200;
 
-const TOGGLE = "button#chromatogram-export-toggle";
-const PANEL = "#chromatogram-export-panel";
-const LINKED = "#chromatogram-linked-section";
-const REASON = "#chromatogram-linked-unavailable";
-const FIRST_ROW = 'div.spectrum-table-row[data-row-position="0"]';
-
-/** Every action the linked section offers. */
-const LINKED_ACTIONS = [
-  "Export linked SVG…",
-  "Export linked PNG…",
-  "Copy linked plot",
-] as const;
-
-/** Every action the surface offered before this milestone. */
-const EXPORT_ACTIONS = [
-  "Export SVG…",
-  "Export PNG…",
-  "Copy plot",
-  "Export CSV…",
-  "Export TSV…",
-] as const;
-
-/** Everything the open surface has to keep within reach, all of it at once. */
-const EVERY_ACTION = [...EXPORT_ACTIONS, ...LINKED_ACTIONS] as const;
-
+const PANEL = FIGURE_DIALOG;
+/** The ⋯ menu's entry to the linked figure, by the words it starts with. */
+const LINKED_ITEM = "Linked figure";
 /** The evidence column, the viewer's scroll owner since M7.2/M7.3. */
 const EVIDENCE = "#workbench-evidence";
+
+/** Every action the linked figure's dialog offers. */
+const LINKED_ACTIONS = ["Copy plot", "Export SVG…", "Export PNG…"] as const;
+
+/** Every action the chromatogram's own dialog offers. */
+const EXPORT_ACTIONS = [
+  "Export CSV…",
+  "Export TSV…",
+  "Copy plot",
+  "Export SVG…",
+  "Export PNG…",
+] as const;
 
 async function unexpectedConsole(): Promise<string[]> {
   return (await consoleEntries())
@@ -53,54 +65,99 @@ async function unexpectedConsole(): Promise<string[]> {
     .map((entry) => `${entry.level}: ${entry.text}`);
 }
 
-/** Opens the export surface, which every viewer opens closed. */
-async function openExport(): Promise<void> {
-  await browser.$(TOGGLE).click();
-  await browser.$(PANEL).waitForDisplayed({ timeout: 10_000 });
+/**
+ * A viewer of a long enough run, with the dialog's preview answered: its Copy,
+ * SVG and PNG wait for a drawn preview, here a labelled mock. In-page, so
+ * installed once the page has loaded.
+ */
+async function openViewer(options: OpenViewerOptions = {}): Promise<void> {
+  await openTheViewer({ width: 1_366, height: 768, ...options, scans: SCANS });
+  await answerFigurePreviews();
 }
 
 /** Reads one spectrum, so there is a pair to link. */
 async function selectAScan(): Promise<void> {
-  await browser.$(FIRST_ROW).click();
-  await browser.$("section.spectrum-panel").$("button=Copy plot").waitForDisplayed({
+  await selectTheSpectrum(0);
+  await browser.$(figureActions("section.spectrum-panel")).waitForExist({ timeout: 30_000 });
+}
+
+/** Opens the linked figure's dialog from the chromatogram's ⋯ menu. */
+async function openLinked(): Promise<void> {
+  await openPlotMenu(CHROMATOGRAM);
+  await browser.$(plotMenuItem(LINKED_ITEM)).click();
+  await browser.$(PANEL).waitForDisplayed();
+}
+
+/**
+ * What the ⋯ menu says about the linked figure: whether its item is refused,
+ * and the reason printed inside it. Opens the menu to read it and closes it
+ * again with Escape, as a reader would.
+ */
+async function linkedItem(): Promise<{ readonly refused: boolean; readonly reason: string }> {
+  await openPlotMenu(CHROMATOGRAM);
+  const item = browser.$(plotMenuItem(LINKED_ITEM));
+  const refused = (await item.getAttribute("aria-disabled")) === "true";
+  const reason = await browser.execute(
+    (name: string) =>
+      [...document.querySelectorAll('[role="menuitem"]')]
+        .find((node) => (node.textContent ?? "").trim().startsWith(name))
+        ?.querySelector(".plot-menu-reason")?.textContent?.trim() ?? "",
+    LINKED_ITEM,
+  );
+  await browser.keys("Escape");
+  await browser.$('[role="menu"]').waitForExist({ reverse: true });
+  return { refused, reason };
+}
+
+/** Waits until the menu's reason for the linked figure is the one given. */
+async function linkedReasonBecomes(expected: string, timeoutMsg: string): Promise<void> {
+  await browser.waitUntil(async () => (await linkedItem()).reason === expected, {
     timeout: 30_000,
+    timeoutMsg,
   });
 }
 
 /**
- * One of the linked section's controls, found by its own text.
+ * One of the dialog's controls, found by its own text.
  *
  * Chained rather than written as one selector string: WebdriverIO's text
  * pseudo-selector is not CSS and cannot be combined with a CSS prefix, and the
  * driver refuses the whole thing rather than the half it does not understand.
  */
-function linked(label: string) {
-  return browser.$(LINKED).$(`button=${label}`);
-}
-
 function control(label: string) {
   return browser.$(PANEL).$(`button=${label}`);
 }
 
-/** Why the linked actions are closed, read from the document. */
-async function linkedReason(): Promise<string> {
-  return browser.execute(
-    (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
-    REASON,
-  );
+/** Offered: neither disabled nor refused (`aria-disabled`, which keeps a Tab stop). */
+async function offered(label: string): Promise<boolean> {
+  const button = control(label);
+  return (await button.isEnabled()) && (await button.getAttribute("aria-disabled")) !== "true";
+}
+
+/** Presses a dialog action once its preview is drawn, which is what offers it. */
+async function press(label: string): Promise<void> {
+  await browser.waitUntil(() => offered(label), {
+    timeout: 30_000,
+    timeoutMsg: `${label} was never offered`,
+  });
+  await control(label).click();
+}
+
+/** Chooses a range scope in the open dialog by its visible label. */
+async function chooseScope(label: string): Promise<void> {
+  await browser.$(PANEL).$(`button*=${label}`).click();
 }
 
 /**
- * What the linked section's live region says.
+ * What the linked dialog's result line says.
  *
  * Read from the document rather than through `getText`, which answers only for
- * text inside the viewport: this section sits at the bottom of a surface that
- * scrolls, so it is routinely present, correct and below the fold.
+ * text inside the viewport.
  */
 async function linkedStatus(): Promise<string> {
   return browser.execute(
     (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
-    `${LINKED} [role="status"]`,
+    `${PANEL} .figure-export-result [role="status"]`,
   );
 }
 
@@ -134,16 +191,6 @@ async function scrollTo(selector: string, top: number): Promise<void> {
     selector,
     top,
   );
-}
-
-/** How far one scroll owner can be scrolled, and how tall it thinks it is. */
-async function scrollExtent(selector: string): Promise<{ height: number; extent: number }> {
-  return browser.execute((css: string) => {
-    const owner = document.querySelector(css);
-    return owner === null
-      ? { height: 0, extent: 0 }
-      : { height: owner.clientHeight, extent: owner.scrollHeight };
-  }, selector);
 }
 
 /**
@@ -206,10 +253,10 @@ async function reachability(label: string): Promise<{
 }
 
 /**
- * Scrolls the viewer until one control is genuinely reachable.
+ * Scrolls the dialog until one control is genuinely reachable.
  *
  * The offset is computed rather than stepped towards: the control's position
- * within the scrolling column is known, so one scroll puts it in the middle of
+ * within its scrolling column is known, so one scroll puts it in the middle of
  * the visible band. Answers the measurement taken afterwards, so a failure
  * reports what was actually on screen rather than only that a search gave up.
  */
@@ -245,42 +292,60 @@ async function bringIntoView(label: string): Promise<Awaited<ReturnType<typeof r
   return reachability(label);
 }
 
-/** Where one panel sits, for the assertions about panels not covering others. */
-async function panelBox(selector: string): Promise<{ top: number; bottom: number }> {
-  return browser.execute((css: string) => {
-    const found = document.querySelector(css);
-    if (found === null) {
-      return { top: 0, bottom: 0 };
-    }
-    const rect = found.getBoundingClientRect();
-    return { top: rect.top, bottom: rect.bottom };
-  }, selector);
+interface Band {
+  readonly top: number;
+  readonly bottom: number;
+  readonly left: number;
+  readonly right: number;
+}
+
+/** Where the viewer's three panels sit, for the assertions about them staying apart. */
+async function viewerPanels(): Promise<{ chromatogram: Band; table: Band; spectrum: Band }> {
+  return browser.execute((chromatogram: string) => {
+    const band = (css: string) => {
+      const rect = document.querySelector(css)?.getBoundingClientRect();
+      return rect === undefined
+        ? { top: 0, bottom: 0, left: 0, right: 0 }
+        : {
+            top: Math.round(rect.top),
+            bottom: Math.round(rect.bottom),
+            left: Math.round(rect.left),
+            right: Math.round(rect.right),
+          };
+    };
+    return {
+      chromatogram: band(chromatogram),
+      table: band("section.spectrum-table-panel"),
+      spectrum: band("section.spectrum-panel"),
+    };
+  }, CHROMATOGRAM);
 }
 
 describe("the linked chromatogram and spectrum figure, rendered", () => {
   it("offers three linked actions and no linked data document", async () => {
-    await openTheViewer({ scans: SCANS });
+    await openViewer();
     await selectAScan();
-    await openExport();
+    await openLinked();
 
     for (const label of LINKED_ACTIONS) {
-      expect(await linked(label).isExisting()).toBe(true);
+      expect(await control(label).isExisting()).toBe(true);
     }
     // No combined table: a document that interleaved two measurements, or
     // dropped the link to avoid it, would be a file that lies about what it is.
     for (const label of ["Export CSV…", "Export TSV…"]) {
-      expect(await browser.$(LINKED).$(`button=${label}`).isExisting()).toBe(false);
+      expect(await control(label).isExisting()).toBe(false);
     }
-    expect(await browser.$(LINKED).$("legend").getText()).toBe("Linked chromatogram + spectrum");
+    // And the range it takes is the run's, not a spectrum's.
+    expect(await browser.$(`${PANEL} .figure-export-label`).getText()).toBe("Run range to export");
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("sends the pair, the range and the traces on screen", async () => {
-    await openTheViewer({ scans: SCANS });
+    await openViewer();
     await selectAScan();
-    await openExport();
+    await openLinked();
 
-    await linked("Export linked SVG…").click();
+    await press("Export SVG…");
 
     await browser.waitUntil(async () => (await linkedRequests()).length === 1, {
       timeout: 30_000,
@@ -322,11 +387,11 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
   });
 
   it("puts the linked figure on the clipboard without choosing a destination", async () => {
-    await openTheViewer({ scans: SCANS });
+    await openViewer();
     await selectAScan();
-    await openExport();
+    await openLinked();
 
-    await linked("Copy linked plot").click();
+    await press("Copy plot");
 
     await browser.waitUntil(async () => (await linkedCopies()).length === 1, {
       timeout: 30_000,
@@ -334,44 +399,41 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     });
     expect(await linkedRequests()).toEqual([]);
     await browser.waitUntil(
-      async () => (await linkedStatus()).includes("Copied the linked figure"),
+      async () => (await linkedStatus()).includes("Copied linked figure"),
       { timeout: 30_000, timeoutMsg: "the linked copy never reported an outcome" },
     );
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("says why it is closed before a scan has been selected, and sends nothing", async () => {
-    await openTheViewer({ scans: SCANS });
-    await openExport();
+    await openViewer();
+    await openPlotMenu(CHROMATOGRAM);
 
-    expect(await linkedReason()).toBe("Select a scan and wait for its spectrum to load.");
-    for (const label of LINKED_ACTIONS) {
-      expect(await linked(label).isEnabled()).toBe(false);
-      // Pressed anyway: `disabled` is an affordance, and what matters is that
-      // nothing crossed the boundary.
-      await browser.execute((text: string) => {
-        Array.from(document.querySelectorAll("button"))
-          .filter((node) => (node.textContent ?? "").trim() === text)
-          .forEach((node) => {
-            (node as HTMLButtonElement).click();
-          });
-      }, label);
-    }
+    // Refused rather than disabled: it stays in the menu's arrow-key order,
+    // with the reason printed inside it and read as its description.
+    const item = browser.$(plotMenuItem(LINKED_ITEM));
+    expect(await item.getAttribute("aria-disabled")).toBe("true");
+    const reason = item.$(".plot-menu-reason");
+    expect(await reason.getText()).toBe("Select a scan and wait for its spectrum to load.");
+    expect(await item.getAttribute("aria-describedby")).toContain(await reason.getAttribute("id"));
+
+    // Chosen anyway: the menu stays open on it, and nothing opens or crosses
+    // the boundary.
+    await item.click();
+    expect(await item.isDisplayed()).toBe(true);
+    expect(await browser.$(PANEL).isExisting()).toBe(false);
     expect(await linkedRequests()).toEqual([]);
     expect(await linkedCopies()).toEqual([]);
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("says the selected scan is outside the current range once the viewer moves away", async () => {
-    await openTheViewer({ scans: SCANS });
+    await openViewer();
     await selectAScan();
 
     // A wheel that settles is a committed viewport, and this one is centred
-    // well away from the first scan. The plot is brought back on screen through
-    // the product's scroll owner first: selecting the scan clicked a table row,
-    // which since M7.3 sits below the spectrum, so the evidence column scrolled
-    // the plot away and a pointer aimed at its layout box was out of bounds
-    // (PM9.7; slice-03 §5 (d)). As in the operable-chromatogram case below.
+    // well away from the first scan. The plot is brought on screen through the
+    // product's scroll owner first, so the pointer lands on it.
     const box = await revealThePlot();
     const at = { x: (await pointAt(0.6)).x, y: Math.round(box.top + box.height / 2) };
     await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -500 }).perform();
@@ -385,59 +447,62 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
       { timeout: 30_000, timeoutMsg: "the viewport never committed" },
     );
 
-    await openExport();
-    await browser.$(PANEL).$("label*=Current range").click();
-    await browser.waitUntil(async () => (await linkedReason()).length > 0, {
-      timeout: 30_000,
-      timeoutMsg: "the linked section never said why it was closed",
-    });
-
-    // M7.3's sentence (en.ts `linkedOutside`, c12f45d; LinkedFigureExport.test.tsx
-    // "says the selected scan is outside the current range, and how to fix it").
-    // The copy this first expected predates it (PM9.7).
-    expect(await linkedReason()).toBe(
-      "The selected scan is outside the current chromatogram range. Choose Full run or " +
-        "include the selected scan in the committed range.",
+    // The current range is chosen in the chromatogram's dialog, and the run's
+    // scope is shared with the linked figure.
+    await openFigureDialog(CHROMATOGRAM);
+    await chooseScope("Current range");
+    await closeFigureDialog();
+    await linkedReasonBecomes(
+      // M7.3's sentence (en.ts `linkedOutside`, c12f45d; LinkedFigureExport.test.tsx
+      // "says the selected scan is outside the current range, and how to fix it").
+      "The selected scan is outside the current range. Choose Full run or widen the range to include it.",
+      "the menu never said why the linked figure was closed",
     );
+    // Said, and still offered: the dialog is where it is repaired.
+    expect((await linkedItem()).refused).toBe(false);
     expect(await linkedRequests()).toEqual([]);
     // The chromatogram's own exports are untouched: the range holds scans, just
     // not the selected one.
-    expect(await control("Export CSV…").isEnabled()).toBe(true);
+    await openPlotMenu(CHROMATOGRAM);
+    expect(await browser.$(plotMenuItem("Export CSV")).getAttribute("aria-disabled")).toBe(null);
 
-    // Full run is one of the two fixes the sentence offers.
-    await browser.$(PANEL).$("label*=Full run").click();
-    await browser.waitUntil(async () => (await linkedReason()).length === 0, {
-      timeout: 30_000,
-      timeoutMsg: "choosing Full run never reopened the linked actions",
-    });
+    // Full run is one of the two fixes the sentence offers, chosen in the
+    // linked figure's own dialog.
+    await browser.$(plotMenuItem(LINKED_ITEM)).click();
+    await browser.$(PANEL).waitForDisplayed();
+    await chooseScope("Full run");
+    await closeFigureDialog();
+    await linkedReasonBecomes("", "choosing Full run never reopened the linked figure");
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("closes at a height of 259 and opens at 260", async () => {
-    await openTheViewer({ scans: SCANS });
+    await openViewer();
     await selectAScan();
-    await openExport();
-    // By id: since M7.1 a SettingField's label sits beside its input rather than
-    // around it, so `label*=… input` finds nothing (PM9.7; slice-03 §5 (b)).
-    const height = browser.$("#chromatogram-heightPx");
+    // The figure settings are the workspace's, shared by every dialog. By id
+    // suffix: the dialog's ids come from `useId`.
+    const height = `${PANEL} input[id$="-heightPx"]`;
 
-    await height.setValue("259");
-    await browser.waitUntil(async () => (await linkedReason()).length > 0, {
-      timeout: 30_000,
-      timeoutMsg: "259 never closed the linked actions",
-    });
-    expect(await linkedReason()).toBe(
-      "A two-panel linked figure needs a height of at least 260.",
-    );
+    await openFigureDialog(CHROMATOGRAM);
+    await browser.$(height).setValue("259");
     // One panel still fits, so the chromatogram's own figure is untouched.
-    expect(await control("Export SVG…").isEnabled()).toBe(true);
-
-    await height.setValue("260");
-    await browser.waitUntil(async () => (await linkedReason()).length === 0, {
+    await browser.waitUntil(() => offered("Export SVG…"), {
       timeout: 30_000,
-      timeoutMsg: "260 never reopened the linked actions",
+      timeoutMsg: "259 closed the chromatogram's own figure",
     });
-    await linked("Export linked SVG…").click();
+    await closeFigureDialog();
+    await linkedReasonBecomes(
+      "A two-panel linked figure needs a height of at least 260.",
+      "259 never closed the linked figure",
+    );
+
+    await openFigureDialog(CHROMATOGRAM);
+    await browser.$(height).setValue("260");
+    await closeFigureDialog();
+    await linkedReasonBecomes("", "260 never reopened the linked figure");
+
+    await openLinked();
+    await press("Export SVG…");
     await browser.waitUntil(async () => (await linkedRequests()).length === 1, {
       timeout: 30_000,
       timeoutMsg: "the linked export never reached the boundary",
@@ -459,26 +524,29 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     it(`brings every export action, old and linked, within reach at ${viewport.name}`, async () => {
       /*
        * The question M4.3.1's Round 2 answered for five controls, asked again
-       * for eight. The linked section makes the open surface taller, and a
-       * surface whose new controls are only reachable by driving the browser is
-       * a surface no user can operate.
+       * for eight: the chromatogram's own dialog, then the ⋯ menu's way into
+       * the linked figure and that dialog's actions. A control only reachable
+       * by driving the browser is a control no user can operate.
        *
        * Reachability rather than position: the whole rectangle inside
        * everything that clips, and `elementFromPoint` landing on the control.
-       * Getting there uses the application's own scroll owner.
+       * Getting there uses the dialog's own scroll owner.
        */
-      await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
+      await openViewer({ width: viewport.width, height: viewport.height });
       await selectAScan();
-      // The evidence column is the scroll owner that grows when the surface
-      // opens, not the chromatogram panel of the three-row grid this first
-      // measured (PM9.3).
-      const closed = await scrollExtent(EVIDENCE);
-      await openExport();
 
-      const opened = await scrollExtent(EVIDENCE);
-      expect(opened.extent).toBeGreaterThan(closed.extent);
+      await openFigureDialog(CHROMATOGRAM);
+      for (const label of EXPORT_ACTIONS) {
+        const reach = await bringIntoView(label);
+        expect(reach.found).toBe(true);
+        expect(reach.clippedBy).toEqual([]);
+        expect(reach.inViewport).toBe(true);
+        expect(reach.hitTestReachesIt).toBe(true);
+      }
+      await closeFigureDialog();
 
-      for (const label of EVERY_ACTION) {
+      await openLinked();
+      for (const label of LINKED_ACTIONS) {
         const reach = await bringIntoView(label);
         expect(reach.found).toBe(true);
         expect(reach.clippedBy).toEqual([]);
@@ -489,24 +557,26 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
     });
 
     it(`dispatches the operation a real click asks for at ${viewport.name}`, async () => {
-      // Reachable is not the same claim as operable. This scrolls the surface
-      // the way a user would, clicks the control the hit test says is there,
-      // and proves the command it names is what crossed the boundary.
-      await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
+      // Reachable is not the same claim as operable. This brings the control
+      // within reach the way a user would, clicks the control the hit test says
+      // is there, and proves the command it names is what crossed the boundary.
+      await openViewer({ width: viewport.width, height: viewport.height });
       await selectAScan();
-      await openExport();
+      await openLinked();
 
-      const reach = await bringIntoView("Copy linked plot");
+      await browser.waitUntil(() => offered("Copy plot"), { timeout: 30_000 });
+      const reach = await bringIntoView("Copy plot");
       expect(reach.hitTestReachesIt).toBe(true);
-      await linked("Copy linked plot").click();
+      await control("Copy plot").click();
       await browser.waitUntil(async () => (await linkedCopies()).length === 1, {
         timeout: 30_000,
         timeoutMsg: "a real click on the linked copy dispatched nothing",
       });
 
-      const svg = await bringIntoView("Export linked SVG…");
+      await browser.waitUntil(() => offered("Export SVG…"), { timeout: 30_000 });
+      const svg = await bringIntoView("Export SVG…");
       expect(svg.hitTestReachesIt).toBe(true);
-      await linked("Export linked SVG…").click();
+      await control("Export SVG…").click();
       await browser.waitUntil(async () => (await linkedRequests()).length === 1, {
         timeout: 30_000,
         timeoutMsg: "a real click on the linked export dispatched nothing",
@@ -517,22 +587,19 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
 
     it(`keeps the chromatogram itself reachable and operable at ${viewport.name}`, async () => {
       /*
-       * What the linked section costs. Measured with a scan selected, it makes
-       * the open export surface 116px taller at 1366x768 and at 960x640, and
-       * 96px at 1920x1080 where its sentence fits on one line -- and the
-       * surface already pushes the plot down inside a panel that scrolls, the
-       * trade M4.3 measured and accepted. So the
-       * claim worth making is not that the plot stays where it was, which it
-       * does not, but that it is still reachable through the product's own
-       * scroll owner and still *works* once it is.
+       * What the linked figure costs the plot it is drawn from. The dialog is
+       * modal, so the claim worth making is that once it returns to the viewer
+       * the plot is still reachable through the product's own scroll owner and
+       * still *works* -- the viewport a current-range linked export would
+       * carry can still be chosen.
        */
-      await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
+      await openViewer({ width: viewport.width, height: viewport.height });
       await selectAScan();
-      await openExport();
+      await openLinked();
+      await closeFigureDialog();
 
       const box = await revealThePlot();
-      // The plot is legitimately taller than the band its panel gives it, so
-      // what has to be non-empty is the part actually painted on screen.
+      // What has to be non-empty is the part actually painted on screen.
       expect(box.height).toBeGreaterThan(40);
       expect(box.width).toBeGreaterThan(40);
 
@@ -550,8 +617,7 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
       expect(hitTestReachesIt).toBe(true);
 
       // Reachable is not the same claim as operable: a real wheel over it still
-      // narrows the range, so the viewport a current-range linked export would
-      // carry can still be chosen with the surface open.
+      // narrows the range.
       const before = await browser.execute(
         () => document.querySelector(".chromatogram-range")?.textContent ?? "",
       );
@@ -567,60 +633,22 @@ describe("the linked chromatogram and spectrum figure, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it(`keeps the three views apart with the linked section open at ${viewport.name}`, async () => {
-      // The surface must not buy its extra room by covering the views beside
-      // it. Each panel keeps its own band, and nothing the linked section draws
-      // is painted over the view below: in M7.3's order, chromatogram, selected
-      // spectrum, then scans (this was written for chromatogram, scans,
-      // spectrum; PM9.3).
-      await openTheViewer({ width: viewport.width, height: viewport.height, scans: SCANS });
+    it(`keeps the three views where they were, and apart, with the linked figure open at ${viewport.name}`, async () => {
+      // The surface must not buy its room by moving the views beneath it. Each
+      // panel keeps its own band, and keeps it while the dialog is open: in the
+      // rebuild's order, the chromatogram across the top, then the scan list
+      // beside the spectrum it selects (spec 3.1).
+      await openViewer({ width: viewport.width, height: viewport.height });
       await selectAScan();
-      await openExport();
       await scrollTo(EVIDENCE, 0);
+      const closed = await viewerPanels();
+      await openLinked();
+      expect(await viewerPanels()).toEqual(closed);
 
-      const chromatogram = await panelBox(CHROMATOGRAM);
-      const table = await panelBox("section.spectrum-table-panel");
-      const spectrum = await panelBox("section.spectrum-panel");
-      expect(chromatogram.bottom).toBeLessThanOrEqual(spectrum.top + 1);
-      expect(spectrum.bottom).toBeLessThanOrEqual(table.top + 1);
-
-      const intruding = await browser.execute((labels: readonly string[]) => {
-        const below = document.querySelector("section.spectrum-panel");
-        if (below === null) {
-          return ["the selected spectrum is not on screen"];
-        }
-        const bounds = below.getBoundingClientRect();
-        // Only what is actually painted there. A control scrolled out of its
-        // own panel still reports the position it would occupy, and clipped
-        // away is not the same as drawn over the neighbour.
-        const clipped = (node: Element): boolean => {
-          const rect = node.getBoundingClientRect();
-          for (
-            let up: HTMLElement | null = (node as HTMLElement).parentElement;
-            up !== null && up !== document.body;
-            up = up.parentElement
-          ) {
-            const style = getComputedStyle(up);
-            if (style.overflowX === "visible" && style.overflowY === "visible") {
-              continue;
-            }
-            const box = up.getBoundingClientRect();
-            if (rect.top < box.top - 1 || rect.bottom > box.bottom + 1) {
-              return true;
-            }
-          }
-          return false;
-        };
-        return Array.from(document.querySelectorAll("button"))
-          .filter((node) => labels.includes((node.textContent ?? "").trim()))
-          .filter((node) => !clipped(node))
-          .filter((node) => {
-            const rect = node.getBoundingClientRect();
-            return rect.bottom > bounds.top + 1 && rect.top < bounds.bottom - 1;
-          })
-          .map((node) => (node.textContent ?? "").trim());
-      }, EVERY_ACTION);
-      expect(intruding).toEqual([]);
+      expect(closed.chromatogram.bottom).toBeLessThanOrEqual(
+        Math.min(closed.table.top, closed.spectrum.top) + 1,
+      );
+      expect(closed.table.right).toBeLessThanOrEqual(closed.spectrum.left + 1);
 
       // And the plot itself did not pay for the surface by disappearing.
       const box = await boxOf(PLOT);

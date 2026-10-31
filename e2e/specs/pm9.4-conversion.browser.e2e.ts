@@ -30,7 +30,7 @@ import {
   setInvokeResult,
 } from "../support/harness";
 import { cdp, metrics } from "../support/cdp";
-import { CONVERT, CONVERSION_SURFACE, checkMembers, isRefused, showConversion, waitUntilOffered } from "../support/conversion";
+import { CONVERT, CONVERSION_SURFACE, START_ANOTHER, checkMembers, isRefused, showConversion, startAnother, waitUntilOffered } from "../support/conversion";
 import { NO_PROJECT, scenario, type Locale } from "../support/pm9Scenarios";
 import { readBackSavedPreferences } from "../support/viewer";
 import {
@@ -67,7 +67,11 @@ function word(locale: Locale, key: string): string {
 }
 
 function fill(template: string, values: Record<string, string | number>): string {
-  return template.replace(/\{\{(\w+)\}\}/gu, (_, key: string) => String(values[key] ?? ""));
+  // A `{{count, number}}` placeholder formats the number, as i18next does in en.
+  return template.replace(/\{\{(\w+)(, number)?\}\}/gu, (_, key: string, number?: string) => {
+    const value = values[key];
+    return number !== undefined && typeof value === "number" ? value.toLocaleString("en-US") : String(value ?? "");
+  });
 }
 
 /** Any estimate: the lookahead lets the stop control's own "remaining items" through. */
@@ -305,11 +309,12 @@ async function frame(label: string) {
       .filter((button) => shown(button) && !button.disabled && button.getAttribute("aria-disabled") !== "true")
       .filter((button) => getComputedStyle(button).backgroundColor === accent)
       .map((button) => (button.textContent ?? "").trim());
-    // Controls under the 32 px compact minimum (DESIGN_SYSTEM), inputs aside.
+    // Controls under the rebuild's 30 px small-button height (v5.11 rebuild
+    // spec 1.4, `--control-height-sm`), inputs aside.
     const small = [...(node?.querySelectorAll<HTMLElement>("button, summary") ?? [])]
       .filter(shown)
       .map((control) => ({ name: (control.textContent ?? "").trim().slice(0, 40), height: control.getBoundingClientRect().height }))
-      .filter((control) => control.height < 31.5);
+      .filter((control) => control.height < 29.5);
     return {
       css: { width: innerWidth, height: innerHeight },
       devicePixelRatio,
@@ -386,11 +391,16 @@ async function pressByKeyboard(scope: string, name: string) {
 }
 
 async function navigate(label: string) {
-  await browser.execute((name: string) => {
-    [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
-      .find((button) => (button.textContent ?? "") === name)
-      ?.click();
+  const found = await browser.execute((name: string) => {
+    const target = [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
+      .find((button) => (button.textContent ?? "") === name);
+    target?.click();
+    return target !== undefined;
   }, label);
+  // Project is the header's third tab (direction A).
+  if (!found) {
+    await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
+  }
   await frames();
 }
 
@@ -456,7 +466,7 @@ describe("PM9.4 conversion journey, rendered", () => {
     await frame("pm94-p2-no-backend-en-1366x768");
 
     const pending = await browser.execute(() => (document.querySelector("#conversion-plan-pending")?.textContent ?? "").trim());
-    expect(pending).not.toBe(en.m74CnvPlanUnknown);
+    expect(pending).not.toBe(en.m74CnvNoticePlanSettingsUnknown);
     expect(pending).toBe(word("en", "m74CnvPlanNoBackend"));
     const control = await startControl();
     expect(control?.ariaDisabled).toBe("true");
@@ -475,15 +485,16 @@ describe("PM9.4 conversion journey, rendered", () => {
     await waitUntilOffered(CONVERT);
     const review = await frame("pm94-p3-review-en-1366x768");
 
-    // R5: scope, settings, destination, conflict, the reviewed summary, then Convert.
+    // R5: settings, destination and conflict in the form column, then the
+    // scope, the reviewed summary and Convert in the summary column.
     const order = await browser.execute((css: string) => {
-      const plan = document.querySelector(".conversion-plan");
+      const plan = document.querySelector(".conversion-panel");
       const at = (selector: string) => document.querySelector(selector);
       const parts = [
-        at(".conversion-scope"),
         at(".conversion-settings"),
         at(".conversion-destination"),
         at(".conversion-conflict"),
+        at(".conversion-scope"),
         at("#conversion-plan-summary"),
         at(css),
       ];
@@ -493,17 +504,18 @@ describe("PM9.4 conversion journey, rendered", () => {
       return { ordered, settingsInPlan: plan?.contains(at(".conversion-settings")) ?? false, fieldsetsAfterSummary: between.length };
     }, CONVERT);
     expect(order).toEqual({ ordered: true, settingsInPlan: true, fieldsetsAfterSummary: 0 });
-    // R4: compression in words, like the other axes.
+    // C11 (was R4): the rail lists only what differs from the shipped settings,
+    // so the shipped compression is not repeated there; the form says it.
     const compression = await browser.execute((label: string) => {
-      const term = [...document.querySelectorAll(".conversion-plan .metadata-list dt")].find((node) => (node.textContent ?? "").trim() === label);
-      return (term?.nextElementSibling?.textContent ?? "").trim();
+      const term = [...document.querySelectorAll(".conversion-plan-summary .metadata-list dt")].find((node) => (node.textContent ?? "").trim() === label);
+      return term === undefined ? null : (term.nextElementSibling?.textContent ?? "").trim();
     }, en.m74CnvCompression);
-    expect(compression).toBe(en.cnvZlib);
+    expect(compression).toBe(null);
     // R7: one filled primary, and it is Convert.
     expect(review.filled).toEqual([fill(word("en", "m74CnvConvertSelected"), { count: 2 })]);
 
     await setInvokeResult("get_workspace_conversion_state", slot(1, STARTED));
-    await pressByKeyboard(".conversion-plan", fill(word("en", "m74CnvConvertSelected"), { count: 2 }));
+    await pressByKeyboard(".conversion-panel", fill(word("en", "m74CnvConvertSelected"), { count: 2 }));
     await browser.$(".conversion-running").waitForExist({ timeout: 15_000 });
     await browser.waitUntil(async () => (await requests("choose_workspace_conversion_destination")).length === 1, { timeout: 15_000 });
     await frames();
@@ -551,7 +563,7 @@ describe("PM9.4 conversion journey, rendered", () => {
     await setInvokeResult("stop_workspace_conversion_queue", slot(2, { ...STARTED, status: "stopping" }));
     await setInvokeResult("get_workspace_conversion_state", slot(2, { ...STARTED, status: "stopping" }));
     await pressByKeyboard(".conversion-running", en.m74CnvStopQueue);
-    await browser.waitUntil(async () => (await browser.$(".conversion-running").getText()).includes(en.m74CnvStopping), { timeout: 15_000 });
+    await browser.waitUntil(async () => (await browser.$(".conversion-panel").getText()).includes(en.m74CnvStopping), { timeout: 15_000 });
     await frame("pm94-p4-stopping-en-1366x768");
     expect(await requests("stop_workspace_conversion_queue")).toEqual([{ operationId: OPERATION }]);
     expect(await focusedId()).toBe("conversion-queue-status");
@@ -574,11 +586,13 @@ describe("PM9.4 conversion journey, rendered", () => {
     await open(world({ slot: slot(1, MIXED) }));
     await checkMembers([THIRD.handle]);
     await showConversion();
-    await waitUntilOffered(CONVERT);
+    await browser.$(START_ANOTHER).waitForDisplayed({ timeout: 15_000 });
     const finished = await frame("pm94-p6-mixed-en-1366x768");
 
-    // R7: the outputs are the primary; the next conversion's start is secondary.
+    // R7: the outputs are the primary; the next conversion waits behind
+    // Start another conversion, and no Convert is on screen (review 6).
     expect(finished.filled).toEqual([en.m74CnvAddOne]);
+    expect(await browser.$(CONVERT).isExisting()).toBe(false);
     // R8: each failed row says whether Retry reruns it, and the scope is visible.
     const markers = await browser.execute(() =>
       [...document.querySelectorAll('li[data-item-state="failed"]')].map((row) => (row.querySelector(".conversion-queue-retry")?.textContent ?? "").trim() || null),
@@ -691,11 +705,12 @@ describe("PM9.4 conversion journey, rendered", () => {
         }
       }
 
-      // A finished mixed queue with the next conversion below it.
+      // A finished mixed queue with the next conversion opened below it.
       await metrics(1920, 1080);
       await open(world({ locale, slot: slot(1, MIXED) }));
       await checkMembers([THIRD.handle]);
       await showConversion();
+      await startAnother();
       await waitUntilOffered(CONVERT);
       for (const [width, height] of anchors) {
         await metrics(width, height);

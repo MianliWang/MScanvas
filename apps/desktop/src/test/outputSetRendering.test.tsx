@@ -102,7 +102,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 async function renderState(
@@ -115,9 +115,11 @@ async function renderState(
     initialConversion: state,
   });
   renderApp(api);
+  // The queue is two parts -- its rows and its summary -- so the panel that
+  // holds both is what is read.
   return await waitFor(() => {
-    const node = document.querySelector(".conversion-running");
-    if (node === null) {
+    const node = document.querySelector(".conversion-running")?.closest(".conversion-panel");
+    if (node == null) {
       throw new Error("expected a queue on screen");
     }
     return node as HTMLElement;
@@ -170,7 +172,6 @@ describe("rendered QA for the one-to-many output topology", () => {
     const memberList = ruleFor(style, ".conversion-queue-set-members");
     expect(memberList.style.getPropertyValue("overflow-wrap")).toBe("anywhere");
     expect(memberList.style.getPropertyValue("min-width")).toBe("0px");
-    expect(memberList.style.getPropertyValue("flex")).toContain("100%");
 
     const set = ruleFor(style, ".conversion-queue-output-set");
     expect(set.style.getPropertyValue("white-space")).toBe("normal");
@@ -178,13 +179,13 @@ describe("rendered QA for the one-to-many output topology", () => {
     expect(set.style.getPropertyValue("min-width")).toBe("0px");
     expect(set.style.getPropertyValue("flex-wrap")).toBe("wrap");
 
-    // And every new status line takes a row of its own and wraps, rather than
-    // competing with the two names for the first line.
+    // And every status line takes a row of its own under the names and wraps,
+    // rather than competing with the two names for the first line.
+    expect(ruleFor(style, ".conversion-run-detail").style.getPropertyValue("flex-direction")).toBe("column");
     const status = ruleFor(
       style,
-      ".conversion-queue-status, .conversion-queue-attempts, .conversion-queue-facts, .conversion-queue-reason, .conversion-queue-residue, .conversion-queue-set-result, .conversion-queue-set-completeness, .conversion-queue-set-partial",
+      ".conversion-queue-attempts, .conversion-queue-facts, .conversion-queue-reason, .conversion-queue-retry, .conversion-queue-residue, .conversion-queue-set-result, .conversion-queue-set-completeness, .conversion-queue-set-partial",
     );
-    expect(status.style.getPropertyValue("flex")).toContain("100%");
     expect(status.style.getPropertyValue("overflow-wrap")).toBe("anywhere");
     expect(status.style.getPropertyValue("min-width")).toBe("0px");
   });
@@ -227,11 +228,7 @@ describe("rendered QA for the one-to-many output topology", () => {
     renderApp(api);
     fireEvent.click(within(await screen.findByRole("row", { name: new RegExp(LONG_NAME.slice(0, 20)) })).getByRole("checkbox"));
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(/One SCIEX WIFF acquisition will be converted to mzML\./),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(1));
     const output = panel.querySelector(".conversion-queue-output");
     expect(output?.textContent).toContain("1–24 mzML outputs");
     // The acquisition's own stem must not appear in what it converts *to*.
@@ -407,7 +404,7 @@ describe("rendered QA for the one-to-many output topology", () => {
     });
     const unconfirmedText = visibleText(unconfirmed);
     expect(unconfirmedText).toContain("Stop could not be confirmed");
-    expect(unconfirmedText).toMatch(/could not remove its own temporary folder/);
+    expect(unconfirmedText).toMatch(/could not remove its temporary folder/);
   });
 
   it("renders ten adoption outcomes with mixed results, keyed apart", async () => {
@@ -480,7 +477,7 @@ describe("rendered QA for the one-to-many output topology", () => {
     });
     // The refusal names the member and the reason, in the user's terms.
     expect(
-      screen.getByText(`${TEN_MEMBERS[9]} was not added: changed since it was converted.`),
+      screen.getByText(`${TEN_MEMBERS[9]} was not added: it changed since it was converted.`),
     ).toBeVisible();
 
     // The action stays mounted and focusable rather than being replaced, so a
