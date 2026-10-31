@@ -70,6 +70,23 @@ impl NonMzmlFormat {
             Self::MzMlb => "mzmlb",
         }
     }
+
+    /// The extension the evidenced build appends for this format
+    /// (`msconvert.cpp:627-661`, read from source, not measured).
+    #[must_use]
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::MzXml(_) => "mzXML",
+            Self::Mgf => "mgf",
+            Self::Text => "txt",
+            Self::Ms1 => "ms1",
+            Self::Ms2 => "ms2",
+            Self::Cms1 => "cms1",
+            Self::Cms2 => "cms2",
+            Self::Mz5 => "mz5",
+            Self::MzMlb => "mzMLb",
+        }
+    }
 }
 
 /// The one global precision mzXML's `<peaks>` is written at (`--32` or `--64`).
@@ -263,7 +280,9 @@ pub fn inspect_final_output(
     )
 }
 
-fn inspect_opened<R: BufRead>(
+/// [`inspect_final_output`] over a file the caller already holds, so the run
+/// can hash and finalize the object these checks read.
+pub(crate) fn inspect_opened<R: BufRead>(
     reader: R,
     length: u64,
     format: NonMzmlFormat,

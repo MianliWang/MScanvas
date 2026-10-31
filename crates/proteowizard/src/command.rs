@@ -7,6 +7,7 @@ use thiserror::Error;
 use crate::capability::{CapabilityRequirementError, InstalledHelpCapabilities, Sha256Digest};
 use crate::conversion_run::ConversionSourceKind;
 use crate::intent::{ConversionIntent, OutputFormat};
+use crate::output_inspect::NonMzmlFormat;
 use crate::structured::{Lowering, SourceBlock, StructuredIntent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -774,7 +775,7 @@ fn build_msconvert_command_from(
 ) -> Result<CommandSpec, PlanError> {
     let executable = executable.into();
     validate_paths(&executable, input, output_directory)?;
-    validate_output_file_name(output_file_name, format)?;
+    validate_output_file_name(output_file_name, format.extension())?;
 
     let mut arguments = Vec::with_capacity(6 + lowered.len());
     arguments.push(input.as_os_str().to_owned());
@@ -906,7 +907,7 @@ pub fn build_msconvert_command_for_source(
             capabilities.require_conversion_intent(intent)?;
             let executable = capabilities.executable().to_path_buf();
             validate_paths(&executable, input, output_directory)?;
-            validate_output_file_name(output_file_name, format)?;
+            validate_output_file_name(output_file_name, format.extension())?;
             let safe_output = require_safe_output_directory(input, output_directory)?;
             let canonical_input = backend_input_spelling(&safe_output.source_identity, spelling)?;
             let command = build_msconvert_command(
@@ -930,14 +931,14 @@ pub fn build_msconvert_command_for_source(
     }
 }
 
-/// Builds the one run of an advanced intent that writes mzML directly (ADR
-/// 0055 decision 6's `Direct` route), with every guard the row builder above
-/// applies.
+/// Builds the run of an advanced intent that reads the source, with every guard
+/// the row builder above applies: the one run that writes mzML directly, or
+/// run 1 of ADR 0055 decision 6, which writes the private mzML intermediate.
+/// `output_file_name` is the name that run writes.
 ///
 /// In be/core's order: the source-dependent refusals first (`tier()` is the
-/// only place `lowering()` meets a source), then the provider requirements,
-/// and only then the lowering. Any other route is refused: the two-run route
-/// is not wired into a run.
+/// only place `lowering()` meets a source), then the provider requirements of
+/// both runs, and only then the lowering.
 pub(crate) fn build_structured_msconvert_command_for_source(
     capabilities: &InstalledHelpCapabilities,
     input: &Path,
@@ -950,13 +951,15 @@ pub(crate) fn build_structured_msconvert_command_for_source(
     intent
         .tier(source, capabilities)
         .map_err(PlanError::StepBlockedForSource)?;
-    if intent.integrity_route(source).is_none() {
+    if intent.integrity_route(source).is_none() && intent.intermediate_route(source).is_none() {
         return Err(PlanError::IntentNotCheckable);
     }
     intent.confirm_provider_requirements(capabilities)?;
-    let Lowering::Direct(lowered) = intent.lowering() else {
-        return Err(PlanError::IntentNotCheckable);
-    };
+    let (Lowering::Direct(lowered)
+    | Lowering::ViaIntermediate {
+        intermediate: lowered,
+        ..
+    }) = intent.lowering();
     let executable = capabilities.executable().to_path_buf();
     validate_paths(&executable, input, output_directory)?;
     let safe_output = require_safe_output_directory(input, output_directory)?;
@@ -978,6 +981,70 @@ pub(crate) fn build_structured_msconvert_command_for_source(
     Ok(command
         .with_executable_identity(capabilities.executable_sha256())
         .with_source_identity(safe_output.source_identity))
+}
+
+/// What run 2 is told to call its output: a fixed stem, never a name derived
+/// from the user's file. The evidenced build appends the format's extension to
+/// `--outfile` after stripping a known one, and `.txt` is not among those it
+/// strips (`msconvert.cpp:82-117`), so a planned `<stem>.txt` would come back
+/// as `<stem>.txt.txt`. The staged file is renamed to the planned name when it
+/// is finalized.
+const TARGET_OUTFILE_STEM: &str = "target";
+
+/// The file run 2 writes in its private directory: [`TARGET_OUTFILE_STEM`]
+/// with the format's extension.
+pub(crate) fn target_staged_file_name(format: NonMzmlFormat) -> OsString {
+    OsString::from(format!("{TARGET_OUTFILE_STEM}.{}", format.extension()))
+}
+
+/// Builds run 2 of ADR 0055 decision 6: the checked intermediate to the
+/// requested format, in a second private directory.
+///
+/// The argv carries the format flag, that format's encoding options and the
+/// writer switches, and no filter ([`Lowering::ViaIntermediate`]'s `output`).
+/// The intermediate is named the way an mzML source is, and bound by identity
+/// like one. The provider requirements of both runs were confirmed when run 1
+/// was built.
+pub(crate) fn build_target_msconvert_command(
+    capabilities: &InstalledHelpCapabilities,
+    intermediate: &Path,
+    output_directory: &Path,
+    format: NonMzmlFormat,
+    intent: &StructuredIntent,
+) -> Result<CommandSpec, PlanError> {
+    let Lowering::ViaIntermediate {
+        output: lowered, ..
+    } = intent.lowering()
+    else {
+        return Err(PlanError::IntentNotCheckable);
+    };
+    let executable = capabilities.executable().to_path_buf();
+    validate_paths(&executable, intermediate, output_directory)?;
+    let safe_output = require_safe_output_directory(intermediate, output_directory)?;
+    let input = backend_input_spelling(
+        &safe_output.source_identity,
+        ConversionSourceKind::MzmlFile.input_spelling(),
+    )?;
+    let mut arguments = Vec::with_capacity(5 + lowered.len());
+    arguments.push(input.into_os_string());
+    arguments.extend(lowered);
+    arguments.push(OsString::from("--outdir"));
+    arguments.push(safe_output.output_directory.as_os_str().to_owned());
+    arguments.push(OsString::from("--outfile"));
+    arguments.push(OsString::from(TARGET_OUTFILE_STEM));
+    let destination = safe_output
+        .output_directory
+        .join(target_staged_file_name(format));
+    require_output_destination_available(&destination)?;
+    Ok(CommandSpec::new(
+        BackendTool::MsConvert,
+        executable,
+        arguments,
+        &safe_output.output_directory,
+    )
+    .with_output_destination(destination, safe_output.source_directory_boundary)
+    .with_executable_identity(capabilities.executable_sha256())
+    .with_source_identity(safe_output.source_identity))
 }
 
 #[cfg(test)]
@@ -1160,7 +1227,7 @@ fn validate_paths(
 
 pub(crate) fn validate_output_file_name(
     output_file_name: &OsStr,
-    format: OpenFormat,
+    extension: &str,
 ) -> Result<(), PlanError> {
     let path = Path::new(output_file_name);
     let mut components = path.components();
@@ -1178,10 +1245,10 @@ pub(crate) fn validate_output_file_name(
     if is_windows_device_name(path) {
         return Err(PlanError::InvalidOutputFileName);
     }
-    if !path.extension().is_some_and(|extension| {
-        extension
+    if !path.extension().is_some_and(|observed| {
+        observed
             .as_encoded_bytes()
-            .eq_ignore_ascii_case(format.extension().as_bytes())
+            .eq_ignore_ascii_case(extension.as_bytes())
     }) {
         return Err(PlanError::OutputFileExtensionMismatch);
     }

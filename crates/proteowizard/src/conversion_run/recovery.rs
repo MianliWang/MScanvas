@@ -33,6 +33,10 @@ struct RecoveryState {
     /// The exact containing directory held from staging creation.
     parent: Option<File>,
     quiescent: bool,
+    /// A provider run whose owned tree was not confirmed gone. Never cleared:
+    /// a later run that ends cleanly says nothing about an earlier one's
+    /// processes (ADR 0055 decision 6 launches two).
+    unconfirmed: bool,
     frozen: Option<cleanup::FrozenStagingTree>,
     snapshot_attempted: bool,
 }
@@ -106,6 +110,7 @@ impl StagingRecovery {
                 },
                 parent: Some(parent),
                 quiescent: true,
+                unconfirmed: false,
                 frozen: None,
                 snapshot_attempted: false,
             }),
@@ -168,6 +173,20 @@ impl StagingRecovery {
             .output_directory()
     }
 
+    /// Exclusively creates `name` inside the held output directory and hands
+    /// back its handle: run 2's private directory (ADR 0055 decision 6).
+    /// Teardown removes it with everything else under the output directory,
+    /// once the caller has released the handle.
+    pub(super) fn create_output_subdirectory(&self, name: &OsStr) -> io::Result<File> {
+        let state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let output = state.area.output.as_ref().ok_or(io::ErrorKind::NotFound)?;
+        cleanup::create_owned_directory(output, name)
+    }
+
     pub(super) fn before_provider(&self) {
         self.0
             .state
@@ -181,11 +200,13 @@ impl StagingRecovery {
             Ok(output) => OwnedTreeDisposition::of(output).no_owned_process_survives(),
             Err(error) => !error.leaves_an_owned_process_unaccounted(),
         };
-        self.0
+        let mut state = self
+            .0
             .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .quiescent = confirmed;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.unconfirmed |= !confirmed;
+        state.quiescent = !state.unconfirmed;
     }
 
     pub(super) fn discard(&self) -> Option<StagingResidue> {

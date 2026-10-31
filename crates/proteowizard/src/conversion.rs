@@ -146,17 +146,23 @@ const SAME_FORMAT_OUTPUT_SUFFIX: &str = "-converted";
 /// keeps an output written beside its source from ever naming the source.
 #[must_use]
 pub fn conversion_output_file_name(input: &Path, format: OpenFormat) -> Option<OsString> {
+    output_file_name_with_extension(input, format.extension())
+}
+
+/// [`conversion_output_file_name`] for any extension, including the formats
+/// written from an intermediate (ADR 0055 decision 6).
+pub(crate) fn output_file_name_with_extension(input: &Path, extension: &str) -> Option<OsString> {
     let stem = input.file_stem().filter(|stem| !stem.is_empty())?;
     let mut name = stem.to_os_string();
-    if input.extension().is_some_and(|extension| {
-        extension
+    if input.extension().is_some_and(|observed| {
+        observed
             .as_encoded_bytes()
-            .eq_ignore_ascii_case(format.extension().as_bytes())
+            .eq_ignore_ascii_case(extension.as_bytes())
     }) {
         name.push(SAME_FORMAT_OUTPUT_SUFFIX);
     }
     name.push(".");
-    name.push(format.extension());
+    name.push(extension);
     Some(name)
 }
 
@@ -183,7 +189,7 @@ pub fn inspect_conversion_output(
 
 /// Whether the object read is kept open afterwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OutputRetention {
+pub(crate) enum OutputRetention {
     /// Read the output and let it go. The caller wants facts, not the object.
     Release,
     /// Read the output through a handle that can also rename it, and keep that
@@ -199,8 +205,29 @@ fn open_and_inspect_output(
     limits: MzmlScanLimits,
     retention: OutputRetention,
 ) -> Result<(File, ConversionOutputInspection), ConversionOutputRejection> {
+    let (file, observed_byte_length) = open_planned_output(
+        output_directory,
+        expected_file_name,
+        format.extension(),
+        retention,
+    )?;
+    // The scanned handle is threaded through by ownership rather than merely
+    // sitting beside the reading: what comes back is the object that was read,
+    // and a caller cannot substitute another without visibly discarding this one.
+    inspect_open_output(file, observed_byte_length, limits)
+}
+
+/// The directory postconditions every staged output is held to -- exactly one
+/// entry, the planned name and extension, a non-empty regular file -- and the
+/// opened object, length-checked against the listing that admitted it.
+pub(crate) fn open_planned_output(
+    output_directory: &Path,
+    expected_file_name: &OsStr,
+    extension: &str,
+    retention: OutputRetention,
+) -> Result<(File, u64), ConversionOutputRejection> {
     let snapshot = fs_guard::snapshot_output_directory(output_directory)?;
-    let entry = require_single_planned_entry(&snapshot, expected_file_name, format)?;
+    let entry = require_single_planned_entry(&snapshot, expected_file_name, extension)?;
 
     let path = output_directory.join(expected_file_name);
     let (file, observed_byte_length) = match retention {
@@ -212,16 +239,13 @@ fn open_and_inspect_output(
     if observed_byte_length != entry.byte_length() {
         return Err(ConversionOutputRejection::ChangedDuringInspection);
     }
-    // The scanned handle is threaded through by ownership rather than merely
-    // sitting beside the reading: what comes back is the object that was read,
-    // and a caller cannot substitute another without visibly discarding this one.
-    inspect_open_output(file, observed_byte_length, limits)
+    Ok((file, observed_byte_length))
 }
 
 fn require_single_planned_entry<'a>(
     snapshot: &'a OutputDirectorySnapshot,
     expected_file_name: &OsStr,
-    format: OpenFormat,
+    extension: &str,
 ) -> Result<&'a OutputDirectoryEntry, ConversionOutputRejection> {
     if snapshot.is_empty() {
         return Err(ConversionOutputRejection::Missing);
@@ -239,7 +263,7 @@ fn require_single_planned_entry<'a>(
     if !entry.has_name(expected_file_name) {
         return Err(ConversionOutputRejection::UnexpectedOutputName);
     }
-    if !entry.has_extension(format.extension()) {
+    if !entry.has_extension(extension) {
         return Err(ConversionOutputRejection::ExtensionMismatch);
     }
     if entry.kind() != OutputEntryKind::RegularFile {
