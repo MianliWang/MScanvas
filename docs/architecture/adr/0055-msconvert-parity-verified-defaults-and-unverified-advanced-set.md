@@ -188,7 +188,12 @@ every subsetting filter would look blockable, and parity would mean nothing.
 
 The label is a resource value in `en` and `zh-CN`. It appears:
 
-- on the collapsed **Advanced options** disclosure;
+- on the collapsed **Advanced settings** disclosure;
+
+  > **Amended 2026-10-30 under owner decision FE-1.** This read "Advanced
+  > options". Each settings level now has one name, and the disclosure is
+  > "Advanced settings" (高级设置), the name #164 ships for the conversion
+  > settings' Advanced disclosure.
 - on each advanced step or switch;
 - in the plan summary before Run;
 - on the outcome of every queue item finalized with any advanced setting,
