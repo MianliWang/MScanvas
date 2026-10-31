@@ -748,7 +748,9 @@ Slice 1 therefore meets this decision's merge condition.
 >   panel its own units, because the chromatogram's intensity has none. The
 >   webview commit draws the same line on screen over a viewport: a profile
 >   projection carries the measured sample beyond each edge, and the plot's
->   clip cuts the line there, scaled to those heights as the export is. With
+>   clip cuts the line there, scaled to those heights as the export is. In a
+>   window holding more samples than a screen projection carries, the line
+>   joins the reduced points, so the cut is exact to one screen column. With
 >   no viewport (no admitted m/z domain) a profile spectrum stays sticks and
 >   Details says why. Centroid and undeclared spectra are unchanged.
 >

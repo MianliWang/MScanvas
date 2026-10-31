@@ -1,7 +1,7 @@
 /** Production viewer; deterministic synthetic source responses at the existing IPC boundary only. */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { buildPreview, buildSpectrum, secondFile, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
+import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 import { ipcTable } from "../support/fixtures";
 import { readBackSavedPreferences, revealRosterRow, seedARunOf } from "../support/viewer";
 import { choosePlotMenuItem } from "../support/figure";
@@ -47,7 +47,7 @@ async function preferences(language: "en" | "zh-CN", density: "comfortable" | "c
   await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
-function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" | "superseded" = "complete") {
+function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" = "complete") {
   const table: Record<string, unknown> = ipcTable({ emptySpectrum: kind === "empty", refusedViewport: kind === "refused", oneMzViewport: kind === "one" });
   const preview = buildPreview(8);
   preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, {
@@ -73,7 +73,7 @@ function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "la
     Object.assign(preview, { chromatogramExportToken: null });
   }
   table.open_mzml_preview = preview;
-  table.get_workspace_roster = { capacity: 1024, datasets: kind === "superseded" ? [selectedFile, secondFile] : [selectedFile] };
+  table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
   table.subscribe_workspace_drop_updates = { reservationId: "browser-m73-reservation" };
   return table;
 }
@@ -492,12 +492,20 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     expect(await browser.$(".spectrum-head-facts").getText()).toContain("Profile");
     expect(await axisTitles()).toEqual(["Intensity (MS:1000131)", "m/z (MS:1000040)"]);
     await capture("profile-line");
-    // Zoomed in, the line runs in from the sample beyond the low edge and the
-    // band's clip cuts it there, as the export cuts it.
-    await browser.$('.spectrum-panel button[aria-label="Zoom in m/z"]').click();
+    // Zoomed in from the keyboard, the line runs in from the sample beyond the
+    // low edge and the band's clip cuts it there, as the export cuts it.
+    await browser.execute((css: string) => document.querySelector<SVGSVGElement>(css)?.focus(), MZ);
+    await browser.keys("+");
     await browser.waitUntil(async () => await lineStartX() < 8, { timeoutMsg: "the zoomed line never started beyond the band" });
     expect(await browser.$(MZ).getAttribute("data-drawn-as")).toBe("line");
     await capture("profile-line-zoomed");
+    // And from the button, the same.
+    const line = () => browser.$(".spectrum-panel .spectrum-line").getAttribute("d");
+    const before = await line();
+    await browser.$('.spectrum-panel button[aria-label="Zoom in m/z"]').click();
+    await browser.waitUntil(async () => await line() !== before && await lineStartX() < 8,
+      { timeoutMsg: "the button's zoom never redrew the cut line" });
+    expect(await browser.$(MZ).getAttribute("data-drawn-as")).toBe("line");
     expect(await consoleEntries()).toEqual([]);
   });
 
@@ -542,6 +550,8 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     const failed = browser.$('#workbench-evidence[data-evidence="failed"]');
     await failed.waitForDisplayed();
     expect(await failed.getText()).toContain("A newer request for that file arrived before this one finished");
+    // Nothing was wrong with the file, so its row says nothing against it.
+    expect(await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').getText()).not.toContain("Could not be read");
     await capture("superseded-open");
     await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
     await failed.$("button").click();

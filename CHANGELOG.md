@@ -21,6 +21,13 @@ All notable changes will be documented here once versioned releases begin.
   representation and unit fields now state what the mzML file declares and
   retention times stay in the file's own unit
   ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
+- **The viewer shows what the mzML file declares.** A spectrum the file
+  declares profile is drawn as one joined line, on screen as in export; a
+  centroid or undeclared one stays sticks. Retention times carry the file's
+  `s` or `min`, never converted, and scans in mixed units give no
+  chromatogram. Each axis names a declared unit by its accession. A spectrum
+  whose preview is gone offers **Open the file again**
+  ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
 
 ## 0.1.0-beta.1 — 2026-10-28 (prerelease)
 
