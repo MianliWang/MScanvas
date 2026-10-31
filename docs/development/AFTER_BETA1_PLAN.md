@@ -548,11 +548,11 @@ writer and Rust's ownership of files.
     (the install location and the installer language), then the parent key if
     it is empty, and `%APPDATA%\org.mscanvas.desktop` and
     `%LOCALAPPDATA%\org.mscanvas.desktop` recursively (preferences, presets,
-    WebView2 data, and the view cache once it ships). Proposed: leave both
-    opt-in (the folder holds user-authored presets; the next install reads the
-    key for its location); the alternatives are an `NSIS_HOOK_POSTUNINSTALL`
-    that always deletes the key, or removing only the view cache once it
-    ships. A release-path change, so the owner's.
+    WebView2 data, and the view cache once it ships). Whether to change this
+    is OWNER_DECISIONS_V511 DEF-2, open until the view cache ships; its
+    recommendation is to always remove the cache folder (except on
+    `/UPDATE`) and keep the key, presets and preferences opt-in. A
+    release-path change, so the owner's.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
@@ -571,7 +571,8 @@ writer and Rust's ownership of files.
   refusal leaves later items showing "Waiting".
   - *2026-10-30, fixed:* Save As claims the result-store name before it
     publishes the document, with an empty store when there is no result, so no
-    other writer can take it (proposed, for the owner). So every new project's
+    other writer can take it (accepted 2026-10-30, OWNER_DECISIONS_V511
+    DEF-1). So every new project's
     first save, and every Save As to a new name, now creates
     `<name>.mscanvas.payloads`, also for a project that never runs targeted
     MS1; a document publish that fails after it leaves that empty folder, and
@@ -585,7 +586,8 @@ writer and Rust's ownership of files.
     test that counts copies; a recoverable queue-level refusal settles the rows
     it kept from starting as Not run, as a stop does, and a retry reruns the
     failures only, as its label and the panel say; those rows are converted by
-    a new queue (before, a retry converted them; proposed, for the owner).
+    a new queue (before, a retry converted them; accepted 2026-10-30,
+    OWNER_DECISIONS_V511 DEF-1).
 - PM9 options left to the owner: the request-error banner beside its control
   (PM9.4 O4), Retry bound to an operation id (PM9.4 F1), Rust-projected
   parameter bounds for exact range wording (PM9.5 F1).

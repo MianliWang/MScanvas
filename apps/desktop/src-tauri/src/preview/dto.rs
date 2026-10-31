@@ -1464,7 +1464,8 @@ pub enum ConversionQueueItemStateDto {
     /// confirmed tree would claim one for a run that never started a process.
     Cancelled,
     /// The queue never began this item. Not a failure: no process was launched
-    /// and nothing was created.
+    /// and no output was written. A destination folder the queue prepared
+    /// follows the queue's reclamation rule, as for `SkippedByRequest`.
     ///
     /// A stop is one way that happens and not the only one: any queue-level
     /// refusal settles the rest of the queue this way, and that queue is

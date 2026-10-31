@@ -914,4 +914,5 @@ and no native evidence is inherited across that.
   2026-10-30: every queue-level refusal settles those items as `NotRun`, as a
   stop does, and a retry now reruns only the retryable failures, as its label
   and the panel say; those items are converted by a new queue. What a rerun
-  converts did change, deliberately (proposed, for the owner).*
+  converts did change, deliberately (accepted 2026-10-30, OWNER_DECISIONS_V511
+  DEF-1).*
