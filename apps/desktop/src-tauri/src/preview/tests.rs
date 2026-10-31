@@ -14068,6 +14068,69 @@ fn a_skip_of_a_row_that_never_ran_is_the_users_decision() {
     assert_eq!(dto.failed_count, 0);
 }
 
+/// A queue-level refusal the session can recover from settles what it never
+/// reached as not run, and a retry reruns the failures only.
+///
+/// Left pending, such a row read "Waiting" in a queue that was over and was
+/// counted nowhere, and a retry labelled as rerunning failures converted it
+/// too. Settled as not run, it is what a stop leaves: a new queue's to convert.
+#[test]
+fn a_recoverable_queue_refusal_settles_unreached_rows_as_not_run_and_a_retry_leaves_them() {
+    let cancellation = ConversionCancellation::new();
+    let (mut slot, operation, attempt) = running_two_item_slot(cancellation.request_handle());
+    slot.release_attempt(operation, 0, attempt);
+    assert!(slot.settle_item(
+        operation,
+        0,
+        ItemOutcome::Refused {
+            attempt: AttemptFacts::NOTHING_RAN,
+            retryable: true,
+            error: PreviewErrorDto::new("backend_wait_failed", "lost track", true),
+        },
+    ));
+    // Refused before item 1 starts, for a reason the session can recover from.
+    slot.refuse(
+        operation,
+        PreviewErrorDto::new("queue_destination_changed", "moved", true),
+    );
+
+    let update = slot.read(
+        false,
+        ConversionDiagnosticsStateDto::default(),
+        BackendAuthorityProjectionDto::unresolved(),
+    );
+    let WorkspaceConversionStateDto::Terminal { queue, .. } = update.state else {
+        panic!("the refused queue is terminal: {:?}", update.state);
+    };
+    assert_eq!(
+        queue
+            .items
+            .iter()
+            .map(|item| item.state)
+            .collect::<Vec<_>>(),
+        vec![
+            ConversionQueueItemStateDto::Failed,
+            ConversionQueueItemStateDto::NotRun
+        ],
+        "the row the refusal kept from starting is not waiting for anything"
+    );
+    assert_eq!((queue.failed_count, queue.not_run_count), (1, 1));
+
+    slot.begin_retry().expect("a retryable failure is rerun");
+    assert_eq!(
+        running_queue_dto(&slot)
+            .items
+            .iter()
+            .map(|item| item.state)
+            .collect::<Vec<_>>(),
+        vec![
+            ConversionQueueItemStateDto::Pending,
+            ConversionQueueItemStateDto::NotRun
+        ],
+        "the retry reruns the failure and not the row never run"
+    );
+}
+
 /// The stop handle belongs to one exact attempt.
 ///
 /// Released by operation, item and attempt number, so a release that names any
@@ -28887,6 +28950,10 @@ fn a_destination_replaced_after_the_queue_starts_refuses_before_it_writes() {
         Vec::<String>::new(),
         "and nothing was written into the object that took the name"
     );
+    // And the row it kept from starting is not left waiting in a queue that
+    // is over.
+    assert_eq!(queue.items[0].state, ConversionQueueItemStateDto::NotRun);
+    assert_eq!(queue.not_run_count, 1);
 }
 
 /// Nothing the destination authority holds renders a user's own text.
