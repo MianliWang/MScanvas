@@ -1,7 +1,9 @@
 # ADR 0063 — Copy diagnostics: a redacted environment summary the user shares
 
 Status: **Accepted (2026-10-30)**; see the
-[owner decision](#owner-decision-2026-10-30-a0063), which answers questions 1–5.
+[owner decision](#owner-decision-2026-10-30-a0063), which answers questions 1–5,
+and the [owner decision of 2026-10-31](#owner-decision-2026-10-31), which
+answers questions 6 and 7.
 Proposed on 2026-10-30. The owner asked that day for every backend
 item that can be done now to start; this record states the recommendations that
 lane implemented, and each choice the owner has not made is listed
@@ -88,7 +90,11 @@ account name.
 
 The recent error codes of decision 5 do say something about the user's work: a
 code can name the input's vendor (`sciex_companion_missing`) or a feature that
-was used (`targeted_evidence_absent`), and its times say when.
+was used (`targeted_evidence_absent`), and its times say when. Once a failed
+conversion's outcome joins the ring (question 7, decided 2026-10-31,
+implemented after PR #161 merges), the ring also names conversion outcomes, and
+their times say when a conversion failed. An outcome is an owned id, so it adds
+no text.
 
 ### 3. Codes come from owned ids; every value passes its shape, or is withheld whole
 
@@ -166,8 +172,8 @@ but not exactly, what the interface showed: an error built and then discarded
 is counted too. A search of the native sources on 2026-10-30 found no
 `ok_or`, `unwrap_or`, `map_or` or `or` that builds one eagerly.
 
-The ring holds `PreviewErrorDto` kinds only. These are not errors at the
-boundary, so they are not in it:
+Until the slice of question 7 lands, the ring holds `PreviewErrorDto` kinds
+only. These are not errors at the boundary, so they are not in it:
 
 - a conversion that ran and failed, which is a report whose `outcome` and
   `detailedOutcome` say why;
@@ -176,8 +182,13 @@ boundary, so they are not in it:
   configuration;
 - a preference save that failed, whose `problem` is part of its `Ok` result.
 
-So `Held: 0` does not mean that no conversion failed this session. Whether a
-failed conversion's outcome joins the ring is open (question 7).
+So `Held: 0` does not mean that no conversion failed this session. On
+2026-10-31 the owner decided that a failed conversion's outcome will join the
+ring (question 7): when a conversion that ran ends in failure, its report's
+`detailedOutcome`, or its `outcome` when it has none, is recorded where the
+report is projected. That projection is PR #161's code, so this is implemented
+after #161 merges; until then the ring holds only `PreviewErrorDto` kinds, as
+stated above. Nothing else in the list above joins it.
 
 ### 6. Format
 
@@ -315,7 +326,24 @@ questions 1–5, and each is answered as recommended:
    accepted; no code allowlist or category is added to the ring.
 
 Questions 6 and 7 were added after A0063 was written and are not answered by
-it; they stay open below.
+it; the owner answered them on 2026-10-31 (below).
+
+## Owner decision, 2026-10-31
+
+Shown five questions on 2026-10-31, each with a recommendation, questions 6 and
+7 of this record among them, the owner replied "全部按推荐" ("all as
+recommended"). Both are answered as recommended:
+
+6. **Where the account name is checked (decision 3):** as implemented. Only a
+   value whose shape admits a word is checked, and only for the account name as
+   a whole token. This changes no code.
+7. **A failed conversion's outcome in the ring (decision 5):** yes. When a
+   conversion that ran ends in failure, its report's `detailedOutcome`, or its
+   `outcome` when it has none, joins the ring, recorded where the report is
+   projected. That projection is PR #161's code, so this is implemented after
+   #161 merges, not on this branch. Decision 2 says that the ring will then
+   also hold conversion outcomes; until that slice lands it holds only
+   `PreviewErrorDto` kinds, as decision 5 states.
 
 ## Open questions for the owner
 
@@ -329,16 +357,18 @@ it; they stay open below.
    (decision 10).** A Settings button, a read-only preview and the platform
    text clipboard.
 5. *Answered on 2026-10-30 (A0063):* **Workspace contents by family.** Left out.
-6. **Where the account name is checked (decision 3).** Open. Recommended: only values
-   whose shape admits a word, as a whole token. The alternatives are every
+6. *Answered on 2026-10-31 ([owner decision](#owner-decision-2026-10-31)):*
+   **Where the account name is checked (decision 3).** As recommended: only values
+   whose shape admits a word, as a whole token. The alternatives were every
    value as a whole token, every value as a substring, codes only, or no
    account check at all, which keeps `sciex_companion_missing` for an account
    named `sciex` but loses the defence in depth.
-7. **A failed conversion's outcome in the ring (decision 5).** Open; added after
-   A0063. Recommended: yes, the report's `detailedOutcome` (its `outcome` when
+7. *Answered on 2026-10-31 ([owner decision](#owner-decision-2026-10-31)):*
+   **A failed conversion's outcome in the ring (decision 5).** Added after
+   A0063. As recommended: yes, the report's `detailedOutcome` (its `outcome` when
    it has none) joins the ring when a conversion that ran ends in failure,
    recorded where the report is projected, after PR #161 merges, because that
-   projection is #161's code. It is an owned id, so it adds no text, but
-   decision 2 would then say that the ring names conversion outcomes too. The
-   alternatives are the `Ok`-carried refusals as well, or the ring as it is,
+   projection is #161's code. It is an owned id, so it adds no text, and
+   decision 2 now says that the ring will name conversion outcomes too. The
+   alternatives were the `Ok`-carried refusals as well, or the ring as it is,
    with decision 5 saying what it leaves out.
