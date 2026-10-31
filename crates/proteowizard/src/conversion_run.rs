@@ -3913,33 +3913,12 @@ fn run_staged(
             },
         };
     }
-    if !output.success() {
-        return StagedResult::Settled {
-            outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected {
-                exit_code: output.exit_code,
-            }),
-            backend,
-            diagnostics: diagnostic_text(&output, plan, staging, &executable),
-            // The decisive case. Two runs can end here with the same exit
-            // code and the same clean teardown, one having written a
-            // half-finished document and one having written nothing, and
-            // until this observation the two were indistinguishable
-            // everywhere downstream.
-            staged: StagedOutputEvidence::of(
-                StagedObservationPhase::ProviderReturned,
-                observe_staged_content(staging),
-            ),
-            identity,
-            process: backend.map_or(
-                ProcessAttemptOutcome::Indeterminate,
-                ProcessAttemptOutcome::of,
-            ),
-        };
-    }
     // Nothing of the output is judged or finalized while the owned tree is not
-    // confirmed gone: the one state `OwnedTreeDisposition::Unconfirmed` forbids
-    // both in, as it does for decision 6's run 1. A stop already requested is
-    // answered as one that could not be confirmed.
+    // confirmed gone, whatever the exit code: the one state
+    // `OwnedTreeDisposition::Unconfirmed` forbids both in, as it does for
+    // decision 6's run 1, and an exit code must not hide it from the
+    // quarantine. A stop already requested is answered as one that could not
+    // be confirmed.
     if !OwnedTreeDisposition::of(&output).no_owned_process_survives() {
         let staged = StagedOutputEvidence::of(
             StagedObservationPhase::ProviderReturned,
@@ -3970,6 +3949,29 @@ fn run_staged(
                 identity,
                 process,
             }
+        };
+    }
+    if !output.success() {
+        return StagedResult::Settled {
+            outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected {
+                exit_code: output.exit_code,
+            }),
+            backend,
+            diagnostics: diagnostic_text(&output, plan, staging, &executable),
+            // The decisive case. Two runs can end here with the same exit
+            // code and the same clean teardown, one having written a
+            // half-finished document and one having written nothing, and
+            // until this observation the two were indistinguishable
+            // everywhere downstream.
+            staged: StagedOutputEvidence::of(
+                StagedObservationPhase::ProviderReturned,
+                observe_staged_content(staging),
+            ),
+            identity,
+            process: backend.map_or(
+                ProcessAttemptOutcome::Indeterminate,
+                ProcessAttemptOutcome::of,
+            ),
         };
     }
 

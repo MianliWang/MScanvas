@@ -11990,6 +11990,7 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
             "error",
             "fileName",
             "finalizedOutputs",
+            "notVerifiedByMscanvas",
             "output",
             "process",
             "result",
@@ -12003,6 +12004,8 @@ fn the_serialized_queue_carries_exactly_these_members_and_no_location() {
         ],
         "one latest attempt per item, never a history of them"
     );
+    // The shipped row on the measured build: nothing to label.
+    assert_eq!(item["notVerifiedByMscanvas"], serde_json::Value::Null);
     // A known single output states its one name, under the arm that has one.
     assert_eq!(
         sorted_keys(&item["output"]),
@@ -16745,6 +16748,52 @@ fn a_plan_on_an_unmeasured_build_labels_every_row_with_its_release() {
             );
         }
     }
+}
+
+/// The plan's label is bound into the queue at `BEGIN`, so a row waiting for
+/// its destination says it before any report exists, and its report agrees
+/// once it has run.
+#[test]
+fn a_queue_on_an_unmeasured_build_labels_every_row_before_it_runs() {
+    let fixture = TestFile::new("queue-unverified-build");
+    let destination = destination_root(&fixture, "out");
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        conversion_capabilities("3.0.26204", Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+        FakeConversionRunner::new(BackendAct::Convert),
+    )));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("acquisition.raw"));
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_now(
+            std::slice::from_ref(&handle),
+            ConversionConflictPolicyDto::Fail,
+            document,
+        )
+        .expect("the queue is admitted");
+    let waiting = serde_json::to_value(service.conversion_state()).expect("the state serializes");
+    let label = &waiting["state"]["queue"]["items"][0]["notVerifiedByMscanvas"];
+    assert_eq!(label["unverifiedBuildRelease"], "3.0.26204");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    let update = service.run_claimed_conversion(operation, &destination);
+    let item = &terminal_queue(&update).items[0];
+    assert_eq!(item.state, ConversionQueueItemStateDto::Finalized);
+    let Some(super::dto::ConversionAttemptResultDto::Single { report }) = &item.result else {
+        panic!("a Thermo item reports once: {:?}", item.result);
+    };
+    assert_eq!(
+        item.not_verified_by_mscanvas
+            .as_ref()
+            .and_then(|label| label.unverified_build_release.as_deref()),
+        report.unverified_build_release.as_deref()
+    );
+    assert_eq!(
+        item.not_verified_by_mscanvas
+            .as_ref()
+            .map(|label| label.unverified_settings),
+        Some(report.unverified_settings)
+    );
 }
 
 /// A plan asked under a binding the session has left is refused with the one it

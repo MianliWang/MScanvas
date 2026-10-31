@@ -547,6 +547,9 @@ pub(super) struct QueueItem {
     // where the latest attempt is worth diagnosing, replaced whole when a later
     /// attempt settles, and dropped with the queue.
     diagnostic: Option<Arc<ConversionFailureDiagnosticTicket>>,
+    /// The "not verified by MSCanvas" label the plan stated for this row
+    /// (ADR 0055), so the row says it before any report exists.
+    not_verified: Option<NotVerifiedByMscanvas>,
 }
 
 /// What a stop established about one attempt, path-free.
@@ -629,7 +632,14 @@ impl QueueItem {
             staging_recovery: None,
             published: Vec::new(),
             diagnostic: None,
+            not_verified: None,
         }
+    }
+
+    /// The "not verified by MSCanvas" label this row runs under, bound at
+    /// `BEGIN` from the plan's own rule.
+    pub(super) fn set_not_verified(&mut self, label: Option<NotVerifiedByMscanvas>) {
+        self.not_verified = label;
     }
 
     pub(super) const fn dataset(&self) -> DatasetId {
@@ -745,6 +755,7 @@ impl QueueItem {
             file_name: self.dataset_dto.file_name.clone(),
             source_kind: self.dataset_dto.source_kind,
             output: self.output.to_dto(),
+            not_verified_by_mscanvas: self.not_verified.clone(),
             state: self.state.to_dto(),
             attempts: self.attempts,
             retryable: self.retryable,

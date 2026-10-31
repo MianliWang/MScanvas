@@ -4735,6 +4735,8 @@ fn opening_a_schema_four_document_writes_nothing_and_its_save_writes_schema_five
     );
     let described = store.describe();
     assert!(!described.dirty);
+    // What the interface warns before the first write from.
+    assert!(described.saving_upgrades_schema);
     assert!(
         described
             .inputs
@@ -4750,9 +4752,12 @@ fn opening_a_schema_four_document_writes_nothing_and_its_save_writes_schema_five
     );
     assert_eq!(fs::read_dir(scratch.directory()).expect("list").count(), 1);
     assert!(!store.describe().dirty);
+    assert!(store.describe().saving_upgrades_schema);
 
     change_and_undo(&store, &scratch);
     store.save().expect("the first Save after a change");
+    // Written as schema 5: the next Save upgrades nothing.
+    assert!(!store.describe().saving_upgrades_schema);
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(&path).expect("read")).expect("json");
     let expected = schema_four_after(|value| {

@@ -6711,6 +6711,36 @@ fn a_clean_exit_with_an_unconfirmed_tree_is_neither_judged_nor_finalized() {
     );
 }
 
+/// A non-zero exit does not hide an unconfirmed tree behind `backend_rejected`.
+#[test]
+fn a_rejected_exit_with_an_unconfirmed_tree_is_still_unaccounted() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        convert_faithfully(spec)?;
+        Ok(1)
+    };
+    let runner = FakeRunner::new(&act).leaving_a_process();
+
+    let attempt = run_conversion_cancellable(
+        &fixture.plan,
+        &capabilities(),
+        &runner,
+        ConversionCancellation::new(),
+    );
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("an unrequested run settles as a completed attempt: {attempt:?}");
+    };
+    assert_eq!(
+        report.outcome(),
+        &ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+            BackendExecutionFailure::NotTerminated
+        ))
+    );
+    assert!(report.leaves_an_owned_process_unaccounted());
+    assert!(!fixture.root.join(&fixture.plan.output_file_name).exists());
+}
+
 /// The same run with a stop requested is a failed cancellation, never a
 /// finalized output.
 #[test]

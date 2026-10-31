@@ -1343,6 +1343,9 @@ pub struct ConversionQueueItemDto {
     /// discovered here. A backend-named set carries no name, because none
     /// exists until the run has finished.
     pub output: ConversionOutputPlanDto,
+    /// The "not verified by MSCanvas" label this row runs under, as its plan
+    /// row stated it (ADR 0055), or `null` for a verified conversion.
+    pub not_verified_by_mscanvas: Option<crate::project::record::NotVerifiedByMscanvas>,
     pub state: ConversionQueueItemStateDto,
     /// How many times this item has been attempted. One after the first pass.
     pub attempts: u64,
@@ -2286,6 +2289,11 @@ pub fn queue_output_name_collision(names: &[String]) -> PreviewErrorDto {
         false,
     )
     .with_detail(names.join(", "))
+    // Whole, as a list: the detail above is bounded and a name may hold a
+    // comma, so the interface lists these (ADR 0057 decision 3).
+    .with_context(PreviewErrorContextDto::OutputNameCollision {
+        names: names.to_vec(),
+    })
 }
 
 /// What a retry answers with when the folder it would write into is no longer
@@ -3483,6 +3491,11 @@ pub enum PreviewErrorContextDto {
     /// Which rule refused a conversion intent, by stable id.
     ConversionIntent {
         reason: String,
+    },
+    /// Every planned output name two queued items would both write, once
+    /// each: display names, never locations.
+    OutputNameCollision {
+        names: Vec<String>,
     },
 }
 
