@@ -688,9 +688,15 @@ fn a_stop_after_run_one_left_its_tree_unconfirmed_is_a_failed_cancellation() {
 #[test]
 fn run_two_text_names_the_staging_area_as_staging() {
     let fixture = Fixture::new(&two_level_source());
+    let plan = fixture.plan(OutputEncoding::Mgf, ConflictPolicy::Fail);
+    // Spelled as the attempt hands it over, from the canonical root: a
+    // runner's temporary directory can carry a short component that no
+    // registered spelling mixes with long ones.
     let said = format!(
         "cannot write {}\n",
-        fixture.root.join("sample.mgf.mscanvas-staging").display()
+        plan.destination_root()
+            .join("sample.mgf.mscanvas-staging")
+            .display()
     );
     let first = writes(intermediate_of(&two_level_source()).into_bytes());
     let failing = |_: &CommandSpec| -> Result<i32, ProcessError> { Ok(1) };
@@ -698,11 +704,7 @@ fn run_two_text_names_the_staging_area_as_staging() {
         first: FakeRunner::new(&first),
         second: FakeRunner::new(&failing).complaining(&said),
     };
-    let mut report = run_conversion(
-        &fixture.plan(OutputEncoding::Mgf, ConflictPolicy::Fail),
-        &capabilities_from(CAPTURED_HELP),
-        &runner,
-    );
+    let mut report = run_conversion(&plan, &capabilities_from(CAPTURED_HELP), &runner);
     assert_eq!(report.outcome().detailed_stable_id(), "backend_rejected");
     let text = report.take_backend_text().expect("run 2's account");
     let stderr = text.stderr().text().expect("redacted, not withheld");
