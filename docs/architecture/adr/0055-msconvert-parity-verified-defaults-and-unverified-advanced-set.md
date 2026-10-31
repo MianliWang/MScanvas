@@ -221,6 +221,11 @@ default.
 > many of the outputs carry it (decision 2); on the roster row an adopted
 > output becomes; and on the project reference. No surface sends an advanced
 > intent yet, so the Advanced disclosure and its steps carry no label.
+>
+> **Review, 2026-10-31 (PR #161).** A project reference added back to the
+> Workbench brings its label to the row, and the viewer's Details names it
+> beside the file. The Metadata tab's File row and an exported figure's
+> source line do not carry it; whether they should is open for the owner.
 
 ### 4. An ordered filter chain replaces the nine fixed rows
 

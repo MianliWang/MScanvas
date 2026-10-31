@@ -119,6 +119,8 @@ const MANY: readonly SelectedFile[] = Array.from({ length: 1_024 }, (_, index) =
 /** A ProteoWizard release with no measured row: everything it converts is labelled (ADR 0055). */
 const UNMEASURED = "3.0.26204";
 const LABEL = { unverifiedSettings: true, unverifiedBuildRelease: UNMEASURED };
+/** A world on that build, so the status bar and plan rail name the release its labels name. */
+const onUnmeasured = (table: Record<string, unknown>) => ({ ...table, inspect_backend: { ...(table.inspect_backend as object), release: UNMEASURED } });
 
 /** FINISHED on the unmeasured build: both rows labelled, and Add says how many it adds. */
 const FINISHED_LABELLED = {
@@ -141,7 +143,7 @@ const COLLIDED = {
   status: "terminal",
   reason: "completed",
   operationId: OPERATION,
-  queue: queueOf(MANY.map((row) => queueItem(row.handle, row.fileName)), {
+  queue: queueOf(MANY.map((row) => queueItem(row.handle, row.fileName, { state: "notRun" })), {
     kind: "queue_output_name_collision",
     summary: "Two or more selected acquisitions would produce the same converted filename, so nothing was queued.",
     detail: MANY.map((row) => row.fileName.replace(/\.raw$/u, ".mzML")).join(", ").slice(0, 400),
@@ -203,7 +205,15 @@ function beta1Project(locale: Locale) {
     savingUpgradesSchema: true,
     inputs: project.inputs.map((input, index) => index === 0 ? { ...input, notVerifiedByMscanvas: LABEL } : input),
   };
-  return table;
+  return onUnmeasured(table);
+}
+
+/** The populated world with its mzML row adopted from a labelled conversion. */
+function labelledMzmlRow(locale: Locale) {
+  const table = scenario("populated", locale);
+  const roster = table.get_workspace_roster as { datasets: SelectedFile[]; capacity: number };
+  table.get_workspace_roster = { ...roster, datasets: roster.datasets.map((row) => row.handle === MZML_ROW.handle ? { ...row, notVerifiedByMscanvas: LABEL } : row) };
+  return onUnmeasured(table);
 }
 
 /** Chooses one processing value by its radio, never by its words. */
@@ -373,6 +383,17 @@ const STOPS: readonly Stop[] = [
       await frames();
     },
     anchor: "#workbench-inspector .inspector-panel",
+  },
+  {
+    // Details of an adopted output: its label beside the file's name.
+    name: "workbench-details-not-verified",
+    table: labelledMzmlRow,
+    drive: async () => {
+      await openSpectrum();
+      await browser.$('.workbench-header [aria-controls="workbench-inspector"]').click();
+      await frames();
+    },
+    anchor: "#workbench-inspector .inspector-panel [data-not-verified]",
   },
   {
     // A chromatogram export's result, over the plot's corner: the plot keeps
@@ -678,7 +699,7 @@ const STOPS: readonly Stop[] = [
   {
     // Every plan row on an unmeasured build labelled, and counted before Run.
     name: "conversion-plan-not-verified",
-    table: (locale) => conversionWorld(locale, { status: "idle" }),
+    table: (locale) => onUnmeasured(conversionWorld(locale, { status: "idle" })),
     drive: async () => {
       await answerPlansFor(ROWS, UNMEASURED);
       await checkMembers([FIRST.handle, SECOND.handle]);
@@ -691,7 +712,7 @@ const STOPS: readonly Stop[] = [
     // A labelled queue under way: the running and the waiting row say it
     // before either has a report (the label BEGIN binds).
     name: "conversion-running-not-verified",
-    table: (locale) => conversionWorld(locale, STARTED_LABELLED),
+    table: (locale) => onUnmeasured(conversionWorld(locale, STARTED_LABELLED)),
     drive: () => go(2),
     anchor: '.conversion-run-list li[data-item-state="pending"] [data-not-verified]',
   },
@@ -718,7 +739,7 @@ const STOPS: readonly Stop[] = [
     // Add over 1,024 results, refused for a full workspace: every output it
     // did not add, and why, windowed.
     name: "conversion-adoption-refused-long",
-    table: (locale) => ({ ...conversionWorld(locale, LONG_FINISHED, MANY), adopt_workspace_conversion_outputs: ADOPTION_REFUSED }),
+    table: (locale) => onUnmeasured({ ...conversionWorld(locale, LONG_FINISHED, MANY), adopt_workspace_conversion_outputs: ADOPTION_REFUSED }),
     drive: async () => {
       await go(2);
       await browser.$(".conversion-adoption .conversion-actions button").waitForExist({ timeout: 30_000 });
@@ -729,14 +750,14 @@ const STOPS: readonly Stop[] = [
   {
     // A finished labelled queue: its rows and Add say it.
     name: "conversion-finished-not-verified",
-    table: (locale) => conversionWorld(locale, FINISHED_LABELLED),
+    table: (locale) => onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)),
     drive: () => go(2),
     anchor: "#conversion-adopt-not-verified",
   },
   {
     // Its results at the queue's full size: windowed, every row labelled.
     name: "conversion-finished-long",
-    table: (locale) => conversionWorld(locale, LONG_FINISHED, MANY),
+    table: (locale) => onUnmeasured(conversionWorld(locale, LONG_FINISHED, MANY)),
     drive: () => go(2),
     anchor: '.conversion-run-list[data-windowed="true"] [data-not-verified]',
   },
@@ -750,7 +771,7 @@ const STOPS: readonly Stop[] = [
   {
     // An adopted output keeps its label on the roster row.
     name: "workbench-roster-not-verified",
-    table: (locale) => conversionWorld(locale, { status: "idle" }, [...ROWS, ADOPTED]),
+    table: (locale) => onUnmeasured(conversionWorld(locale, { status: "idle" }, [...ROWS, ADOPTED])),
     drive: () => revealRosterRow(ADOPTED.handle),
     anchor: `.grouped-roster [data-handle="${ADOPTED.handle}"] [data-not-verified]`,
   },
