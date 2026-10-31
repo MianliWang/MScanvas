@@ -314,6 +314,50 @@ fn a_reduced_profile_window_keeps_each_column_s_valley() {
     );
 }
 
+/// A reduced profile window keeps its first and last samples, so the screen's
+/// line crosses each edge from the sample beyond it to the same sample the
+/// export's does, and the edge heights and the value scale agree with it. Here
+/// neither edge sample is its column's extreme.
+#[test]
+fn a_reduced_profile_window_keeps_the_samples_beside_its_edges() {
+    use super::super::mzml_fixture::native_spectrum;
+    // 99.99, 100.01, ... 200.09: the window 100 to 200 holds steps 1 to 5000.
+    let points: Vec<(f64, f64)> = (0..=5005_u32)
+        .map(|step| {
+            let height = match step {
+                0 | 5001 => 5000.0,
+                1 | 5000 => 500.0,
+                2 => 300.0,
+                3 | 4999 => 0.0,
+                4 => 800.0,
+                4998 => 900.0,
+                _ => 100.0,
+            };
+            (99.99 + 0.02 * f64::from(step), height)
+        })
+        .collect();
+    let spectrum = native_spectrum("MS:1000128", (None, None), &points);
+
+    let projection = project(&spectrum, settle_viewport_domain(&spectrum), 100.0, 200.0)
+        .expect("a window inside the source");
+
+    assert!(projection.reduced());
+    assert!(projection.mz().len() <= MAX_PROJECTION_POINTS);
+    assert_eq!(
+        projection.outside(),
+        [Some((points[0].0, 5000.0)), Some((points[5001].0, 5000.0))]
+    );
+    let first = (projection.mz()[0], projection.intensity()[0]);
+    let last = (
+        *projection.mz().last().expect("points"),
+        *projection.intensity().last().expect("points"),
+    );
+    assert_eq!(first, points[1]);
+    assert_eq!(last, points[5000]);
+    assert!(projection.mz().is_sorted());
+    assert!(projection.intensity().contains(&800.0) && projection.intensity().contains(&900.0));
+}
+
 #[test]
 fn a_window_over_the_budget_is_reduced_within_the_bound() {
     let spectrum = ascending(MAX_PROJECTION_POINTS * 4);

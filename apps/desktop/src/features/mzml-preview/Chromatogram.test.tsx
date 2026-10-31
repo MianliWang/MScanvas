@@ -14,7 +14,7 @@
 
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import appStyles from "../../app/app.css?raw";
@@ -86,12 +86,14 @@ function Harness({
   onSelect,
   onToggleTrace,
   selectionAvailability,
+  exportTools,
 }: {
   readonly model: ScanModel;
   readonly initialTraces: TraceVisibility;
   readonly onSelect: (index: number) => void;
   readonly onToggleTrace: (trace: keyof TraceVisibility) => void;
   readonly selectionAvailability?: SpectrumSelectionAvailability;
+  readonly exportTools?: ComponentProps<typeof Chromatogram>["exportTools"];
 }) {
   const viewer = useViewerInteraction();
   controller = viewer;
@@ -117,6 +119,7 @@ function Harness({
       }}
       readInteraction={viewer.current}
       traces={traces}
+      exportTools={exportTools}
     />
   );
 }
@@ -126,6 +129,7 @@ function renderChromatogram(
     readonly model?: ScanModel;
     readonly traces?: TraceVisibility;
     readonly selectionAvailability?: SpectrumSelectionAvailability;
+    readonly exportTools?: ComponentProps<typeof Chromatogram>["exportTools"];
   } = {},
 ) {
   const onSelect = vi.fn();
@@ -138,6 +142,7 @@ function renderChromatogram(
       onSelect={onSelect}
       onToggleTrace={onToggleTrace}
       selectionAvailability={options.selectionAvailability}
+      exportTools={options.exportTools}
     />,
   );
   if (model.status === "ready") {
@@ -407,6 +412,18 @@ describe("what the traces are made of", () => {
     expect(document.querySelector("#chromatogram-axis-x")).toHaveTextContent("Retention time (min)");
     // The run's own minutes: 1 to 3, not 60 to 180.
     expect(document.querySelector(".chromatogram-range")).toHaveTextContent("Showing 1.0000 to 3.0000 min");
+  });
+
+  it("puts the run's unit on the range editor's fields and on the range it commits", () => {
+    renderChromatogram({ model: runOf([{ rt: 1, tic: 10, bpc: 5 }, { rt: 3, tic: 20, bpc: 8 }], false, "minute"),
+      exportTools: items => <button onClick={event => items[0]?.onSelect(event.currentTarget)} type="button">open range</button> });
+
+    fireEvent.click(screen.getByRole("button", { name: "open range" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "From (min)" }), { target: { value: "1.5" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "To (min)" }), { target: { value: "2.5" } });
+    fireEvent.submit(screen.getByRole("form", { name: UI_RESOURCES.en.rangeSet }));
+
+    expect(document.querySelector(".plot-committed-range")).toHaveTextContent("namely 1.5000 to 2.5000 min");
   });
 
   it("says neither axis carries a unit, in each axis's title", () => {

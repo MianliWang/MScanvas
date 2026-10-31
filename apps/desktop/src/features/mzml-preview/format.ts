@@ -58,6 +58,12 @@ export function retentionTimeUnitSymbol(unit: RetentionTimeUnit): string | null 
   return unit === "second" ? "s" : unit === "minute" ? "min" : null;
 }
 
+/** A retention time with the symbol of the unit the run declares, or bare where it declares none. */
+export function withRetentionTimeUnit(value: number, unit: RetentionTimeUnit): string {
+  const symbol = retentionTimeUnitSymbol(unit);
+  return symbol === null ? value.toFixed(4) : `${value.toFixed(4)} ${symbol}`;
+}
+
 /**
  * A retention time with the unit the file declares, or with the caveat that it
  * declares none. Inventing "min" or "s" would present a guess as a measurement.

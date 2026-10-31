@@ -155,6 +155,8 @@ describe("spectrum table columns", () => {
     const rt = screen.getAllByRole("columnheader")[1]!;
     expect(rt).toHaveTextContent("RT(min)");
     expect(within(rt).getByRole("button", { name: "RT (Retention time) (min)" })).toBeVisible();
+    // The search's description says nothing of retention-time units; the header does.
+    expect(document.getElementById("scan-view-help")?.textContent).not.toMatch(/retention/iu);
   });
 
   it("puts every field the table sorts by under its own header on the Scans tab (P11)", () => {

@@ -2,7 +2,8 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { RawTextField } from "../../components/fields/RawTextField";
 import { Button } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { formatMz } from "./format";
+import type { RetentionTimeUnit } from "./contracts";
+import { formatMz, retentionTimeUnitSymbol, withRetentionTimeUnit } from "./format";
 import type { PlotMenuItem } from "./QuickFigureActions";
 import type { PlotInputPort, PlotInputSnapshot } from "./viewer/plotInputAdapters";
 import { sameRange, usableRange } from "./viewer/rangeSelection";
@@ -33,11 +34,13 @@ export function usePlotRangeEditor(): { readonly editing: boolean; readonly item
  * while it is open, the committed range for a screen reader, and the gesture
  * sentence the plot is described by.
  */
-export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low: number; readonly high: number }>({ port, editing, onClose }: {
+export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low: number; readonly high: number }>({ port, editing, onClose, rtUnit = "notReported" }: {
   readonly port: PlotInputPort<A, D>;
   /** Whether the editor is open; the plot's ⋯ menu opens it. */
   readonly editing: boolean;
   readonly onClose: () => void;
+  /** The one retention-time unit the run declares, for an `rt` range; never converted. */
+  readonly rtUnit?: RetentionTimeUnit;
 }) {
   const t = useUiMessages();
   const root = useRef<HTMLDivElement | null>(null);
@@ -63,6 +66,10 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
   // At the plot's own precision, as its axis and caption print it; the exact
   // values are the editor's and the export note's (PM9 UI-31).
   const format = (value: number) => (port.axis === "mz" ? formatMz(value) : value.toFixed(4));
+  // The upper bound carries the run's unit, as the readout's "Showing" line does.
+  const formatHigh = (value: number) => (port.axis === "mz" ? formatMz(value) : withRetentionTimeUnit(value, rtUnit));
+  const symbol = port.axis === "rt" ? retentionTimeUnitSymbol(rtUnit) : null;
+  const fieldLabel = (key: "rangeLow" | "rangeHigh") => (symbol === null ? t(key) : `${t(key)} (${symbol})`);
   const id = `plot-range-${port.axis}`;
   // A plot whose whole range is one value has nothing narrower to apply.
   const noWidth = !usableRange(current.full);
@@ -80,14 +87,14 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
         mounted either way, so the live region is watched before its text
         changes. */}
     <p className={`plot-committed-range${pending === null && current.committed === null ? " visually-hidden" : ""}`} aria-live="polite" aria-atomic="true">{pending !== null
-      ? t("rangePending", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })
+      ? t("rangePending", { name: axis, low: format(pending.domain.low), high: formatHigh(pending.domain.high) })
       : current.committed === null
         ? t("rangeCommittedFull", { name: axis })
         : <>{t("rangeCommittedPart", { name: axis })}<span className="visually-hidden">{t("rangeCommittedBounds", {
-          low: format(current.committed.low), high: format(current.committed.high) })}</span></>}</p>
+          low: format(current.committed.low), high: formatHigh(current.committed.high) })}</span></>}</p>
     {pending === null ? null : <div className="plot-pending-actions">
       <Button size="sm" onClick={() => { port.confirm(pending); focusPlot(); }}
-        aria-label={t("rangeConfirmContext", { name: axis, low: format(pending.domain.low), high: format(pending.domain.high) })}>
+        aria-label={t("rangeConfirmContext", { name: axis, low: format(pending.domain.low), high: formatHigh(pending.domain.high) })}>
         {t("rangeConfirm")}
       </Button>
       <Button size="sm" onClick={() => { port.cancel(pending.transaction); focusPlot(); }}>{t("rangeCancel")}</Button>
@@ -107,10 +114,10 @@ export function PlotRangeActions<A extends "rt" | "mz", D extends { readonly low
         if (!result.valid) { setProblem(result.reason); return; }
         port.apply(port.domain(result.low, result.high)); onClose();
       }}>
-      <label id={`${id}-low-label`} htmlFor={`${id}-low`}>{t("rangeLow")}</label>
+      <label id={`${id}-low-label`} htmlFor={`${id}-low`}>{fieldLabel("rangeLow")}</label>
       <RawTextField id={`${id}-low`} labelledBy={`${id}-low-label`} describedBy={`${id}-problem`} inputMode="decimal"
         invalid={problem !== null} value={draft.low} onChange={low => setDraft({ ...draft, low })} />
-      <label id={`${id}-high-label`} htmlFor={`${id}-high`}>{t("rangeHigh")}</label>
+      <label id={`${id}-high-label`} htmlFor={`${id}-high`}>{fieldLabel("rangeHigh")}</label>
       <RawTextField id={`${id}-high`} labelledBy={`${id}-high-label`} describedBy={`${id}-problem`} inputMode="decimal"
         invalid={problem !== null} value={draft.high} onChange={high => setDraft({ ...draft, high })} />
       <Button type="submit" size="sm" refused={noWidth} reasonId={`${id}-problem`}>{t("rangeApply")}</Button>

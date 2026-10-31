@@ -237,6 +237,19 @@ describe("profile line (P175)", () => {
     expect(plot()).toHaveAttribute("data-drawn-as", "sticks");
     expect(details()).toHaveTextContent(en.plotProfileSticks);
   });
+
+  it.each(["pending", "failed"] as const)("gives no sticks reason while a profile window's drawing is %s", reason => {
+    render(<Plot drawing={{ kind: "viewport-blank", low: 150, high: 250, reason }} intensity={[]} mz={[]} representation="profile" />);
+
+    expect(details()).not.toHaveTextContent(en.plotProfileSticks);
+    expect(details()).not.toHaveTextContent(en.plotProfileLine);
+  });
+
+  it("gives no sticks reason for a profile window holding one sample to join", () => {
+    render(<Plot drawing={window([null, null])} intensity={[80]} mz={[200]} representation="profile" />);
+
+    expect(details()).not.toHaveTextContent(en.plotProfileSticks);
+  });
 });
 
 describe("stick plot caption", () => {

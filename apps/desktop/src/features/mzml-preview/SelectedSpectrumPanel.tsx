@@ -19,6 +19,9 @@ export interface SelectedSpectrumPanelProps {
   readonly onRetry: () => void;
   /** Opens the file again, for a spectrum refused because its preview is gone or no longer matches. */
   readonly onReopen?: () => void;
+  /** Whether opening the file again can start now, and the visible sentence that says why not. */
+  readonly canReopen?: boolean;
+  readonly reopenReasonId?: string;
   /**
    * Why a scan cannot be chosen now, said once, in the empty spectrum, in
    * place of the instruction to choose one (S4).
@@ -51,7 +54,7 @@ export interface SelectedSpectrumPanelProps {
 const SCAN_ID = "selected-spectrum-scan";
 
 /** Spectrum refusals whose recovery is opening the file again (ADR 0056). */
-const REOPEN_KINDS = new Set(["preview_not_open", "spectrum_not_as_recorded"]);
+const REOPEN_KINDS = new Set(["preview_not_open", "spectrum_not_as_recorded", "source_changed_since_preview"]);
 
 /**
  * The selected spectrum (direction A): a head with the title, the scan and its
@@ -161,7 +164,8 @@ function renderBody(state: Exclude<SpectrumState, { readonly status: "unavailabl
       {ownedErrorDetail(state.error, t) === null ? null : <span>{ownedErrorDetail(state.error, t)}</span>}
       {state.error.retryable ? <Button onClick={onRetry} size="sm">{t("viewerSpectrumRetry")}</Button>
         : REOPEN_KINDS.has(state.error.kind) && binding.onReopen !== undefined
-          ? <Button onClick={binding.onReopen} size="sm">{t("viewerReopenFile")}</Button> : null}</div>;
+          ? <Button onClick={binding.onReopen} refused={binding.canReopen === false} reasonId={binding.reopenReasonId} size="sm">
+            {t("viewerReopenFile")}</Button> : null}</div>;
     case "loaded": return <SpectrumDetail binding={binding} rangeEditor={rangeEditor} spectrum={state.spectrum} />;
   }
 }

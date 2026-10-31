@@ -150,7 +150,6 @@ export interface MessageParameters {
   readonly stagingRecoveryOwned: { readonly count: number };
   readonly clearCounts: { readonly count: number; readonly total: number; readonly protected: string };
   readonly linkedHeight: { readonly value: string };
-  readonly viewerExportRtHelp: { readonly low: string; readonly high: string };
   readonly viewerExportRtWindow: { readonly low: string; readonly high: string };
   readonly viewerLinkedCopied: { readonly width: string; readonly height: string; readonly theme: string; readonly index: string; readonly count: number };
   readonly viewerLinkedSaved: { readonly name: string; readonly index: string; readonly rt: string; readonly count: number };

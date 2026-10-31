@@ -466,11 +466,13 @@ export function PreviewWorkspace() {
     expanded: backendOpen,
     onToggle: () => setBackendOpen((was) => !was),
   };
+  /** The run's one declared retention-time unit, for the sentences that print a retention time. */
+  const runRtUnit = workspace.scanModel.status === "ready" ? workspace.scanModel.retentionTimeUnit : "notReported";
   /**
    * The visible reason a refused read points at: the backend item when the
    * backend is why, the busy reason when a workspace change is.
    */
-  const previewReasonId = !backendUsable || workspace.backendBusy || workspace.conversion.backendQuarantined
+  const previewReasonId =!backendUsable || workspace.backendBusy || workspace.conversion.backendQuarantined
     ? STATUS_BACKEND_ID
     : busyReason !== null ? STATUS_BUSY_ID : undefined;
   /**
@@ -827,13 +829,14 @@ export function PreviewWorkspace() {
         rangeAvailability={figureDialog.kind === "spectrum" ? workspace.spectrumRangeAvailability : "available"}
         onScope={figureDialog.kind === "spectrum" ? workspace.setSpectrumRangeScope : workspace.setChromatogramRangeScope}
         committedDomain={figureDialog.kind === "spectrum" ? workspace.spectrumCommittedDomain : workspace.chromatogramCommittedDomain}
+        rtUnit={runRtUnit}
         onExportData={figureDialog.kind === "spectrum" ? workspace.exportSpectrum : figureDialog.kind === "chromatogram" ? workspace.exportChromatogram : undefined}
         // A linked figure the lane would refuse says why here, beside the
         // actions it refuses, rather than accepting a press that does nothing.
         refusal={figureDialog.kind === "linked" && workspace.linkedFigureUnavailable !== null
           ? describeUnavailable(workspace.linkedFigureUnavailable, t) : null}
         result={figureDialog.kind === "spectrum" ? <><p role="status">{describeSpectrumExport(workspace.spectrumExport, t)}{workspace.spectrumExport.status === "failed" ? <span className="notice-detail">{ownedErrorDetail(workspace.spectrumExport.error, t)}</span> : null}</p>
-          {["saved", "copied", "cancelled", "failed"].includes(workspace.spectrumExport.status) ? <IconButton size="sm" icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={workspace.dismissSpectrumExport} /> : null}</> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} /></div>}
+          {["saved", "copied", "cancelled", "failed"].includes(workspace.spectrumExport.status) ? <IconButton size="sm" icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={workspace.dismissSpectrumExport} /> : null}</> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} rtUnit={runRtUnit} /></div>}
       /> : null}
       {/* One workspace card per surface (spec 1.2): the columns share its
           border and are separated by rules, not gaps. */}
@@ -977,6 +980,7 @@ export function PreviewWorkspace() {
                         linkedExportState={workspace.linkedFigureExport}
                         onDismiss={workspace.dismissChromatogramExport}
                         onDismissLinked={workspace.dismissLinkedFigureExport}
+                        rtUnit={runRtUnit}
                       />
                     }
                     exportTools={
@@ -1031,6 +1035,8 @@ export function PreviewWorkspace() {
                       onExport={workspace.exportSpectrum}
                       onRetry={workspace.retrySpectrum}
                       onReopen={workspace.previewActiveAgain}
+                      canReopen={canPreview}
+                      reopenReasonId={previewReasonId}
                       onRetryProjection={workspace.retrySpectrumProjection}
                       projectionError={workspace.spectrumProjectionError}
                       readViewport={workspace.readSpectrumViewport}

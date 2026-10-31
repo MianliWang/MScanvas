@@ -24,9 +24,10 @@ All notable changes will be documented here once versioned releases begin.
 - **The viewer shows what the mzML file declares.** A spectrum the file
   declares profile is drawn as one joined line, on screen as in export; a
   centroid or undeclared one stays sticks. Retention times carry the file's
-  `s` or `min`, never converted, and scans in mixed units give no
+  `s` or `min`, never converted, including in the range editor, the figure
+  dialog and the linked figure's result, and scans in mixed units give no
   chromatogram. Each axis names a declared unit by its accession. A spectrum
-  whose preview is gone offers **Open the file again**
+  whose preview is gone, or whose file changed, offers **Open the file again**
   ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
 - **Beta-1 projects open, and are upgraded when you save a change.** A project
   saved by beta 1 opens as it is. Opening it writes nothing, and Save with

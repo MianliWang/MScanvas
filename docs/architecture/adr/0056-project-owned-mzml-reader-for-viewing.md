@@ -752,7 +752,9 @@ Slice 1 therefore meets this decision's merge condition.
 >   window holding more samples than a screen projection carries, the
 >   reduction keeps each column's greatest and least value (the figure
 >   contract's `MinMaxPerColumn`, never the sticks' per-sign rule), so the
->   line keeps its valleys, and the cut is exact to one screen column. With
+>   line keeps its valleys; it also keeps the window's first and last
+>   samples, so each edge is cut from the same two samples as in the export,
+>   at the same height (one column fewer keeps them in the budget). With
 >   no viewport (no admitted m/z domain) a profile spectrum stays sticks and
 >   Details says why. Centroid and undeclared spectra are unchanged.
 >

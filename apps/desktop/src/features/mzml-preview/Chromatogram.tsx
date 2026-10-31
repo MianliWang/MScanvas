@@ -12,7 +12,7 @@ import { usePlotInput } from "./viewer/usePlotInput";
 import { usePlotTextSize } from "./viewer/usePlotTextSize";
 
 import type { RetentionTimeUnit } from "./contracts";
-import { formatCount, formatIntensity, retentionTimeUnitSymbol } from "./format";
+import { formatCount, formatIntensity, retentionTimeUnitSymbol, withRetentionTimeUnit } from "./format";
 import type {
   ViewerEvent,
   ViewerInteractionState,
@@ -201,7 +201,7 @@ export const Chromatogram = memo(function Chromatogram({
           {/* The range on screen, in the head beside the controls it refuses
               (P4): the visible reason for a refused Fit all and −. */}
           {domain === null ? null : (() => {
-            const range = t("viewerShowing", { low: domain.low.toFixed(4), high: withUnit(domain.high, model.retentionTimeUnit) }) +
+            const range = t("viewerShowing", { low: domain.low.toFixed(4), high: withRetentionTimeUnit(domain.high, model.retentionTimeUnit) }) +
               (showingFullRange ? t("viewerFullRange") : "");
             return <span className="plot-range chromatogram-axis-caption chromatogram-range" id={AXIS_CAPTION_ID} title={range}>{range}</span>;
           })()}
@@ -271,11 +271,6 @@ const UNAVAILABLE = {
   "unusable-intensity": "viewerTicIntensity", "mixed-retention-time-units": "viewerTicUnit",
 } as const satisfies Record<Exclude<ScanModelRefusal, "no-spectra">, string>;
 
-/** A retention time with the symbol of the unit the run declares, or bare where it declares none. */
-function withUnit(value: number, unit: RetentionTimeUnit): string {
-  const symbol = retentionTimeUnitSymbol(unit);
-  return symbol === null ? value.toFixed(4) : `${value.toFixed(4)} ${symbol}`;
-}
 
 interface PlotProps {
   /** The one unit every row declares; nothing converts it. */
@@ -490,7 +485,7 @@ function ChromatogramPlot({
     }
     // The range line is in the plot head, outside the plot's own frame.
     const line = node.closest(".chromatogram-panel")?.querySelector(".chromatogram-range");
-    if (line) line.textContent = t("viewerShowing", { low: shown.low.toFixed(4), high: withUnit(shown.high, unit) }) +
+    if (line) line.textContent = t("viewerShowing", { low: shown.low.toFixed(4), high: withRetentionTimeUnit(shown.high, unit) }) +
       (state.committedDomain === null && state.gesture === null ? t("viewerFullRange") : "");
   }, [readInteraction, activeTraces, points, byIndex, t, domain, extent, scale, marks, unit]);
   const input = usePlotInput({ port: inputPort, geometry: { width: PLOT_WIDTH, left: PADDING_LEFT, drawnWidth: USABLE_WIDTH }, paintFrame,
@@ -611,10 +606,10 @@ function ChromatogramPlot({
             hidden={x < PADDING_LEFT || x > PLOT_WIDTH - PADDING_RIGHT}
             style={{ left: `${at.toFixed(3)}%` }}>
             {t("viewerCursorLabel", { scan: selectedPoint.scanNumber === null ? formatCount(selectedPoint.spectrumIndex) : formatCount(selectedPoint.scanNumber),
-              rt: withUnit(selectedPoint.retentionTime, unit) })}
+              rt: withRetentionTimeUnit(selectedPoint.retentionTime, unit) })}
           </span>;
         })()}
-        <PlotRangeActions port={inputPort} editing={rangeEditing} onClose={onRangeEditorClose} />
+        <PlotRangeActions port={inputPort} editing={rangeEditing} onClose={onRangeEditorClose} rtUnit={unit} />
       </div>
       {/* One line under the ticks: the hovered scan while the pointer or the
           keyboard is on the plot, then the position title at the right. */}
@@ -695,6 +690,6 @@ function describeScan(point: ScanPoint, verb: string, unit: RetentionTimeUnit, t
       ? t("viewerScanUnreported")
       : t("viewerReportedScan", { index: formatCount(point.scanNumber) });
   return t("viewerScanReadout", { name: verb, index: formatCount(point.spectrumIndex), scan,
-    level: formatCount(point.msLevel), rt: withUnit(point.retentionTime, unit),
+    level: formatCount(point.msLevel), rt: withRetentionTimeUnit(point.retentionTime, unit),
     tic: formatIntensity(point.totalIonCurrent), bpc: formatIntensity(point.basePeakIntensity) });
 }

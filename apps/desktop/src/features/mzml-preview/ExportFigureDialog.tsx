@@ -2,7 +2,9 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { Button, Icon, IconButton, SegmentedControl } from "../../components/ui";
-import type { FigurePreviewKind, FigurePreviewOutcome, FigurePreviewQuestion, FigurePreviewRequest, FigureTheme, SpectrumRangeAvailability } from "./contracts";
+import type { FigurePreviewKind, FigurePreviewOutcome, FigurePreviewQuestion, FigurePreviewRequest, FigureTheme, RetentionTimeUnit,
+  SpectrumRangeAvailability } from "./contracts";
+import { withRetentionTimeUnit } from "./format";
 import { dpiProblemId, FigureSettingsFields } from "./FigureSettingsFields";
 import { ownedErrorMessage } from "./ownedErrorMessages";
 import type { FigureSettingsValidation } from "./figureSettingsValidation";
@@ -33,6 +35,8 @@ export interface ExportFigureDialogProps {
   readonly rangeAvailability: SpectrumRangeAvailability;
   /** The committed window "Current range" covers; null when none narrower than the source is committed. */
   readonly committedDomain: { readonly low: number; readonly high: number } | null;
+  /** The run's one declared retention-time unit, for a run's window; never converted. */
+  readonly rtUnit?: RetentionTimeUnit;
   /** The data export of the same source and range (spectrum and chromatogram; never linked). */
   readonly onExportData?: (format: "csv" | "tsv") => void;
   /** Why the lane would refuse this figure now, or `null`: shown beside the actions it refuses. */
@@ -129,7 +133,8 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
   const figureReason = props.busy ? busyReason : refusal !== null && artifact !== null ? ids.refusal : ids.status;
   const figureRefused = props.busy || artifact === null || refusal !== null;
   const rangeWindow = props.committedDomain === null ? null : t(props.kind === "spectrum" ? "viewerExportMzWindow" : "viewerExportRtWindow",
-    { low: props.committedDomain.low.toFixed(4), high: props.committedDomain.high.toFixed(4) });
+    { low: props.committedDomain.low.toFixed(4), high: props.kind === "spectrum" ? props.committedDomain.high.toFixed(4)
+      : withRetentionTimeUnit(props.committedDomain.high, props.rtUnit ?? "notReported") });
   const rangeNote = props.rangeAvailability === "noPeaks" ? t("viewerExportNoPeaks") : props.rangeAvailability === "noViewport" ? t("viewerExportNoViewport") : null;
   const onExportData = props.kind === "linked" ? undefined : props.onExportData;
   return <Dialog.Root open onOpenChange={open => { if (!open) props.onClose(); }}>

@@ -571,7 +571,11 @@ export function describeSpectrumSource(
       : drawing.kind === "viewport" || drawing.kind === "transfer" ? describeDrawing(reduction, drawing, t) : "",
     line === null && reduction.negativeCount > 0 ? describeNegativeDrawing(reduction, t) : "",
     representation === "notReported" ? t("plotUnknownRepresentation")
-      : representation === "profile" ? t(line === null ? "plotProfileSticks" : "plotProfileLine") : "",
+      // Sticks only where there is no viewport to draw the line over. A
+      // viewport whose drawing is on its way, failed, or has nothing to join
+      // states no reason it does not have; the head already says profile.
+      : representation !== "profile" ? "" : drawing.kind === "transfer" ? t("plotProfileSticks")
+      : line !== null ? t("plotProfileLine") : "",
   ]);
 }
 
