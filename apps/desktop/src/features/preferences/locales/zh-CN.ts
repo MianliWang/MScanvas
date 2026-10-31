@@ -791,7 +791,7 @@ export const zhCN = {
   noticeDropUnsupportedRoot_other: "{{count}} 个顶层项目不受支持。",
   noticeDropLinkedEntry_other: "已跳过拖入文件夹内的 {{count}} 个链接或特殊条目，未跟随。",
   noticeDropInaccessibleEntry_other: "拖入文件夹内的 {{count}} 个条目无法读取，已跳过。",
-  cnvAdvanced: "高级选项",
+  cnvAdvanced: "高级设置",
   cnvChangedCount: "已更改 {{count}} 项",
   cnvSettingsTitle: "转换设置",
   cnvSettingsLoading: "正在读取转换设置…",

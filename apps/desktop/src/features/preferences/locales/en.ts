@@ -810,7 +810,7 @@ export const en = {
   noticeDropLinkedEntry_other: "Skipped {{count}} linked or special entries inside dropped folders without following them.",
   noticeDropInaccessibleEntry_one: "{{count}} entry inside dropped folders could not be read and was left out.",
   noticeDropInaccessibleEntry_other: "{{count}} entries inside dropped folders could not be read and were left out.",
-  cnvAdvanced: "Advanced options",
+  cnvAdvanced: "Advanced settings",
   cnvChangedCount: "{{count}} changed",
   cnvSettingsTitle: "Conversion settings",
   cnvSettingsLoading: "Reading conversion settings…",
