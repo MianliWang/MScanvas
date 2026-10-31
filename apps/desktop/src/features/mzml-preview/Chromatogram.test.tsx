@@ -210,13 +210,22 @@ function tracePaths(): NodeListOf<Element> {
   return document.querySelectorAll('path.chromatogram-trace:not([d=""])');
 }
 
-/** The top value label, which is what the axis claims the tallest thing is. */
+/**
+ * The largest visible value the value axis is scaled from, which is what the
+ * axis claims the tallest thing is. Its ticks are rounded on purpose, so the
+ * plot carries the extent itself (PR #72's guard reads it here).
+ */
 function axisHigh(): string {
-  return document.querySelectorAll("text.chromatogram-value-label")[0]?.textContent ?? "";
+  return plot().getAttribute("data-value-high") ?? "";
 }
 
 function axisLow(): string {
-  return document.querySelectorAll("text.chromatogram-value-label")[1]?.textContent ?? "";
+  return plot().getAttribute("data-value-low") ?? "";
+}
+
+/** The value axis's tick labels, top to bottom as painted. */
+function valueTicks(): string[] {
+  return [...document.querySelectorAll(".chromatogram-y-ticks .plot-tick")].map((node) => node.textContent ?? "");
 }
 
 /** Where a retention time falls, in client pixels, under the range on screen. */
@@ -257,19 +266,25 @@ function spoken(): string {
 }
 
 /**
- * The committed row is true of the interaction now (PM9 UI-34): the visible
+ * The committed row is true of the interaction now (PM9 UI-34): the committed
  * sentence has a declared truth condition and meets it against the reducer's
- * own state, the caption prints the range the plot displays, the committed
+ * own state, the caption prints the range the plot displays, and the committed
  * bounds stay the live line's last words (PM9.3's rangeLine and LONG_RANGE read
  * them there), and at rest the line does not repeat the caption's numbers.
+ * With nothing narrower than the full range committed it is not printed at
+ * all: the caption already says "full range", so the sentence is announced only.
  */
 function expectTruthfulLine(): void {
   const now = state();
   expect(now.rangeSelection).toBeNull();
   const displayed = fixed(shown());
   const committed = now.committedDomain === null ? null : fixed(now.committedDomain);
-  const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, details");
-  expect(untrue(visible, "retention time", { committed, shown: displayed })).toBeNull();
+  if (committed === null) expect(liveLine()).toHaveClass("visually-hidden");
+  else expect(liveLine()).not.toHaveClass("visually-hidden");
+  const sentence = textOutside(liveLine(), "span.visually-hidden");
+  expect(untrue(sentence, "retention time", { committed, shown: displayed })).toBeNull();
+  const visible = textOutside(document.querySelector(".plot-range-actions")!, ".visually-hidden, .plot-pending-actions, .plot-range-toggle, .plot-range-editor");
+  expect(visible).toBe(committed === null ? "" : sentence);
   expect(document.querySelector(".chromatogram-range")?.textContent).toContain(displayed);
   if (committed !== null) expect(spoken().endsWith(committed), `"${spoken()}" does not end with ${committed}`).toBe(true);
   if (now.gesture === null) expect(visible).not.toMatch(/\d/u);
@@ -386,20 +401,33 @@ describe("what the traces are made of", () => {
     expect(axisLow()).toBe("0");
   });
 
-  it("says the values come from the loaded table and are not a stored record", () => {
+  it("says neither axis carries a unit, in each axis's title", () => {
     renderChromatogram();
 
-    fireEvent.click(screen.getByText("Source and drawing details"));
-    expect(screen.getByText(/Per-scan values from the complete loaded table/u)).toBeVisible();
-    expect(screen.getByText(/Not a stored chromatogram record\./u)).toBeVisible();
+    // Each title describes the plot, so a reader hears both units.
+    expect(document.querySelector("#chromatogram-axis-x")).toHaveTextContent(UI_RESOURCES.en.plotAxisRt);
+    expect(document.querySelector("#chromatogram-axis-y")).toHaveTextContent(UI_RESOURCES.en.plotAxisIntensity);
+    expect(screen.getByText(UI_RESOURCES.en.plotAxisRt)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.plotAxisIntensity)).toBeVisible();
+    // The value title is above the drawing, and the position title on the line
+    // under the ticks: neither sits in a tick row, so no tick gives way to one.
+    expect(document.querySelector(".plot-frame > .plot-axis-title-y")).not.toBeNull();
+    expect(document.querySelector(".plot-x-ticks .plot-axis-title, .plot-x-ticks + .plot-axis-title")).toBeNull();
+    expect(document.querySelector(".plot-foot > .plot-axis-title-x")).not.toBeNull();
+    // Said once per axis: the readout beside the title does not repeat it.
+    expect(document.querySelector(".plot-readout")?.textContent).not.toMatch(/unit/u);
   });
 
-  it("says neither axis carries a unit", () => {
-    renderChromatogram();
+  it("ticks both axes at round values outside the drawing, with headroom over the tallest point", () => {
+    renderChromatogram({ model: runOf([{ rt: 0, tic: 500, bpc: 90 }, { rt: 30.1, tic: 400, bpc: 80 }]) });
 
-    expect(
-      screen.getByText(/Retention time — unit not reported · Intensity — unit not reported/u),
-    ).toBeVisible();
+    const ticks = [...document.querySelectorAll(".chromatogram-plot .plot-x-ticks .plot-tick")].map((node) => node.textContent);
+    expect(ticks).toEqual(["0", "10", "20", "30"]);
+    // 500 is the tallest visible value; the axis runs past it to 525.
+    expect(valueTicks()).toEqual(["0", "100", "200", "300", "400", "500"]);
+    expect(document.querySelectorAll("svg.chromatogram-svg .plot-gridlines line")).toHaveLength(6);
+    // Every label is HTML beside the drawing: nothing in it is text a plot height could stretch.
+    expect(document.querySelector("svg.chromatogram-svg text")).toBeNull();
   });
 });
 
@@ -491,11 +519,12 @@ describe("trace visibility", () => {
   it("starts on TIC alone and hands a toggle back rather than deciding it", () => {
     const { onToggleTrace } = renderChromatogram();
 
-    expect(screen.getByRole("checkbox", { name: /TIC/u })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /BPC/u })).not.toBeChecked();
+    // Two pressed toggles rather than one choice: both may be on, or neither.
+    expect(screen.getByRole("button", { name: /TIC/u })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /BPC/u })).toHaveAttribute("aria-pressed", "false");
     expect(tracePaths()).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /BPC/u }));
+    fireEvent.click(screen.getByRole("button", { name: /BPC/u }));
 
     expect(onToggleTrace.mock.calls).toEqual([["bpc"]]);
     expect(tracePaths()).toHaveLength(2);
@@ -701,14 +730,16 @@ describe("choosing a scan", () => {
     expect(state()).toBe(before);
   });
 
-  it("draws the selected scan as a rule and a glyph, not a colour", () => {
+  it("draws the selected scan as a full-height rule labelled with its scan and RT, not a colour (P7)", () => {
     renderChromatogram();
     send({ type: "selection-committed", index: 20, retentionTime: 20 * 0.0125 });
 
     const marker = document.querySelector("g.chromatogram-selected");
     expect(marker?.querySelector("line")).not.toBeNull();
-    expect(marker?.querySelector("rect")).not.toBeNull();
-    expect(screen.getByText(/Selected index 20, scan 21, MS1/u)).toBeVisible();
+    expect(marker?.querySelector("rect")).toBeNull();
+    expect(document.querySelector(".chromatogram-cursor-label")).toHaveTextContent("Scan 21, RT 0.2500");
+    // Still the plot's description, for a reader who focuses it.
+    expect(screen.getByText(/Selected index 20, scan 21, MS1/u)).toBeInTheDocument();
   });
 
   it("keeps the marker where the scan is under the range on screen now", () => {
@@ -731,16 +762,17 @@ describe("choosing a scan", () => {
     // 0.25 falls at the middle of a 0.2-0.3 range, which is the middle of the
     // drawing area: 64 + 924 / 2.
     expect(Number(after)).toBeCloseTo(526, 0);
-    expect(document.querySelector("g.chromatogram-selected rect")?.getAttribute("x")).toBe(
-      String(Number(after) - 4.5),
-    );
+    // The label moves with its rule.
+    expect(parseFloat(document.querySelector<HTMLElement>(".chromatogram-cursor-label")?.style.left ?? ""))
+      .toBeCloseTo((Number(after) / 1000) * 100, 2);
   });
 
   it("draws no marker while nothing is selected", () => {
     renderChromatogram();
 
     expect(document.querySelector("g.chromatogram-selected")).toBeNull();
-    expect(screen.getByText(/^No scan selected\./u)).toBeVisible();
+    // Unseen, but still the plot's accessible description.
+    expect(screen.getByText(/^No scan selected\./u)).toHaveAttribute("data-idle");
   });
 });
 
@@ -873,6 +905,8 @@ describe("moving the viewport", () => {
     send({ type: "range-released", transaction: state().rangeSelection!.transaction });
     expect(state().rangeSelection?.phase).toBe("pending");
     expect(spoken()).toBe("Pending retention time: 0.1500 to 0.2500");
+    // A pending band is printed.
+    expect(liveLine()).not.toHaveClass("visually-hidden");
     const observer = observeLine();
 
     // A gesture's start discards a pending band (interactionState's
@@ -1031,8 +1065,8 @@ describe("when there is no chromatogram", () => {
   it("refuses a table the preview did not load whole, and says why", () => {
     renderChromatogram({ model: runOfRows(20, true) });
 
-    expect(screen.getByText("TIC and BPC are unavailable for this preview.")).toBeVisible();
-    expect(screen.getByText(/loaded table is incomplete/u)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.viewerTicUnavailable)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.viewerTicPrefix)).toBeVisible();
     expect(screen.queryByRole("img", { name: "Chromatogram" })).toBeNull();
     expect(tracePaths()).toHaveLength(0);
     // And no controls for a range that does not exist.
@@ -1049,15 +1083,18 @@ describe("when there is no chromatogram", () => {
       model: buildPreviewScanModel({ rows, totalRowCount: rows.length, truncated: false }),
     });
 
-    expect(screen.getByText("TIC and BPC are unavailable for this preview.")).toBeVisible();
-    expect(screen.getByText(/does not name it/u)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.viewerTicUnavailable)).toBeVisible();
+    expect(screen.getByText(UI_RESOURCES.en.viewerTicUnit)).toBeVisible();
     expect(screen.queryByText(/malformed|corrupt|invalid file/iu)).toBeNull();
   });
 
-  it("says a run with no spectra has nothing to draw", () => {
+  it("says a run with no spectra has nothing to draw, once", () => {
     renderChromatogram({ model: runOf([]) });
 
-    expect(screen.getByText("This run has no spectra.")).toBeVisible();
+    const heading = screen.getByText(UI_RESOURCES.en.viewerNoSpectra);
+    expect(heading).toBeVisible();
+    // The heading is the whole statement; no second sentence repeats it.
+    expect(heading.closest(".empty-state")?.children).toHaveLength(1);
   });
 });
 
@@ -1070,7 +1107,8 @@ describe("reaching the plot without a pointer", () => {
 
     expect(document.activeElement).toBe(plot());
     // The readout, then each axis's unit state, said once on the panel (PM9 UI-33).
-    expect(plot()).toHaveAttribute("aria-describedby", "chromatogram-readout chromatogram-units");
+    expect(plot()).toHaveAttribute("aria-describedby", "chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures");
+    expect(document.querySelector("#plot-range-rt-gestures")).toHaveTextContent(UI_RESOURCES.en.rangeHelpText);
     expect(document.querySelector("#chromatogram-readout")?.textContent).toMatch(
       /^Selected index 20,/u,
     );
@@ -1105,10 +1143,12 @@ describe("a run of a single scan", () => {
 
   /** Where a single scan lands: the domain has no width, so it is centred. */
   const ONLY_X = 526;
-  /** The top of the drawing area, which is where the extent's maximum sits. */
-  const TOP_Y = 12;
-  /** The bottom of it, which is where zero sits when zero is all there is. */
-  const BASELINE_Y = 180;
+  /** The top of the drawing area and its bottom, where zero sits when zero is all there is. */
+  const FRAME_TOP = 12;
+  const BASELINE_Y = 206;
+  const DRAWN_HEIGHT = BASELINE_Y - FRAME_TOP;
+  /** Where the extent's maximum sits: below the top by the axis's headroom. */
+  const TOP_Y = FRAME_TOP + DRAWN_HEIGHT * (0.05 / 1.05);
 
   function glyphs(): { r: string; cx: string; cy: string; className: string }[] {
     return [...document.querySelectorAll('circle.chromatogram-point:not([visibility="hidden"])')].map((node) => ({
@@ -1172,7 +1212,7 @@ describe("a run of a single scan", () => {
     // Scaled together, as they are when they are lines: the axis is the run's,
     // and each mark is at its own series' value.
     expect(Number(drawn[0]?.cy)).toBeCloseTo(TOP_Y, 6);
-    expect(Number(drawn[1]?.cy)).toBeCloseTo(TOP_Y + (6_000 / 9_000) * 168, 6);
+    expect(Number(drawn[1]?.cy)).toBeCloseTo(TOP_Y + (6_000 / 9_450) * DRAWN_HEIGHT, 6);
     expect(Number(drawn[0]?.cx)).toBeCloseTo(ONLY_X, 6);
     expect(Number(drawn[1]?.cx)).toBeCloseTo(ONLY_X, 6);
   });
@@ -1237,14 +1277,19 @@ describe("a run of a single scan", () => {
  * component was told to look for.
  */
 describe("the viewport control group", () => {
-  const CONTROLS = ["Zoom in", "Zoom out", "Reset range"] as const;
+  const CONTROLS = ["Zoom in", "Zoom out", "Fit all, retention time"] as const;
 
   function control(label: (typeof CONTROLS)[number]): HTMLButtonElement {
     return screen.getByRole("button", { name: label }) as HTMLButtonElement;
   }
 
+  /** A refused control stays focusable, as `aria-disabled` (UI-24). */
+  function refused(label: (typeof CONTROLS)[number]): boolean {
+    return control(label).getAttribute("aria-disabled") === "true";
+  }
+
   function enabledControls(): string[] {
-    return CONTROLS.filter((label) => !control(label).disabled);
+    return CONTROLS.filter((label) => !refused(label));
   }
 
   /** Presses a control without going through the roles that would refuse. */
@@ -1268,20 +1313,20 @@ describe("the viewport control group", () => {
 
     const narrowed = shown();
     expect(narrowed.high - narrowed.low).toBeLessThan(full.high - full.low);
-    expect(enabledControls()).toEqual(["Zoom in", "Zoom out", "Reset range"]);
+    expect(enabledControls()).toEqual(["Zoom in", "Zoom out", "Fit all, retention time"]);
   });
 
   it("stops offering to zoom in at the narrowest viewport the run allows", () => {
     // Driven there by pressing the button, not by naming a range.
     renderChromatogram();
-    for (let step = 0; step < 200 && !control("Zoom in").disabled; step += 1) {
+    for (let step = 0; step < 200 && !refused("Zoom in"); step += 1) {
       press("Zoom in");
     }
 
-    expect(control("Zoom in")).toBeDisabled();
+    expect(refused("Zoom in")).toBe(true);
     // And the way back is still open.
-    expect(control("Zoom out")).toBeEnabled();
-    expect(control("Reset range")).toBeEnabled();
+    expect(refused("Zoom out")).toBe(false);
+    expect(refused("Fit all, retention time")).toBe(false);
   });
 
   it("offers nothing for a run whose scans all share one retention time", () => {
@@ -1308,7 +1353,7 @@ describe("the viewport control group", () => {
         press("Zoom in");
       },
       () => {
-        for (let step = 0; step < 200 && !control("Zoom in").disabled; step += 1) {
+        for (let step = 0; step < 200 && !refused("Zoom in"); step += 1) {
           press("Zoom in");
         }
       },
@@ -1319,9 +1364,9 @@ describe("the viewport control group", () => {
       for (const label of CONTROLS) {
         const before = state();
         const shownBefore = shown();
-        if (control(label).disabled) {
-          // A disabled button is refused by the DOM, and the operation refuses
-          // it too -- so neither the range nor the state moves.
+        if (refused(label)) {
+          // A refused button swallows the click, and the operation refuses it
+          // too -- so neither the range nor the state moves.
           act(() => {
             control(label).dispatchEvent(new MouseEvent("click", { bubbles: true }));
           });
@@ -1351,17 +1396,17 @@ describe("the viewport control group", () => {
      */
     renderChromatogram();
     press("Zoom in");
-    expect(control("Reset range")).toBeEnabled();
+    expect(refused("Fit all, retention time")).toBe(false);
 
     let afterReset: ViewerInteractionState | null = null;
     act(() => {
       afterReset = controller?.dispatch({ type: "viewport-reset" }) ?? null;
-      control("Reset range").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      control("Fit all, retention time").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(afterReset).not.toBeNull();
     expect(state()).toBe(afterReset);
-    expect(control("Reset range")).toBeDisabled();
+    expect(refused("Fit all, retention time")).toBe(true);
   });
 
   it("takes the same rule from the keyboard, without inventing a transition", () => {
@@ -1382,13 +1427,13 @@ describe("the viewport control group", () => {
 
     fireEvent.keyDown(plot(), { key: "+" });
     expect(state()).not.toBe(before);
-    expect(control("Zoom out")).toBeEnabled();
+    expect(refused("Zoom out")).toBe(false);
 
     plot().focus();
 
     fireEvent.keyDown(plot(), { key: "Home" });
     expect(shown()).toEqual(renderedDomain(state()));
-    expect(control("Reset range")).toBeDisabled();
+    expect(refused("Fit all, retention time")).toBe(true);
   });
 
   it("says nothing about the range when there is no chromatogram to have one", () => {
@@ -2392,7 +2437,7 @@ describe("choosing a scan while selection is unavailable", () => {
     // Described, never disabled: this plot can still be read, and marking it
     // unavailable would say the run cannot be.
     expect(plot().getAttribute("aria-describedby")).toBe(
-      "chromatogram-readout chromatogram-units viewer-selection-availability",
+      "chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures viewer-selection-availability",
     );
     expect(plot().getAttribute("aria-disabled")).toBeNull();
     expect(styleOf(".chromatogram-svg").pointerEvents).not.toBe("none");
@@ -2402,7 +2447,7 @@ describe("choosing a scan while selection is unavailable", () => {
 
   it("keeps describing the readout and the units alone once selection returns", () => {
     renderChromatogram();
-    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-units");
+    expect(plot().getAttribute("aria-describedby")).toBe("chromatogram-readout chromatogram-axis-x chromatogram-axis-y plot-range-rt-gestures");
   });
 
   it("still reports the scan under the pointer", () => {
@@ -2458,24 +2503,22 @@ describe("choosing a scan while selection is unavailable", () => {
     blocked();
     // Zoom out and Reset are the ones a full range closes, and that rule is
     // about the range rather than about the backend.
-    expect(screen.getByRole("button", { name: "Zoom in" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Zoom in" })).not.toHaveAttribute("aria-disabled");
 
     wheel({ deltaY: -400 });
     act(() => {
       vi.advanceTimersByTime(200);
     });
 
-    expect(screen.getByRole("button", { name: "Reset range" }).hasAttribute("disabled")).toBe(
-      false,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Reset range" }));
+    expect(screen.getByRole("button", { name: "Fit all, retention time" })).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(screen.getByRole("button", { name: "Fit all, retention time" }));
     expect(shown()).toEqual(state().fullDomain);
   });
 
   it("still toggles a trace", () => {
     const { onToggleTrace } = blocked();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "BPC" }));
+    fireEvent.click(screen.getByRole("button", { name: "BPC" }));
 
     expect(onToggleTrace.mock.calls).toEqual([["bpc"]]);
   });

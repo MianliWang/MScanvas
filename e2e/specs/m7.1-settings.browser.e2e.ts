@@ -5,6 +5,7 @@ import { consoleEntries, holdInvoke, installIpcBoundary, ipcCalls, releaseInvoke
 import { ipcTable } from "../support/fixtures";
 import { activateFigureFieldByLabel } from "../support/figureLabelActivation";
 import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
+import { FIGURE_DIALOG, answerFigurePreviews, closeFigureDialog, openFigureDialog } from "../support/figure";
 import { selectedFile, unavailableBackend } from "../../apps/desktop/src/test/previewFixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
@@ -27,9 +28,11 @@ async function openSettings() {
   await browser.$("[data-settings-entry]").click();
   await browser.$(DIALOG).waitForDisplayed();
 }
-async function choose(value: string) { await browser.$(`${DIALOG} input[value="${value}"]`).click(); }
+async function choose(value: string) { await browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click(); }
 async function press(name: string) {
-  await browser.$(DIALOG).$(name === en.close || name === zh.close ? `button[aria-label="${name}"]` : `button=${name}`).click();
+  // Close is the footer's one button since Settings apply immediately (D4);
+  // found by its role in the dialog, whichever language is showing.
+  await browser.$(DIALOG).$(name === en.close || name === zh.close ? "[data-settings-close]" : `button=${name}`).click();
 }
 async function returned() {
   await browser.$(DIALOG).waitForExist({ reverse: true });
@@ -119,13 +122,13 @@ async function loadWorkspace(emptySpectrum = false, refusedViewport = false) {
   // be undone. The store reads back what it was asked to save instead.
   await readBackSavedPreferences();
   // A row press views an mzML row (DatasetRoster `handleRowPress`; PM9
-  // slice-03 "Roster row click, Enter, Preview focused"), so there is no
-  // separate Preview focused step.
+  // slice-03 "Roster row click, Enter"), so there is no separate step.
   await browser.$(ROW).click();
   await browser.$('.spectrum-table[role="grid"]').waitForDisplayed();
   await chooseFirstScan();
   // Mounted only for a loaded spectrum, including an empty or refused one.
-  await browser.$(".spectrum-panel .spectrum-export-disclosure").waitForExist();
+  await browser.$(".spectrum-panel .figure-quick-actions").waitForExist();
+  await answerFigurePreviews();
 }
 
 /**
@@ -143,11 +146,15 @@ async function chooseFirstScan() {
     ?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-/** Both shared figure-settings consumers: the chromatogram's panel and the spectrum's disclosure. */
+/**
+ * The shared figure settings' one consumer since the rebuild (spec 6): the
+ * Export figure dialog, opened from the spectrum's Export…. The inline
+ * chromatogram panel and spectrum disclosure that were the two consumers are
+ * gone, and the draft they shared lives in the workspace across openings.
+ */
 async function openFigureExports() {
-  await browser.$("#chromatogram-export-toggle").click();
-  await browser.$(".spectrum-panel .spectrum-export-disclosure summary").click();
-  await browser.$('.spectrum-panel input[id$="-widthPx"]').waitForDisplayed();
+  await openFigureDialog(".spectrum-panel");
+  await browser.$(`${FIGURE_DIALOG} input[id$="-widthPx"]`).waitForDisplayed();
 }
 
 describe("M7.1 localized Settings and real shared consumers", () => {
@@ -169,23 +176,24 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     await loadWorkspace();
     await metrics(1366, 768);
     await openFigureExports();
-    await browser.$('.spectrum-panel input[id$="-widthPx"]').setValue("00640");
-    await browser.$('.spectrum-panel input[id$="-heightPx"]').setValue("480");
-    await browser.$('.spectrum-panel input[id$="-pngDpi"]').setValue("1e");
-    for (const panel of [".spectrum-panel", ".chromatogram-export-panel"]) {
-      for (const field of ["widthPx", "heightPx", "pngDpi"] as const) {
-        const activation = await activateFigureFieldByLabel(panel, field);
-        evidence.push(activation);
-        if (!activation.focused) await capture(`label-activation-${panel.slice(1)}-${field}`);
-        expect(activation.focused).toBe(true);
-        expect(activation.labelFor).toBe(activation.inputId);
-        expect(activation.valueAfter).toBe(activation.valueBefore);
-      }
+    await browser.$(`${FIGURE_DIALOG} input[id$="-widthPx"]`).setValue("00640");
+    await browser.$(`${FIGURE_DIALOG} input[id$="-heightPx"]`).setValue("480");
+    await browser.$(`${FIGURE_DIALOG} input[id$="-pngDpi"]`).setValue("1e");
+    for (const field of ["widthPx", "heightPx", "pngDpi"] as const) {
+      const activation = await activateFigureFieldByLabel(FIGURE_DIALOG, field);
+      evidence.push(activation);
+      if (!activation.focused) await capture(`label-activation-figure-dialog-${field}`);
+      expect(activation.focused).toBe(true);
+      expect(activation.labelFor).toBe(activation.inputId);
+      expect(activation.valueAfter).toBe(activation.valueBefore);
     }
     const before = await capture("01-comfortable-figure-draft");
+    // The dialog is modal, so Settings opens once it has returned to the
+    // viewer; the draft is the workspace's and outlives the dialog.
+    await closeFigureDialog();
     await browser.execute(() => {
       const target = window as unknown as { m71Nodes: Element[] };
-      target.m71Nodes = [...document.querySelectorAll('.dataset-row, .spectrum-panel, input[id$="-widthPx"]')];
+      target.m71Nodes = [...document.querySelectorAll(".dataset-row, .spectrum-panel")];
     });
     const calls = await ipcCalls();
     await cdp("Network.enable", {});
@@ -194,14 +202,14 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     expect(await connectivityProbe("offline")).toBe(false);
     try {
       await openSettings();
-      expect(await browser.execute(() => (document.activeElement as HTMLInputElement).value)).toBe("en");
+      expect(await browser.execute(() => document.activeElement?.querySelector("[data-setting-value]")?.getAttribute("data-setting-value"))).toBe("en");
       await choose("zh-CN");
       await choose("compact");
       const changed = await capture("02-chinese-compact-preview");
       expect(changed.rows[0].height).toBeLessThan(before.rows[0].height);
       expect(changed.rows[0].fontSize).toBe(before.rows[0].fontSize);
       expect(changed.rows.map(row => row.handle)).toEqual(before.rows.map(row => row.handle));
-      // Native radio semantics plus the actual modal's Tab and Shift-Tab loop.
+      // Radio-group semantics plus the actual modal's Tab and Shift-Tab loop.
       for (let step = 0; step < 12; step++) {
         await browser.keys("Tab");
         expect(await browser.execute(() => document.querySelector("[data-settings-dialog]")?.contains(document.activeElement))).toBe(true);
@@ -210,41 +218,46 @@ describe("M7.1 localized Settings and real shared consumers", () => {
       expect(await browser.execute(() => document.querySelector("[data-settings-dialog]")?.contains(document.activeElement))).toBe(true);
       await browser.action("pointer").move({ x: 2, y: 2 }).down().up().perform();
       expect(await browser.$(DIALOG).isExisting()).toBe(true);
-      await press(zh.apply);
+      await press(zh.close);
       await returned();
       expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
       expect(await browser.execute(() => (window as unknown as { m71Nodes: Element[] }).m71Nodes.every(node => node.isConnected))).toBe(true);
       await openSettings();
       await press(zh.reset);
-      const reset = await capture("03-reset-preview-english");
+      const reset = await capture("03-reset-applied-english");
       expect(reset.rows[0].height).toBe(before.rows[0].height);
-      await press(en.cancel);
-      await returned();
-      expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
-      await openSettings();
-      await choose("en");
+      // Applied at once (GOALS D4): Chinese again is one more choice, and
+      // Escape closes without undoing anything.
+      await choose("zh-CN");
       await browser.keys("Escape");
       await returned();
       expect(await browser.execute(() => document.documentElement.lang)).toBe("zh-CN");
-      // M7.5 made Apply durable: it publishes the appearance group it applied
-      // and nothing else (docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
-      // "Startup, Settings and layout semantics"; m7.5's browser case asserts
-      // the same request). Reset then Cancel, and Escape, still write nothing.
+      // Each choice publishes the appearance group it applied and nothing else
+      // (docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md, "Startup, Settings
+      // and layout semantics").
       const after = await ipcCalls();
       expect(after.slice(0, calls.length)).toEqual(calls);
       expect(after.slice(calls.length)).toEqual([
+        { command: "save_ui_preferences", args: { request: { appearance: { locale: "zh-CN", density: "comfortable" } } } },
         { command: "save_ui_preferences", args: { request: { appearance: { locale: "zh-CN", density: "compact" } } } },
+        { command: "save_ui_preferences", args: { request: { appearance: { locale: "en", density: "comfortable" } } } },
+        { command: "save_ui_preferences", args: { request: { appearance: { locale: "zh-CN", density: "comfortable" } } } },
       ]);
+      // The draft survived Settings: reopened, the dialog shows what was typed.
+      await openFigureExports();
+      await browser.$(`${FIGURE_DIALOG} .figure-preview img`).waitForDisplayed({ timeout: 30_000 });
       const fieldFacts = await browser.execute(() => {
         const widths = [...document.querySelectorAll<HTMLInputElement>('input[id$="-widthPx"]')];
         const ids = [...document.querySelectorAll("[id]")].map(node => node.id);
-        const themes = [...document.querySelectorAll<HTMLInputElement>('.spectrum-figure-settings input[type="radio"]')];
-        return { widths: widths.map(input => input.value), idsUnique: new Set(ids).size === ids.length, themeGroups: new Set(themes.map(input => input.name)).size };
+        const themes = [...document.querySelectorAll('.spectrum-figure-settings [role="radiogroup"]')];
+        return { widths: widths.map(input => input.value), idsUnique: new Set(ids).size === ids.length, themeGroups: new Set(themes.map(group => group.getAttribute("aria-labelledby"))).size };
       });
-      expect(fieldFacts).toEqual({ widths: ["00640", "00640"], idsUnique: true, themeGroups: 2 });
-      // The session is Chinese here, and the viewer's actions are localized.
-      expect(await browser.$('.spectrum-panel').$(`button=${zh.viewerExportFormat.replace("{{name}}", "SVG")}`).isEnabled()).toBe(true);
-      expect(await browser.$('.spectrum-panel').$(`button=${zh.viewerExportFormat.replace("{{name}}", "PNG")}`).isEnabled()).toBe(false);
+      expect(fieldFacts).toEqual({ widths: ["00640"], idsUnique: true, themeGroups: 1 });
+      // The session is Chinese here, and the dialog's actions are localized:
+      // SVG is offered, and PNG is refused for the DPI draft, saying why.
+      expect(await browser.$(FIGURE_DIALOG).$(`button=${zh.viewerExportFormat.replace("{{name}}", "SVG")}`).getAttribute("aria-disabled")).toBe(null);
+      expect(await browser.$(FIGURE_DIALOG).$(`button=${zh.viewerExportFormat.replace("{{name}}", "PNG")}`).getAttribute("aria-disabled")).toBe("true");
+      await closeFigureDialog();
       // The keyboard on the roster's roving tab stop, as Tab would put it. A
       // pointer press would now view the row again (DatasetRoster
       // `handleRowPress`) and drop the loaded spectrum this case captures.
@@ -260,7 +273,6 @@ describe("M7.1 localized Settings and real shared consumers", () => {
 
   it("keeps Settings readable across four viewports and explicit 100/125/150/200 percent DPR emulation", async () => {
     await loadWorkspace();
-    await openFigureExports();
     const cases = [
       [1366, 768, 1], [1920, 1080, 1], [960, 640, 1], [1200, 800, 1],
       [1093, 614, 1.25], [1280, 720, 1.5], [480, 320, 2],
@@ -276,20 +288,21 @@ describe("M7.1 localized Settings and real shared consumers", () => {
       for (let step = 0; step < 8; step++) await browser.keys("Tab");
       expect(await browser.execute(() => document.querySelector("[data-settings-dialog]")?.contains(document.activeElement))).toBe(true);
       if (dpr === 2) {
-        await browser.execute(() => document.querySelector(".settings-dialog-actions .primary-button")!.scrollIntoView({ block: "center" }));
+        await browser.execute(() => document.querySelector("[data-settings-close]")!.scrollIntoView({ block: "center" }));
         const visible = await browser.execute(() => {
-          const target = document.querySelector<HTMLElement>(".settings-dialog-actions .primary-button")!;
+          const target = document.querySelector<HTMLElement>("[data-settings-close]")!;
           const rect = target.getBoundingClientRect();
           return rect.top >= 0 && rect.bottom <= innerHeight;
         });
         expect(visible).toBe(true);
         await capture("layout-480x320-dpr-2-footer", dpr);
       }
-      await press(index % 2 === 0 ? zh.apply : en.apply);
+      await press(index % 2 === 0 ? zh.close : en.close);
       await returned();
-      // Both actual field instances must remain pointer/focus reachable at the
-      // same scale after modal return, including their existing scroll owners.
-      for (const panel of [".spectrum-panel", ".chromatogram-export-panel"]) {
+      // The figure fields must be pointer/focus reachable at the same scale
+      // after Settings returns, in the dialog that now holds them.
+      await openFigureExports();
+      for (const panel of [FIGURE_DIALOG]) {
         const input = browser.$(`${panel} input[id$="-widthPx"]`);
         // The pinned WDIO helper wheels at viewport (0, 0), outside these
         // nested scrollports. Use the DOM scroll operation, then a real click.
@@ -322,6 +335,7 @@ describe("M7.1 localized Settings and real shared consumers", () => {
         }
       }
       await capture(`consumers-${width}x${height}-dpr-${dpr}`, dpr);
+      await closeFigureDialog();
     }
     await metrics(1366, 768);
   });
@@ -341,11 +355,13 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     await loadWorkspace(true);
     await capture("state-empty-spectrum");
     await holdInvoke("open_mzml_preview");
-    await browser.$(`button=${en.previewFocused}`).click();
+    await browser.$(ROW).click();
     await openSettings();
     await choose("zh-CN");
     await capture("state-loading-chinese");
-    await press(zh.cancel);
+    // Applied at once (D4): English again before the next English states.
+    await choose("en");
+    await press(en.close);
     await returned();
     await releaseInvokeHold("open_mzml_preview");
     await browser.$('.spectrum-table[role="grid"]').waitForDisplayed();
@@ -354,7 +370,7 @@ describe("M7.1 localized Settings and real shared consumers", () => {
     await browser.waitUntil(async () => (await browser.$(".spectrum-panel").getText()).includes("Controlled provider refusal"));
     await openSettings();
     await capture("state-provider-error-english");
-    await press(en.cancel);
+    await press(en.close);
     await returned();
     await loadWorkspace(false, true);
     await capture("state-unsupported-viewport");

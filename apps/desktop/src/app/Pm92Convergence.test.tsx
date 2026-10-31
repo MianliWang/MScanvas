@@ -10,11 +10,13 @@
  * rendered checks' (the PM9.1 browser spec's observation block).
  */
 
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { renderPm9Scenario } from "../test/pm9Scenarios";
+import { openProjectSurface } from "../test/projectMenu";
+import { rosterAction } from "../test/rosterActions";
 
 const en = UI_RESOURCES.en;
 
@@ -75,7 +77,7 @@ function shownNotices(): Element[] {
   return [...document.querySelectorAll(".shell-notices > .notice")];
 }
 
-/** Reads the first acquisition, as a reader would: focus its row, then Preview focused. */
+/** Reads the first acquisition, as a reader would: a plain click on its row. */
 async function readTheFirstAcquisition() {
   const row = await waitFor(() => {
     const found = document.querySelector<HTMLElement>('.grouped-roster [data-handle="file-0"]');
@@ -83,16 +85,14 @@ async function readTheFirstAcquisition() {
     return found;
   });
   await press(row);
-  await press(screen.getByRole("button", { name: en.previewFocused }));
-  await screen.findByRole("grid", { name: "Spectra" });
+  await screen.findByRole("grid", { name: "Scans" });
 }
 
 describe("PM9.2: the backend banner folds when there is nothing to act on (L10)", () => {
-  it("keeps a usable installation's reading as a phrase in the header, and no band", async () => {
+  it("keeps a usable installation's reading as a phrase in the status bar, and no band", async () => {
     mount("populated");
-    await waitFor(() => expect(backendToggle()).not.toBeNull());
+    await waitFor(() => expect(backendToggle()).toHaveAccessibleName(en.backendReadyShort));
     const toggle = backendToggle()!;
-    expect(toggle).toHaveAccessibleName(en.backendReadyShort);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveAttribute("aria-controls", "backend-status");
     // No banner takes a row, and its actions are out of the way...
@@ -102,9 +102,10 @@ describe("PM9.2: the backend banner folds when there is nothing to act on (L10)"
     const reading = document.querySelector('#backend-status [role="status"]');
     expect(reading).toHaveTextContent(en.backendAvailable);
 
+    // The details open over the bar, never as a band in the track.
     await press(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(shownNotices()).toHaveLength(1);
+    expect(shownNotices().map(notice => notice.getAttribute("data-backend-mode"))).toEqual(["popover"]);
     expect(screen.getByRole("button", { name: en.backendRecheck })).toBeVisible();
 
     await press(toggle);
@@ -112,12 +113,16 @@ describe("PM9.2: the backend banner folds when there is nothing to act on (L10)"
     expect(shownNotices()).toEqual([]);
   });
 
-  it("keeps a banner that has something to act on on screen, with no way to fold it", async () => {
+  it("keeps a state with something to act on as one line with its one fix", async () => {
     mount("empty");
     await screen.findByText("No ProteoWizard installation was found");
-    expect(backendToggle()).toBeNull();
-    expect(shownNotices()).toHaveLength(1);
+    expect(shownNotices().map(notice => notice.getAttribute("data-backend-mode"))).toEqual(["notice"]);
     expect(screen.getByRole("button", { name: en.backendChoose })).toBeVisible();
+    // Check again is in the details, which the status bar's item opens.
+    expect(screen.queryByRole("button", { name: en.backendRecheck })).toBeNull();
+    expect(backendToggle()).toHaveAccessibleName(en.backendStatusMissing);
+    await press(backendToggle()!);
+    expect(screen.getByRole("button", { name: en.backendRecheck })).toBeVisible();
   });
 });
 
@@ -130,9 +135,8 @@ describe("PM9.2: each surface says what it is, and offers only its own next step
       ["project", en.projectSurface],
     ] as const;
     for (const [target, name] of surfaces) {
-      if (target !== "workbench") {
-        await press(screen.getByRole("button", { name: target === "project" ? en.projectSurface : /^Conversion & results/ }));
-      }
+      if (target === "project") await openProjectSurface();
+      else if (target === "conversion") await press(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
       await waitFor(() => expect(shell()).toHaveAttribute("data-surface", target));
       const titles = screen.getAllByRole("heading", { level: 1 });
       expect(titles.map((title) => title.textContent)).toEqual([name]);
@@ -141,85 +145,87 @@ describe("PM9.2: each surface says what it is, and offers only its own next step
     // The titles are headings, not buttons: the navigation is still found once.
     expect(screen.getAllByRole("button", { name: en.workbench })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: en.projectSurface })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: /^Conversion & results/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Conversion(\s|$)/ })).toHaveLength(1);
   });
 
   it("invents no primary action on a surface that has no owned next step", async () => {
     mount("empty");
     await screen.findByText("No ProteoWizard installation was found");
     // Nothing read and nothing retained: the evidence surface offers nothing.
-    expect(document.querySelectorAll("#workbench-evidence .primary-button")).toHaveLength(0);
-    await press(screen.getByRole("button", { name: en.projectSurface }));
+    expect(document.querySelectorAll("#workbench-evidence :is(.primary-button, .ui-button--primary)")).toHaveLength(0);
+    await openProjectSurface();
     await screen.findByText(en.projectNone);
     // With no project open, New project is the one owned next step (PM9.7 F2,
     // which replaced L1's New/Open equality); Open project stays beside it.
-    const primary = document.querySelectorAll("#workbench-project .primary-button");
+    const primary = document.querySelectorAll("#workbench-project .ui-button--primary");
     expect(primary).toHaveLength(1);
     expect(primary[0]).toHaveTextContent(en.projectNew);
   });
 });
 
 describe("PM9.2: the roster's actions, quieter but all there (L9)", () => {
-  it("keeps every action reachable by name, and marks the picked-row actions", async () => {
+  it("keeps every action reachable by name", async () => {
     mount("populated");
-    for (const name of [en.addFiles, en.addFolder, en.previewFocused, en.removeHighlighted, en.clearList, en.newGroup]) {
+    for (const name of [en.addFiles, en.addFolder, en.rosterListActions]) {
       expect(await screen.findAllByRole("button", { name })).toHaveLength(1);
     }
-    expect(screen.getByRole("button", { name: en.previewFocused })).toHaveAttribute("data-contextual");
-    expect(screen.getByRole("button", { name: en.removeHighlighted })).toHaveAttribute("data-contextual");
-    expect(screen.getByRole("button", { name: en.addFiles })).not.toHaveAttribute("data-contextual");
+    // The list actions are one menu away, each once.
+    await rosterAction("removeHighlighted");
+    for (const name of [en.removeHighlighted, en.clearList, en.newGroup]) {
+      expect(screen.getAllByRole("menuitem", { name })).toHaveLength(1);
+    }
   });
 
-  it("puts the selection count on the organizing row, after New group", async () => {
+  it("leads the footer with the checked count, which is Convert's reason while it is zero", async () => {
     mount("populated");
-    await screen.findByRole("button", { name: en.newGroup });
-    const toolbar = document.querySelector<HTMLElement>(".organization-toolbar")!;
-    expect(toolbar.querySelector("button")).toHaveTextContent(en.newGroup);
-    expect(within(toolbar).getByText(/highlighted/)).toHaveClass("roster-selection-context");
+    await screen.findByRole("button", { name: en.rosterListActions });
+    const footer = document.querySelector<HTMLElement>(".roster-foot")!;
+    const count = footer.querySelector<HTMLElement>("#roster-selection-count")!;
+    expect(count).toBeVisible();
+    expect(count.textContent).toMatch(/^0\u00a0checked/);
+    expect(footer.querySelector("[data-roster-list-menu]")).toHaveAccessibleName(en.rosterListActions);
+    const convert = screen.getByRole("button", { name: en.rosterConvert });
+    expect(convert).toHaveAttribute("aria-disabled", "true");
+    expect(convert.getAttribute("aria-describedby")).toContain("roster-selection-count");
   });
 });
 
-describe("PM9.2: the context line by rank (L14–L16)", () => {
-  it("ranks every item, and leaves the conversion scope out on the Project surface", async () => {
-    mount("converting");
+describe("PM9.2: the status bar's order (L14–L16)", () => {
+  it("puts work first on every surface, and never moves an item between them", async () => {
+    mount("conversionEnded");
     await waitFor(() => expect(document.querySelector('[data-shell-context="conversionActivity"]')).not.toBeNull());
-    const ranked = () =>
-      [...document.querySelectorAll<HTMLElement>("[data-shell-context]")].map((item) => [
-        item.getAttribute("data-shell-context"),
-        item.getAttribute("data-priority"),
-      ]);
-    // The status comes first, and never gives way.
-    expect(ranked()[0]).toEqual(["conversionActivity", "1"]);
-    expect(ranked().some(([id]) => id === "conversionScope")).toBe(true);
+    const order = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-shell-context]")].map((item) => item.getAttribute("data-shell-context"));
+    const before = order();
+    expect(before[0]).toBe("conversionActivity");
 
-    await press(screen.getByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await waitFor(() => expect(shell()).toHaveAttribute("data-surface", "project"));
-    expect(ranked()[0]).toEqual(["conversionActivity", "1"]);
-    expect(ranked().some(([id]) => id === "conversionScope")).toBe(false);
+    expect(order()).toEqual(before);
   });
 });
 
 describe("PM9.2: the Details entry at a 1366-class window (L20)", () => {
-  it("stays in the tab order, says why while there is nothing to show, and opens once there is", async () => {
+  it("always opens, says in one line that there is nothing to show yet, and shows the acquisition once there is", async () => {
     mount("populated", "medium");
     const details = await screen.findByRole("button", { name: en.inspectorToggle });
     // Closed by default here, as recorded; the entry is what has to be findable.
     expect(shell()).toHaveAttribute("data-details-open", "false");
-    expect(details).toHaveAttribute("aria-disabled", "true");
+    expect(details).not.toHaveAttribute("aria-disabled");
     expect(details).not.toBeDisabled();
-    expect(details).toHaveAttribute("title", en.inspectorUnavailable);
-    details.focus();
-    expect(details).toHaveFocus();
+    await press(details);
+    expect(shell()).toHaveAttribute("data-details-open", "true");
+    expect(document.getElementById("workbench-inspector")).toHaveTextContent(en.inspectorUnavailable);
     await press(details);
     expect(shell()).toHaveAttribute("data-details-open", "false");
 
     await readTheFirstAcquisition();
-    // The same control, now usable, still closed until asked for.
+    // The same control, still closed until asked for.
     expect(screen.getByRole("button", { name: en.inspectorToggle })).toBe(details);
-    expect(details).not.toHaveAttribute("aria-disabled");
     expect(shell()).toHaveAttribute("data-details-open", "false");
     await press(details);
     expect(shell()).toHaveAttribute("data-details-open", "true");
     expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById("workbench-inspector")).not.toHaveTextContent(en.inspectorUnavailable);
   });
 });

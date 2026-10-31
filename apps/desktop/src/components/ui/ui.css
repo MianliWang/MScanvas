@@ -1,0 +1,448 @@
+/* Shared UI primitives (components/ui). Colours and radii come from
+   design-system/tokens.css (v5.11 values, rebuild spec 1.3); the type scale,
+   control heights and motion live here. The button rules are v5.11's .btn
+   (spec 1.4). The focus ring is index.css's shared :where() rule; a primitive
+   overrides it only where it sits against a clipping edge (DESIGN_SYSTEM
+   PM9.7 F15). */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  --type-body: 13px;
+  --type-label: 13px;
+  --type-caption: 12px;
+
+  --control-height-md: 36px;
+  --control-height-sm: 30px;
+
+  --motion-fast: 120ms;
+  --motion-standard: 200ms;
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --color-status-bar: #f5f7fa;
+  --shadow-control-primary: 0 1px 1px rgb(20 54 108 / 0.07);
+  --shadow-segment-checked: 0 1px 4px rgb(23 32 51 / 0.09);
+}
+
+/* Icon */
+
+.ui-icon {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Button */
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: var(--control-height-md);
+  padding: 7px 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: var(--type-body);
+  font-weight: 550;
+  line-height: 1.45;
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease);
+}
+
+.ui-button > svg {
+  flex: none;
+}
+
+.ui-button--sm {
+  gap: 5px;
+  min-height: var(--control-height-sm);
+  padding: 4px 10px;
+  font-size: var(--type-caption);
+}
+
+.ui-button:hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-subtle);
+}
+
+.ui-button:active:not(:disabled):not([aria-disabled="true"]) {
+  filter: brightness(0.96);
+}
+
+.ui-button--primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  box-shadow: var(--shadow-control-primary);
+  color: #fff;
+}
+
+.ui-button--primary:hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+}
+
+/* Quiet rests exactly as secondary does, icon buttons included: white, framed,
+   ink text, so no action is bare at rest (GOALS B1, B3). It differs only on
+   hover. */
+.ui-button--quiet:hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-selected);
+  color: var(--color-text-primary);
+}
+
+/* Danger is a secondary button with red text: one filled primary per surface. */
+.ui-button--danger {
+  color: var(--color-danger);
+}
+
+/* Open, pressed or current. It outranks the hover rules, so the state still
+   shows under the pointer that just set it. The text is accent-hover, not
+   v5.11's accent: #1769e0 on #e8f1ff is 4.47:1, below AA at 12px. */
+.ui-button:is([aria-expanded="true"], [aria-pressed="true"], [aria-current="true"]),
+.ui-button:is([aria-expanded="true"], [aria-pressed="true"], [aria-current="true"]):hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: var(--color-selected-border);
+  background: var(--color-surface-selected);
+  color: var(--color-accent-hover);
+}
+
+/* Refused (aria-disabled) stays a Tab stop and has one look whatever its
+   variant (GOALS B4, B5): a dashed edge, the grey well and muted text, never
+   opacity, so the focus ring keeps full contrast and a refused primary is no
+   louder than an enabled secondary. Focus adds the ring and nothing else. */
+.ui-button[aria-disabled="true"],
+.ui-button:disabled {
+  cursor: not-allowed;
+}
+
+.ui-button[aria-disabled="true"] {
+  border-style: dashed;
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-subtle);
+  box-shadow: none;
+  color: var(--color-text-secondary);
+}
+
+/* Native disabled is kept only for controls that are frozen, not refused. */
+.ui-button:disabled {
+  opacity: 0.48;
+}
+
+/* IconButton: square at the control height. */
+
+.ui-icon-button {
+  width: var(--control-height-md);
+  padding: 0;
+}
+
+.ui-icon-button.ui-button--sm {
+  width: var(--control-height-sm);
+}
+
+/* Toolbar / button group */
+
+.ui-toolbar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ui-toolbar[data-orientation="vertical"] {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* SegmentedControl */
+
+/* MiddleEllipsis: the head gives way, the tail and extension never do. */
+
+.ui-middle-ellipsis {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* Each part holds its own line, whatever a container's wrapping says. */
+.ui-middle-ellipsis__head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-middle-ellipsis__tail {
+  flex: none;
+  white-space: nowrap;
+}
+
+.ui-segmented {
+  display: inline-flex;
+  max-width: 100%;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
+}
+
+.ui-segmented__option {
+  min-height: var(--control-height-sm);
+  padding: 5px 10px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--type-label);
+  line-height: 1.5;
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
+}
+
+.ui-segmented__option:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.ui-segmented__option[aria-checked="true"] {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-segment-checked);
+  color: var(--color-accent);
+  font-weight: 650;
+}
+
+.ui-segmented__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+/* Refused, in the button's one refused look (B4): a dashed edge and muted text. */
+.ui-segmented__option[aria-disabled="true"] {
+  color: var(--color-text-secondary);
+  cursor: not-allowed;
+}
+
+.ui-segmented__option[aria-disabled="true"]:not(:focus-visible) {
+  outline: 1px dashed var(--color-border-strong);
+  outline-offset: -3px;
+}
+
+/* Tabs */
+
+/* Tabs and Splitter fill a flex parent (a Splitter pane is one), so they
+   nest: roster | (evidence | details). */
+.ui-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.ui-tablist {
+  display: flex;
+  flex: none;
+  gap: 20px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+  scrollbar-width: thin;
+}
+
+.ui-tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-height: var(--control-height-md);
+  padding: 2px 2px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--type-label);
+  white-space: nowrap;
+}
+
+.ui-tab:hover {
+  color: var(--color-accent);
+}
+
+.ui-tab[aria-selected="true"] {
+  border-bottom-color: var(--color-accent);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* The tablist scrolls, so its tabs draw the ring inside themselves. */
+.ui-tab:focus-visible,
+.ui-tabpanel:focus-visible {
+  outline-offset: -2px;
+}
+
+.ui-tabpanel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* PanelHeader */
+
+.ui-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 48px;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ui-panel-header__title {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--type-body);
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.ui-panel-header__actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+/* Splitter */
+
+.ui-splitter {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ui-splitter[data-orientation="vertical"] {
+  flex-direction: column;
+}
+
+.ui-splitter__pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.ui-splitter__separator {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 1px;
+  background: var(--color-border);
+  touch-action: none;
+  transition: background-color var(--motion-fast) var(--motion-ease);
+}
+
+/* A 9px hit area around the 1px line. */
+.ui-splitter__separator::before {
+  position: absolute;
+  inset: 0 -4px;
+  content: "";
+}
+
+.ui-splitter[data-orientation="vertical"] > .ui-splitter__separator::before {
+  inset: -4px 0;
+}
+
+.ui-splitter[data-orientation="horizontal"] > .ui-splitter__separator,
+.ui-splitter[data-orientation="horizontal"][data-dragging] {
+  cursor: col-resize;
+}
+
+.ui-splitter[data-orientation="vertical"] > .ui-splitter__separator,
+.ui-splitter[data-orientation="vertical"][data-dragging] {
+  cursor: row-resize;
+}
+
+.ui-splitter[data-dragging] {
+  user-select: none;
+}
+
+.ui-splitter__separator:hover,
+.ui-splitter__separator:focus-visible,
+.ui-splitter[data-dragging] > .ui-splitter__separator {
+  background: var(--color-accent);
+}
+
+/* StatusBar */
+
+.ui-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-4);
+  min-height: 30px;
+  padding: 4px var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-status-bar);
+  color: var(--color-text-secondary);
+  font-size: var(--type-caption);
+  line-height: 1.5;
+}
+
+.ui-status-bar__start,
+.ui-status-bar__end {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
+}
+
+.ui-status-bar__end {
+  margin-left: auto;
+}
+
+/* EmptyState */
+
+.ui-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: 40px var(--space-4);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.ui-empty-state__message {
+  max-width: 48ch;
+  margin: 0;
+  font-size: var(--type-body);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-button,
+  .ui-segmented__option,
+  .ui-splitter__separator {
+    transition: none;
+  }
+}

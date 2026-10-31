@@ -118,6 +118,14 @@ L12 is not revived: UI-25 closed it (baseline §12).
 | R5 | C, D | A history record whose stored payload the project found missing or damaged says so beside it, in the report's state words. The state is the project's last look; a later read's finding stays in its report (§11) | Code: the history row shows only the outcome counts (`ProjectPanel.tsx:1375-1391`). A record that opens to "Missing" or "Damaged" reads like a whole one until it is opened | `ProjectPanel` history | Vitest; P5, P10 |
 | R6 | D | A damaged payload's sentence gives its truthful next step, as the missing one does. The record and its digests are kept: put back an intact copy of the results folder, if there is one, then open the project again. Text only; no Repair or Regenerate control | O6 `resultPayloadCorrupt-01`: "…do not match the digests the project records, so they are not shown." and nothing more. Rust observes availability again on open (`dto.rs`) | bundles | Vitest (copy); P5 |
 
+*Changed by the self-explaining copy pass (2026-10-28, R4; owner direction in
+[AFTER_BETA1_PLAN §2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+The history note no longer names targeted runs. It reads "Records hold facts
+only. Opening one runs nothing. Recorded work cannot be removed yet." (记录只保存事实。打开记录不会运行任何内容。已记录的工作暂不能移除。).
+It still says opening a record runs nothing, and it no longer claims that
+recorded work does not analyse. Each targeted run's row says how it ended and
+what it stored, as R4 requires. No rendered rerun is claimed.
+
 ### VERIFIED NO DEFECT
 
 | ID | Checked | Result |
