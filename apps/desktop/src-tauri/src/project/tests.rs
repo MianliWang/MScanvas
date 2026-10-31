@@ -1484,6 +1484,50 @@ fn a_save_as_with_no_stored_result_whose_document_fails_keeps_the_reserved_store
         .expect("another name");
 }
 
+/// A 246-character document name, whose store name is 255 characters: all a
+/// path component allows. A Save As and a first run each assemble the store
+/// under a pending name of its own length; one built from the store's name
+/// would be past that limit, and the store would be refused.
+///
+/// Under a verbatim root, so the whole path may pass 260 characters, as the
+/// platform's long-path form allows.
+#[test]
+fn a_document_name_whose_store_name_fills_a_path_component_saves_and_runs() {
+    let scratch = Scratch::new("store-name-long");
+    let root = fs::canonicalize(scratch.directory()).expect("root");
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    let own = document_of(&store).project_id;
+    let another = record::ProjectId::new();
+    let document = |stem: &str| root.join(format!("{}.mscanvas", stem.repeat(237)));
+    let destination = document("a");
+    let reserved = super::payload::store_of(&destination).expect("a store name");
+    assert_eq!(reserved.file_name().expect("name").len(), 255);
+
+    store.save_as(&destination).expect("save as");
+
+    assert!(destination.exists());
+    assert_eq!(
+        super::payload::ensure_store(&reserved, another),
+        Err(super::payload::StoreRefusal::NotOwned),
+        "Save As reserved the store"
+    );
+    // A first run, for a document with no store yet, makes one the same way.
+    let first_run = super::payload::store_of(&document("b")).expect("a store name");
+    assert_eq!(super::payload::ensure_store(&first_run, own), Ok(()));
+    assert_eq!(
+        super::payload::ensure_store(&first_run, another),
+        Err(super::payload::StoreRefusal::NotOwned)
+    );
+    let residue: Vec<String> = fs::read_dir(&root)
+        .expect("dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".pending"))
+        .collect();
+    assert!(residue.is_empty(), "{residue:?}");
+}
+
 #[test]
 fn a_save_as_over_the_bound_document_is_not_refused_for_the_store_beside_it() {
     let scratch = Scratch::new("store-name-own");

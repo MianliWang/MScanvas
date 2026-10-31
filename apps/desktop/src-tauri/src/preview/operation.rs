@@ -377,10 +377,11 @@ pub(super) enum ItemState {
     ///
     /// Three states now say "no process ran for this item", and they are three
     /// because they answer three different questions. `Skipped` is the conflict
-    /// policy leaving an existing file alone. `NotRun` is a stopped queue never
-    /// reaching it. This one is a decision the user made about this item, and
-    /// the plan still holds it and still says what became of it -- which is the
-    /// whole reason skipping is an outcome rather than a membership change.
+    /// policy leaving an existing file alone. `NotRun` is a stopped or refused
+    /// queue never reaching it. This one is a decision the user made about this
+    /// item, and the plan still holds it and still says what became of it --
+    /// which is the whole reason skipping is an outcome rather than a
+    /// membership change.
     SkippedByRequest,
     /// Stopped while running, and the termination could not be confirmed.
     CancellationFailed,

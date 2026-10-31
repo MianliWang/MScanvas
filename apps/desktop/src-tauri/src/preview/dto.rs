@@ -1466,16 +1466,17 @@ pub enum ConversionQueueItemStateDto {
     /// The queue never began this item. Not a failure: no process was launched
     /// and nothing was created.
     ///
-    /// A stop is one way that happens and not the only one — a session that
-    /// loses track of a process it started refuses the rest of the queue on its
-    /// own, and that queue is `completed`.
+    /// A stop is one way that happens and not the only one: any queue-level
+    /// refusal settles the rest of the queue this way, and that queue is
+    /// `completed`. A retry does not rerun such an item in place; converting it
+    /// is a new queue.
     NotRun,
     /// The user settled this item without running it, and the queue carried on.
     ///
     /// Its own state rather than either neighbour. `Skipped` is the conflict
     /// policy leaving an existing file alone -- a decision about a destination,
-    /// which this is not. `NotRun` is a stopped queue never reaching the item --
-    /// a consequence of ending the batch, which this is not either.
+    /// which this is not. `NotRun` is a stopped or refused queue never reaching
+    /// the item -- a consequence of ending the batch, which this is not either.
     ///
     /// No conversion ran and no output was written. It does **not** say that
     /// nothing was created: a destination folder the queue prepared is bound to

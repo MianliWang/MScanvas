@@ -1066,21 +1066,6 @@ fn a_new_store_is_placed_whole_and_leaves_no_pending_directory() {
     assert!(residue.is_empty(), "{residue:?}");
 }
 
-/// A store is assembled under a name whose length is its own, not the
-/// document's plus a suffix: a 246-character document name, whose store name
-/// is 255 characters, would otherwise need a pending name past the 255 a path
-/// component allows.
-#[test]
-fn a_pending_store_name_does_not_grow_with_the_document_name() {
-    let directory = Path::new("projects");
-    let pending = payload::pending_store(directory);
-
-    assert_eq!(pending.parent(), Some(directory));
-    let name = pending.file_name().expect("name").to_string_lossy();
-    assert!(name.ends_with(".pending"), "{name}");
-    assert!(name.len() < 64, "{name}");
-}
-
 #[test]
 fn a_worker_whose_end_was_not_observed_keeps_every_later_run_out() {
     let scratch = Scratch::new("m91-quarantine");
