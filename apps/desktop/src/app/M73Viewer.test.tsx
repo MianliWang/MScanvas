@@ -58,7 +58,7 @@ function releaseBand(plot: HTMLElement, axis: "rt" | "mz") {
   pointer(plot, "pointerUp", point(axis, .5)); fireEvent.click(plot, { detail: 1 });
 }
 /** The RT header shows its short label first and its full name after it. */
-const RT_HEADER = "RT (Retention time)";
+const RT_HEADER = "RT (Retention time) (unit not reported)";
 /** Each plot's Set range… is the first item of its own ⋯ menu (direction A). */
 async function openRangeEditor(panel: HTMLElement, locale: "en" | "zh-CN" = "en") {
   fireEvent.keyDown(within(panel).getByRole("button", { name: UI_RESOURCES[locale].plotMoreExports }), { key: "Enter" });

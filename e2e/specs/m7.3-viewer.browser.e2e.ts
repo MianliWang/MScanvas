@@ -526,6 +526,8 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     expect(await browser.$(RT).isExisting()).toBe(false);
     // The header claims no one unit, and each value keeps its own.
     expect(await browser.$(SCANS + " .scan-sort-unit").getText()).toBe("(mixed units)");
+    // Heard as well as seen: the unit is in the sort button's name.
+    expect(await browser.$(SCANS + ' [role="columnheader"]:nth-child(2) button').getAttribute("aria-label")).toBe("RT (Retention time) (mixed units)");
     expect(await browser.$(row(0)).getText()).toContain("0.0000 min");
     expect(await browser.$(row(1)).getText()).toContain("1.0000 s");
     await capture("mixed-unit-refusal");

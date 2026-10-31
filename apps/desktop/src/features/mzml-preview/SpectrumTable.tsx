@@ -397,6 +397,10 @@ export const SpectrumTable = memo(function SpectrumTable({
             <div aria-rowindex={1} className="spectrum-table-row spectrum-table-head" role="row">
               {columns.map((column, columnIndex) => {
                 const short = t(column.label), full = t(SORT_LABELS[column.sort]);
+                const name = short === full ? full : t("scanColumnName", { short, full });
+                // RT's name carries its unit too, so a screen reader can tell
+                // seconds from minutes; the other names are unchanged.
+                const label = column.sort === "retentionTime" ? `${name} ${rtHeaderUnit}` : short === full ? undefined : name;
                 return <span
                   aria-colindex={columnIndex + 1}
                   className="spectrum-table-cell"
@@ -405,12 +409,12 @@ export const SpectrumTable = memo(function SpectrumTable({
                   aria-sort={view.options.sort?.key === column.sort ? view.options.sort.direction : undefined}
                 >
                   {/* The name starts with what the header shows, so it can be spoken. */}
-                  <button aria-label={short === full ? undefined : t("scanColumnName", { short, full })} className="scan-sort-button"
+                  <button aria-label={label} className="scan-sort-button"
                     onClick={() => view.sortBy(column.sort)} title={full} type="button">
                     {/* The unit the rows declare, none where they declare none, and
                         never one claim over rows in different units (P11). */}
                     <span className="scan-sort-label">{short}{column.sort === "retentionTime"
-                      // Seen, not re-read: the column's name stays its sort name.
+                      // Seen here; heard once, in the button's name.
                       ? <span aria-hidden="true" className="scan-sort-unit">{rtHeaderUnit}</span> : null}</span>
                     <svg aria-hidden="true" viewBox="0 0 12 12" width="10" height="10"
                       data-direction={view.options.sort?.key === column.sort ? view.options.sort.direction : "none"}>
