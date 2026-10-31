@@ -1,6 +1,6 @@
 # MSCanvas roadmap: every v5.11 function, both tracks
 
-Status: **Draft, awaiting the owner's decisions** ([OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md)). Nothing here authorizes a release, an upload, a dependency change or outbound contact; each keeps its own approval.
+Status: **In use. The owner answered the 21 decisions that block work now on 2026-10-30; the other 32 stay open** ([OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md), section 1b). Nothing here authorizes a release, an upload, a dependency change or outbound contact; each keeps its own approval.
 
 Date 2026-10-30. Read on `origin/main` at `7ac5a219` and on the open PRs, re-checked at about 15:45 UTC, when #181 to #184 were open, and again at about 23:00 UTC, when #185, #187 and #188 had opened. PR and branch states move; section 6 gives them as of the second check.
 
@@ -24,11 +24,11 @@ So this roadmap plans and builds every function of the owner's v5.11 demo that M
 
 Analysis runs on two tracks (SYNTHESIS section 6.2). **Track A** needs no Python: an imported feature table, sample metadata and Rust statistics. **Track B** is pyOpenMS feature detection, alignment, gap filling and annotation, and reaches users only through a released runtime.
 
-The owner, 2026-10-30 14:09 UTC, on the redesign (verbatim): "这几个前端选项我都不满意". No look is chosen. Therefore:
+The owner, 2026-10-30 14:09 UTC, on the redesign (verbatim): "这几个前端选项我都不满意". On 2026-10-30 the owner answered FE-2 as recommended: the target is the owner's own v5.11 demo, ported onto #164's tokens and components, with one real screen shown first and no more theme rounds. Therefore:
 
 - no item applies a theme;
 - #164 merges for its behaviour only, as the functional baseline (FE-1);
-- the look is settled by FE-2 and applied once by N-02, which gates nothing;
+- the look is applied once by N-02, after that first screen (FE-2), and N-02 gates nothing;
 - exported figure colours stay as they are on `main`.
 
 Binding preferences, carried into every item:
@@ -37,7 +37,7 @@ Binding preferences, carried into every item:
 - The interface explains itself: no secondary explanation text. States and labels are values.
 - Fast, bold frontend work, with one review pass for UI. Multi-round review is kept for data safety.
 - Thermo first, Bruker later. No decompilation or reverse engineering of vendor software.
-- No new dependency without the owner's approval. This plan asks for `nalgebra` and `statrs` (S-1), `ms_entropy` in the runtime (B-8), possibly `resvg`'s raster feature (MAP-1), and, for the first runtime release, the shipped runtime's wheels as production dependencies (B-1, ADR 0066 question 8).
+- No new dependency without the owner's approval. The owner approved `nalgebra` and `statrs` on 2026-10-30 (S-1). The same day the shipped runtime's wheels were approved as production dependencies, effective at the first runtime release (B-1, ADR 0066 question 8). This plan still asks for `ms_entropy` in the runtime (B-8) and possibly `resvg`'s raster feature (MAP-1).
 - Outbound contact needs the owner's go-ahead for each message. This plan schedules none.
 - Heavy tests run on GitHub Actions. Local heavy runs pass the memory gate.
 - `main` requires all nine CI checks. A product PR merges after every check passes and every thread is resolved.
@@ -69,7 +69,7 @@ MSCanvas 0.1.0-beta.1 was published on 2026-10-28 as an unsigned 6.47 MB Windows
 - **Closes:** the v5.11 rows the item makes available to users, each row exactly once.
 - **Extends:** a row closed earlier that the item deepens.
 - **Interface items** include `en` and `zh-CN` resources, and rendered QA of the loading, empty, error and keyboard states at 960x640 and at a wide viewport.
-- **Decision:** a `OWNER_DECISIONS_V511.md` id. Work may start on the recommendation. The gated part merges only after the owner's answer.
+- **Decision:** a `OWNER_DECISIONS_V511.md` id. Work may start on the recommendation. The gated part merges only after the owner's answer. The 21 decisions of its section 3 were answered on 2026-10-30 (its section 1b).
 
 ### 3.1 Lanes and the files they own
 
@@ -309,7 +309,7 @@ Computed over Depends-on and After with the upper slice counts:
 
 **Ways to shorten it:**
 
-- **Ask the decisions on this path on day one:** FE-1, M161, S-6, G3, B-6, B-2, B-4, B-5, B-9, B-8, B-3, S-7. Ask FE-1 and M161 first: the train waits for them.
+- **Ask the open decisions on this path on day one:** S-6, B-6, B-2, B-4, B-5, B-9, B-8, B-3, S-7. FE-1, M161 and G3, which the train and the scope waited for, were answered on 2026-10-30.
 - **Write A-08-KINDS's kinds into N-A2,** if B-6 is answered before N-A2 starts. `record.rs` is then touched once, A-08-KINDS shrinks to fixtures and bounds tests (up to 2 slices saved), and schema 5 carries the study kinds.
 - **Split N-A3.** A-08-KINDS and N-A9 then wait only for its Rust commands, not for the editing interface (up to 3 slices).
 - **Stack N-A2 and N-A3's Rust commands on `be/integrate`** before #161 merges, and rebase (up to 3 slices; `non-runtime.md` section 7).
@@ -336,23 +336,23 @@ Latest-finishing items, if every lane starts as early as its dependencies allow:
 
 | # | PR or branch | Item | Waits for | Note |
 | --- | --- | --- | --- | --- |
-| 1 | #185 `fix/backend-defects-1030` (ready, head `efd0294a`, nine checks green) | N-07 | DEF-1 (both of #185's proposed changes) | Squash-merge it: the message of `f127692d` describes a Retry change that `5cfd8efb` reversed. Merge it before #161's last merge of `main`, to keep #161's conflict set small |
-| 2 | #164 `ui/v511-rebuild` | N-01 | FE-1; round 2's functional fixes; the ported native specs green in one idle-desktop window; nine checks | Head `631a4a6e`, all nine checks green, still a draft. The checks went green because `3a416010` recoloured `main`'s two frozen figure documents. Revert the export half of `66a6067c` (`svg.rs`, its test and three plot goldens) and all of `3a416010` |
-| 3 | #180 `be/saved-figure` (Rust side, draft) | N-F3, slice 1 | A0062; its checks | Independent of #164. A draft until A0062 is answered. Its interface waits for #175 |
-| 4 | #176 `docs/m10-route` (head `7f91c05b`) | N-C10's schema | A0064 (eight questions) | Docs only |
-| 5 | #177 `be/restore-workspace`, #178 `be/copy-diagnostics` (Rust halves) | N-S4, N-S5 | A0061, A0063 | May merge before their interfaces. The interfaces come after #164 |
+| 1 | #185 `fix/backend-defects-1030` (ready, head `efd0294a`, nine checks green) | N-07 | Nothing from the owner: DEF-1 was answered on 2026-10-30, and both of #185's proposed changes are accepted | Squash-merge it: the message of `f127692d` describes a Retry change that `5cfd8efb` reversed. Merge it before #161's last merge of `main`, to keep #161's conflict set small |
+| 2 | #164 `ui/v511-rebuild` | N-01 | The export revert of FE-1 (answered 2026-10-30: (a)); round 2's functional fixes; the ported native specs green in one idle-desktop window; nine checks | Head `631a4a6e`, all nine checks green, still a draft. The checks went green because `3a416010` recoloured `main`'s two frozen figure documents. Revert the export half of `66a6067c` (`svg.rs`, its test and three plot goldens) and all of `3a416010` |
+| 3 | #180 `be/saved-figure` (Rust side, draft) | N-F3, slice 1 | Q5's help sentence dropped; its checks | Independent of #164. A0062 was answered on 2026-10-30: ADR 0062 as implemented, except that the save dialog shows the recorded locator and no help sentence. Its interface waits for #175 |
+| 4 | #176 `docs/m10-route` (head `7f91c05b`) | N-C10's schema | ADR 0064 recording its answers, with ADR 0058 amended in the same step (A0064, answered 2026-10-30: all eight questions as recommended) | Docs only |
+| 5 | #177 `be/restore-workspace`, #178 `be/copy-diagnostics` (Rust halves) | N-S4, N-S5 | Nothing from the owner: A0061 and A0063 were answered on 2026-10-30, as recommended | May merge before their interfaces. The interfaces come after #164 |
 | 6 | `ui/conversion-advanced` (`8e363e22`, `4e96a72a`, local) | N-04 | #164 merged | Rebase it (its base `66665a8b` is a #164 commit). It lands inside #161, or as the PR right before it |
-| 7 | #161 `be/integrate` | N-03 | N-04, N-07; M161 | Close #148, #149, #150, #151, #152 and #156 unmerged: their content merges through #161. #161 brings schema 5 |
+| 7 | #161 `be/integrate` | N-03 | N-04, N-07 (M161 answered 2026-10-30: the 2026-10-29 rule covers it) | Close #148, #149, #150, #151, #152 and #156 unmerged: their content merges through #161. #161 brings schema 5 |
 | 8 | #179 `be/adopt-output` | N-C4 | #161 merged | Retarget it from `be/integrate` to `main` |
-| 9 | #187 `be/run-history` (draft, Rust side, stacked on `be/integrate`, head `eaef5051`) | N-C9, its record and store | #161 merged; RUN-1 (ADR 0065's five questions) | Retarget it to `main` after #161. Its Rust check is red: `run_history::a_finished_queue_is_recorded_with_its_sources_and_outputs_and_the_wire_names_no_path` fails. Its body lists additive conflicts with #177, #178, #179 and #181 in `lib.rs`, `tests.rs` and `service.rs` |
-| 10 | #175 `be/reader-preview` | N-05 | #164 and #161 merged; P175; HR-1 | The webview commit draws the on-screen profile line. HR-1 covers its four native specs, unless the 2026-10-20 release already does. Its Repository quality check is red until that commit gives the eight new error codes their resources (N-05's third slice); #182 and #183 inherit the red check from this base |
-| 11 | #181 `be/viewraw-op` (ready for review, head `5dc7d807`) | N-R1 | #161 merged; A0060's notes | It does not compile against #161 as merged (`plan_conversion` takes `&BoundIntent` there), and it conflicts with #175 in seven `preview/service.rs` hunks. Whichever merges second carries the fix and reruns CI |
+| 9 | #187 `be/run-history` (draft, Rust side, stacked on `be/integrate`, head `eaef5051`) | N-C9, its record and store | #161 merged (RUN-1 answered 2026-10-30: ADR 0065's five questions as recommended) | Retarget it to `main` after #161. Its Rust check is red: `run_history::a_finished_queue_is_recorded_with_its_sources_and_outputs_and_the_wire_names_no_path` fails. Its body lists additive conflicts with #177, #178, #179 and #181 in `lib.rs`, `tests.rs` and `service.rs` |
+| 10 | #175 `be/reader-preview` | N-05 | #164 and #161 merged; HR-1 (P175 answered 2026-10-30: (a)) | The webview commit draws the on-screen profile line. HR-1 covers its four native specs, unless the 2026-10-20 release already does. Its Repository quality check is red until that commit gives the eight new error codes their resources (N-05's third slice); #182 and #183 inherit the red check from this base |
+| 11 | #181 `be/viewraw-op` (ready for review, head `5dc7d807`) | N-R1 | #161 merged (A0060's notes accepted 2026-10-30) | It does not compile against #161 as merged (`plan_conversion` takes `&BoundIntent` there), and it conflicts with #175 in seven `preview/service.rs` hunks. Whichever merges second carries the fix and reruns CI |
 | 12 | #155 `be/vendordrop` | N-S3 | #164 merged | Interface slices, then native evidence |
-| 13 | #182 `be/reader-meta` (draft, library only, stacked on #175) | N-B1 | N-15 accepted (R-1); #175 merged, then retarget to `main` | Nothing calls the new readings yet. `msaccess` leaves the open only after the BPI-time match, a later N-B1 slice |
+| 13 | #182 `be/reader-meta` (draft, library only, stacked on #175) | N-B1 | N-15 accepted (the record of R-1, answered 2026-10-30); #175 merged, then retarget to `main` | Nothing calls the new readings yet. `msaccess` leaves the open only after the BPI-time match, a later N-B1 slice |
 | 14 | #154 `be/scanctx` | N-B2 | N-B1 | Reworked, not rebased. The chromatogram document version is renumbered after #175's |
 | 15 | #183 `be/map2d` (draft, stacked on #175, head `3c566256`) | N-14 (ADR 0068), N-X4's library | MAP-1; #175 merged, then retarget to `main` | ADR 0068 and the MS1 map library, measured on the R0 file. No command or interface yet |
-| 16 | #184 `docs/study-model-adr` (draft, `8870e36e`) | A-08 (ADR 0067) | G1; B-6 with S-6 | Docs only. Its metadata scope (per study) differs from S-6's (per layer); B-6 recommends the reconciliation |
-| 17 | #188 `docs/runtime-release-adr` (draft, docs only, head `7bfa2ce3`, nine checks green) | A-02 (ADR 0066) | A-03's 3.6.0 probes; B-1, B-2, B-3 | Its decision 8 (3.5.0 for the first release) differs from B-2's lean; whichever the owner picks, decision 8 is amended before the record is accepted. Its section-9 line in AFTER_BETA1_PLAN.md merges cleanly beside this roadmap's |
+| 16 | #184 `docs/study-model-adr` (draft, `8870e36e`) | A-08 (ADR 0067) | B-6 with S-6 (G1 answered 2026-10-30) | Docs only. Its metadata scope (per study) differs from S-6's (per layer); B-6 recommends the reconciliation |
+| 17 | #188 `docs/runtime-release-adr` (draft, docs only, head `7bfa2ce3`, nine checks green) | A-02 (ADR 0066) | A-03's 3.6.0 probes; B-2, B-3; ADR 0066 question 3 (B-1 answered 2026-10-30 except question 3) | Its decision 8 (3.5.0 for the first release) differs from B-2's lean; whichever the owner picks, decision 8 is amended before the record is accepted. Its section-9 line in AFTER_BETA1_PLAN.md merges cleanly beside this roadmap's |
 
 **Started, not yet a PR** (about 23:00 UTC). `be/two-step` (N-C2) has one local commit, `4e3b0ccd`, on #161's head, not pushed. `docs/u1-feature-detection-measurement` (A-13) has nothing committed. Each starts ahead of some of its roadmap dependencies, so its work stays a draft until the gating decisions (B-11, C-2) are answered. `docs/runtime-release-adr` and `be/run-history`, listed here at 15:45 UTC, are now #188 and #187.
 
@@ -432,10 +432,10 @@ Latest-finishing items, if every lane starts as early as its dependencies allow:
 
 All 53 owner decisions are in [`OWNER_DECISIONS_V511.md`](OWNER_DECISIONS_V511.md), with options, recommendations and sources. Its section 9 lists the roadmap items each decision gates, generated from the same data as this file.
 
-- **Ask now:** the 21 decisions in its section 3. They gate phase 0, the merge train, the records and the runtime-release ADR.
-- **FE-2 is the only open question about the look.** It gates N-02 and nothing else.
+- **Answered 2026-10-30:** the 21 decisions in its section 3, which gate phase 0, the merge train, the records and the runtime-release ADR. The owner answered them as recommended, and its section 1b gives each answer and what it leaves open. ADR 0066 question 3 stays open under B-1.
+- **FE-2 was answered on 2026-10-30:** the owner's v5.11 demo, one real screen first. FE-3 (bundled fonts) is the open question left about the look. It gates N-02 and nothing else.
 - **New since the first version:** G1 carries the exact wording proposed for AGENTS.md and PROJECT_PROPOSAL.md; R-1, MAP-1, B-6 and A0064 carry the questions of #182, ADR 0068, ADR 0067 and ADR 0064's two new ones; FE-1 names `3a416010`. After the second check: RUN-1 carries ADR 0065's five questions (#187) and moves to section 3; B-1, B-2 and B-3 carry ADR 0066's nine (#188); DEF-1 adds #185's Retry change.
-- **On the critical path:** FE-1, M161, S-6, G3, B-6, B-2, B-4, B-5, B-9, B-8, B-3, S-7.
+- **On the critical path:** S-6, B-6, B-2, B-4, B-5, B-9, B-8, B-3 and S-7 are open. FE-1, M161 and G3 were answered on 2026-10-30.
 - **The research ids map as follows:**
   - the non-runtime plan's ND-xx: `OWNER_DECISIONS_V511.md` section 8;
   - SYNTHESIS D1–D15: G1, G2, B-1, B-2 (D4, D6), B-3, S-1, B-8 (D8, D15), S-2 / S-4 / S-5 (D9), B-4, B-7, B-5, B-6 and B-10.

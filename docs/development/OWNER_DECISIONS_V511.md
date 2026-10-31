@@ -1,10 +1,11 @@
 # Owner decisions for the v5.11 backend roadmap
 
-Status: **Draft, awaiting the owner's decisions** ([OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md)). Nothing here authorizes a release, an upload, a dependency change or outbound contact; each keeps its own approval.
+Status: **Partly decided: the owner answered the 21 decisions of section 3 on 2026-10-30 (section 1b); the other 32 stay open** ([OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md)). Nothing here authorizes a release, an upload, a dependency change or outbound contact; each keeps its own approval.
 
 Date 2026-10-30. This document consolidates every decision the owner still has
 to make before or during the roadmap in `ROADMAP_V511_AND_ANALYSIS.md`. Nothing in it is decided
 until the owner answers; each recommendation is the working default until then.
+*2026-10-30:* the owner answered all 21 decisions of section 3 as recommended; section 1b gives each answer and what it leaves open. The 32 in sections 4 and 5 stay open.
 
 Re-checked again at about 23:00 UTC. Since 15:45 UTC, #185 opened for
 `fix/backend-defects-1030` (ready, nine checks green), #187 for `be/run-history`
@@ -99,7 +100,7 @@ which opened at 14:38 UTC.
 | Preset floats: tolerances are carried as integers or decimal strings, so the `float_roundtrip` dependency is not needed | Resolved by design | ADR 0058:147–151 on `origin/be/integrate`; PR #151 body |
 | Secondary explanations removed (RO-26, SET-10, C12) | 2026-10-28 | AFTER_BETA1_PLAN section 2 |
 | MSCanvas ships no preset (C41) | 2026-10-29 | ADR 0058 decision 1 |
-| Product PRs merge after all checks pass and every thread is resolved | 2026-10-29 | AFTER_BETA1_PLAN:58–62, "Merging" (the record has no "accepted decisions" qualifier; the maintainer agent's memory note has it). M161 asks whether it covers #161. FE-1 asks whether it still covers #164 |
+| Product PRs merge after all checks pass and every thread is resolved | 2026-10-29 | AFTER_BETA1_PLAN:58–62, "Merging" (the record has no "accepted decisions" qualifier; the maintainer agent's memory note has it). M161 asks whether it covers #161. FE-1 asks whether it still covers #164. Both were answered on 2026-10-30 (section 1b) |
 
 ### 1a. Withdrawn on 2026-10-30, not asked
 
@@ -116,35 +117,63 @@ questions belonged to those options and are not put to the owner:
 | #164's five layout answers, as owner choices | FE-2 | Folded into FE-1 as interim defaults. Asking the owner to confirm details of a rejected direction would ask the wrong question |
 | ADR 0060 open question 8, "Recommended: direction A" | A0060 | A0060 now answers it through FE-1 and FE-2 |
 
+### 1b. Decided on 2026-10-30, as recommended
+
+The owner was shown the list of the 20 decisions that block work now, which is all of section 3 except S-1. The owner replied, verbatim: "全部按推荐，继续" ("all as recommended, continue"). Earlier the same day the owner approved S-1, verbatim: "批准" ("approved"). Each answer is that decision's recommendation in section 3. Section 3 keeps the question, options and sources as the record of what was asked. The records an answer names (ADRs, `AGENTS.md`, `PROJECT_PROPOSAL.md`) take it in their own PRs, not here. The 32 decisions in sections 4 and 5 stay open, and their recommendations stay working defaults.
+
+| Id | Answer | Left open, or work that follows |
+| --- | --- | --- |
+| FE-1 | (a): #164 merges as the functional base once round 2's findings close and all nine checks pass. Its five layout answers become interim defaults, reversible under FE-2. Each settings level gets one name: "Basic settings" and "Advanced settings" (基本设置 and 高级设置). The export half of `66a6067c` and all of `3a416010` are reverted, and the screen tokens stay | Work: the export revert in #164. A later export palette goes through L-FIG with its own document version |
+| FE-2 | (a): the owner's own v5.11 demo is the target for look and layout, ported onto #164's tokens and components. One real screen, the Workbench at 1366x768 in the real app, is shown first. No more theme rounds. The fixed points listed under FE-2 stay | Open: what the owner found wrong (layout and hierarchy, controls, colour or type). N-02 is sized again: 4 slices if only the look changes, 6–8 if the layout goes too. FE-3 stays open (section 4) |
+| G1 | (a): `AGENTS.md`, `PROJECT_PROPOSAL.md` and the product records are amended with the exact wording proposed under G1, unedited. The 10-condition promotion gate and the four rules stay. Analysis is milestone M11 and runs in parallel with M10. The three core jobs keep priority | Work: N-10 applies the wording as written, with the other records G1 lists, in its own PR. Neither file changes here |
+| G2 | (a), yes to both. Track A ships before the Python runtime. An imported feature table is a project artifact with its own digest, import record and lineage. MZmine-2-style CSV comes first, up to the 64 MiB payload cap in v1 | None |
+| G3 | (a): the split under G3. The data-safety refusals and the owner's own removals stay refused: C17, C28, C50, C41, RO-26, SET-10, C12, C19 and EXP-21. The analysis rows reopen, each behind G1's gate. C59 and EXP-20 stay outside this roadmap | Open: the rows decided separately keep their own decisions. These are VW-14 (V-4), VW-33 (V-1), VW-47 (V-5), C15 (HR-1) and VW-02's exports and panel (X-3) |
+| G4 | (a): each analysis page enters the navigation when its first working function ships. There are no placeholder pages. FE-2's target leaves room for five page tabs at 960 px | None |
+| P175 | (a): #175 keeps exporting a declared profile spectrum as a line, and its webview commit draws the same line on screen | None. N-05 is 4 slices and N-06 is 1 |
+| A0060 | Q1: a View button. Q8: slice 3 builds on #164's structure (FE-1 (a)), with decision 1's content, the phases, Cancel and the CNV-D8 progress amendment as written. The pane's place moves with FE-2. ADR 0060's slice-2 notes 2 (#181's two cases) and 3 (the departure from decision 6) are accepted as written. The defaults of Q2–Q5 and Q7 stand | Open: Q6, the hold release, under HR-1 |
+| A0061 | ADR 0061's four questions as it recommends. Matching rows come back automatically, and restore is on by default. The checked state is restored, and the off switch is in the restore document. The roster stays out of the `.mscanvas` project file for now | Open: the roster in the project file comes back with S-6 |
+| A0062 | ADR 0062's seven questions as implemented: (1) a standalone `.msfigure` JSON file; (2) a changed source is refused, with no relink and no redraw; (3) the data digest and (4) the document digest are kept; (5) paths are relative inside the document's folder and absolute outside it; (6) no saved figure in project documents or stored targeted results in this slice; (7) a figure whose source is a cache entry cannot be saved. One change to Q5: the save dialog shows the recorded locator itself and no help sentence | Work: #180 drops Q5's help sentence. Open: the locator that would let a cache-entry figure be saved (Q7) |
+| A0063 | ADR 0063's five questions as recommended: (1) only the known root of the ProteoWizard folder is named; (2) the error ring is recorded at `PreviewErrorDto::new`; (3) a `Verified build` line is added after #161; (4) a Settings button, a read-only preview and the text clipboard; (5) workspace contents stay out | None. The button comes after #164 |
+| A0064 | ADR 0064's eight questions as recommended: (1) route A1 now; (2) MCP runs approved through elicitation, with clients without it refused; (3) the desktop refuses operations that would start ProteoWizard while the CLI holds the run lock; (4) the installer carries `mscanvas.exe` and does not change PATH; (5) the CLI requires roots; (6) `run --reclaim-staging` as written; (7) `CREATE_NO_WINDOW` for every backend process; (8) a fixed cap on the MCP store, with `planStoreFull`. ADR 0058 is amended in the same step, so a method can leave the app as a plan file | Work: the ADR 0058 amendment. Open: question 7's hold-release window, under HR-1 |
+| RUN-1 | ADR 0065's five questions as recommended: (1) history is on by default; (2) Off forgets what is stored; (3) 200 runs and 64 MiB in total, 16 MiB per run; (4) the advanced intent is stored; (5) Clear keeps runs in progress. History is app-local and per user, never in the project. EXP-25's JSON is one run's redacted record | None |
+| DEF-1 | Both of #185's proposed changes are accepted. Save As, and every new project's first save, reserve the result-store name and leave `<name>.mscanvas.payloads`. Rows a refused queue never reached settle as Not run, and Retry leaves them | Work: squash-merge #185. The rendered retry-queue check belongs to N-01 and N-03 |
+| M161 | No: the 2026-10-29 rule covers #161 once its blockers 1–6 close | None |
+| U7 | (a): one umbrella decision admits project-owned computations over the reader's decoded arrays, each with its own per-algorithm record. It also amends the retention invariant, so that a bounded, cancellable full pass may run and keep only its result | Work: the umbrella decision is written with N-13 (X0) |
+| X-1 | Option 2: the full XIC re-enters through the X0 scope record, with XIC §11 items 1, 6, 7, 11 and 12 as recommended | None. X-3 stays open (section 4) |
+| X-2 | All accepted: (1) the four departures from ADR 0046 §1, which are ppm input and the whole-query refusal of mixed polarity, mixed FAIMS CV and mixed representation; (2) polarity rule P1 now, and P2 in a later record; (3) the profile point sum, labelled "sum of profile points, not an area", with the owner as S1's owner in the record; (4) MS1 only; (5) the preview's open refusals in front of the engine, with the narrower domain disclosed | None |
+| R-1 | The amendment is accepted: polarity, charge, run-level metadata and the run summary from the table pass. #182's five choices are accepted as it states them. PRJ-006's BPI retention times: (a) now, from `msaccess`; then (c), computed from the declared base-peak values under a short record under U7 and matched to `msaccess` on a fixture first. If they cannot be matched, (a) stays. #154's terms: polarity and charge now | Open: analyzer and filter string, taken only if #154's columns stay in the rebuilt scan table. The recommendation takes no scan event or ion injection time. The recorded `msaccess` pair is HR-1 item 6 |
+| S-1 | Approved: `nalgebra =0.35.0` (`default-features = false, features = ["std"]`) and `statrs =0.19.1` (`default-features = false`) as production dependencies of `crates/stats`. Pinned scipy, statsmodels and numpy are used only in a development fixture generator. Its outputs are committed, and nothing from it ships | Open: `kodama`, only if S-2 asks for clustering. Work: the lockfile crate count is derived again with `cargo tree` at admission |
+| B-1 | (b), ADR 0066 decision 1: a separate, verified runtime package beside each release, which the user installs. Every fix to a shipped runtime component is an app release. Decision 2 is accepted: the runtime goes per machine under `%ProgramFiles%\MSCanvas Analysis Runtime\<digest>\`, and the work area under `%ProgramData%\MSCanvas\work\<user SID>\`. Question 6: AppContainer confinement is a release blocker only if A-06 shows it can be enforced without administrator rights; otherwise a release ships with the stated limit and the measured mitigations. Question 8: the hash-pinned wheels and the release-workflow change are approved with ADR 0066, effective at the first runtime release (A-05); nothing ships before then. Question 9: a reading on redistributing the MSVC runtime copies is asked for, with B-2's Qt reading if that is still needed | Open: question 3, a user without administrator rights (working default: require elevation). Also open: the question-9 reading itself, which blocks A-05, and B-2 (questions 5 and 7) and B-3 (question 4). ADR 0066 stays Proposed, and B-2 is decided before it is accepted |
+
 ---
 
 ## 2. Summary
 
-Ordered: work blocked now first, then by the slice each decision gates. Counts: 21 now, 25 before-its-slice, 7 later (53).
+Ordered: work blocked now first, then by the slice each decision gates. Counts: 21 now, 25 before-its-slice, 7 later (53). The 21 now were decided on 2026-10-30, as recommended (section 1b); the other 32 stay open.
 
 | # | Id | Decision | Recommendation | Kind | Urgency |
 | --- | --- | --- | --- | --- | --- |
-| 1 | FE-1 | Does #164 still merge, for its behaviour only, now that its look is rejected? | Yes, as the interim base: its five layout answers as interim defaults, one name per settings level, and the export palette of `66a6067c` and the recoloured frozen goldens of `3a416010` reverted | choice | now |
-| 2 | FE-2 | What the new look is, and how it is chosen | The owner's own v5.11 demo, ported onto #164's tokens and components, one real screen first; no more theme rounds | choice | now |
-| 3 | G1 | Record the analysis direction in AGENTS.md, PROPOSAL and the product records | Amend them. Keep the promotion gate and the four safety rules. Run analysis in parallel with M10 | choice | now |
-| 4 | G2 | Two tracks: Track A ships before the Python runtime; an imported feature table is a project artifact | Yes to both; MZmine-2-style CSV first | choice | now |
-| 5 | G3 | Which refused v5.11 rows stay refused | Keep the data-safety refusals and the owner's own removals. Reopen the analysis rows | choice | now |
-| 6 | G4 | When the analysis pages enter the navigation | Each page appears when its first working function ships. No placeholder pages | choice | now |
-| 7 | P175 | Export profile spectra as lines in slice 2, before slice 3 | Keep it, and draw the line on screen in the same webview commit | choice | now |
-| 8 | A0060 | ADR 0060 Q1 (entry point) and Q8 (direction); slice-2 notes | A View button; slice 3 builds on #164's structure and moves with FE-2; accept the notes. Q2–Q7 defaults stand | choice | now |
-| 9 | A0061 | ADR 0061's four restore questions; the roster in the project file | As recommended; the roster stays out of `.mscanvas` for now | confirm | now |
-| 10 | A0062 | ADR 0062's seven saved-figure questions | As implemented, except that Q5 drops its help sentence | confirm | now |
-| 11 | A0063 | ADR 0063's five diagnostics questions | As recommended | confirm | now |
-| 12 | A0064 | ADR 0064's eight M10 route questions; ADR 0058's "presets stay in the app" | As recommended; amend ADR 0058 so a method can leave the app as a file | confirm | now |
-| 13 | RUN-1 | ADR 0065's five questions on conversion run history (RUN-007; EXP-23, EXP-25) | As recommended: on by default, Off forgets, 200 runs and 64 MiB, the advanced intent stored, Clear keeps runs in progress; app-local, never in the project | confirm | now |
-| 14 | DEF-1 | #185's two proposed changes: every new project's first save and every Save As to a new name leaves a `.payloads` folder; rows a refused queue never reached settle as Not run, and Retry leaves them | Accept both | confirm | now |
-| 15 | M161 | Does #161 still need the owner's own merge? | No. The 2026-10-29 rule covers it once blockers 1–6 close | confirm | now |
-| 16 | U7 | One written decision for computation over the reader's decoded arrays | Yes: one umbrella decision, then a record per algorithm | choice | now |
-| 17 | X-1 | XIC re-entry (option 2) and its evidence gates | Yes, with XIC §11 items 1, 6, 7, 11 and 12 as recommended | choice | now |
-| 18 | X-2 | XIC first-scope semantics: four departures, P1 polarity, profile point sum, MS1 only, narrower domain | Accept all | choice | now |
-| 19 | R-1 | The reader-metadata amendment: polarity, charge and run metadata; PRJ-006's BPI times; #154's terms; #182's five choices | Accept it and #182's five choices; BPI times stay with `msaccess` in #182, then are computed from declared values under a short record, matched to `msaccess` first; analyzer and filter string only with #154's columns | choice | now |
-| 20 | S-1 | `nalgebra` and `statrs` as production crates; scipy and statsmodels for fixtures only | Approve; `kodama` only with clustering | choice | now |
-| 21 | B-1 | How the Python analysis runtime is distributed: ADR 0066 questions 1–3, 6, 8 and 9 | A separate, verified runtime package (ADR 0066 decision 1), per machine under Program Files; every runtime fix is an app release; confinement a release blocker only if A-06 shows it can be enforced; approve the shipped wheels at the first runtime release | choice | now |
+| 1 | FE-1 | Does #164 still merge, for its behaviour only, now that its look is rejected? | Decided 2026-10-30: yes, as the interim base: its five layout answers as interim defaults, one name per settings level, and the export palette of `66a6067c` and the recoloured frozen goldens of `3a416010` reverted | choice | now |
+| 2 | FE-2 | What the new look is, and how it is chosen | Decided 2026-10-30: the owner's own v5.11 demo, ported onto #164's tokens and components, one real screen first; no more theme rounds | choice | now |
+| 3 | G1 | Record the analysis direction in AGENTS.md, PROPOSAL and the product records | Decided 2026-10-30: amend them. Keep the promotion gate and the four safety rules. Run analysis in parallel with M10 | choice | now |
+| 4 | G2 | Two tracks: Track A ships before the Python runtime; an imported feature table is a project artifact | Decided 2026-10-30: yes to both; MZmine-2-style CSV first | choice | now |
+| 5 | G3 | Which refused v5.11 rows stay refused | Decided 2026-10-30: keep the data-safety refusals and the owner's own removals. Reopen the analysis rows | choice | now |
+| 6 | G4 | When the analysis pages enter the navigation | Decided 2026-10-30: each page appears when its first working function ships. No placeholder pages | choice | now |
+| 7 | P175 | Export profile spectra as lines in slice 2, before slice 3 | Decided 2026-10-30: keep it, and draw the line on screen in the same webview commit | choice | now |
+| 8 | A0060 | ADR 0060 Q1 (entry point) and Q8 (direction); slice-2 notes | Decided 2026-10-30: a View button; slice 3 builds on #164's structure and moves with FE-2; accept the notes. Q2–Q7 defaults stand | choice | now |
+| 9 | A0061 | ADR 0061's four restore questions; the roster in the project file | Decided 2026-10-30: as recommended; the roster stays out of `.mscanvas` for now | confirm | now |
+| 10 | A0062 | ADR 0062's seven saved-figure questions | Decided 2026-10-30: as implemented, except that Q5 drops its help sentence | confirm | now |
+| 11 | A0063 | ADR 0063's five diagnostics questions | Decided 2026-10-30: as recommended | confirm | now |
+| 12 | A0064 | ADR 0064's eight M10 route questions; ADR 0058's "presets stay in the app" | Decided 2026-10-30: as recommended; amend ADR 0058 so a method can leave the app as a file | confirm | now |
+| 13 | RUN-1 | ADR 0065's five questions on conversion run history (RUN-007; EXP-23, EXP-25) | Decided 2026-10-30: as recommended: on by default, Off forgets, 200 runs and 64 MiB, the advanced intent stored, Clear keeps runs in progress; app-local, never in the project | confirm | now |
+| 14 | DEF-1 | #185's two proposed changes: every new project's first save and every Save As to a new name leaves a `.payloads` folder; rows a refused queue never reached settle as Not run, and Retry leaves them | Decided 2026-10-30: accept both | confirm | now |
+| 15 | M161 | Does #161 still need the owner's own merge? | Decided 2026-10-30: no. The 2026-10-29 rule covers it once blockers 1–6 close | confirm | now |
+| 16 | U7 | One written decision for computation over the reader's decoded arrays | Decided 2026-10-30: yes, one umbrella decision, then a record per algorithm | choice | now |
+| 17 | X-1 | XIC re-entry (option 2) and its evidence gates | Decided 2026-10-30: yes, with XIC §11 items 1, 6, 7, 11 and 12 as recommended | choice | now |
+| 18 | X-2 | XIC first-scope semantics: four departures, P1 polarity, profile point sum, MS1 only, narrower domain | Decided 2026-10-30: accept all | choice | now |
+| 19 | R-1 | The reader-metadata amendment: polarity, charge and run metadata; PRJ-006's BPI times; #154's terms; #182's five choices | Decided 2026-10-30: accept it and #182's five choices; BPI times stay with `msaccess` in #182, then are computed from declared values under a short record, matched to `msaccess` first; analyzer and filter string only with #154's columns | choice | now |
+| 20 | S-1 | `nalgebra` and `statrs` as production crates; scipy and statsmodels for fixtures only | Decided 2026-10-30: approve; `kodama` only with clustering | choice | now |
+| 21 | B-1 | How the Python analysis runtime is distributed: ADR 0066 questions 1–3, 6, 8 and 9 | Decided 2026-10-30: a separate, verified runtime package (ADR 0066 decision 1), per machine under Program Files; every runtime fix is an app release; confinement a release blocker only if A-06 shows it can be enforced; approve the shipped wheels at the first runtime release | choice | now |
 | 22 | R-2 | A chromatogram above 100,000 spectra | Rust sends the chromatogram from its retained rows | choice | before-its-slice |
 | 23 | R-3 | Open a new preview during a conversion (ADR 0057 decision 2) | Yes, once the open runs no process | choice | before-its-slice |
 | 24 | V-1 | Show a spectrum on open (VW-33) | Select the TIC-apex MS1 scan | choice | before-its-slice |
@@ -182,7 +211,11 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ## 3. Decisions that block work now
 
+*Decided 2026-10-30:* the owner answered all 21 decisions in this section as recommended (section 1b). Each keeps its text below as the record of what was asked.
+
 ### FE-1. #164 as the interim base
+
+*Decided 2026-10-30: (a), as recommended (section 1b).*
 
 - **Question.** #164 rebuilds the frontend toward direction A, the owner's
   choice of 2026-10-29. On 2026-10-30 the owner rejected the frontend options
@@ -231,6 +264,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### FE-2. The new look
 
+*Decided 2026-10-30: (a), as recommended (section 1b).*
+
 - **Question.** The owner rejected every option shown:
   - the three demo directions of 2026-10-29 led to direction A;
   - its redesign, A2, offered three themes (Cobalt, Almanac, Console) on one composition, so the rejection reaches the composition, not only a palette.
@@ -256,6 +291,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** the owner's message (2026-10-30, 14:09 UTC); `design/v2/HANDOFF.md` ("How each owner complaint was answered", the theme table); `design/GOALS.md`:39; the maintainer agent's feature brief (Claude Docs, 2026-10-30); the non-runtime plan's ND-02 and N-02.
 
 ### G1. Record the analysis direction in the governing records
+
+*Decided 2026-10-30: (a), with the wording below unedited, as recommended (section 1b).*
 
 - **Question.** The owner's direction of 2026-10-30 is the decision to un-defer analysis. Should it now be written into the records that agents follow?
 - **Records to change:**
@@ -331,6 +368,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### G2. Two tracks, and imported feature tables
 
+*Decided 2026-10-30: (a), as recommended (section 1b).*
+
 - **Question.** Two parts:
   - May **Track A** ship in releases before the Python analysis runtime is released? Track A is Rust statistics on feature tables, sample metadata, scan browsing and the 2D map.
   - May a feature table **imported** from elsewhere be a project artifact that the statistics and QC pages run on? It would carry its own digest, an import record and lineage. MZmine-2-style CSV comes first, as the de facto GNPS contract.
@@ -344,6 +383,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §7 D2, §0 item 5, §4 item 4, §6.2; stats.md §14 Q6.
 
 ### G3. Which refused v5.11 rows stay refused
+
+*Decided 2026-10-30: (a), as recommended (section 1b).*
 
 - **Question.** The direction asks for every v5.11 function. 40 rows are refused or deferred by a record. Which refusals stand?
 - **Options:**
@@ -380,6 +421,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### G4. When the analysis pages enter the navigation
 
+*Decided 2026-10-30: (a), as recommended (section 1b).*
+
 - **Question.** v5.11 has five pages (SH-02). MSCanvas follows ADR 0047:61, "Omit future navigation or state honest unavailability". When do 特征与注释, 统计与质控, 导出与记录 and the analysis steps of 处理工作流 appear?
 - **Options:**
   - (a) each page appears when its first working function ships:
@@ -394,6 +437,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** GAP SH-02; ADR 0047:61; `design/GOALS.md`:69; AFTER_BETA1_PLAN section 2 (secondary explanations).
 
 ### P175. Profile spectra as lines in export, before slice 3
+
+*Decided 2026-10-30: (a), as recommended (section 1b).*
 
 - **Question.** Slice 2 (#175) exports a declared profile spectrum as a joined line in SVG, PNG, Copy plot and the figure preview. ADR 0056 decision 9 gives profile lines to slice 3, so this is a third deviation from the delivery order. Keep it, or hold the line back to slice 3?
 - **Options:**
@@ -412,6 +457,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** PR #175 body, "Owner question (open)" and webview checklist; ADR 0056:634 (decision 9).
 
 ### A0060. One-click view RAW: what gates slice 3
+
+*Decided 2026-10-30: as recommended (section 1b). FE-1 was answered (a), so the Q8 answer holds. Q6 stays with HR-1.*
 
 - **Question.** ADR 0060 open questions 1 and 8 gate slice 3, the interface (VW-49):
   - **Q1:** a View button, or converting on row activation?
@@ -441,6 +488,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### A0061. Restore workspace (#177)
 
+*Decided 2026-10-30: as recommended (section 1b).*
+
 - **Question.** ADR 0061 asks four questions:
   1. put matching rows back automatically, or only through an explicit Restore action;
   2. restore on by default;
@@ -458,6 +507,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### A0062. Saved figure specification (FIG-007)
 
+*Decided 2026-10-30: as recommended, with Q5's help sentence dropped (section 1b).*
+
 - **Question.** ADR 0062 asks seven questions, and the Rust side implements every recommendation:
   1. a standalone `.msfigure` JSON file;
   2. a changed source is refused, with no relink and no redraw;
@@ -473,6 +524,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### A0063. Copy diagnostics (#178)
 
+*Decided 2026-10-30: as recommended (section 1b).*
+
 - **Question.** ADR 0063 asks five questions:
   1. name only the known root of the ProteoWizard folder;
   2. record the error ring at `PreviewErrorDto::new`;
@@ -485,6 +538,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** ADR 0063:213–226 (`origin/be/copy-diagnostics`); PR #178 body.
 
 ### A0064. M10 automation route (#176)
+
+*Decided 2026-10-30: as recommended, with ADR 0058 amended in the same step (section 1b).*
 
 - **Question.** ADR 0064 asks eight questions on `origin/docs/m10-route` (`7f91c05b`). The sixth to eighth, and narrower wording for the second and third, come from the review answers since the PR opened:
   1. route A1, a small CLI package over the desktop library, now; A2 only on a measured need;
@@ -511,6 +566,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### RUN-1. Conversion run history (RUN-007 for conversion; ADR 0065)
 
+*Decided 2026-10-30: as recommended (section 1b).*
+
 - **Question.** v5.11 keeps a run history: each run's method version, inputs, steps, results and frozen parameters (EXP-23). It also downloads one run's frozen snapshot as JSON (EXP-25). Conversion runs are session-only on `main`, and RUN-007 covers project operations only (FEATURE_CATALOG.md:436). ADR 0065 (Proposed; draft PR #187, Rust side, stacked on `be/integrate`) writes the history as the first version of this document recommended: app-local and per user, one bounded, versioned JSON document per run, no path in either direction, and failures by stable code only. It asks five questions:
   1. Is history on by default, or off until the user turns it on?
   2. Does Off also forget what is stored, or does it only stop recording?
@@ -527,6 +584,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### DEF-1. Save As reserves its result-store name; Retry leaves rows that never ran
 
+*Decided 2026-10-30: both accepted, as recommended (section 1b).*
+
 - **Question.** #185 (`fix/backend-defects-1030`) makes two changes that it marks "proposed, for the owner". Accept both?
   1. **The store name is reserved.** Save As, and every new project's first save, claims the result-store name with a no-replace rename before the document is published. Each therefore leaves `<name>.mscanvas.payloads`, empty when there is no result. If the document publish then fails, the empty store stays, and a retry to the same name is refused `destinationStoreExists`.
   2. **Refused queue rows settle as Not run.** After a recoverable queue-level refusal, the rows the run never reached settle as `NotRun`, as after a stop. On `main` they stayed `Pending` ("Waiting"), and Retry converted them. Retry now reruns only the retryable failures, as its label and the panel copy say, so those rows need a new queue.
@@ -539,6 +598,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### M161. The merge of #161
 
+*Decided 2026-10-30: no, as recommended (section 1b).*
+
 - **Question.** The #161 body says "Not for merge without the owner". The 2026-10-29 rule lets a product PR merge once every check passes and every thread is resolved. Does #161 still need the owner's own merge once its blockers 1–6 close?
 - **Recommendation:** no; the 2026-10-29 rule covers it. ADR 0055, the schema-5 upgrade, the MS1+ and MS2+ rows and `serde` are all accepted, and the PR adds no package or release.
 - **Blocks:**
@@ -550,6 +611,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** PR #161 body; AFTER_BETA1_PLAN section 2, "Merging".
 
 ### U7. One written decision for computation over decoded arrays
+
+*Decided 2026-10-30: (a), as recommended (section 1b).*
 
 - **Question.** ADR 0056 decision 7 says: "Any computation over the decoded arrays is an algorithm, and it needs its own record." The reader keeps offsets, "never arrays" (:394). The XIC and the MS1 map both compute over the arrays of many spectra. Should one written decision:
   - admit project-owned computations over the reader's decoded arrays, each with its own per-algorithm record (XIC per-scan sum; MS1 map binning; later a summed spectrum);
@@ -565,6 +628,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** ADR 0056:554–570 and :394; XIC §11.1; SYN §5.2 (2D map); internal.md H4.
 
 ### X-1. XIC re-entry and its evidence gates
+
+*Decided 2026-10-30: option 2 with those gates, as recommended (section 1b).*
 
 - **Question.** Should the XIC re-enter as the evaluation's option 2? That means a full XIC with stated profile semantics, through a new scope record (X0) for a sibling pass over ADR 0056's reader, with these gates:
   - **§11.6:** the frozen PX.3 comparator, byte-identical, with new hashed runner revisions;
@@ -589,6 +654,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### X-2. XIC semantics in the first scope
 
+*Decided 2026-10-30: all accepted, as recommended (section 1b).*
+
 - **Question.** Should these XIC semantics be accepted for the first scope?
   - **§11.2, four departures from ADR 0046 §1:**
     - ppm input (also against ADR 0037 XIC-D1's default);
@@ -607,6 +674,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** XIC §1 and §11.2–.5 and .8; ADR 0046 §1; ADR 0037 XIC-D1 and XIC-D2.
 
 ### R-1. The reader-metadata amendment (ADR 0056 decisions 1 and 3)
+
+*Decided 2026-10-30: as recommended (section 1b).*
 
 - **Question.** The reader-metadata lane is now draft PR #182 (`be/reader-meta`, library only, stacked on #175): nothing calls the new readings yet, and the open still asks `msaccess` for metadata and the run summary. Whether it runs is not in question. What its amendment admits is, in four parts:
   1. **Accept the amendment.** The reader takes polarity (MS:1000130 and MS:1000129), charge (MS:1000041), run-level metadata, and the run summary from the table pass.
@@ -639,6 +708,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### S-1. Statistics crates
 
+*Decided 2026-10-30: (a), approved by the owner: "批准" ("approved") (section 1b).*
+
 - **Question.** Approve two production dependencies of a new pure crate, `crates/stats`?
   - `nalgebra =0.35.0`: Apache-2.0, `default-features = false, features = ["std"]`, MSRV 1.89 (the toolchain is 1.97.1);
   - `statrs =0.19.1`: MIT, `default-features = false`.
@@ -662,6 +733,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §7 D7, §2 C1, §3 item 1, §8; stats.md §5.1, §14 Q1; `rust-toolchain.toml` on `origin/main`.
 
 ### B-1. How the Python analysis runtime is distributed
+
+*Decided 2026-10-30: as recommended (section 1b). ADR 0066 question 3 stays open, with its working default.*
 
 - **Question.** The runtime is 4,628 files and 348.7 MB, about 54 times the 6.47 MB installer. The NSIS install is per-user, so a Chinese user name puts it under a non-ASCII path, and a non-ASCII runtime path is a measured failure. How should the runtime reach users? ADR 0066 (Proposed, draft PR #188) now writes the options and asks nine questions. This decision carries its questions 1–3, 6, 8 and 9; B-2 carries 5 and 7, and B-3 carries 4.
 - **Options** (ADR 0066, "Distribution"):
