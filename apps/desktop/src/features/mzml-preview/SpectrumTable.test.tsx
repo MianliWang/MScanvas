@@ -13,22 +13,30 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import appStyles from "../../app/app.css?raw";
 import { buildRows } from "../../test/previewFixtures";
-import { SpectrumTable, type SpectrumTableProps } from "./SpectrumTable";
+import { UI_RESOURCES } from "../preferences/i18n";
+import { SelectedSpectrumPanel } from "./SelectedSpectrumPanel";
+import { SpectrumTable, scanStepReasonId, type SpectrumTableProps } from "./SpectrumTable";
+import { initialSpectrumViewportState } from "./viewer/spectrumViewport";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { useScanTableView } from "./viewer/useScanTableView";
 import type { Selection } from "./viewer/interactionState";
 import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
+import type { RetentionTimeUnit } from "./contracts";
 
+/** v5.11's compact scan list; the rest of a scan's facts are in Details. */
 const COLUMN_LABELS = [
-  "Index",
   "Scan",
-  "Identifier",
-  "MS level",
-  "Retention time",
-  "Base peak m/z",
-  "Base peak intensity",
-  "Total ion current",
-  "Precursor m/z",
+  "RT",
+  "MS",
+  "Prec. m/z",
+];
+/** What each header is called: its short label first, then its full name where they differ. */
+const COLUMN_NAMES = [
+  "Scan",
+  // The unit is heard as well as seen (P11, ADR 0056).
+  "RT (Retention time) (unit not reported)",
+  "MS (MS level)",
+  "Prec. m/z (Precursor m/z)",
 ];
 
 const mountedStyles: HTMLStyleElement[] = [];
@@ -46,22 +54,26 @@ function commit(index: number, revision: number): Selection {
 }
 
 interface TableOptions {
+  readonly layout?: "compact" | "full";
   readonly rowCount?: number;
   readonly selection?: Selection | null;
   readonly truncated?: boolean;
   readonly canSelectPrevious?: boolean;
   readonly canSelectNext?: boolean;
   readonly selectionAvailability?: SpectrumSelectionAvailability;
+  readonly retentionTimeUnit?: RetentionTimeUnit;
 }
 
 function renderTable(options: TableOptions = {}) {
   const rowCount = options.rowCount ?? 40;
-  const rows = buildRows(rowCount);
+  const unit = options.retentionTimeUnit;
+  const rows = buildRows(rowCount).map(row => unit === undefined ? row : { ...row, retentionTime: { ...row.retentionTime, unit } });
   const onSelect = vi.fn();
   const onRendered = vi.fn();
   const onSelectPrevious = vi.fn();
   const onSelectNext = vi.fn();
   const props = (selection: Selection | null) => ({
+    layout: options.layout,
     canSelectNext: options.canSelectNext ?? false,
     canSelectPrevious: options.canSelectPrevious ?? false,
     onRendered,
@@ -119,24 +131,67 @@ afterEach(() => {
 });
 
 describe("spectrum table columns", () => {
-  it("keeps all nine labels, in order, once each", () => {
+  it("keeps all four labels, in order, once each", () => {
     renderTable();
 
     const headers = screen.getAllByRole("columnheader");
 
-    expect(headers.map((header) => header.textContent)).toEqual(COLUMN_LABELS);
+    // RT carries "(unit not reported)" on a second line (P11).
+    expect(headers.map((header) => header.textContent)).toEqual(COLUMN_LABELS.map(label => label === "RT" ? `RT${UI_RESOURCES.en.scanUnitNotReported}` : label));
     // One header set, not a visual copy alongside an announced one.
     expect(headers).toHaveLength(COLUMN_LABELS.length);
-    expect(screen.getAllByText("Total ion current")).toHaveLength(1);
-    expect(screen.getAllByText("Precursor m/z")).toHaveLength(1);
+    expect(screen.getAllByText("RT")).toHaveLength(1);
+    expect(screen.getAllByText("Prec. m/z")).toHaveLength(1);
+    // Short enough for the side column, and still spoken in full after the
+    // visible label, which is what a speech user says to press it.
+    expect(headers.map((header) => within(header).getByRole("button").getAttribute("aria-label") ??
+      within(header).getByRole("button").textContent)).toEqual(COLUMN_NAMES);
+    expect(within(headers[1]!).getByRole("button")).toHaveAttribute("title", "Retention time");
+  });
+
+  it("says a declared retention-time unit in the RT header, seen and heard", () => {
+    renderTable({ retentionTimeUnit: "minute" });
+
+    const rt = screen.getAllByRole("columnheader")[1]!;
+    expect(rt).toHaveTextContent("RT(min)");
+    expect(within(rt).getByRole("button", { name: "RT (Retention time) (min)" })).toBeVisible();
+    // The search's description says nothing of retention-time units; the header does.
+    expect(document.getElementById("scan-view-help")?.textContent).not.toMatch(/retention/iu);
+  });
+
+  it("puts every field the table sorts by under its own header on the Scans tab (P11)", () => {
+    const { container } = renderTable({ rowCount: 6, layout: "full" });
+    const order = () => [...container.querySelectorAll("[data-source-index]")].map((row) => row.getAttribute("data-source-index"));
+    const headers = () => screen.getAllByRole("columnheader");
+    expect(headers().map((header) => header.textContent)).toEqual([
+      "Index", "Scan", "Identifier", "MS level", `Retention time${UI_RESOURCES.en.scanUnitNotReported}`, "Base peak m/z",
+      "Base peak intensity", "Total ion current", "Precursor m/z",
+    ]);
+    expect(screen.getByRole("grid", { name: "Scans" })).toHaveAttribute("aria-colcount", "9");
+    expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
+
+    // Total ion current, which has no column beside the spectrum, sorts from
+    // its own header, and its header says which way.
+    const tic = () => within(headers()[7]!).getByRole("button", { name: "Total ion current" });
+    fireEvent.click(tic());
+    expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
+    fireEvent.click(tic());
+    expect(order()).toEqual(["5", "4", "3", "2", "1", "0"]);
+    expect(headers()[7]).toHaveAttribute("aria-sort", "descending");
+    // The index ascending is the file's own order.
+    fireEvent.click(within(headers()[0]!).getByRole("button", { name: "Index" }));
+    expect(order()).toEqual(["0", "1", "2", "3", "4", "5"]);
+    expect(headers()[0]).toHaveAttribute("aria-sort", "ascending");
+    // The identifier is a cell of its own, as the file spells it.
+    expect(within(screen.getAllByRole("row")[1]!).getAllByRole("gridcell")[2]).toHaveTextContent("controllerType=0 controllerNumber=1 scan=1");
   });
 
   it("still counts every row the run has, not the rendered window", () => {
     const { container } = renderTable({ rowCount: 400 });
 
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     expect(grid).toHaveAttribute("aria-rowcount", "401");
-    expect(grid).toHaveAttribute("aria-colcount", "9");
+    expect(grid).toHaveAttribute("aria-colcount", "4");
     // Windowed: the header row plus a bounded slice, not 400 rows.
     expect(within(grid).getAllByRole("row").length).toBeLessThan(100);
     expect(requireElement(container, ".spectrum-table-head")).toHaveAttribute("aria-rowindex", "1");
@@ -213,7 +268,7 @@ describe("spectrum table horizontal position", () => {
     const { container } = renderTable();
     const viewport = requireElement(container, ".spectrum-table-viewport");
 
-    expect(getComputedStyle(viewport).scrollPaddingTop).toBe("36px");
+    expect(getComputedStyle(viewport).scrollPaddingTop).toBe("30px");
   });
 });
 
@@ -221,7 +276,7 @@ describe("spectrum table rows", () => {
   it("moves focus with the arrows and commits only on Enter", () => {
     // Each selection launches one backend read, so arrowing must not select.
     const { onSelect } = renderTable();
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     const rows = within(grid).getAllByRole("row");
 
     rows[1]?.focus();
@@ -239,12 +294,12 @@ describe("spectrum table rows", () => {
     // row shorter than that box. Counting the whole box would page the focus
     // one row further than the user can see.
     renderTable({ rowCount: 400 });
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     within(grid).getAllByRole("row")[1]?.focus();
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "PageDown" });
 
-    expect(document.activeElement).toHaveAttribute("aria-rowindex", "19");
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "21");
   });
 
   it("carries exactly one tab stop among the rendered rows", () => {
@@ -256,7 +311,7 @@ describe("spectrum table rows", () => {
   it("marks the selected row for a reader as well as for the eye", () => {
     renderTable({ rowCount: 40, selection: commit(3, 1) });
 
-    const grid = screen.getByRole("grid", { name: "Spectra" });
+    const grid = screen.getByRole("grid", { name: "Scans" });
     const selected = within(grid)
       .getAllByRole("row")
       .filter((row) => row.getAttribute("aria-selected") === "true");
@@ -274,7 +329,7 @@ describe("spectrum table rows", () => {
  * arithmetic rather than from a rendered box -- but that arithmetic is
  * `revealScrollTop`'s, and these are the two cases the wrong version of it got
  * wrong. The viewport reports no height here, so the table falls back to its
- * 600px default: the header takes a row, leaving 564px for rows of 30px each.
+ * 600px default: the 30px header leaves 570px for rows of 28px each.
  */
 describe("bringing a row into view", () => {
   function viewportOf(container: HTMLElement): HTMLElement {
@@ -287,17 +342,17 @@ describe("bringing a row into view", () => {
     const { container, commitSelection } = renderTable({ rowCount: 400 });
     const viewport = viewportOf(container);
 
-    // Row 30 sits at canvas offset 900 and the rows have 564px, so the least
-    // scroll that shows all of it is 900 + 30 - 564.
+    // Row 30 sits at canvas offset 840 and the rows have 570px, so the least
+    // scroll that shows all of it is 840 + 28 - 570.
     commitSelection(commit(30, 1));
 
-    expect(viewport.scrollTop).toBe(366);
+    expect(viewport.scrollTop).toBe(298);
   });
 
   it("puts a row above the fold exactly at the top of the canvas, header included once", () => {
     // The discriminating case. The header is `position: sticky`, so the canvas
     // already begins after it and `scrollTop = rowTop` places the row
-    // immediately below it. Subtracting the header again would land on 570 and
+    // immediately below it. Subtracting the header again would land on 530 and
     // scroll a row that was about to be perfectly placed one row too far.
     const { container, commitSelection } = renderTable({ rowCount: 400 });
     const viewport = viewportOf(container);
@@ -305,7 +360,7 @@ describe("bringing a row into view", () => {
 
     commitSelection(commit(20, 1));
 
-    expect(viewport.scrollTop).toBe(600);
+    expect(viewport.scrollTop).toBe(560);
   });
 
   it("leaves a row that is already in view exactly where it is", () => {
@@ -325,12 +380,12 @@ describe("bringing a row into view", () => {
     const { container, commitSelection } = renderTable({ rowCount: 400 });
     const viewport = viewportOf(container);
     commitSelection(commit(30, 1));
-    expect(viewport.scrollTop).toBe(366);
+    expect(viewport.scrollTop).toBe(298);
 
     fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
     commitSelection(commit(30, 2));
 
-    expect(viewport.scrollTop).toBe(366);
+    expect(viewport.scrollTop).toBe(298);
   });
 
   it("does not undo a scroll the user made while the same commit stands", () => {
@@ -374,18 +429,19 @@ describe("bringing a row into view", () => {
     fireEvent.scroll(viewport, { target: { scrollTop: 0 } });
     commitSelection(commit(30, 1));
 
-    expect(viewport.scrollTop).toBe(366);
+    expect(viewport.scrollTop).toBe(298);
   });
 });
 
 describe("stepping through scans from the table", () => {
-  it("offers Previous and Next, and disables them where the table ends", () => {
+  it("offers Previous and Next, and refuses them where the table ends", () => {
     const { onSelectPrevious, onSelectNext } = renderTable({ canSelectNext: true });
 
     const previous = screen.getByRole("button", { name: "Previous scan" });
     const next = screen.getByRole("button", { name: "Next scan" });
-    expect(previous).toBeDisabled();
-    expect(next).toBeEnabled();
+    // Refused rather than disabled, so each stays a Tab stop (UI-24).
+    expect(previous).toHaveAttribute("aria-disabled", "true");
+    expect(next).not.toHaveAttribute("aria-disabled");
 
     fireEvent.click(next);
 
@@ -393,12 +449,40 @@ describe("stepping through scans from the table", () => {
     expect(onSelectPrevious).not.toHaveBeenCalled();
   });
 
+  it("says why Previous and Next are refused while the filters hide the selection", () => {
+    renderTable({ selection: commit(3, 1) });
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search loaded scans" }), { target: { value: "no such scan" } });
+
+    const reason = "Selected scan 3 is hidden by the filters.";
+    expect(screen.getByText(reason)).toBeVisible();
+    for (const name of ["Previous scan", "Next scan"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(reason);
+    }
+  });
+
   it("does not present the end of a truncated prefix as the end of the run", () => {
     renderTable({ rowCount: 40, truncated: true });
 
-    expect(
-      screen.getByText(/loaded prefix only/),
-    ).toBeVisible();
+    const count = document.querySelector(".scan-result-count");
+    expect(count).toHaveTextContent(UI_RESOURCES.en.scanPrefix);
+    expect(count).toHaveTextContent("400");
+    expect(count).toBeVisible();
+  });
+
+  it("gives one number while every row is loaded and none is filtered out", () => {
+    renderTable({ rowCount: 40 });
+    const count = () => document.querySelector(".scan-result-count")?.textContent ?? "";
+    const all = UI_RESOURCES.en.scanCountAll.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "40");
+
+    expect(count()).toBe(all);
+
+    // Filtering is when matches and loaded rows differ, so both are said.
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "scan=1" } });
+    expect(count()).not.toBe(all);
+    expect(count()).toMatch(/40/u);
   });
 });
 
@@ -414,7 +498,7 @@ describe("the spectrum table while selection is unavailable", () => {
   }
 
   function grid(): HTMLElement {
-    return screen.getByRole("grid", { name: "Spectra" });
+    return screen.getByRole("grid", { name: "Scans" });
   }
 
   it("does not commit a clicked row", () => {
@@ -463,7 +547,7 @@ describe("the spectrum table while selection is unavailable", () => {
     expect(document.activeElement).toHaveAttribute("aria-rowindex", "3");
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "PageDown" });
-    expect(document.activeElement).toHaveAttribute("aria-rowindex", "20");
+    expect(document.activeElement).toHaveAttribute("aria-rowindex", "22");
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Home" });
     expect(document.activeElement).toHaveAttribute("aria-rowindex", "2");
@@ -518,7 +602,7 @@ describe("the spectrum table while selection is unavailable", () => {
     // The sentence itself lives once, in the viewer. Not here.
     expect(screen.queryByText(/conversion is running/u)).toBeNull();
     // Navigation help stays reachable; the row names the one current refusal.
-    expect(screen.getByText(/Enter\/Space opens once/u)).toBeInTheDocument();
+    expect(screen.getByText(/Enter\/Space opens\./u)).toBeInTheDocument();
   });
 
   it("says nothing about availability, and describes nothing, once selection returns", () => {
@@ -528,7 +612,7 @@ describe("the spectrum table while selection is unavailable", () => {
     for (const row of container.querySelectorAll('[role="row"]:not(.spectrum-table-head)')) {
       expect(row.getAttribute("aria-disabled")).toBeNull();
     }
-    expect(screen.getByText(/Enter\/Space opens once/u)).toBeInTheDocument();
+    expect(screen.getByText(/Enter\/Space opens\./u)).toBeInTheDocument();
   });
 
   it("commits again as soon as the lane clears, without being remounted", () => {
@@ -546,7 +630,27 @@ describe("the spectrum table while selection is unavailable", () => {
   });
 });
 
-function TestSpectrumTable(props: Omit<SpectrumTableProps, "view">) {
+interface StepProps {
+  readonly canSelectPrevious: boolean;
+  readonly canSelectNext: boolean;
+  readonly onSelectPrevious: () => void;
+  readonly onSelectNext: () => void;
+}
+
+/**
+ * The table and the spectrum head's scan steps (direction A), wired as the
+ * workspace wires them: the steps walk this table's order, and point at the
+ * table's sentence when its filters hide the selection.
+ */
+function TestSpectrumTable({ canSelectPrevious, canSelectNext, onSelectPrevious, onSelectNext, ...props }: Omit<SpectrumTableProps, "view"> & StepProps) {
   const view = useScanTableView(props.table.rows);
-  return <SpectrumTable {...props} view={view} />;
+  return <>
+    <SpectrumTable {...props} view={view} />
+    <SelectedSpectrumPanel state={{ status: "none" }} onOpenFigure={() => {}} onRetry={() => {}} viewport={initialSpectrumViewportState}
+      dispatchViewport={() => initialSpectrumViewportState} readViewport={() => initialSpectrumViewportState} projectionError={null}
+      onRetryProjection={() => {}} exportState={{ status: "idle" }} scientificExportBusy={false} onExport={() => {}} onCopyPlot={() => {}}
+      onDismissExport={() => {}} figureSettingsValidation={{ render: null, dpi: null }}
+      canSelectPrevious={canSelectPrevious} canSelectNext={canSelectNext} onSelectPrevious={onSelectPrevious} onSelectNext={onSelectNext}
+      stepReasonId={scanStepReasonId(view, props.selection?.index ?? null, props.selectionAvailability)} />
+  </>;
 }

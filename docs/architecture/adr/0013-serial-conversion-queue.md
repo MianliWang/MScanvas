@@ -60,6 +60,13 @@ unbounded history is the one thing a session-scoped slot must not accumulate.
 
 ### The bound is sixteen, and it is a stated number
 
+> **Amended 2026-10-29 by [ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md),
+> decision 3, on `be/integrate` (draft PR #161).** `MAX_CONVERSION_QUEUE_ITEMS` is the roster's
+> capacity, 1,024, so one checked roster converts as one queue. Items stay
+> serial and the open gate "No parallelism" stands (ADR 0057, decision 4).
+> "Select everything and convert is refused by a rule" is reversed
+> deliberately. Every list of queue items must be windowed.
+
 `MAX_CONVERSION_QUEUE_ITEMS = 16`, enforced in Rust, reported to the interface
 as the plan's `capacity`, and refused with `queue_too_large`.
 

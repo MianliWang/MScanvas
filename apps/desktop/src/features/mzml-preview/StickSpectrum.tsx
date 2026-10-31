@@ -1,20 +1,27 @@
-import type { KeyboardEventHandler, Ref } from "react";
-import { useCallback, useMemo } from "react";
+import type { KeyboardEventHandler, ReactNode, Ref } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import type { UiMessage } from "../preferences/i18n";
+import { joinSentences, type UiMessage } from "../preferences/i18n";
 
+import type { ProjectionSample, SpectrumRepresentation, ValueUnit } from "./contracts";
 import { formatIntensity, formatMz } from "./format";
-import { usePlotTextSize } from "./viewer/usePlotTextSize";
+import { niceTicks, paintTicks, withHeadroom } from "./viewer/plotAxes";
 
 /**
  * The drawing area, in viewBox units. The element scales to its container, so
  * these are resolution units rather than pixels.
+ *
+ * The tick labels and axis titles are HTML around the drawing, so the
+ * stretched viewBox never distorts them and none of it is reserved for text.
  */
 const PLOT_WIDTH = 1000;
 const PLOT_HEIGHT = 260;
 const PLOT_PADDING_LEFT = 8;
 const PLOT_PADDING_RIGHT = 8;
-const PLOT_PADDING_TOP = 10;
+/** Deep enough that the value title in the corner clears the headroom's top. */
+const PLOT_PADDING_TOP = 12;
+/** Room past each edge of the drawn band for a stick's stroke, in viewBox units (about 2 px). */
+const STICK_BLEED = 4;
 
 /**
  * The drawn band, exported so an interaction adapter resolves a pointer against
@@ -31,21 +38,36 @@ export const SPECTRUM_PLOT_PADDING_LEFT = PLOT_PADDING_LEFT;
 export const SPECTRUM_PLOT_DRAWN_WIDTH = PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT;
 
 /**
- * The parts of the drawing an interaction adapter moves directly.
+ * The part of the drawing an interaction adapter moves directly.
  *
  * A gesture is a stream of pointer frames, and this repository's frontend rules
- * keep frame data out of React state -- so during one the adapter writes these
- * three nodes itself rather than asking React to redraw the panel per frame.
- * Named here, beside the geometry they are positioned by, so the component that
- * renders them and the adapter that moves them cannot come to disagree about
- * which node is which.
+ * keep frame data out of React state -- so during one the adapter transforms
+ * this layer itself, and repaints the m/z axis with {@link paintMzAxis}, rather
+ * than asking React to redraw the panel per frame. Named here, beside the
+ * geometry they are positioned by, so the component that renders them and the
+ * adapter that moves them cannot come to disagree about which node is which.
  *
  * The layer exists to be transformed as a whole: a pan is a translate and a
  * wheel zoom a scale about the pointer, which is exact and costs no reduction.
  */
 export const SPECTRUM_STICKS_LAYER = "spectrum-sticks-layer";
-export const SPECTRUM_AXIS_LOW = "spectrum-axis-low";
-export const SPECTRUM_AXIS_HIGH = "spectrum-axis-high";
+
+/**
+ * Puts the m/z ticks for `[low, high]` under the plot, and writes the window on
+ * the drawing (`data-mz-low`/`data-mz-high`, at the axis precision) for a
+ * reader that checks which range the drawing is under. One writer for a render
+ * and for a gesture frame, so the two cannot disagree.
+ */
+export function paintMzAxis(plot: SVGSVGElement | null, low: number, high: number): void {
+  const frame = plot?.closest(".spectrum-frame");
+  if (plot === null || plot === undefined || frame === null || frame === undefined) return;
+  const span = high - low;
+  paintTicks(frame.querySelector<HTMLElement>(".plot-x-ticks"), niceTicks(low, high),
+    value => ((PLOT_PADDING_LEFT + (span > 0 ? (value - low) / span : 0.5) * SPECTRUM_PLOT_DRAWN_WIDTH) / PLOT_WIDTH) * 100,
+    "x");
+  plot.setAttribute("data-mz-low", formatMz(low));
+  plot.setAttribute("data-mz-high", formatMz(high));
+}
 
 /**
  * Where the sticks are clipped to while a gesture is moving them.
@@ -59,12 +81,8 @@ export const SPECTRUM_AXIS_HIGH = "spectrum-axis-high";
  * both.
  */
 const STICKS_CLIP = "spectrum-plot-clip";
-/**
- * The bottom of the drawing area. The gutter below it is deep enough for the
- * lowest-intensity label to sit clear of the m/z labels, which a spectrum
- * carrying negative intensity shows at the same time.
- */
-const BASELINE_Y = PLOT_HEIGHT - 34;
+/** The bottom of the drawing area; the labels are outside the drawing. */
+const BASELINE_Y = PLOT_HEIGHT - 4;
 
 /**
  * The columns the plot reduces to. A spectrum can carry far more points than a
@@ -104,9 +122,9 @@ const MAX_COLUMNS = 900;
 export type SpectrumDrawing =
   | {
       readonly kind: "transfer";
-      /** The backend's own reported pair for the whole spectrum. */
-      readonly reportedMzLow: number;
-      readonly reportedMzHigh: number;
+      /** The pair the spectrum states for itself; `null` where it states none. */
+      readonly reportedMzLow: number | null;
+      readonly reportedMzHigh: number | null;
     }
   /**
    * A range with no drawing under it, and why there is none.
@@ -117,9 +135,8 @@ export type SpectrumDrawing =
    * numbers.
    *
    * The reason is carried because the two are not the same thing to a reader. A
-   * drawing that has not arrived is on its way; one that failed is not, and
-   * captioning a failure as "waiting" leaves a non-retryable refusal describing
-   * itself as an outstanding request for as long as it is on screen.
+   * drawing that has not arrived is on its way; one that failed is not. The
+   * status line beside the plot says which, so the caption names neither.
    */
   | {
       readonly kind: "viewport-blank";
@@ -134,9 +151,11 @@ export type SpectrumDrawing =
    * points answer a different window, so a mid-drag picture is never read as the
    * answer to the range under the cursor.
    */
-  | { readonly kind: "viewport-transient"; readonly low: number; readonly high: number }
+  | { readonly kind: "viewport-transient"; readonly low: number; readonly high: number; readonly outside?: OutsideSamples }
   | {
       readonly kind: "viewport";
+      /** A profile projection's samples beyond each edge, which its line is cut between. */
+      readonly outside?: OutsideSamples;
       /**
        * The committed window, used exactly.
        *
@@ -151,6 +170,9 @@ export type SpectrumDrawing =
       /** Whether Rust drew fewer points than the window measured. */
       readonly reduced: boolean;
     };
+
+/** The measured samples just below and just above a projection's window. */
+export type OutsideSamples = readonly [ProjectionSample | null, ProjectionSample | null];
 
 /**
  * Whether this drawing is something the reader can act on, and how.
@@ -191,16 +213,16 @@ export interface StickSpectrumProps {
   readonly mz: readonly number[];
   readonly intensity: readonly number[];
   readonly drawing: SpectrumDrawing;
-  /**
-   * Whether the file said these are profile samples or centroided peaks. When
-   * it did not, the caption says so, because a reduced profile spectrum looks
-   * like a centroid one and the reader must not have to guess which they are
-   * being shown.
-   */
-  readonly representationKnown: boolean;
-  readonly valueUnitsKnown?: boolean;
+  /** A declared profile spectrum is drawn as a joined line over a viewport; anything else as sticks. */
+  readonly representation?: SpectrumRepresentation;
+  readonly mzUnit?: ValueUnit;
+  readonly intensityUnit?: ValueUnit;
   readonly labelledBy: string;
   readonly surface: SpectrumSurface;
+  /** The line under the ticks, left of the m/z title: what range is on screen. */
+  readonly readout?: ReactNode;
+  /** Whatever sits over the drawing without taking height (the range editor, its pending band). */
+  readonly overlay?: ReactNode;
 }
 
 interface Stick {
@@ -210,10 +232,15 @@ interface Stick {
 
 interface Reduction {
   readonly sticks: readonly Stick[];
+  /** Where one measured sample lands on this drawing's axes. */
+  readonly toPoint: (mz: number, intensity: number) => Stick;
   readonly domainLow: number;
   readonly domainHigh: number;
   readonly intensityLow: number;
   readonly intensityHigh: number;
+  /** The value axis: the visible extent with its headroom. */
+  readonly axisLow: number;
+  readonly axisHigh: number;
   /** How many of the given points fell inside the domain and were drawn from. */
   readonly drawnFrom: number;
   readonly negativeCount: number;
@@ -260,17 +287,50 @@ function drawsWithoutLength(y: number, zeroY: number): boolean {
  */
 function transferDomain(
   mz: readonly number[],
-  reportedMzLow: number,
-  reportedMzHigh: number,
+  reportedMzLow: number | null,
+  reportedMzHigh: number | null,
 ): { readonly low: number; readonly high: number } {
-  let low = reportedMzLow;
-  let high = reportedMzHigh;
+  let low = reportedMzLow ?? Infinity;
+  let high = reportedMzHigh ?? -Infinity;
   for (let index = 0; index < mz.length; index += 1) {
     const value = mz[index] ?? 0;
     low = Math.min(low, value);
     high = Math.max(high, value);
   }
+  // A bound the spectrum does not state is drawn against the other one, or the
+  // points; with neither, the axis is an empty one at zero, never infinite.
+  if (low === Infinity) low = high === -Infinity ? 0 : high;
+  if (high === -Infinity) high = low;
   return { low, high };
+}
+
+/**
+ * The heights a joined profile line has where it crosses the window's edges:
+ * the export renderer's rule, interpolated along the segment from the sample
+ * beyond each edge to the nearest one inside (or to the sample beyond the
+ * other edge, for a window between two samples). They set the value scale, as
+ * they do in the export; nothing records them as data.
+ */
+function edgeHeights(
+  mz: readonly number[],
+  intensity: readonly number[],
+  low: number,
+  high: number,
+  [below, above]: OutsideSamples,
+): number[] {
+  let first: ProjectionSample | null = null;
+  let last: ProjectionSample | null = null;
+  for (let index = 0; index < mz.length; index += 1) {
+    const value = mz[index] ?? 0;
+    if (value < low || value > high) continue;
+    const sample = { mz: value, intensity: intensity[index] ?? 0 };
+    first ??= sample;
+    last = sample;
+  }
+  const at = (edge: number, left: ProjectionSample | null, right: ProjectionSample | null) =>
+    left !== null && right !== null && left.mz < edge && edge < right.mz
+      ? [left.intensity + (right.intensity - left.intensity) * ((edge - left.mz) / (right.mz - left.mz))] : [];
+  return [...at(low, below, first ?? above), ...at(high, last ?? below, above)];
 }
 
 /**
@@ -297,9 +357,11 @@ function reduce(
   intensity: readonly number[],
   domainLow: number,
   domainHigh: number,
+  /** A joined line's heights at the edges, which the scale must hold too. */
+  edges: readonly number[] = [],
 ): Reduction {
-  let intensityLow = 0;
-  let intensityHigh = 0;
+  let intensityLow = Math.min(0, ...edges);
+  let intensityHigh = Math.max(0, ...edges);
   let negativeCount = 0;
   let drawnFrom = 0;
   const inside = (value: number) => value >= domainLow && value <= domainHigh;
@@ -352,34 +414,35 @@ function reduce(
 
   const usableWidth = PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT;
   const usableHeight = BASELINE_Y - PLOT_PADDING_TOP;
-  // The zero line sits where zero falls in the value range, so a negative
-  // stick hangs below it and a positive one rises above it.
-  const valueSpan = intensityHigh - intensityLow;
+  // The zero line sits where zero falls on the value axis, so a negative
+  // stick hangs below it and a positive one rises above it. The axis is the
+  // visible extent with headroom, so the tallest stick stops short of the frame.
+  const axis = withHeadroom(intensityLow, intensityHigh);
+  const valueSpan = axis.high - axis.low;
   const zeroY =
     valueSpan > 0
-      ? PLOT_PADDING_TOP + (intensityHigh / valueSpan) * usableHeight
+      ? PLOT_PADDING_TOP + (axis.high / valueSpan) * usableHeight
       : BASELINE_Y;
 
   const sticks: Stick[] = [];
   let negativesDrawn = 0;
   let negativesDrawnFlat = 0;
+  const toPoint = (value: number, height: number): Stick => ({
+    x: PLOT_PADDING_LEFT + (span > 0 ? (value - domainLow) / span : 0.5) * usableWidth,
+    y: PLOT_PADDING_TOP + (valueSpan > 0 ? (axis.high - height) / valueSpan : 1) * usableHeight,
+  });
   const place = (height: number | null | undefined, value: number) => {
     if (height === null || height === undefined) {
       return;
     }
-    const fraction = span > 0 ? (value - domainLow) / span : 0.5;
-    const scaled = valueSpan > 0 ? (intensityHigh - height) / valueSpan : 1;
-    const y = PLOT_PADDING_TOP + scaled * usableHeight;
+    const stick = toPoint(value, height);
     if (height < 0) {
       negativesDrawn += 1;
-      if (drawsWithoutLength(y, zeroY)) {
+      if (drawsWithoutLength(stick.y, zeroY)) {
         negativesDrawnFlat += 1;
       }
     }
-    sticks.push({
-      x: PLOT_PADDING_LEFT + fraction * usableWidth,
-      y,
-    });
+    sticks.push(stick);
   };
   for (let column = 0; column < columnCount; column += 1) {
     place(highest[column], highestMz[column] ?? domainLow);
@@ -388,10 +451,13 @@ function reduce(
 
   return {
     sticks,
+    toPoint,
     domainLow,
     domainHigh,
     intensityLow,
     intensityHigh,
+    axisLow: axis.low,
+    axisHigh: axis.high,
     drawnFrom,
     negativeCount,
     negativesDrawn,
@@ -422,67 +488,23 @@ function describeNegativeDrawing(reduction: Reduction, t: UiMessage): string {
 }
 
 /**
- * The drawn count, in agreement with itself. A reduction that yields one column
- * drew one stick, and saying `1 sticks` reads as a defect in the number.
- */
-function formatSticks(count: number, t: UiMessage): string {
-  return count === 1 ? t("plotSticksOne") : t("plotSticks", { count });
-}
-
-/**
- * What the drawing is, in the words it is allowed to use.
+ * Whether the drawing collapsed points, said only when it did.
  *
- * The two drawings make different claims and the difference is the milestone.
- * A transferred prefix can only say how many of *its own* points went into how
- * many sticks. A viewport window can say how many observations the retained
- * source holds there -- which is a fact about the spectrum rather than about
- * this document, and is the number that makes panning past the transferred
- * prefix legible instead of mysterious.
+ * The counts are the caption's, and the m/z bounds the axis's; this sentence
+ * says only what neither of them can: that sticks are not one per point. A
+ * drawing that is one stick per point says nothing here.
  *
  * Neither sentence calls the drawing the measurement. A screen projection is a
  * bounded drawing of the science and never the science.
  */
-function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing, t: UiMessage): string {
-  const drawn = formatSticks(reduction.sticks.length, t);
+function describeDrawing(
+  reduction: Reduction,
+  drawing: Extract<SpectrumDrawing, { readonly kind: "transfer" | "viewport" }>,
+  t: UiMessage,
+): string {
   if (drawing.kind === "transfer") {
-    // The count is written plainly, not grouped. The sentence has said
-    // `from 200000 points` since M4.1 and a reader comparing it with the
-    // grouped `Points` fact beside it is comparing the same number twice; what
-    // is not worth doing is changing a shipped sentence while moving it.
-    return reduction.sticks.length < reduction.drawnFrom
-      ? t("plotTransferReduced", { sticks: drawn, count: reduction.drawnFrom })
-      : t("plotTransferExact", { sticks: drawn });
+    return reduction.sticks.length < reduction.drawnFrom ? t("plotTransferReduced") : "";
   }
-  if (drawing.kind === "viewport-blank") {
-    /*
-     * No claim about points, and none about a window either.
-     *
-     * "This range" is the range beneath the caption, which is the only one this
-     * component can speak for. Naming the window a request is outstanding for
-     * would be naming a different range whenever a gesture is in flight -- the
-     * axis follows the pointer while the request does not -- and the status
-     * region beside the plot is where that window is already said.
-     */
-    return drawing.reason === "failed"
-      ? t("plotFailed")
-      : t("plotWaiting");
-  }
-  if (drawing.kind === "viewport-transient") {
-    /*
-     * Said plainly rather than hidden, because it is the one moment the picture
-     * is not an answer about the range beneath it: the drawing in hand is being
-     * stretched for feedback, and the range is asked for when the gesture stops.
-     *
-     * It names no range, and that is not vagueness. A gesture is drawn between
-     * two React renders -- the one that starts it and the one that settles it --
-     * so any number written here would be the range the gesture *began* at,
-     * sitting under a plot that has since moved. The range line beside the plot
-     * carries the live numbers, and is kept current for exactly that reason.
-     */
-    return t("plotTransient");
-  }
-  const opening = t("plotObservations", { sticks: drawn, count: drawing.sourcePoints,
-    low: formatMz(drawing.low), high: formatMz(drawing.high) });
   /*
    * Whether anything was collapsed, decided by what this drawing did rather
    * than by who did it.
@@ -511,18 +533,18 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing, t: UiMe
    * that column's extremes, which is the same rule on both sides of the boundary
    * and says nothing about how many columns there were.
    */
-  return reduction.sticks.length < drawing.sourcePoints
-    ? `${opening} ${t("plotReduced")}`
-    : `${opening} ${t("plotExact")}`;
+  return reduction.sticks.length < drawing.sourcePoints ? t("plotReduced") : "";
 }
 
 /**
- * A stick spectrum drawn as one SVG path.
+ * A spectrum drawn as one SVG path.
  *
- * Sticks, not a connected line: a mass spectrum is a set of discrete m/z
+ * Sticks for a centroid or undeclared spectrum: those are discrete m/z
  * measurements, and joining them would draw intensity at m/z values that were
- * never measured. Everything is emitted into a single path so that a large
- * spectrum costs one node rather than thousands.
+ * never measured. A spectrum the file declares profile is sampled along m/z,
+ * so over a viewport it is the joined line the export draws (P175).
+ * Everything is emitted into a single path so that a large spectrum costs one
+ * node rather than thousands.
  *
  * The axis is a prop rather than a derivation, which is the M5.2 change. A
  * spectrum with no admitted viewport is still drawn over the range its own
@@ -531,150 +553,230 @@ function describeDrawing(reduction: Reduction, drawing: SpectrumDrawing, t: UiMe
  * projection of the complete spectrum it retained. This component decides
  * neither -- it draws what it is handed, over the axis it is handed.
  */
+/**
+ * What the caption and the axes cannot say about a drawing: how it was reduced,
+ * how negative intensities are drawn, and an unreported representation. Shown
+ * in Details → Spectrum source; empty when there is nothing to add.
+ */
+export function describeSpectrumSource(
+  mz: readonly number[],
+  intensity: readonly number[],
+  drawing: SpectrumDrawing,
+  representation: SpectrumRepresentation,
+  t: UiMessage,
+): string {
+  const { reduction, line } = drawingGeometry(mz, intensity, drawing, representation);
+  return joinSentences(t, [
+    line !== null ? (drawing.kind === "viewport" && reduction.drawnFrom < drawing.sourcePoints ? t("plotLineReduced") : "")
+      : drawing.kind === "viewport" || drawing.kind === "transfer" ? describeDrawing(reduction, drawing, t) : "",
+    line === null && reduction.negativeCount > 0 ? describeNegativeDrawing(reduction, t) : "",
+    representation === "notReported" ? t("plotUnknownRepresentation")
+      // Sticks only where there is no viewport to draw the line over. A
+      // viewport whose drawing is on its way, failed, or has nothing to join
+      // states no reason it does not have; the head already says profile.
+      : representation !== "profile" ? "" : drawing.kind === "transfer" ? t("plotProfileSticks")
+      : line !== null ? t("plotProfileLine") : "",
+  ]);
+}
+
+const NO_OUTSIDE: OutsideSamples = [null, null];
+
+/**
+ * What one drawing draws: its m/z axis, its reduction, and -- for a declared
+ * profile spectrum over a viewport -- the joined line (P175). Shared by the
+ * plot and by Details, so the two cannot describe different drawings.
+ *
+ * The line runs from the sample beyond the low edge through the projection's
+ * points to the sample beyond the high edge, and the band's clip cuts it at
+ * each edge at the height between the two samples beside it -- the export's
+ * cut. A settled window is scaled to those heights, as the export is. A
+ * transferred drawing (no viewport) and a line of fewer than two samples stay
+ * sticks: there is no window to cut, or nothing to join.
+ */
+function drawingGeometry(
+  mz: readonly number[],
+  intensity: readonly number[],
+  drawing: SpectrumDrawing,
+  representation: SpectrumRepresentation,
+) {
+  const domain = drawing.kind === "transfer"
+    ? transferDomain(mz, drawing.reportedMzLow, drawing.reportedMzHigh)
+    : { low: drawing.low, high: drawing.high };
+  const outside = representation !== "profile" ? null
+    : drawing.kind === "viewport" || drawing.kind === "viewport-transient" ? drawing.outside ?? NO_OUTSIDE : null;
+  const edges = outside !== null && drawing.kind === "viewport"
+    ? edgeHeights(mz, intensity, domain.low, domain.high, outside) : [];
+  const reduction = reduce(mz, intensity, domain.low, domain.high, edges);
+  let line: Stick[] | null = null;
+  if (outside !== null && mz.length + (outside[0] === null ? 0 : 1) + (outside[1] === null ? 0 : 1) >= 2) {
+    line = [];
+    if (outside[0] !== null) line.push(reduction.toPoint(outside[0].mz, outside[0].intensity));
+    for (let index = 0; index < mz.length; index += 1) line.push(reduction.toPoint(mz[index] ?? 0, intensity[index] ?? 0));
+    if (outside[1] !== null) line.push(reduction.toPoint(outside[1].mz, outside[1].intensity));
+  }
+  return { domain, reduction, line };
+}
+
 export function StickSpectrum({
   mz,
   intensity,
   drawing,
-  representationKnown,
-  valueUnitsKnown = false,
+  representation = "notReported",
+  mzUnit,
+  intensityUnit,
   labelledBy,
   surface,
+  readout,
+  overlay,
 }: StickSpectrumProps) {
   const t = useUiMessages();
-  const sizeText = usePlotTextSize();
+  const plotNode = useRef<SVGSVGElement | null>(null);
   const externalRef = surface.kind === "interactive" ? surface.plotRef : undefined;
   const attachPlot = useCallback((node: SVGSVGElement | null) => {
-    sizeText(node);
+    plotNode.current = node;
     if (typeof externalRef === "function") externalRef(node);
     else if (externalRef) externalRef.current = node;
-  }, [externalRef, sizeText]);
-  const domain = useMemo(
-    () =>
-      drawing.kind === "transfer"
-        ? transferDomain(mz, drawing.reportedMzLow, drawing.reportedMzHigh)
-        : { low: drawing.low, high: drawing.high },
-    [drawing, mz],
-  );
-
-  const reduction = useMemo(
-    () => reduce(mz, intensity, domain.low, domain.high),
-    [domain.high, domain.low, intensity, mz],
+  }, [externalRef]);
+  const { domain, reduction, line } = useMemo(
+    () => drawingGeometry(mz, intensity, drawing, representation),
+    [drawing, intensity, mz, representation],
   );
 
   const path = useMemo(
-    () =>
-      reduction.sticks
+    () => line !== null
+      ? line.map((point, index) => `${index === 0 ? "M" : "L"}${coordinate(point.x)} ${coordinate(point.y)}`).join("")
+      : reduction.sticks
         .map(
           (stick) =>
             `M${coordinate(stick.x)} ${coordinate(reduction.zeroY)}V${coordinate(stick.y)}`,
         )
         .join(""),
-    [reduction.sticks, reduction.zeroY],
+    [line, reduction.sticks, reduction.zeroY],
   );
 
   const flat = reduction.intensityHigh === reduction.intensityLow;
-  /** Whether this plot has anything on it, which several sentences depend on. */
-  const nothingDrawn = reduction.sticks.length === 0;
+  /** Whether this plot has anything on it, which the value axis depends on. */
+  const nothingDrawn = line === null && reduction.sticks.length === 0;
+  // The m/z axis is painted, not rendered: a gesture repaints it per frame.
+  // Every render, so a title that changed width (another language) is
+  // measured again against the labels beside it.
+  useLayoutEffect(() => { paintMzAxis(plotNode.current, domain.low, domain.high); });
+  /*
+   * The value axis, and only where there are values.
+   *
+   * With nothing drawn the extent is zero to zero, so `flat` is true and the
+   * axis used to read "every intensity is the same" -- a statement about
+   * measurements, over a plot holding none, shown identically while a drawing
+   * was outstanding, after one had failed, and for a window that truthfully
+   * holds no measured point. An empty plot says nothing about intensity, which
+   * is what it knows.
+   */
+  const valueTicks = nothingDrawn ? [] : niceTicks(reduction.axisLow, reduction.axisHigh);
+  const valueSpan = reduction.axisHigh - reduction.axisLow;
+  const valueY = (value: number) => valueSpan > 0
+    ? PLOT_PADDING_TOP + ((reduction.axisHigh - value) / valueSpan) * (BASELINE_Y - PLOT_PADDING_TOP) : BASELINE_Y;
+  // Each axis states the unit its array declares, by accession, as the export does.
+  const valueTitle = (intensityUnit?.state === "declared" ? t("plotAxisIntensityUnit", { unit: intensityUnit.accession })
+    : t("plotAxisIntensity")) + (flat && !nothingDrawn ? ` · ${t("plotFlat")}` : "");
+  const mzTitle = mzUnit?.state === "declared" ? t("plotAxisMzUnit", { unit: mzUnit.accession }) : t("plotAxisMz");
+  // A blank plot's caption names no drawing: the status line beside the plot
+  // already says whether one is on its way or failed.
+  const caption = [
+    drawing.kind === "viewport" ? line !== null ? t("plotLineCaption", { count: reduction.drawnFrom, total: drawing.sourcePoints })
+      : t("plotCaption", { count: reduction.sticks.length, total: drawing.sourcePoints }) :
+      drawing.kind === "transfer" ? t("plotTransferCaption", { count: reduction.sticks.length, total: reduction.drawnFrom }) :
+        drawing.kind === "viewport-transient" ? t("plotTransient") : "",
+    reduction.negativeCount > 0 ? t("plotNegativeCount", { count: reduction.negativeCount }) : "",
+  ].filter(part => part !== "").join(" · ");
 
   return (
     <figure className="spectrum-figure">
-      <svg
-        // Described wherever there is a viewport, whether or not it can be
-        // moved. What the range is and what the drawing is doing are true of an
-        // inert viewport too, and are exactly what a reader who cannot act on it
-        // still needs.
-        aria-describedby={surface.kind === "interactive" ? surface.describedBy : undefined}
-        aria-labelledby={labelledBy}
-        className="plot spectrum-plot"
-        // Focusable exactly where there is something to do, and the keyboard
-        // exposed only there with it. A tab stop that reaches a picture nothing
-        // can be done to spends a keyboard user's time to tell them nothing --
-        // which is what this did for a spectrum whose whole domain is one m/z,
-        // because it asked whether a viewport existed rather than whether it
-        // could move.
-        onKeyDown={surface.kind === "interactive" && surface.focusable ? surface.onKeyDown : undefined}
-        preserveAspectRatio="none"
-        // Attached wherever there is a viewport. The wheel listener lives on
-        // this node and must go on answering an inert spectrum's wheel by
-        // declining it, rather than never hearing it.
-        ref={attachPlot}
-        role="img"
-        // Chromium may implicitly tab to an SVG carrying input listeners.
-        // Explicitly exclude inert/refused drawings from sequential focus.
-        tabIndex={surface.kind === "interactive" && surface.focusable ? 0 : -1}
-        viewBox={`0 0 ${PLOT_WIDTH} ${PLOT_HEIGHT}`}
-      >
-        <defs>
-          <clipPath id={STICKS_CLIP}>
-            <rect
-              height={BASELINE_Y}
-              width={PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT}
-              x={PLOT_PADDING_LEFT}
-              y={0}
-            />
-          </clipPath>
-        </defs>
-        {surface.kind === "interactive" ? <rect className="plot-range-band" aria-hidden="true"
-          visibility="hidden" x={0} y={PLOT_PADDING_TOP} width={0} height={BASELINE_Y - PLOT_PADDING_TOP} /> : null}
-        <g className="plot-grid">
-          <line x1={0} x2={PLOT_WIDTH} y1={reduction.zeroY} y2={reduction.zeroY} />
-          <line x1={0} x2={PLOT_WIDTH} y1={PLOT_PADDING_TOP} y2={PLOT_PADDING_TOP} />
-        </g>
-        {/* The one node a gesture moves. Transformed as a whole rather than
-            redrawn, so a pointer frame costs an attribute rather than a
-            reduction over the projection. */}
-        <g className={SPECTRUM_STICKS_LAYER} clipPath={`url(#${STICKS_CLIP})`}>
-          {path === "" ? null : <path className="spectrum-sticks" d={path} />}
-        </g>
-        <text
-          className={`axis-label ${SPECTRUM_AXIS_LOW}`}
-          x={PLOT_PADDING_LEFT}
-          y={PLOT_HEIGHT - 6}
+      {/* The drawing and its axes: the value title on its own row above, value
+          ticks left of the drawing, m/z ticks under it, and the m/z title on
+          the line under those. The text is HTML placed by percentage, so no
+          plot height distorts it. */}
+      <div className="plot-frame spectrum-frame">
+        <p className="plot-axis-title plot-axis-title-y">{valueTitle}</p>
+        <div aria-hidden="true" className="plot-y-ticks">
+          {valueTicks.map(tick => <span className="plot-tick" key={tick.value} style={{ top: `${(valueY(tick.value) / PLOT_HEIGHT) * 100}%` }}>
+            {tick.label}</span>)}
+        </div>
+        <svg
+          // Described wherever there is a viewport, whether or not it can be
+          // moved. What the range is and what the drawing is doing are true of an
+          // inert viewport too, and are exactly what a reader who cannot act on it
+          // still needs.
+          aria-describedby={surface.kind === "interactive" ? surface.describedBy : undefined}
+          aria-labelledby={labelledBy}
+          className="plot spectrum-plot"
+          // The visible extent the value axis is scaled from, since its ticks
+          // are rounded: what a reader checking the scale reads.
+          data-value-high={nothingDrawn ? undefined : formatIntensity(reduction.intensityHigh)}
+          data-value-low={nothingDrawn ? undefined : formatIntensity(reduction.intensityLow)}
+          // How the points are drawn: a joined line for a declared profile
+          // spectrum over a viewport, sticks for everything else.
+          data-drawn-as={line === null ? "sticks" : "line"}
+          // Focusable exactly where there is something to do, and the keyboard
+          // exposed only there with it. A tab stop that reaches a picture nothing
+          // can be done to spends a keyboard user's time to tell them nothing --
+          // which is what this did for a spectrum whose whole domain is one m/z,
+          // because it asked whether a viewport existed rather than whether it
+          // could move.
+          onKeyDown={surface.kind === "interactive" && surface.focusable ? surface.onKeyDown : undefined}
+          preserveAspectRatio="none"
+          // Attached wherever there is a viewport. The wheel listener lives on
+          // this node and must go on answering an inert spectrum's wheel by
+          // declining it, rather than never hearing it.
+          ref={attachPlot}
+          role="img"
+          // Chromium may implicitly tab to an SVG carrying input listeners.
+          // Explicitly exclude inert/refused drawings from sequential focus.
+          tabIndex={surface.kind === "interactive" && surface.focusable ? 0 : -1}
+          viewBox={`0 0 ${PLOT_WIDTH} ${PLOT_HEIGHT}`}
         >
-          {formatMz(reduction.domainLow)}
-        </text>
-        <text
-          className={`axis-label ${SPECTRUM_AXIS_HIGH}`}
-          textAnchor="end"
-          x={PLOT_WIDTH - PLOT_PADDING_RIGHT}
-          y={PLOT_HEIGHT - 6}
-        >
-          {formatMz(reduction.domainHigh)}
-        </text>
-        {/*
-          The value axis, and only where there are values.
-
-          With nothing drawn the extent is zero to zero, so `flat` is true and
-          this label used to read "every intensity is the same" -- a statement
-          about measurements, over a plot holding none, shown identically while a
-          drawing was outstanding, after one had failed, and for a window that
-          truthfully holds no measured point. An empty plot says nothing about
-          intensity, which is what it knows.
-        */}
-        {nothingDrawn ? null : (
-          <text className="axis-label" x={PLOT_PADDING_LEFT} y={PLOT_PADDING_TOP + 10}>
-            {flat ? t("plotFlat") : formatIntensity(reduction.intensityHigh)}
-          </text>
-        )}
-        {reduction.intensityLow < 0 ? (
-          <text className="axis-label" x={PLOT_PADDING_LEFT} y={BASELINE_Y + 10}>
-            {formatIntensity(reduction.intensityLow)}
-          </text>
-        ) : null}
-      </svg>
-      <figcaption className="spectrum-caption">
-        <p>{drawing.kind === "viewport" ? t("plotCaption", { count: reduction.sticks.length, total: drawing.sourcePoints }) :
-          drawing.kind === "transfer" ? t("plotTransferCaption", { count: reduction.sticks.length, total: reduction.drawnFrom }) :
-          drawing.kind === "viewport-transient" ? t("plotTransient") : t(drawing.reason === "failed" ? "plotFailed" : "plotWaiting")}
-          {" · "}{t(valueUnitsKnown ? "plotUnitsReported" : "plotUnits")}
-          {reduction.negativeCount > 0 ? ` · ${t("plotNegativeCount", { count: reduction.negativeCount })}` : ""}
-        </p>
-        <details className="plot-source-details"><summary>{t("viewerSourceDetails")}</summary>
-          <p>{drawing.kind === "viewport-blank" || drawing.kind === "viewport-transient" ? "" : describeDrawing(reduction, drawing, t)} {nothingDrawn ? "m/z" : t("plotAxes")}
-            {reduction.negativeCount > 0 ? ` ${describeNegativeDrawing(reduction, t)}` : ""}
-            {representationKnown ? "" : ` ${t("plotUnknownRepresentation")}`}
-          </p>
-        </details>
+          <defs>
+            {/* A stick on either edge of the drawn band keeps its whole
+                width: clipped at its centre it drew half as wide, and read as
+                a lighter mark than its neighbours (P6). A joined line is cut
+                exactly at the band's edges, which is where the export cuts it. */}
+            <clipPath id={STICKS_CLIP}>
+              <rect
+                height={BASELINE_Y}
+                width={PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT + 2 * (line === null ? STICK_BLEED : 0)}
+                x={PLOT_PADDING_LEFT - (line === null ? STICK_BLEED : 0)}
+                y={0}
+              />
+            </clipPath>
+          </defs>
+          {surface.kind === "interactive" ? <rect className="plot-range-band" aria-hidden="true"
+            visibility="hidden" x={0} y={PLOT_PADDING_TOP} width={0} height={BASELINE_Y - PLOT_PADDING_TOP} /> : null}
+          {/* Light rules at the value ticks, and the zero line the sticks stand on. */}
+          <g aria-hidden="true" className="plot-gridlines">
+            {valueTicks.map(tick => <line key={tick.value} x1={PLOT_PADDING_LEFT} x2={PLOT_WIDTH - PLOT_PADDING_RIGHT}
+              y1={valueY(tick.value)} y2={valueY(tick.value)} />)}
+          </g>
+          <line className="plot-baseline" x1={0} x2={PLOT_WIDTH} y1={reduction.zeroY} y2={reduction.zeroY} />
+          {/* The one node a gesture moves. Transformed as a whole rather than
+              redrawn, so a pointer frame costs an attribute rather than a
+              reduction over the projection. */}
+          <g className={SPECTRUM_STICKS_LAYER} clipPath={`url(#${STICKS_CLIP})`}>
+            {path === "" ? null : <path className={line === null ? "spectrum-sticks" : "spectrum-line"} d={path} />}
+          </g>
+        </svg>
+        <div aria-hidden="true" className="plot-x-ticks" />
+        {overlay}
+      </div>
+      {/* One line under the ticks, whatever the drawing is doing, so the box
+          never changes height when a drawing arrives (which would also
+          abandon a gesture): what range is on screen, then the m/z title. */}
+      <div className="plot-foot">
+        {readout}
+        <p className="plot-axis-title plot-axis-title-x">{mzTitle}</p>
+      </div>
+      {/* What the drawing is made of, for a screen reader: Details says it to
+          the eye, beside the rest of the spectrum's source. */}
+      <figcaption className="spectrum-caption visually-hidden">
+        <p>{caption}</p>
       </figcaption>
     </figure>
   );

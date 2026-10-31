@@ -6,11 +6,30 @@ use std::os::windows::fs::OpenOptionsExt as _;
 use std::time::Instant;
 
 use super::*;
-use crate::preview::dto::PreviewDto;
+use crate::presets::{
+    PresetDeleteRequest, PresetListDto, PresetRenameRequest, PresetSaveRequest, PresetWriteDto,
+};
+use crate::preview::dto::{ConversionIntentWireDto, PreviewDto};
 use crate::preview::raw_view::{
     MAX_RAW_BYTES, RawViewBeginRequestDto, RawViewOperationRequestDto, RawViewPhaseDto,
     RawViewStateDto, ViewCacheSummaryDto,
 };
+
+/// An advanced intent (ADR 0055): MS1 only at 64/32, which no row holds.
+fn advanced_ms1() -> serde_json::Value {
+    serde_json::json!({
+        "output": {
+            "format": "mzml",
+            "mz": { "encoding": "plain", "bits": 64 },
+            "intensity": { "encoding": "plain", "bits": 32 },
+            "zlib": true,
+            "index": true
+        },
+        "spectrumFilters": [{ "kind": "ms_level", "levels": [{ "start": 1, "end": 1 }] }],
+        "chromatogramFilters": [],
+        "switches": []
+    })
+}
 
 /// A provider that records which file every preview read names, so a test can
 /// say the RAW itself was never read by one.
@@ -111,7 +130,7 @@ fn viewing_with<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
 }
 
 fn viewing(label: &str) -> Viewing {
-    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let runner = FakeConversionRunner::new(BackendAct::ConvertViewable);
     let arguments = runner.arguments();
     viewing_with(label, runner, arguments, open_responses())
 }
@@ -311,18 +330,27 @@ fn a_miss_converts_the_verified_default_publishes_once_and_opens_the_entry_not_t
     );
 
     // The open reads the pinned entry, and so does a spectrum load; never the
-    // RAW. A cached view retains no summary a QC capture could copy.
+    // RAW. `msaccess` reads it twice; the table and the spectrum are read
+    // natively from it (ADR 0056), and neither reaches the provider. A cached
+    // view retains no summary a QC capture could copy.
     let preview = session.open(operation).expect("the ready view opens");
     assert_eq!(preview.file.file_name, RAW_NAME);
     assert_eq!(preview.qc_snapshot_token, None);
     assert!(!preview.qc_producer_identified);
-    let _ = session.service.load_spectrum(&session.handle, 0);
-    let sources = session.sources.lock().expect("sources").clone();
-    assert_eq!(
-        sources.len(),
-        4,
-        "three open reads and one spectrum: {sources:?}"
+    assert!(
+        preview.chromatogram_export_token.is_some(),
+        "the view's chromatogram is the one on screen"
     );
+    assert!(matches!(
+        session
+            .service
+            .load_spectrum(&session.handle, 0)
+            .expect("a spectrum of the view")
+            .outcome,
+        SelectedSpectrumOutcomeDto::Spectrum { .. }
+    ));
+    let sources = session.sources.lock().expect("sources").clone();
+    assert_eq!(sources.len(), 2, "two open reads: {sources:?}");
     let output = entry.join("view.mzML");
     assert!(
         sources.iter().all(|source| source == &output),
@@ -440,12 +468,16 @@ fn cancel_during_storing_or_the_new_entry_check_keeps_the_stored_copy() {
 
 #[test]
 fn a_cancel_while_msconvert_runs_ends_cancelled_and_every_slot_route_answers_raw_view_busy() {
-    let (runner, started, release) = FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let (runner, started, release) =
+        FakeConversionRunner::new(BackendAct::ConvertViewable).blocking();
     let arguments = runner.arguments();
     let mut responses = open_responses();
     responses.extend(open_responses());
     let session = viewing_with("raw-view-running", runner, arguments, responses);
-    let mzml = session.raws.readable_mzml("other.mzML");
+    // A document the native reader opens, for the open after the view ends.
+    let mzml = session
+        .raws
+        .named_bytes("other.mzML", sample_document().as_bytes());
     let mzml_handle = match session
         .service
         .add_files_now(std::slice::from_ref(&mzml))
@@ -508,6 +540,64 @@ fn a_cancel_while_msconvert_runs_ends_cancelled_and_every_slot_route_answers_raw
         document,
     );
     assert_eq!(begin_refusal(&refused).kind, "raw_view_busy");
+    // ADR 0055's structured intent arrives through the same Begin and is
+    // refused the same way, before it is read.
+    let refused = service.begin_conversion_queue(
+        &ConversionBeginRequestDto {
+            handles: vec![mzml_handle.clone()],
+            intent_id: None,
+            intent: Some(ConversionIntentWireDto(advanced_ms1())),
+            conflict_policy: ConversionConflictPolicyDto::Fail,
+            expected_receipt: receipt,
+            destination_policy: None,
+        },
+        document,
+    );
+    assert_eq!(begin_refusal(&refused).kind, "raw_view_busy");
+    // Composing settings stays allowed (decision 5): planning an advanced
+    // intent is read-only, and the presets (ADR 0055) take no slot, no gate
+    // and no row, so none of their four commands is refused. The plan is
+    // judged on its merits: this fixture's build lacks the filter's grammar.
+    let planned = service.conversion_queue_plan(&ConversionPlanRequestDto {
+        handles: vec![mzml_handle.clone()],
+        intent_id: None,
+        intent: Some(ConversionIntentWireDto(advanced_ms1())),
+        conflict_policy: ConversionConflictPolicyDto::Fail,
+        expected_receipt: receipt,
+        destination_policy: None,
+    });
+    assert_eq!(
+        planned.expect_err("the build's grammar answers").kind,
+        "conversion_intent_unsupported"
+    );
+    let presets = crate::presets::PresetStore::over(Ok(session.app_data.directory.clone()));
+    let committed = |answer| assert!(matches!(answer, PresetWriteDto::Committed { .. }));
+    committed(presets.save(&PresetSaveRequest {
+        name: "MS1".to_owned(),
+        intent: advanced_ms1(),
+        replace_existing: false,
+        replace_unusable: false,
+    }));
+    assert!(matches!(presets.list(), PresetListDto::Listed { presets } if presets.len() == 1));
+    committed(presets.rename(&PresetRenameRequest {
+        name: "MS1".to_owned(),
+        new_name: "MS1 only".to_owned(),
+    }));
+    committed(presets.delete(&PresetDeleteRequest {
+        name: "MS1 only".to_owned(),
+    }));
+    // ADR 0052's per-output adoption shares the queue-wide action's body, so
+    // a view changes neither answer: no new guard (decision 5).
+    assert_eq!(
+        service
+            .adopt_conversion_output("1", "1", document)
+            .expect_err("no terminal queue")
+            .kind,
+        service
+            .adopt_conversion_outputs("1", document)
+            .expect_err("no terminal queue")
+            .kind,
+    );
     assert!(matches!(
         service.raw_view_state(),
         RawViewStateDto::Running {
@@ -774,7 +864,7 @@ fn a_cached_copy_that_cannot_be_checked_or_removed_ends_retryable_before_any_con
 #[test]
 fn pins_end_with_the_next_open_or_the_row_and_removing_the_row_deletes_nothing() {
     // Responses for the RAW's open only, so the mzML's open below fails.
-    let runner = FakeConversionRunner::new(BackendAct::Convert);
+    let runner = FakeConversionRunner::new(BackendAct::ConvertViewable);
     let arguments = runner.arguments();
     let session = viewing_with("raw-view-pins", runner, arguments, open_responses());
     let (operation, _) = ready(&session.view());
@@ -987,7 +1077,8 @@ fn a_superseded_open_ends_the_view_and_leaves_its_entry_for_the_next_view() {
 fn cancel_and_clear_ends_a_running_view_and_deletes_nothing() {
     use crate::preview::dto::{WorkspaceClearActionDto, WorkspaceClearOutcomeDto};
 
-    let (runner, started, release) = FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let (runner, started, release) =
+        FakeConversionRunner::new(BackendAct::ConvertViewable).blocking();
     let arguments = runner.arguments();
     let session = viewing_with("raw-view-clear", runner, arguments, open_responses());
     let before = session.raw_facts();
@@ -1508,13 +1599,18 @@ fn a_viewed_preview_reads_nothing_of_the_raw() {
     session
         .open(operation)
         .expect("the cached view opens without the RAW");
-    let _ = session.service.load_spectrum(&session.handle, 0);
+    // Read natively, from the entry: with the RAW gone, a spectrum can only
+    // have come from there.
+    assert!(matches!(
+        session
+            .service
+            .load_spectrum(&session.handle, 1)
+            .expect("a spectrum without the RAW")
+            .outcome,
+        SelectedSpectrumOutcomeDto::Spectrum { .. }
+    ));
     let sources = session.sources.lock().expect("sources").clone();
-    assert_eq!(
-        sources.len(),
-        4,
-        "three open reads and one spectrum: {sources:?}"
-    );
+    assert_eq!(sources.len(), 2, "two open reads: {sources:?}");
     let output = session.the_entry().join("view.mzML");
     assert!(
         sources.iter().all(|source| source == &output),

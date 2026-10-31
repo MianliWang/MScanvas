@@ -138,7 +138,7 @@ async function drawingCaption(): Promise<string> {
 async function waitForADrawing(): Promise<void> {
   // The statement now follows the caption's short summary, so it is contained
   // rather than leading; it is only ever written for an actual drawing.
-  await browser.waitUntil(async () => (await drawingCaption()).includes("Drawn as"), {
+  await browser.waitUntil(async () => / sticks? · /u.test(await drawingCaption()), {
     timeout: 30_000,
     timeoutMsg: "the real projection never produced a drawing",
   });
@@ -241,7 +241,7 @@ describe("the m/z viewport against the real projection boundary", () => {
       // and it is not the length of anything this document received: the panel's
       // own arrays are the fixture's six points.
       expect(await drawingCaption()).toContain(
-        `of the ${String(SEEDED_POINTS)} observations this spectrum has between m/z ${SEEDED_MZ_LOW.toFixed(4)} and ${SEEDED_MZ_HIGH.toFixed(4)}`,
+        ` · ${String(SEEDED_POINTS)} source observations in this range`,
       );
       expect(spectrumWithPeaks().mz).toHaveLength(6);
 
@@ -393,16 +393,14 @@ describe("the m/z viewport against the real projection boundary", () => {
       expect(await rangeCaption()).toBe(
         `Showing m/z ${SEEDED_MZ_LOW.toFixed(4)} to ${(2_000).toFixed(4)} (full range)`,
       );
-      // Nothing is drawn beneath it, and the caption says the range *failed*
-      // rather than that its drawing is still on its way -- which for a refusal
-      // asking again cannot change would be a sentence that never went away.
-      expect(await drawingCaption()).toContain("This range could not be drawn.");
-      expect(await drawingCaption()).not.toContain("Waiting for the drawing");
+      // Nothing is drawn beneath it: the caption names no drawing, and the
+      // status line above is what says the range was refused.
+      expect(await drawingCaption()).not.toMatch(/ sticks? · /u);
       // And no retry is offered for it.
       expect(
         await browser.execute(() =>
           [...document.querySelectorAll("button")].some(
-            (candidate) => candidate.textContent?.trim() === "Draw this m/z range again",
+            (candidate) => candidate.textContent?.trim() === "Redraw",
           ),
         ),
       ).toBe(false);
@@ -445,11 +443,11 @@ describe("the m/z viewport against the real projection boundary", () => {
       expect(
         await browser.execute(() =>
           [...document.querySelectorAll("button")].some(
-            (candidate) => candidate.textContent?.trim() === "Draw this m/z range again",
+            (candidate) => candidate.textContent?.trim() === "Redraw",
           ),
         ),
       ).toBe(true);
-      expect(await drawingCaption()).toContain("This range could not be drawn.");
+      expect(await drawingCaption()).not.toMatch(/ sticks? · /u);
     });
   });
 
@@ -475,7 +473,7 @@ describe("the m/z viewport against the real projection boundary", () => {
 
       expect(await statusText()).toContain("cannot be navigated");
       // The spectrum is still there, drawn from the points this document holds.
-      expect(await drawingCaption()).toContain("Drawn as");
+      expect(await drawingCaption()).toMatch(/ sticks? · /u);
       expect(await rangeCaption()).toBe("No m/z range to navigate.");
 
       const claimed = await browser.execute((css: string) => {
@@ -497,7 +495,7 @@ describe("the m/z viewport against the real projection boundary", () => {
       expect(claimed).toBe(false);
 
       const disabled = await browser.execute(() =>
-        ["Zoom in m/z", "Zoom out m/z", "Reset m/z range"].map((label) => {
+        ["Zoom in m/z", "Zoom out m/z", "Fit all, m/z"].map((label) => {
           const node = [...document.querySelectorAll("button")].find(
             (candidate) => candidate.textContent?.trim() === label,
           );
@@ -691,7 +689,7 @@ describe("the m/z viewport against the real projection boundary", () => {
         .move({ duration: 60, x: at - 60, y })
         .up()
         .perform();
-      await pressButton("Reset m/z range");
+      await pressButton("Fit all, m/z");
       await waitForADrawing();
 
       const after = await ipcCalls();

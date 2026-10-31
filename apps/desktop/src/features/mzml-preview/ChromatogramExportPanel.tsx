@@ -1,547 +1,164 @@
+import { Icon, IconButton } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import type { UiMessage } from "../preferences/i18n";
 import type { FigureSettingsValidation } from "./figureSettingsValidation";
 /**
- * What the run on screen can be exported as, and over how much of itself.
+ * What the run on screen can be exported as, from the chromatogram's head.
  *
- * A sibling of the chromatogram rather than a second view of it. Every number
- * this panel sends is a *request*: which run, by the opaque token Rust issued
- * with the preview; how much of it, by a scope and the viewport the viewer has
- * committed to; and which traces are on screen. The science is Rust's retained
- * per-scan facts, and nothing here holds it, reads it or could substitute for
- * it.
+ * Every number these actions send is a *request*: which run, by the opaque
+ * token Rust issued with the preview; how much of it, by the scope the figure
+ * dialog chose; and which traces are on screen. The science is Rust's retained
+ * per-scan facts, and nothing here holds it.
  *
- * Two things this surface has to say out loud, because a reader would otherwise
- * have to guess and would guess wrong in both directions:
- *
- * - a **figure** draws the traces that are visible, so hiding one changes the
- *   picture;
- * - a **data** export carries both measured columns whatever is on screen,
- *   because hiding a trace is a choice about a plot rather than a decision to
- *   leave measured science out of a file.
- *
- * The linked section at the bottom is a third surface over the same two
- * sources. It exports one figure of two ordered panels -- this chromatogram
- * above, the complete selected spectrum below -- and it lives here rather than
- * beside the spectrum because the range and the traces it needs are the ones
- * chosen here. It offers no data document: a combined table would have to
- * interleave two different measurements or drop the link.
+ * Export… opens the figure dialog (range, size, theme, SVG and PNG). PNG and
+ * Copy repeat the current settings without it. The ⋯ menu holds the data
+ * documents -- which carry both measured columns whatever is on screen -- and
+ * the linked chromatogram + spectrum figure, which opens the same dialog.
  */
 
-import type {
-  ChromatogramExportFormat,
-  ChromatogramRangeScope,
-  FigureTheme,
-  LinkedFigureFormat,
-} from "./contracts";
-import { FigureSettingsFields } from "./FigureSettingsFields";
-import { formatCount } from "./format";
+import type { ChromatogramExportFormat, RetentionTimeUnit } from "./contracts";
+import { formatCount, retentionTimeUnitSymbol } from "./format";
+import { figureRefusal, QuickFigureActions, type PlotMenuItem } from "./QuickFigureActions";
 import type {
   ChromatogramExportState,
-  FigureSettingsDraft,
-  FigureSettingsField,
   LinkedFigureExportState,
   LinkedFigureUnavailable,
   TraceVisibility,
 } from "./usePreviewWorkspace";
-import type { RetentionTimeDomain } from "./viewer/scanModel";
 
-/** What every identifier in this panel is named after. */
-const FIGURE_PREFIX = "chromatogram";
+/** The ⋯ menu's note on what the data documents hold, which CSV and TSV point at. */
+const DATA_NOTE_ID = "chromatogram-data-note";
 
-/**
- * How many decimals a retention time is written with.
- *
- * The same four this panel's own range note uses two paragraphs above, and the
- * same four the scan table, the plot readout and the run summary use. A raw
- * number here would print `0.1` where the table beside it prints `0.1000`, and a
- * reader comparing the two has no way to know they are the same scan.
- */
-
-/**
- * The scopes and formats this panel offers, and nothing about how they read.
- *
- * Each control is named from the resource bundle where it is rendered. These
- * lists used to carry the English beside the scope, which was a second
- * authority for text the bundle already owned and which no renderer read.
- */
-const RANGE_SCOPES: readonly { readonly scope: ChromatogramRangeScope }[] = [
-  { scope: "full" },
-  { scope: "current" },
-];
-
-const FIGURE_FORMATS: readonly {
-  readonly format: ChromatogramExportFormat;
-  readonly recordsDpi: boolean;
-}[] = [
-  { format: "svg", recordsDpi: false },
-  { format: "png", recordsDpi: true },
-];
-
-const DATA_FORMATS: readonly { readonly format: ChromatogramExportFormat }[] = [
-  { format: "csv" },
-  { format: "tsv" },
-];
-
-/**
- * The linked figure's two drawn outputs.
- *
- * Drawings only, and the absence is the point rather than an omission: there is
- * no honest combined table of a chromatogram and a spectrum, so the linked
- * surface offers none and the two single-source exports keep theirs.
- */
-const LINKED_FIGURE_FORMATS: readonly {
-  readonly format: LinkedFigureFormat;
-  readonly recordsDpi: boolean;
-}[] = [
-  { format: "svg", recordsDpi: false },
-  { format: "png", recordsDpi: true },
-];
-
-export interface ChromatogramExportPanelProps {
-  readonly onOpenLinkedFigure: () => void;
-  readonly exportState: ChromatogramExportState;
+export interface ChromatogramExportToolsProps {
+  /** The plot's own menu items (Set range…), above the figure items. */
+  readonly leadingItems?: readonly PlotMenuItem[];
+  readonly onOpenFigure: () => void;
+  /** Opens the linked figure dialog, returning focus to `trigger`. */
+  readonly onOpenLinkedFigure: (trigger: HTMLElement | null) => void;
   /**
    * Whether the session's one scientific export lane is occupied.
    *
    * Not this panel's own state. The selected spectrum shares the lane, so its
-   * save or copy closes these actions exactly as one of this panel's own would
-   * -- otherwise a button that is visibly available reaches Rust and comes back
-   * refused, which is a failure the interface caused rather than reported.
-   *
-   * Availability only. What this panel *says* still comes from `exportState`:
-   * a running label names the operation this surface started, and a spectrum's
-   * result is never shown here.
+   * save or copy closes these actions exactly as one of this panel's own would.
    */
   readonly scientificExportBusy: boolean;
-  readonly rangeScope: ChromatogramRangeScope;
-  readonly onRangeScope: (scope: ChromatogramRangeScope) => void;
-  /**
-   * The range a current-range export would cover, as the viewer committed it.
-   *
-   * `null` means nothing narrower has been committed, so the current range is
-   * the whole run. Said in those words rather than filled in with the run's own
-   * bounds, which would look like a choice the user had made.
-   */
-  readonly committedDomain: RetentionTimeDomain | null;
   readonly traces: TraceVisibility;
   readonly onExport: (format: ChromatogramExportFormat) => void;
   readonly onCopyPlot: () => void;
-  readonly onDismiss: () => void;
-  readonly figureSettings: FigureSettingsDraft;
   readonly figureSettingsValidation: FigureSettingsValidation;
-  readonly renderSettingsProblem: string | null;
-  readonly pngDpiProblem: string | null;
-  readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
-  readonly onFigureTheme: (theme: FigureTheme) => void;
-  /** What the linked two-panel surface is doing, and what it last did. */
-  readonly linkedExportState: LinkedFigureExportState;
-  /**
-   * Why a linked figure cannot be exported right now, or `null` when it can.
-   *
-   * Shown rather than only acted on. A closed control that says nothing is a
-   * control the reader has to guess about, and every one of these sentences
-   * names something they can change.
-   */
+  /** Why a linked figure cannot be previewed now, or `null` when it can. */
   readonly linkedUnavailable: LinkedFigureUnavailable | null;
-  readonly onExportLinked: (format: LinkedFigureFormat) => void;
-  readonly onCopyLinkedPlot: () => void;
-  readonly onDismissLinked: () => void;
 }
 
-export function ChromatogramExportPanel({
-  onOpenLinkedFigure,
-  exportState,
-  scientificExportBusy,
-  rangeScope,
-  onRangeScope,
-  committedDomain,
-  traces,
-  onExport,
-  onCopyPlot,
-  onDismiss,
-  figureSettings,
-  figureSettingsValidation,
-  renderSettingsProblem,
-  pngDpiProblem,
-  onFigureSetting,
-  onFigureTheme,
-  linkedExportState,
-  linkedUnavailable,
-  onExportLinked,
-  onCopyLinkedPlot,
-  onDismissLinked,
-}: ChromatogramExportPanelProps) {
+export function ChromatogramExportTools({ leadingItems, onOpenFigure, onOpenLinkedFigure, scientificExportBusy, traces, onExport, onCopyPlot,
+  figureSettingsValidation, linkedUnavailable }: ChromatogramExportToolsProps) {
   const t = useUiMessages();
-  // What this surface is doing *to the run it is showing*, which is what its
-  // labels are allowed to say. An operation that outlived the preview it was
-  // begun on still holds the lane -- so the controls below stay closed -- but
-  // it is no longer this run being written, and no label here says it is.
-  const running = exportState.status === "running" && exportState.namesVisibleRun;
-  // The same rule for the linked surface, and it is about the *pair*: selecting
-  // another scan is as much a change of what is being exported as opening
-  // another run is. The lane stays held either way -- Rust is still writing --
-  // so the actions below stay closed while the label stops claiming this pair
-  // is the one being written.
-  const linkedRunning =
-    linkedExportState.status === "running" && linkedExportState.namesVisiblePair;
-  // A figure nothing can be drawn from is not offered. The data formats stay
-  // live: a width nobody could draw at says nothing about a list of numbers.
-  //
-  // The lane is asked about first, and it is the *shared* lane rather than this
-  // surface's own state. The settings rules below are unchanged and independent
-  // of it: an unusable width still closes only the figures, an unusable
-  // resolution still closes only the raster, and neither of them has anything
-  // to do with the selected spectrum's settings.
-  const figureBlocked = scientificExportBusy || renderSettingsProblem !== null;
-  const rasterBlocked = figureBlocked || pngDpiProblem !== null;
   // A panel of no series is refused by the contract, so a figure with neither
-  // trace visible is not offered either. The data exports are untouched.
+  // trace visible is not offered. The data exports are untouched.
   const nothingDrawn = !traces.tic && !traces.bpc;
-  // Scan and trace choices belong to the viewer. Range and size corrections
+  const reason = figureRefusal(t, scientificExportBusy, figureSettingsValidation, nothingDrawn);
+  // Scan and trace choices belong to the viewer; range and size corrections
   // remain available inside the figure dialog.
-  const linkedPreviewBlocked = linkedUnavailable !== null && (
+  const linkedBlocked = linkedUnavailable !== null && (
     linkedUnavailable.code === "noChromatogram" || linkedUnavailable.code === "loading" ||
     linkedUnavailable.code === "noSpectrum" || linkedUnavailable.code === "noTrace"
   );
-
-  return (
-    <div className="chromatogram-export-panel spectrum-export" id="chromatogram-export-panel">
-      <fieldset className="chromatogram-export-range">
-        <legend>{t("viewerRange")}</legend>
-        <div
-          aria-labelledby="chromatogram-range-label"
-          className="spectrum-figure-themes"
-          role="radiogroup"
-        >
-          <span className="visually-hidden" id="chromatogram-range-label">
-            {t("viewerExportRunScope")}
-          </span>
-          {RANGE_SCOPES.map(({ scope }) => (
-            <label className="spectrum-figure-theme" key={scope}>
-              <input
-                checked={rangeScope === scope}
-                name="chromatogram-range-scope"
-                onChange={() => {
-                  onRangeScope(scope);
-                }}
-                type="radio"
-                value={scope}
-              />
-              <span>{t(scope === "full" ? "viewerExportFullRun" : "viewerExportCurrent")}</span>
-            </label>
-          ))}
-        </div>
-        <p className="chromatogram-export-note">
-          {committedDomain === null
-            ? t("viewerExportFullRunHelp")
-            : t("viewerExportRtHelp", { low: String(committedDomain.low), high: String(committedDomain.high) })}
-        </p>
-      </fieldset>
-      <FigureSettingsFields
-        idPrefix={FIGURE_PREFIX}
-        onFigureSetting={onFigureSetting}
-        onFigureTheme={onFigureTheme}
-        validation={figureSettingsValidation}
-        settings={figureSettings}
-      />
-      <fieldset className="spectrum-figure-actions">
-        <legend className="visually-hidden">{t("viewerFigureExports")}</legend>
-        <p className="chromatogram-export-note">
-          {t("viewerExportTraceHelp")}
-        </p>
-        <div className="spectrum-export-actions">
-          {FIGURE_FORMATS.map(({ format, recordsDpi }) => (
-            <button
-              className="secondary-button"
-              // Every figure action while any scientific export is running --
-              // this panel's own or the selected spectrum's. Rust holds a
-              // single lane across both surfaces and refuses a second, so
-              // leaving these live would offer an action already known to fail.
-              disabled={(recordsDpi ? rasterBlocked : figureBlocked) || nothingDrawn}
-              key={format}
-              onClick={() => {
-                onExport(format);
-              }}
-              type="button"
-            >
-              {t(running && exportState.operation === format ? "viewerExporting" : "viewerExportFormat", { name: format.toUpperCase() })}
-            </button>
-          ))}
-          <button
-            className="secondary-button"
-            // The figure only. A clipboard image carries no physical
-            // resolution, so an unusable one leaves this action live.
-            disabled={figureBlocked || nothingDrawn}
-            onClick={onCopyPlot}
-            type="button"
-          >
-            {t(running && exportState.operation === "copy" ? "viewerCopying" : "viewerCopy")}
-          </button>
-        </div>
-      </fieldset>
-      <fieldset className="spectrum-data-actions">
-        <legend>{t("viewerData")}</legend>
-        <p className="chromatogram-export-note">
-          {t("viewerExportDataHelp")}
-        </p>
-        <div className="spectrum-export-actions">
-          {DATA_FORMATS.map(({ format }) => (
-            <button
-              className="secondary-button"
-              // Closed while any scientific export is running, for the same one
-              // lane. Not closed by a figure setting, because none of them
-              // reaches a data document, and not by a hidden trace either.
-              // Preserve the current data initiator for natural native return.
-              // Every other action remains natively disabled by the shared lane.
-              aria-disabled={scientificExportBusy || undefined}
-              disabled={scientificExportBusy && !(running && exportState.operation === format)}
-              key={format}
-              onClick={() => {
-                if (!scientificExportBusy) onExport(format);
-              }}
-              type="button"
-            >
-              {t(running && exportState.operation === format ? "viewerExporting" : "viewerExportFormat", { name: format.toUpperCase() })}
-            </button>
-          ))}
-        </div>
-      </fieldset>
-      {/*
-        A live region rather than a dialog. An export finishes while the user is
-        looking at the run, and interrupting them to say so would be a worse
-        interruption than the file being saved was.
-
-        Named, because the linked section below has one of its own: two status
-        regions in one surface that both announce "Saved ..." and neither of
-        which says what it is about leave a reader unable to tell which export
-        finished.
-      */}
-      <div
-        aria-label={t("viewerChromatogramExportStatus")}
-        aria-live="polite"
-        className="spectrum-export-status"
-        role="status"
-      >
-        <ChromatogramExportResult onDismiss={onDismiss} state={exportState} />
-      </div>
-      <button
-        type="button"
-        className="secondary-button"
-        disabled={linkedPreviewBlocked}
-        aria-describedby={linkedPreviewBlocked ? LINKED_UNAVAILABLE_ID : undefined}
-        onClick={onOpenLinkedFigure}
-      >{t("figurePreviewLinked")}</button>
-      <LinkedFigureSection
-        linkedRunning={linkedRunning}
-        onCopyLinkedPlot={onCopyLinkedPlot}
-        onDismissLinked={onDismissLinked}
-        onExportLinked={onExportLinked}
-        pngDpiProblem={pngDpiProblem}
-        scientificExportBusy={scientificExportBusy}
-        state={linkedExportState}
-        unavailable={linkedUnavailable}
-      />
-    </div>
-  );
+  return <QuickFigureActions busy={scientificExportBusy}
+    figureUnavailable={figureSettingsValidation.render !== null || nothingDrawn}
+    pngUnavailable={figureSettingsValidation.dpi !== null} reason={reason} leadingItems={leadingItems}
+    onPreview={onOpenFigure} onPng={() => onExport("png")} onCopy={onCopyPlot}
+    menuNote={{ id: DATA_NOTE_ID, text: t("viewerExportTraceHelp") }}
+    menuItems={[
+      ...(["csv", "tsv"] as const).map(format => ({ key: format, label: t("viewerExportFormat", { name: format.toUpperCase() }),
+        // Refused while any scientific export runs: Rust holds one lane.
+        refused: scientificExportBusy, reason: scientificExportBusy ? t("plotExportBusy") : null, describedBy: DATA_NOTE_ID,
+        onSelect: () => { onExport(format); } })),
+      { key: "linked", label: t("figurePreviewLinked"), refused: linkedBlocked, opensDialog: true,
+        // Said whenever there is a reason; the ones the dialog can repair leave the item open.
+        reason: linkedUnavailable === null ? null : describeUnavailable(linkedUnavailable, t), onSelect: onOpenLinkedFigure },
+    ]} />;
 }
 
-/** What every identifier in the linked section is named after. */
-const LINKED_PREFIX = "chromatogram-linked";
-
-/** Where the linked section says why its actions are closed. */
-const LINKED_UNAVAILABLE_ID = `${LINKED_PREFIX}-unavailable`;
-
 /**
- * What the section says about itself when it can be used.
- *
- * A constant rather than markup, because it shares one element with the reason
- * that replaces it -- see the comment where that element is rendered.
+ * What the last chromatogram and linked exports did, over the plot's corner so
+ * a result never takes height from the plot. Each result is its own named
+ * region, so a reader can tell which export finished.
  */
-/**
- * The linked two-panel figure, as one compact section of this surface.
- *
- * Three actions and one sentence about each thing that would refuse them. The
- * section is always rendered while the export surface is open, including when
- * nothing can be exported: a control that disappears when it stops working
- * teaches nobody why, and this one has a reason to give.
- *
- * Availability is asked in the same order the workspace answers it, and one
- * extra rule lives only here -- a resolution no PNG could record closes the
- * raster and nothing else, because an SVG has no pixels to give a physical size
- * to and a clipboard image carries no resolution at all.
- */
-function LinkedFigureSection({
-  state,
-  linkedRunning,
-  unavailable,
-  scientificExportBusy,
-  pngDpiProblem,
-  onExportLinked,
-  onCopyLinkedPlot,
-  onDismissLinked,
-}: {
-  readonly state: LinkedFigureExportState;
-  /** Whether a running linked operation still names the pair on screen. */
-  readonly linkedRunning: boolean;
-  readonly unavailable: LinkedFigureUnavailable | null;
-  readonly scientificExportBusy: boolean;
-  readonly pngDpiProblem: string | null;
-  readonly onExportLinked: (format: LinkedFigureFormat) => void;
-  readonly onCopyLinkedPlot: () => void;
+export function ChromatogramExportStatus({ exportState, linkedExportState, onDismiss, onDismissLinked, rtUnit }: {
+  readonly exportState: ChromatogramExportState;
+  readonly linkedExportState: LinkedFigureExportState;
+  readonly onDismiss: () => void;
   readonly onDismissLinked: () => void;
+  readonly rtUnit: RetentionTimeUnit;
 }) {
-  // The shared lane first, then this surface's own reasons. Both are asked
-  // again in Rust, which is the boundary that decides; this is what keeps an
-  // action that is already known to be refused from being offered.
   const t = useUiMessages();
-  const blocked = scientificExportBusy || unavailable !== null;
-  const rasterBlocked = blocked || pngDpiProblem !== null;
-  // Named for a screen reader only where there is something to name, so a
-  // usable section does not point at an element that is not there.
-  const describedBy = unavailable === null ? undefined : LINKED_UNAVAILABLE_ID;
-
-  return (
-    <fieldset className="linked-figure-actions" id={`${LINKED_PREFIX}-section`}>
-      <legend>{t("viewerLinkedTitle")}</legend>
-      {/*
-        One sentence, in whichever of two elements the reader's situation calls
-        for -- and never both at once.
-
-        Which sentence depends on whether the reader can act. Measured, in the
-        state where the three actions are live: this section costs the open
-        surface 116px at 1366x768 and at 960x640, and 96px at 1920x1080 where
-        the sentence fits on one line. Two stacked paragraphs cost 163px, 163px
-        and 122px for the same states -- and at 1366x768 the difference decides
-        whether the plot's top edge is still inside the 614px viewer column when
-        the surface is open. The three panels' floors were measured for M4.3 and
-        the export surface's own scroll owner was accepted on that arithmetic,
-        so a third section has to fit inside it rather than spend it.
-
-        Which sentence to drop is not a coin toss. A reader who cannot use this
-        yet needs to know what to change; a reader who can needs to know what
-        they will get. Neither is served by being shown the other's sentence
-        underneath their own.
-      */}
-      {/*
-        The refusal is announced and read from the same element, because it is
-        one sentence and a reader should meet it once.
-
-        It has to be announced: the reason appears while the reader is somewhere
-        else -- typing a height, choosing a range scope -- and closes three
-        controls as it does. A correction nobody is told about has to be hunted
-        for, and a disabled control cannot be tabbed to, so its
-        `aria-describedby` is not a way to find one either.
-
-        And the region has to be mounted before the text arrives. Two
-        conditional paragraphs did not announce anything and looked as though
-        they did: React reconciles same-typed siblings in one slot, so the node
-        was reused and `aria-live` arrived in the very commit that replaced the
-        text. Nothing was watching.
-
-        So this element is permanent, visible, and holds the refusal alone. It
-        empties on recovery rather than filling with the description, which is
-        why becoming *usable* -- the state nobody needs telling about -- is
-        silent; it is the same rule the two figure-setting problems on this
-        surface follow. `:empty` collapses it, so the section is one sentence
-        tall in both states, and the description below it is rendered only while
-        there is no refusal to displace. One occurrence either way: the earlier
-        shape kept a hidden copy of the refusal beside the visible one, which
-        announced correctly and made a reader traverse the same sentence twice.
-      */}
-      <p
-        aria-live="polite"
-        className="chromatogram-export-note"
-        data-live-region="linked-figure-availability"
-        /*
-         * The id only while there is something to point at. The element is
-         * permanent so that it is watched before the text arrives; a
-         * described-by target with no text is a promise of an explanation
-         * that is not there.
-         */
-        id={unavailable === null ? undefined : LINKED_UNAVAILABLE_ID}
-      >
-        {unavailable === null ? "" : describeUnavailable(unavailable, t)}
-      </p>
-      {unavailable === null ? (
-        <p className="chromatogram-export-note">{t("viewerLinkedHelp")}</p>
-      ) : null}
-      <div className="spectrum-export-actions">
-        {LINKED_FIGURE_FORMATS.map(({ format, recordsDpi }) => (
-          <button
-            aria-describedby={describedBy}
-            className="secondary-button"
-            disabled={recordsDpi ? rasterBlocked : blocked}
-            key={format}
-            onClick={() => {
-              onExportLinked(format);
-            }}
-            type="button"
-          >
-            {t(linkedRunning && state.status === "running" && state.operation === format ? "viewerLinkedExporting" : "viewerLinkedExport", { name: format.toUpperCase() })}
-          </button>
-        ))}
-        <button
-          aria-describedby={describedBy}
-          className="secondary-button"
-          // A clipboard image carries no physical resolution, so an unusable
-          // one leaves this action live -- the same rule the chromatogram's own
-          // Copy plot follows.
-          disabled={blocked}
-          onClick={onCopyLinkedPlot}
-          type="button"
-        >
-          {t(linkedRunning && state.status === "running" && state.operation === "copy" ? "viewerLinkedCopying" : "viewerLinkedCopy")}
-        </button>
-      </div>
-      <div
-        aria-label={t("viewerLinkedStatus")}
-        aria-live="polite"
-        className="spectrum-export-status linked-figure-status"
-        role="status"
-      >
-        <LinkedFigureResult onDismiss={onDismissLinked} state={state} />
-      </div>
-    </fieldset>
-  );
+  return <div className="plot-status">
+    <div aria-label={t("viewerChromatogramExportStatus")} aria-live="polite" className="spectrum-export-status" role="status">
+      <ChromatogramExportResult onDismiss={onDismiss} state={exportState} />
+    </div>
+    <div aria-label={t("viewerLinkedStatus")} aria-live="polite" className="spectrum-export-status linked-figure-status" role="status">
+      <LinkedFigureResult onDismiss={onDismissLinked} rtUnit={rtUnit} state={linkedExportState} />
+    </div>
+  </div>;
 }
 
-/** What one finished linked export says about itself. */
-export function LinkedFigureResult({ state, onDismiss }: { readonly state: LinkedFigureExportState; readonly onDismiss: () => void }) {
+/**
+ * What one finished linked export says about itself. `rtUnit` is the run's on
+ * screen now: a result stops being shown when the run changes, so it is the
+ * unit the export was made in.
+ */
+export function LinkedFigureResult({ state, onDismiss, rtUnit }: { readonly state: LinkedFigureExportState; readonly onDismiss: () => void;
+  readonly rtUnit: RetentionTimeUnit }) {
   const t = useUiMessages();
-  if (state.status === "idle" || state.status === "running") return null;
-  const message = state.status === "cancelled" ? t("viewerLinkedCancelled") : state.status === "failed" ? ownedErrorMessage(state.error, t) :
+  if (state.status === "idle") return null;
+  if (state.status === "running") return <p className="spectrum-export-message">{describeRunning(state.operation, t)}</p>;
+  const message = state.status === "cancelled" ? t("viewerExportCancelled") : state.status === "failed" ? ownedErrorMessage(state.error, t) :
     state.status === "copied" ? t("viewerLinkedCopied", { width: String(state.figure.width), height: String(state.figure.height),
       theme: t(state.figure.theme), index: formatCount(state.selectedIndex), count: state.sourceScanCount }) :
     t("viewerLinkedSaved", { name: state.fileName, index: formatCount(state.selectedIndex),
-      rt: String(state.selectedRetentionTime), count: state.sourceScanCount });
-  return <p className="spectrum-export-message">{message}{" "}
-    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{ownedErrorDetail(state.error, t)}</span> : null}
+      // The canonical value, never rounded for display, and the run's unit.
+      rt: [String(state.selectedRetentionTime), retentionTimeUnitSymbol(rtUnit)].filter(part => part !== null).join(" "),
+      count: state.sourceScanCount });
+  return <p className="spectrum-export-message"><ResultText message={message} detail={state.status === "failed" ? ownedErrorDetail(state.error, t) : null} />
     <DismissButton label={t("viewerLinkedDismiss")} onDismiss={onDismiss} />
   </p>;
 }
 
 export function ChromatogramExportResult({ state, onDismiss }: { readonly state: ChromatogramExportState; readonly onDismiss: () => void }) {
   const t = useUiMessages();
-  if (state.status === "idle" || state.status === "running") return null;
+  if (state.status === "idle") return null;
+  if (state.status === "running") return <p className="spectrum-export-message">{describeRunning(state.operation, t)}</p>;
   const message = state.status === "cancelled" ? t("viewerExportCancelled") : state.status === "failed" ? ownedErrorMessage(state.error, t) :
     state.status === "copied" ? t("viewerChromCopied", { width: String(state.figure.width), height: String(state.figure.height),
       theme: t(state.figure.theme), count: state.sourceScanCount }) :
     t("viewerChromSaved", { name: state.fileName, details: state.rowCount === null ?
       t("viewerChromSource", { count: state.sourceScanCount }) : t("viewerChromRows", { count: state.rowCount, total: state.sourceScanCount }) });
-  return <p className="spectrum-export-message">{message}{" "}
-    {state.status === "failed" && state.error.detail !== null ? <span className="notice-detail">{ownedErrorDetail(state.error, t)}</span> : null}
+  return <p className="spectrum-export-message"><ResultText message={message} detail={state.status === "failed" ? ownedErrorDetail(state.error, t) : null} />
     <DismissButton onDismiss={onDismiss} />
   </p>;
 }
 
-function DismissButton({ onDismiss, label }: { readonly onDismiss: () => void; readonly label?: string }) {
-  const t = useUiMessages();
-  return <button aria-label={label} className="link-button" onClick={onDismiss} type="button">{t("viewerDismiss")}</button>;
+/** A result on the plot head's line: cut with an ellipsis, whole on hover, its dismiss never cut. */
+function ResultText({ message, detail }: { readonly message: string; readonly detail: string | null }) {
+  return <span className="spectrum-export-text" title={detail === null ? message : `${message} ${detail}`}>{message}
+    {detail === null ? null : <>{" "}<span className="notice-detail">{detail}</span></>}</span>;
 }
 
-function describeUnavailable(problem: LinkedFigureUnavailable, t: UiMessage): string {
+/**
+ * What a running export is waiting on, in the spectrum's words: a refused
+ * action under the plot or in the figure dialog points at this line.
+ */
+function describeRunning(operation: string, t: UiMessage): string {
+  return operation === "copy" ? t("viewerCopying") : t("viewerExportChoose", { name: operation.toUpperCase() });
+}
+
+function DismissButton({ onDismiss, label }: { readonly onDismiss: () => void; readonly label?: string }) {
+  const t = useUiMessages();
+  return <IconButton icon={<Icon name="close" />} label={label ?? t("viewerDismiss")} onClick={onDismiss} size="sm" />;
+}
+
+export function describeUnavailable(problem: LinkedFigureUnavailable, t: UiMessage): string {
   if (problem.code === "minimumHeight") return t("linkedHeight", { value: String(problem.minimum) });
   const keys = { noChromatogram: "linkedNoChromatogram", loading: "linkedLoading", noSpectrum: "linkedNoSpectrum",
     noTrace: "linkedNoTrace", outside: "linkedOutside", figureSettings: "linkedSettings" } as const;

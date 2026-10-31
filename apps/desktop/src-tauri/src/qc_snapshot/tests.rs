@@ -3,8 +3,8 @@
 //!
 //! Every test here runs the real crossing: a real project store, a real
 //! workspace service, a real reattachment of a file this test wrote, a real
-//! layer, and a real preview open through a provider that answers the three
-//! open operations with controlled formatter text and runs it through the
+//! layer, and a real preview open through a provider that answers the two
+//! `msaccess` open operations with controlled formatter text and runs it through the
 //! production interpreter. The provider counts every run and every look at the
 //! backend, so "the capture starts no process and asks no backend" is proved
 //! by the counters rather than by inspection.
@@ -24,6 +24,7 @@ use mscanvas_proteowizard::{
 
 use crate::preview::backend::{OperationAttempt, PreviewProvider, interpretation_error};
 use crate::preview::dto::{BackendAvailabilityDto, PreviewDto, PreviewErrorDto};
+use crate::preview::mzml_fixture::{FixtureSpectrum, document};
 use crate::preview::{InstallationIdentity, PreviewAvailability, PreviewService};
 use crate::project::record::{
     ArtifactPayload, InputId, LayerId, MsLevelCountRecord, ProducerTool, RecordedUnit,
@@ -50,15 +51,32 @@ const METADATA: &str = concat!(
     "  processing: conversion\n",
 );
 
-/// A spectrum table whose native identifiers are distinctive, so a test can
-/// say they did not travel.
-const SPECTRUM_TABLE: &str = concat!(
-    "# sample.mzML\n",
-    "index\tid\tevent\tanalyzer\tmsLevel\trt\tmzLow\tmzHigh\tbasePeakMZ\tbasePeakInt\tTIC\t",
-    "charge\tprecursorMZ\tthermo_monoMZ\tfilterStringMZ\tionInjectionTime\n",
-    "0\tnative-secret-scan-19\t1\tFTMS\tms1\t0.10\t100\t1000\t445.12\t9000\t120000\t\t\t\t\t\n",
-    "1\tnative-secret-scan-20\t2\tFTMS\tms2\t0.20\t100\t1000\t333.33\t5000\t60000\t2\t445.12\t\t\t\n",
-);
+/// An mzML source whose native identifiers are distinctive, so a test can say
+/// they did not travel. The open reads its spectrum table natively (ADR 0056);
+/// the document's own id carries `name`, so two sources are two documents.
+fn source_document(name: &str) -> String {
+    let mut ms2 = FixtureSpectrum::new(
+        "native-secret-scan-20",
+        2,
+        0.2,
+        (333.33, 5000.0),
+        60_000.0,
+        &[(333.33, 5000.0)],
+    );
+    ms2.precursor = Some((Some(445.12), None));
+    document(&[
+        FixtureSpectrum::new(
+            "native-secret-scan-19",
+            1,
+            0.1,
+            (445.12, 9000.0),
+            120_000.0,
+            &[(445.12, 9000.0)],
+        ),
+        ms2,
+    ])
+    .replace(r#"id="fixture""#, &format!(r#"id="{name}""#))
+}
 
 /// The retention-time text the fixture summary reports, in its columns.
 ///
@@ -177,7 +195,7 @@ impl Machine {
     }
 }
 
-/// Answers the three open operations with controlled formatter text, through
+/// Answers the two `msaccess` open operations with controlled formatter text, through
 /// the production interpreter, as whichever build the machine resolves to.
 struct SummaryProvider {
     machine: Machine,
@@ -219,10 +237,6 @@ impl PreviewProvider for SummaryProvider {
             PreviewOperation::RunSummary => (
                 completed_process(&run_summary()),
                 PreviewOutputManifest::empty(),
-            ),
-            PreviewOperation::SpectrumTable => (
-                completed_process(""),
-                PreviewOutputManifest::single_complete_file(SPECTRUM_TABLE.as_bytes().to_vec()),
             ),
             _ => {
                 return Err(PreviewErrorDto::new(
@@ -289,9 +303,7 @@ impl World {
     /// A reference to a file this test wrote, admitted to the Workbench
     /// through the real bridge, and a layer made from it.
     fn attached(&self, name: &str) -> (InputId, LayerId, String) {
-        let path = self
-            .scratch
-            .write(name, format!("<mzML>{name}</mzML>").as_bytes());
+        let path = self.scratch.write(name, source_document(name).as_bytes());
         let input = self.projects.register_input(&path).expect("registered");
         let job = self.projects.accept_job().expect("accepted");
         let result = add_project_input_to_workspace(&self.projects, &self.service, job, input)
@@ -894,7 +906,7 @@ fn a_mixed_project_reopens_with_its_whole_lineage_and_saves_again_unchanged() {
         .register_input(
             &world
                 .scratch
-                .write("sample.mzML", b"<mzML>sample.mzML</mzML>"),
+                .write("sample.mzML", source_document("sample.mzML").as_bytes()),
         )
         .expect("registered");
     // File facts over both.

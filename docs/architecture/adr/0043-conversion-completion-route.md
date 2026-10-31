@@ -362,6 +362,14 @@ family before a staging directory exists. Widening support is *adding a measured
 row*, not relaxing a check. The executable is re-verified before launch and
 `ExecutableChanged` fails a run whose binary moved under it.
 
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** The rows
+now define the verified tier rather than the whole gate. `provider_build_admission`
+answers measured, unverified (with the release) or refused: Thermo RAW and
+Shimadzu LCD convert on any build that reports its release, labelled
+"unverified build" in the plan, the item outcome and the diagnostics;
+`SciexWiffBundle` keeps the measured-row requirement; a build that cannot report
+its release converts no vendor family.
+
 **What M6 extends it to.** Today the binding answers one question — may this
 *family* be converted on this build. M6 makes settings expressible, so it must
 answer a second: may this *setting* be admitted on this build. The binding
@@ -2273,6 +2281,12 @@ The locked semantics:
 
 ### CNV-D6 — queue capacity
 
+> **Re-decided 2026-10-29 by [ADR 0057](0057-conversion-capacity-and-viewing-during-conversion.md),
+> decision 3, on `be/integrate` (draft PR #161): the value is 1,024, the roster's capacity.**
+> Bounded-ness stays `LOCKED`: Rust enforces it, reports it as the plan's
+> `capacity` and refuses with `queue_too_large`, and no frontend constant
+> restates it.
+
 **Status: `DECIDED` by M6.8, 2026-09-08 — the value is `16`, unchanged, on a
 stated basis. Bounded-ness remains `LOCKED`.** M6.7 surfaced the bound; M6.8
 re-decided it after cancellation was understood and kept it, replacing the stale
@@ -2964,6 +2978,14 @@ re-running anything:
 | `IntegrityEvidence` | Validation mode plus the property set, keeping *inapplicable* distinct from *unverified* | exists — **M6.9** projects it |
 | `AdoptionRelation` | Which output was adopted, and against which identity check | exists — **M6.9** records the relation |
 | `Run`, `Artifact`, `Lineage`, `Provenance` | **not built.** M6 supplies the facts these would be assembled from | **M8** |
+
+*Amended 2026-10-30 by [ADR 0052](0052-per-output-adoption.md).* The
+`AdoptionRelation` is written by a queue-wide adoption or by a per-output one,
+which adopts one output the queue-wide action would offer and records its
+answer on that output's item, replacing the answer the item held, about its
+other members too. The "Adoption" row of the implementation table
+above and CNV-D9's "a user action, per terminal queue" read "per terminal
+queue, or one offered output of it"; the identity check is unchanged.
 
 Four constraints M6 accepts now so M8 is not forced to redesign, each earned from
 the reference audit:

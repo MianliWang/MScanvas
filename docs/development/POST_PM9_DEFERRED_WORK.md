@@ -94,6 +94,17 @@ These are candidate criteria, not chosen copy or completed repairs. Before a
 product edit, confirm the current state and freeze the selected criterion;
 this inventory does not supply new rendered evidence.
 
+*Changed by the self-explaining copy pass (2026-10-28, PM9.7 F3; owner
+direction in [AFTER_BETA1_PLAN §2](AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+The empty Workbench's line now follows the roster. While the roster is read it
+says nothing more. While the roster is empty it names *Add files…* in
+*Acquisitions*, and dropping mzML files onto the window when file drop is
+available. Once an mzML row is listed it reads "Select an mzML file in
+Acquisitions."; with only vendor rows it says vendor acquisitions can be
+converted but are not previewed. Both control names stay nested resources.
+Conversion's no-target notice still names *Add files…* in *Acquisitions*; its
+"if that list is hidden" clause is gone. No rendered rerun is claimed.
+
 ## PM9.4 optional presentation ledger
 
 Original rows: [slice 04, Optional, recorded and not done](../phases/pm9/slice-04.md#optional-recorded-and-not-done).
@@ -112,6 +123,21 @@ The minimum criteria below apply only if that individual option is selected.
 | [O7](../phases/pm9/slice-04.md#optional-recorded-and-not-done) | `validationMode` is not rendered; the PM9.4 record describes its then-current value as always output-only because Rust hardcodes it. | **Taken up after PM9 (2026-10-27):** implemented in `feat/beta1-readiness`, component-tested, whole Vitest and browser suites passing; native acceptance pending. The plan says output-only only for an output-only mode and nothing for another until plan-time wording is chosen; results follow each report's mode. | If shown, the description comes from the Rust-projected mode and says exactly what was checked. Output-only validation must not be described as source comparison, scientific suitability or fidelity. | Existing authoritative report fields and localized explanations. No new validation algorithm, comparison, provider read or stronger quality claim is authorized by displaying the field. Recheck the current projection rather than universalizing the historical output-only observation. |
 | [O8](../phases/pm9/slice-04.md#optional-recorded-and-not-done) | Add, Diagnostics and staging cleanup give no reason when another lane action refuses them. | **Taken up after PM9 (2026-10-27):** implemented in `feat/beta1-readiness`, component-tested, whole Vitest and browser suites passing; native acceptance pending. | Each refused action has a truthful reachable reason tied to the current lane; click/Enter/Space remain inert while refused, and pending initiators retain the established natural focus behavior. | Existing adoption, diagnostics, recovery and lane ownership. Do not unlock concurrent work, weaken staging ownership/cleanup boundaries, delete source data or alter queue/adoption authority. |
 
+*Changed by the self-explaining copy pass (2026-10-28, O3, O6; owner direction
+in [AFTER_BETA1_PLAN §2](AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+O3: the standing "Queue capacity" sentence is gone; capacity is said only in
+the over-capacity refusal. The plan-pending sentence is also withheld where the
+notice states the same plan reason, and Convert's description still reaches
+that notice. O6: Stop this file is described only while there is a file to end
+or one ending; between items it has no description, and its "available while
+a file is being converted" sentence is gone. What it still says keeps the
+quarantine branch. Stop queue's sentence names its button: "Stop queue keeps
+completed outputs." Skip has no explanation sentence any more
+(`m74CnvSkipExplanation` and `#conversion-skip-scope` are gone); its label,
+"Skip {{name}}", which is also its accessible name, says what it skips. O3's
+acceptance still holds. O6's holds for Stop queue and Stop this file; for Skip
+it is met by the label rather than by a sentence. No rendered rerun is claimed.
+
 PM9.4's [required and verified rows](../phases/pm9/slice-04.md#3-findings-and-acceptance)
 remain accepted. These options do not reopen the completed scope, review,
 queue or recovery work.
@@ -128,6 +154,12 @@ Final disposition for **each O1-O4**: carried forward by
 | [O2](../phases/pm9/slice-05.md#optional-recorded-and-not-done) | Below 1700 px, Show run inspects a run in folded Details; the existing Show Details hint is at the surface top rather than beside the press. | **Taken up after PM9 (2026-10-27):** implemented in `feat/beta1-readiness`, component-tested, whole Vitest and browser suites passing; native acceptance pending. Select whether a local hint is needed. | At 1366x768 and 960x640 the reader can discover and open the existing Details path after Show run, with truthful guidance and the current inspected run retained. | Show run, shell Details toggle and presentation state. Do not silently unfold panels, move focus, open a report or change the accepted history keyboard model as an incidental copy repair. |
 | [O3](../phases/pm9/slice-05.md#optional-recorded-and-not-done) | The targeted setup heading has the same weight as every project section heading. | **Taken up after PM9 (2026-10-27):** implemented in `feat/beta1-readiness`, component-tested, whole Vitest and browser suites passing; native acceptance pending. Select whether a stronger hierarchy is warranted. | The active setup is visually distinguishable without breaking semantic heading order, minimum targets, long-name wrapping or constrained-window reachability. | Project setup styles and the design system. No new page, stepper, navigation state or altered request/plan/run lifecycle. |
 | [O4](../phases/pm9/slice-05.md#optional-recorded-and-not-done) | Busy-line Cancel for a links check, capture or admission has no retained "requested" state; PM9.5 R7 covers targeted runs only. | **Taken up after PM9 (2026-10-27):** the existing contract carries the accepted operation and its terminal answer for all three families, so no contract change was needed; implemented in `feat/beta1-readiness`, component-tested, whole Vitest and browser suites passing; native acceptance pending. Select whether to extend the requested-state contract to these other operations. | A cancellation press refers to the accepted operation ID, suppresses repeat requests across that operation's controls, and says requested until its own terminal answer. A late terminal answer must not overwrite a newer operation's state. | Project job/cancellation ownership and projections for each operation family. First establish which existing facts support this state; a missing authoritative fact needs a separately bounded contract change. Do not claim cancellation completed on request, clear records, or add automatic retries. |
+
+*Changed by the self-explaining copy pass (2026-10-28, O1; owner direction in
+[AFTER_BETA1_PLAN §2](AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+The read-path disclosure is removed, so O1's "optional read-path detail is
+keyboard reachable" no longer applies. The experimental and domain caveats
+stay visible before Run.
 
 PM9.5's [R1-R12 and V1-V7](../phases/pm9/slice-05.md#4-findings-and-acceptance)
 remain accepted; O4 must not be presented as an unfixed targeted-run R7.
@@ -188,7 +220,7 @@ presentation backlog. These rows are not additional authorized implementations.
 | Source item | Current disposition / decision and minimum boundary for any future work |
 | --- | --- |
 | [PM9.4 F1](../phases/pm9/slice-04.md#future-or-another-owners): Retry has no `operationId` | Rust/DTO work, outside the presentation slice. A new authority-binding decision and invariant-level tests would be needed; copy must not imply a binding the command does not carry. |
-| [PM9.4 F2](../phases/pm9/slice-04.md#future-or-another-owners): preview without adoption or adopt one output | New capability. Separately choose the workflow and authoritative finalized-output identity before any implementation; no automatic adoption/preview or bypass of the existing object checks. |
+| [PM9.4 F2](../phases/pm9/slice-04.md#future-or-another-owners): preview without adoption or adopt one output | New capability. Separately choose the workflow and authoritative finalized-output identity before any implementation; no automatic adoption/preview or bypass of the existing object checks. Decided 2026-10-28/30 in [ADR 0052](../architecture/adr/0052-per-output-adoption.md): adopt one output accepted (Rust done, interface open), preview without adopting declined. |
 | [PM9.4 F3](../phases/pm9/slice-04.md#future-or-another-owners): adopted outputs join conversion membership | Existing roster import default from M6.9/M7.2, **not a defect selected for repair**. Changing that default is an owner decision; any later change must preserve the distinction between highlight, preview and conversion membership. |
 | [PM9.4 F4](../phases/pm9/slice-04.md#future-or-another-owners): shell dot and scope pill | Both were **closed with PM9.2**, retained only as history. No new task. |
 | [PM9.5 F1](../phases/pm9/slice-05.md#future-or-another-owners), also [PM9.6 F1](../phases/pm9/slice-06.md#futureexternal): parameter-bound wording | A read-only Rust-owned bounds projection is required before exact ranges can be stated. No new projection is authorized by this inventory; do not duplicate or guess the scientific bounds in UI copy. |

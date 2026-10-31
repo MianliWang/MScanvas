@@ -196,8 +196,8 @@ export function settledAt(revision: number, receipt: number): BackendAuthorityPr
  *
  * Transcribed rather than derived, because a fixture that rebuilt the table
  * from axis values would be re-deriving the very boundary the table exists to
- * be — a free cross-product of the five axes is forty-eight combinations, and
- * nine were measured.
+ * be — a free cross-product of the five axes is ninety-six combinations, and
+ * eleven were measured. `scripts/check_repo.py` holds the count to Rust's.
  */
 export const admittedIntents: readonly ConversionIntentDescriptor[] = [
   intent("no_additional_centroiding", "all", "mz64_intensity32", "zlib"),
@@ -209,6 +209,8 @@ export const admittedIntents: readonly ConversionIntentDescriptor[] = [
   intent("no_additional_centroiding", "ms2_only", "mz64_intensity64", "zlib"),
   intent("unscoped_default_centroiding", "all", "mz64_intensity64", "zlib"),
   intent("unscoped_default_centroiding", "all", "mz32_intensity32", "zlib"),
+  intent("vendor_centroiding_from_ms1", "all", "mz64_intensity32", "zlib"),
+  intent("vendor_centroiding_from_ms2", "all", "mz64_intensity32", "zlib"),
 ];
 
 /** The combination MSCanvas ships, which is the table's first row. */
@@ -291,10 +293,12 @@ export const completeCatalog: readonly ConversionCatalogRow[] = admittedIntents.
  * The catalog the vendor workflow actually receives from a build that can
  * express every row.
  *
- * The seven writer-side rows run; the two centroiding rows are refused, and
- * refused for the *source evidence* rather than for the installation. Derived
- * from the processing axis rather than listed by identity, so a row added to the
- * admitted table lands on the side its own semantic puts it on.
+ * The seven writer-side rows run; the two default-picker rows are refused, and
+ * refused for the *source evidence* rather than for the installation. The two
+ * Thermo vendor-picker rows run, because Thermo RAW is always a convertible
+ * family; the plan refuses it for a selection with any other source. Derived
+ * from the processing axis rather than listed by identity, so a row added to
+ * the admitted table lands on the side its own semantic puts it on.
  */
 export const vendorWorkflowCatalog: readonly ConversionCatalogRow[] = admittedIntents.map(
   (row) => {
@@ -468,7 +472,7 @@ export function buildRows(count: number): SpectrumRow[] {
       identifier: `controllerType=0 controllerNumber=1 scan=${index + 1}`,
       scanNumber: index + 1,
       msLevel,
-      retentionTime: { value: index * 0.0125, unitKnown: false },
+      retentionTime: { value: index * 0.0125, unit: "notReported" },
       basePeakMz: 400 + (index % 500),
       basePeakIntensity: 1_000 + index,
       totalIonCurrent: 10_000 + index * 3,
@@ -517,10 +521,8 @@ export function buildPreview(rowCount = 6, truncated = false, receipt = 1): Prev
       totalMsLevelCount: 2,
       msLevelsTruncated: false,
       chromatogramCount: null,
-      retentionTimeRange: {
-        minimum: { value: 0, unitKnown: false },
-        maximum: { value: (rowCount - 1) * 0.0125, unitKnown: false },
-      },
+      retentionTimeRange: rowCount === 0 ? { state: "noRows" }
+        : { state: "reported", minimum: 0, maximum: (rowCount - 1) * 0.0125, unit: "notReported" },
     },
     spectrumTable: {
       rows,
@@ -545,6 +547,10 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     }
   }
 
+  // The same MS level and precursor `buildRows` gives this scan, so the
+  // spectrum head, the scan table and the chromatogram readout agree.
+  const msLevel = index % 4 === 0 ? 1 : 2;
+  const precursors = pointCount === 0 || msLevel === 1 ? [] : [{ index: 0, mz: 500 + (index % 300), intensity: 8_400 }];
   return {
     index,
     // Distinct per spectrum, so a test that exports one and then selects
@@ -562,21 +568,23 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     },
     scanNumber: index + 1,
     identifiers: [`controllerType=0 controllerNumber=1 scan=${index + 1}`],
-    msLevel: 2,
-    retentionTime: { value: index * 0.0125, unitKnown: false },
+    msLevel,
+    retentionTime: { value: index * 0.0125, unit: "notReported" },
     pointCount,
     mz,
     intensity,
-    mzLow: pointCount === 0 ? 0 : 300,
-    mzHigh: pointCount === 0 ? 0 : 300 + (pointCount - 1) * 0.5,
+    // What an empty spectrum states: no observed m/z range, which is not 0.
+    mzLow: pointCount === 0 ? null : 300,
+    mzHigh: pointCount === 0 ? null : 300 + (pointCount - 1) * 0.5,
     basePeakMz: pointCount === 0 ? 0 : (mz[basePeakIndex] ?? 0),
     basePeakIntensity: pointCount === 0 ? 0 : (intensity[basePeakIndex] ?? 0),
     totalIonCurrent: 54_321,
-    precursors: pointCount === 0 ? [] : [{ index: 0, mz: 512.25, intensity: 8_400 }],
-    totalPrecursorCount: pointCount === 0 ? 0 : 1,
+    precursors,
+    totalPrecursorCount: precursors.length,
     precursorsTruncated: false,
-    representationKnown: false,
-    valueUnitsKnown: false,
+    representation: "notReported",
+    mzUnit: { state: "notReported" },
+    intensityUnit: { state: "notReported" },
     truncated: false,
   };
 }
@@ -2345,6 +2353,8 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         intensity: [1, 2],
         sourcePoints: 2,
         reduced: false,
+        outsideLow: null,
+        outsideHigh: null,
       };
     },
     // Modelled as Rust behaves: the token names the run Rust retained, the

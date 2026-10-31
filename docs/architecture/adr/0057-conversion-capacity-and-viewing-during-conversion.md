@@ -4,6 +4,22 @@ Status: **Accepted** by the owner on 2026-10-29. Nothing here is implemented
 yet. Until the slices below land, `MAX_CONVERSION_QUEUE_ITEMS` stays 16,
 conversion stays serial, and every preview read stays refused with
 `conversion_busy` while a conversion runs.
+
+*Note, 2026-10-29:* decision 3's Rust half is on `be/integrate` (draft PR
+#161): the constant is `MAX_WORKSPACE_DATASETS` (1,024), the diagnostics
+export bound is the larger of 2 MiB and 128 KiB per diagnosed item, and the
+retained state is stated on the constant. The windowed lists and their rendered QA are not done, so
+that PR does not merge before them.
+
+*Note, 2026-10-30:* the lists are windowed on `be/integrate`. #164 windowed
+the queue panel, the plan summary (the requested and the reviewed order) and
+the results; PR #161 adds the excluded rows, the refused adoptions and the
+colliding names, which Rust now sends whole as a list in the refusal's
+context rather than only in its 400-character detail. The copy tour shoots
+the plan, the running queue, the results and the collision list at 1,024
+items at 960x640 and 1366x768. The slot read is still read whole (decision
+3's last point).
+
 Related: [0005](0005-mzml-preview-boundary.md),
 [0006](0006-multi-dataset-workspace-boundary.md),
 [0012](0012-first-visible-thermo-conversion.md),
@@ -66,7 +82,12 @@ then a selected spectrum is an `msaccess` process, and it stays refused with
   - supersession is checked after the wait, as ADR 0006 requires of a backend
     read;
   - an open's native table pass takes that lane after the backend gate, never
-    in the other order, so the two cannot deadlock.
+    in the other order, so the two cannot deadlock;
+  - *2026-10-30, [ADR 0071](0071-xic-re-entry-and-its-first-version.md)
+    decision 10, for its slice X4 (nothing implemented):* an XIC pass takes
+    this lane one spectrum at a time, never for a whole pass, and checks
+    cancellation and supersession between spectra, so a selected-spectrum read
+    interleaves with it.
 
 **What does not change:**
 

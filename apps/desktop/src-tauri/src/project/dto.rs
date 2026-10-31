@@ -78,6 +78,9 @@ pub struct InputDto {
     /// already holds. A handle naming no live row therefore means "not
     /// currently in the workspace", which is the true answer.
     pub workbench_dataset_handle: Option<String>,
+    /// The "not verified by MSCanvas" label recorded for this input, or
+    /// `null` when none is recorded -- which never means verified.
+    pub not_verified_by_mscanvas: Option<super::record::NotVerifiedByMscanvas>,
 }
 
 /// One recorded artifact.
@@ -290,6 +293,9 @@ pub struct ProjectStateDto {
     /// Whether this project has ever been published anywhere. `false` means
     /// Save has nowhere to go and Save As is the only route.
     pub published: bool,
+    /// Whether the bound document is beta 1's schema 4, so the next Save that
+    /// writes replaces it with schema 5, which beta 1 cannot open (ADR 0055).
+    pub saving_upgrades_schema: bool,
     pub inputs: Vec<InputDto>,
     pub artifacts: Vec<ArtifactDto>,
     pub runs: Vec<RunDto>,
@@ -629,6 +635,7 @@ pub(super) fn describe(
                     .map(ToString::to_string)
                     .collect(),
                 workbench_dataset_handle: project.admitted_row(input.id).map(ToOwned::to_owned),
+                not_verified_by_mscanvas: input.not_verified_by_mscanvas.clone(),
             }
         })
         .collect();
@@ -735,6 +742,10 @@ pub(super) fn describe(
         name: document.name.clone(),
         dirty: project.dirty,
         published: project.binding.is_some(),
+        saving_upgrades_schema: project
+            .binding
+            .as_ref()
+            .is_some_and(|binding| binding.schema == super::record::PUBLISHED_SCHEMA_VERSION),
         inputs,
         artifacts,
         runs,

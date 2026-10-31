@@ -13,7 +13,7 @@
 
 use std::sync::PoisonError;
 
-use mscanvas_proteowizard::{ConflictPolicy, ConversionRunOutcome};
+use mscanvas_proteowizard::{ConflictPolicy, ConversionIntent, ConversionRunOutcome};
 
 use super::super::raw_view::{
     Ended, MAX_RAW_BYTES, Progress, RawView, RawViewBeginRequestDto, RawViewOperationRequestDto,
@@ -541,7 +541,7 @@ impl PreviewService {
             source,
             attempt.path(),
             ConflictPolicy::Fail,
-            ConversionIntent::SHIPPED,
+            &BoundIntent::Row(ConversionIntent::SHIPPED),
         )?;
         let cancellation = ConversionCancellation::new();
         if let Some(view) = self.conversion_slot().view_mut(operation) {

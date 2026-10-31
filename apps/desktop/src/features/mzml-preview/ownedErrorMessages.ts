@@ -32,7 +32,16 @@ const MESSAGE = {
   // rather than being handed over as the boundary wrote it.
   source_changed_during_preview: "errSourceChangedDuringPreview",
   source_changed_since_preview: "errSourceChangedSincePreview",
-  installation_changed_since_preview: "errInstallationChangedSincePreview",
+  // The project-owned mzML reader's refusals (ADR 0056). Each keeps the
+  // reader's stable id as its detail, shown as it is.
+  preview_not_open: "errPreviewNotOpen",
+  spectrum_table_refused: "errSpectrumTableRefused",
+  spectrum_table_unreadable: "errSpectrumTableUnreadable",
+  spectrum_not_as_recorded: "errSpectrumNotAsRecorded",
+  spectrum_value_not_exact: "errSpectrumValueNotExact",
+  spectrum_encoding_unsupported: "errSpectrumEncodingUnsupported",
+  spectrum_unreadable: "errSpectrumUnreadable",
+  spectrum_refused: "errSpectrumRefused",
   configuration_without_a_binding: "errConfigurationWithoutBinding",
   spectrum_identity_conflict: "errSpectrumIdentityConflict",
   spectrum_facts_conflict: "errSpectrumFactsConflict",

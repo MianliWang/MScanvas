@@ -9,8 +9,8 @@
  * number, `KiB`, `s`, `ms`, `MS1` and `MS2` are not.
  */
 
-import type { UiMessage } from "../preferences/i18n";
-import type { RetentionTime, SelectedFile } from "./contracts";
+import type { MessageKey, UiMessage } from "../preferences/i18n";
+import type { RetentionTime, RetentionTimeUnit, SelectedFile, SpectrumRepresentation, ValueUnit } from "./contracts";
 
 /**
  * Names one dataset without deriving or exposing any more location than Rust
@@ -51,17 +51,42 @@ export function formatIntensity(value: number): string {
 }
 
 /**
- * Renders a retention time with no unit, because the backend emits none.
- * Inventing "min" or "s" here would present a guess as a measurement.
- *
- * The caveat is a resource, and it is the same one the spectrum panel already
- * used for this field. Held here as English it was the one value in the
- * localized inspector that a Chinese session read in English -- on every run,
- * because the measured formatter never reports a unit.
+ * The symbol of a declared retention-time unit, as the exported figure's axis
+ * states it, or `null` where the file declares none. Never a conversion.
+ */
+export function retentionTimeUnitSymbol(unit: RetentionTimeUnit): string | null {
+  return unit === "second" ? "s" : unit === "minute" ? "min" : null;
+}
+
+/** A retention time with the symbol of the unit the run declares, or bare where it declares none. */
+export function withRetentionTimeUnit(value: number, unit: RetentionTimeUnit): string {
+  const symbol = retentionTimeUnitSymbol(unit);
+  return symbol === null ? value.toFixed(4) : `${value.toFixed(4)} ${symbol}`;
+}
+
+/**
+ * A retention time with the unit the file declares, or with the caveat that it
+ * declares none. Inventing "min" or "s" would present a guess as a measurement.
  */
 export function formatRetentionTime(retentionTime: RetentionTime, t: UiMessage): string {
-  const value = retentionTime.value.toFixed(4);
-  return retentionTime.unitKnown ? value : t("viewerRetentionValue", { value });
+  return formatRetentionTimeIn(retentionTime.value, retentionTime.unit, t);
+}
+
+/** The same, for a value whose unit is held apart from it. */
+export function formatRetentionTimeIn(value: number, unit: RetentionTimeUnit, t: UiMessage): string {
+  const symbol = retentionTimeUnitSymbol(unit);
+  const digits = value.toFixed(4);
+  return symbol === null ? t("viewerRetentionValue", { value: digits }) : `${digits} ${symbol}`;
+}
+
+/** The representation a spectrum declares, in words. */
+export const REPRESENTATION = {
+  centroid: "viewerRepresentationCentroid", profile: "viewerRepresentationProfile", notReported: "viewerNotReported",
+} as const satisfies Record<SpectrumRepresentation, MessageKey>;
+
+/** A declared unit is its accession, as the exported figure's axis states it. */
+export function unitText(unit: ValueUnit, t: UiMessage): string {
+  return unit.state === "declared" ? unit.accession : t("viewerNotReported");
 }
 
 /** The compact retention-time form for a dense table cell. */

@@ -932,10 +932,31 @@ impl HelpParser {
     fn parse_stream(&mut self, text: &str) -> Result<(), HelpCapabilityError> {
         let mut section = Section::Other;
         let mut previous_blank = true;
+        // A spectrum-filter declaration whose `[` are not all closed on its
+        // first line, and how many lines it has taken since. The 3.0.26013 help
+        // wraps `peakPicking`'s `msLevel=` onto a second line.
+        let mut open_declaration: Option<(String, usize)> = None;
 
         for raw_line in text.lines() {
             let line = raw_line.trim_end_matches('\r');
             let trimmed = line.trim();
+
+            if let Some((mut joined, taken)) = open_declaration.take() {
+                if !trimmed.is_empty() {
+                    joined.push(' ');
+                    joined.push_str(trimmed);
+                }
+                if !trimmed.is_empty()
+                    && has_open_bracket(&joined)
+                    && taken + 2 < MAX_DECLARATION_LINES
+                {
+                    open_declaration = Some((joined, taken + 1));
+                } else {
+                    self.insert_spectrum_filter(&joined)?;
+                }
+                previous_blank = trimmed.is_empty();
+                continue;
+            }
 
             if let Some(program) = trimmed.strip_prefix("Usage: ") {
                 let actual = program.split_ascii_whitespace().next().unwrap_or_default();
@@ -996,14 +1017,10 @@ impl HelpParser {
                     }
                 }
                 Section::SpectrumFilters if previous_blank => {
-                    if let Some((name, declaration)) = parse_named_grammar_declaration(line, 0) {
-                        insert_unique(
-                            &mut self.spectrum_filters,
-                            DeclarationKind::SpectrumFilter,
-                            name,
-                            declaration,
-                            |value| value.normalized_signature.clone(),
-                        )?;
+                    if leading_spaces(line) == 0 && has_open_bracket(line) {
+                        open_declaration = Some((line.to_owned(), 0));
+                    } else {
+                        self.insert_spectrum_filter(line)?;
                     }
                 }
                 Section::AnalysisQueries => {
@@ -1028,6 +1045,22 @@ impl HelpParser {
             }
 
             previous_blank = trimmed.is_empty();
+        }
+        if let Some((joined, _)) = open_declaration {
+            self.insert_spectrum_filter(&joined)?;
+        }
+        Ok(())
+    }
+
+    fn insert_spectrum_filter(&mut self, line: &str) -> Result<(), HelpCapabilityError> {
+        if let Some((name, declaration)) = parse_named_grammar_declaration(line, 0) {
+            insert_unique(
+                &mut self.spectrum_filters,
+                DeclarationKind::SpectrumFilter,
+                name,
+                declaration,
+                |value| value.normalized_signature.clone(),
+            )?;
         }
         Ok(())
     }
@@ -1054,6 +1087,16 @@ impl HelpParser {
             examples: self.examples,
         })
     }
+}
+
+/// The most lines one spectrum-filter declaration may span, its first included.
+/// The longest in the 3.0.26013 help spans two.
+const MAX_DECLARATION_LINES: usize = 3;
+
+/// Whether a declaration opens more `[` than it closes.
+fn has_open_bracket(text: &str) -> bool {
+    text.bytes().filter(|byte| *byte == b'[').count()
+        > text.bytes().filter(|byte| *byte == b']').count()
 }
 
 fn tool_program(tool: BackendTool) -> &'static str {
@@ -3198,6 +3241,56 @@ msaccess data.mzML --exec "tic delimiter=tab" --filter="msLevel 2"
         std::env::current_dir()
             .expect("test current directory")
             .join(relative)
+    }
+
+    /// A spectrum-filter declaration with an unclosed `[` takes the lines after
+    /// it: three in all at most, never past a blank line, and flushed at the
+    /// end of the text.
+    #[test]
+    fn a_wrapped_spectrum_filter_declaration_joins_at_most_three_lines() {
+        let mut parser = HelpParser::new(BackendTool::MsConvert);
+        parser
+            .parse_stream(concat!(
+                "Spectrum List Filters\n",
+                "\n",
+                "twoLines [a=<x>\n",
+                "    [b=<y>]]\n",
+                "\n",
+                "threeLines [a=<x>\n",
+                "    [b=<y>\n",
+                "    [c=<z>]]]\n",
+                "\n",
+                "neverCloses [a=<x>\n",
+                "    [b=<y>\n",
+                "    [c=<z>\n",
+                "    d=<w>\n",
+                "\n",
+                "blankEnds [a=<x>\n",
+                "\n",
+                "    b=<y>]\n",
+                "\n",
+                "atTheEnd [a=<x>\n",
+                "    b=<y>",
+            ))
+            .expect("parse the synthetic help");
+        let signatures: Vec<(&str, &str)> = parser
+            .spectrum_filters
+            .iter()
+            .map(|(name, declaration)| (name.as_str(), declaration.normalized_signature()))
+            .collect();
+        assert_eq!(
+            signatures,
+            [
+                ("atTheEnd", "[a=<x> b=<y>"),
+                ("blankEnds", "[a=<x>"),
+                ("neverCloses", "[a=<x> [b=<y> [c=<z>"),
+                ("threeLines", "[a=<x> [b=<y> [c=<z>]]]"),
+                ("twoLines", "[a=<x> [b=<y>]]"),
+            ]
+        );
+        let three = &parser.spectrum_filters["threeLines"];
+        assert!(three.accepts_invocation(0, &["a", "b", "c"]));
+        assert!(!three.accepts_invocation(0, &["d"]));
     }
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);

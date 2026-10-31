@@ -68,8 +68,8 @@ export interface BackendAuthorityProjection {
  * fails there rather than arriving as an unlabelled control.
  *
  * Listing the *members* of a dimension is not listing the *combinations* of
- * them. A free cross-product of these is forty-eight; nine were measured, and
- * which nine is a question only the catalog answers.
+ * them. A free cross-product of these is ninety-six; eleven were measured, and
+ * which eleven is a question only the catalog answers.
  */
 /**
  * The one format the admitted table names, as an intent spells it.
@@ -80,7 +80,11 @@ export interface BackendAuthorityProjection {
  * standing for both would have to pick a spelling and misdescribe the other.
  */
 export type ConversionIntentFormat = "mzml";
-export type ConversionProcessing = "no_additional_centroiding" | "unscoped_default_centroiding";
+export type ConversionProcessing =
+  | "no_additional_centroiding"
+  | "unscoped_default_centroiding"
+  | "vendor_centroiding_from_ms1"
+  | "vendor_centroiding_from_ms2";
 export type ConversionSpectrumPopulation = "all" | "ms1_only" | "ms2_only";
 export type ConversionNumericPrecision =
   | "mz64_intensity32"
@@ -318,6 +322,23 @@ export interface SelectedFile {
    * own name — the least that has to be said to tell identical names apart.
    */
   readonly relativeContext: string | null;
+  /**
+   * The "not verified by MSCanvas" label of the conversion this session
+   * adopted the row's object from (ADR 0055; owner decision 2 of 2026-10-29).
+   * `null` is never a claim of verification. Optional only until fixtures
+   * carry it; Rust always sends it.
+   */
+  readonly notVerifiedByMscanvas?: NotVerifiedByMscanvas | null;
+}
+
+/**
+ * Why a converted output is "not verified by MSCanvas": its settings were
+ * outside the verified rows, its build has no measured row (named by its
+ * release), or both. At least one half is always set.
+ */
+export interface NotVerifiedByMscanvas {
+  readonly unverifiedSettings: boolean;
+  readonly unverifiedBuildRelease: string | null;
 }
 
 /**
@@ -495,18 +516,35 @@ export interface MsLevelCount {
 }
 
 /**
- * The measured formatter emits no retention-time unit, so `unitKnown` is false
- * and no unit may be displayed alongside the value.
+ * The unit a retention time is stated in, as the file declares it (ADR 0056).
+ * Nothing converts between seconds and minutes, and `notReported` is never
+ * given a unit for display.
  */
+export type RetentionTimeUnit = "second" | "minute" | "notReported";
+
 export interface RetentionTime {
   readonly value: number;
-  readonly unitKnown: boolean;
+  readonly unit: RetentionTimeUnit;
 }
 
-export interface RetentionTimeRange {
-  readonly minimum: RetentionTime;
-  readonly maximum: RetentionTime;
-}
+/**
+ * The run's retention-time range, over every row Rust retained.
+ *
+ * `mixedUnits` where the rows state different units or only some state one:
+ * there is no one range to give, for the reason there is no chromatogram.
+ */
+export type RetentionTimeRange =
+  | { readonly state: "reported"; readonly minimum: number; readonly maximum: number; readonly unit: RetentionTimeUnit }
+  | { readonly state: "mixedUnits" }
+  | { readonly state: "noRows" };
+
+/** Whether a spectrum is centroid or profile, as the file declares it. */
+export type SpectrumRepresentation = "centroid" | "profile" | "notReported";
+
+/** The unit one array's values are stated in: the declared accession, or none. */
+export type ValueUnit =
+  | { readonly state: "declared"; readonly accession: string }
+  | { readonly state: "notReported" };
 
 export interface RunSummary {
   readonly totalSpectrumCount: number;
@@ -516,7 +554,8 @@ export interface RunSummary {
   readonly msLevelsTruncated: boolean;
   /** `null` because no chromatogram count is emitted. It is not zero. */
   readonly chromatogramCount: number | null;
-  readonly retentionTimeRange: RetentionTimeRange | null;
+  /** From the native spectrum table, not from the run summary. */
+  readonly retentionTimeRange: RetentionTimeRange;
 }
 
 export interface SpectrumRow {
@@ -559,8 +598,8 @@ export interface Preview {
    *
    * `null` where there is none, which is exactly where the viewer draws none: a
    * table this session could not transfer whole, a run with no spectra, a
-   * retention time or an intensity that is not a finite number, or a unit this
-   * build cannot name. Rust retains every row the backend reported while this
+   * retention time or an intensity that is not a finite number, or rows in
+   * mixed retention-time units. Rust retains every row the backend reported while this
    * document receives a bounded prefix, so a token is issued only for a run the
    * viewer itself would draw.
    *
@@ -574,8 +613,9 @@ export interface Preview {
    * may copy. The page sends it back with a layer and sends no value: Rust
    * copies the whole summary it retained, not the bounded one above.
    *
-   * `null` where this answer was not the latest open's. It stops naming
-   * anything the moment another preview open begins.
+   * Present on every successful open: an open that is no longer the latest is
+   * refused as `selection_superseded` (ADR 0056). It stops naming anything the
+   * moment another preview open begins.
    */
   readonly qcSnapshotToken: string | null;
   /**
@@ -586,10 +626,11 @@ export interface Preview {
   readonly qcProducerIdentified: boolean;
 }
 
+/** One precursor. An unstated value is `null`, never zero. */
 export interface Precursor {
   readonly index: number;
-  readonly mz: number;
-  readonly intensity: number;
+  readonly mz: number | null;
+  readonly intensity: number | null;
 }
 
 /**
@@ -649,6 +690,20 @@ export interface SpectrumProjection {
   readonly sourcePoints: number;
   /** Whether fewer points are drawn than the window measured. */
   readonly reduced: boolean;
+  /**
+   * For a declared profile spectrum, the measured sample just below and just
+   * above the window, which the joined line crosses each edge from. Not
+   * counted in `sourcePoints`; `null` for a discrete spectrum and where the
+   * window reaches the source's own end.
+   */
+  readonly outsideLow: ProjectionSample | null;
+  readonly outsideHigh: ProjectionSample | null;
+}
+
+/** One measured sample beside a projection's window. */
+export interface ProjectionSample {
+  readonly mz: number;
+  readonly intensity: number;
 }
 
 export interface SelectedSpectrum {
@@ -660,8 +715,12 @@ export interface SelectedSpectrum {
   readonly pointCount: number;
   readonly mz: readonly number[];
   readonly intensity: readonly number[];
-  readonly mzLow: number;
-  readonly mzHigh: number;
+  /**
+   * The lowest and highest observed m/z the spectrum states. `null` where it
+   * states none; never taken from the array.
+   */
+  readonly mzLow: number | null;
+  readonly mzHigh: number | null;
   readonly basePeakMz: number;
   readonly basePeakIntensity: number;
   readonly totalIonCurrent: number;
@@ -669,10 +728,11 @@ export interface SelectedSpectrum {
   /** How many precursors the spectrum really has. */
   readonly totalPrecursorCount: number;
   readonly precursorsTruncated: boolean;
-  /** No profile/centroid marker was emitted, so none may be displayed. */
-  readonly representationKnown: boolean;
-  /** No array unit was emitted, so none may be displayed. */
-  readonly valueUnitsKnown: boolean;
+  /** From the spectrum's own terms; never guessed. */
+  readonly representation: SpectrumRepresentation;
+  readonly mzUnit: ValueUnit;
+  readonly intensityUnit: ValueUnit;
+  /** `mz` and `intensity` are a prefix; `pointCount` is the total. */
   readonly truncated: boolean;
   /**
    * Whether this spectrum has an m/z domain a viewport may navigate.
@@ -1017,7 +1077,11 @@ export interface PreviewError {
     | { readonly kind: "figureTheme" }
     | { readonly kind: "exportExtension"; readonly extension: string }
     | { readonly kind: "temporaryExportLeftBehind" }
-    | { readonly kind: "clipboardBusy" };
+    | { readonly kind: "clipboardBusy" }
+    /** Which rule refused a conversion intent, by stable id (ADR 0055). */
+    | { readonly kind: "conversionIntent"; readonly reason: string }
+    /** Every output name two queued items would both write, once each (ADR 0057). */
+    | { readonly kind: "outputNameCollision"; readonly names: readonly string[] };
 }
 
 /** The only output format this workflow produces. */
@@ -1202,6 +1266,18 @@ export interface ConversionReport {
    * provenance rather than judged for currency.
    */
   readonly receipt: BackendBindingReceipt | null;
+  /**
+   * The release the "unverified build" label names, where this result ran on
+   * a build with no measured row for its family (ADR 0055's relaxed gate).
+   * Rust always sends it; optional here until the fixtures carry it.
+   */
+  readonly unverifiedBuildRelease?: string | null;
+  /**
+   * Whether this result ran under settings "not verified by MSCanvas" (ADR
+   * 0055 decision 1). Every such result carries the label. Rust always sends
+   * it; optional here until the fixtures carry it.
+   */
+  readonly unverifiedSettings?: boolean;
 }
 
 /** Where one queue item is. */
@@ -1407,6 +1483,12 @@ export interface ConversionQueueItem {
   readonly sourceKind: DatasetSourceKind;
   /** What this item will produce, in the cardinality it will produce it. */
   readonly output: ConversionOutputPlan;
+  /**
+   * The "not verified by MSCanvas" label this row runs under, bound at BEGIN
+   * from its plan row (ADR 0055); `null` for a verified conversion. Optional
+   * only until fixtures carry it; Rust always sends it.
+   */
+  readonly notVerifiedByMscanvas?: NotVerifiedByMscanvas | null;
   readonly state: ConversionQueueItemState;
   readonly attempts: number;
   readonly retryable: boolean;
@@ -1685,6 +1767,20 @@ export interface ConversionQueuePlanItem {
   readonly sourceKind: DatasetSourceKind;
   /** What this row will produce, in the cardinality it will produce it. */
   readonly output: ConversionOutputPlan;
+  /**
+   * The release the "unverified build" label names (ADR 0055's relaxed gate);
+   * `null` on a measured build. Rust always sends it; optional here until the
+   * fixtures carry it.
+   */
+  readonly unverifiedBuildRelease?: string | null;
+  /**
+   * Whether this row's settings are "not verified by MSCanvas" (ADR 0055
+   * decision 1): every advanced intent, and a verified row wherever one of
+   * decision 1's four conditions fails for this row's source. The interface
+   * labels every such row. Rust always sends it; optional here until the
+   * fixtures carry it.
+   */
+  readonly unverifiedSettings?: boolean;
 }
 
 /**
@@ -1736,9 +1832,18 @@ export interface ConversionQueuePlan {
    *
    * Rust reconstructs it from the admitted table and answers with what it
    * resolved, so the panel renders the semantic the queue would be bound with
-   * rather than the identity it happened to send.
+   * rather than the identity it happened to send. A row request always gets a
+   * row; an advanced intent's plan is {@link AdvancedConversionQueuePlan}.
    */
   readonly intent: ConversionIntentDescriptor;
+  /**
+   * The structured intent this plan is bound to, in Rust's canonical form: a
+   * row's own structured form, or the advanced intent rebuilt and
+   * canonicalized (integer sets merged, switches ordered). A plan whose
+   * canonical intent differs from what this side would send now is not
+   * current. Rust always sends it; optional here until the fixtures carry it.
+   */
+  readonly canonicalIntent?: ConversionIntentWire;
   /** The conflict policy this plan was asked under. */
   readonly conflictPolicy: ConversionConflictPolicy;
   /** Validated by Rust; describing it creates and resolves no destination. */
@@ -1789,6 +1894,174 @@ export interface ConversionBeginRequest {
   /** The binding the plan on screen was authored under. */
   readonly expectedReceipt: BackendBindingReceipt;
 }
+
+/**
+ * A plan or `BEGIN` request carrying a structured intent in place of a row id
+ * (ADR 0044 as amended by ADR 0055). Exactly one of `intentId` and `intent`
+ * may be sent; both or neither is refused as `conversion_intent_ambiguous`.
+ * One equal to a row is that row, and its plan has a row `intent`.
+ */
+export type StructuredConversionPlanRequest = Omit<ConversionPlanRequest, "intentId"> & {
+  readonly intent: ConversionIntentWire;
+};
+export type StructuredConversionBeginRequest = Omit<ConversionBeginRequest, "intentId"> & {
+  readonly intent: ConversionIntentWire;
+};
+
+/**
+ * The plan a structured request receives when its intent is advanced: no row
+ * describes it, so `intent` is `null`, and `canonicalIntent` is what the queue
+ * would be bound to.
+ */
+export type AdvancedConversionQueuePlan = Omit<ConversionQueuePlan, "intent" | "canonicalIntent"> & {
+  readonly intent: null;
+  readonly canonicalIntent: ConversionIntentWire;
+};
+
+/**
+ * The structured conversion intent of ADR 0055 decision 4, as Rust reads it.
+ *
+ * Rust rebuilds and validates every value, so these types state the shape and
+ * Rust states the rules. A value it cannot build is refused as
+ * `conversion_intent_rejected`, with the rule in `context.reason` (a decision 4
+ * refusal's stable id, `malformed` or `too_large`). Discriminants are snake
+ * case and fields camel case. Numbers are finite JSON numbers.
+ *
+ * Today only `mzml` output on a single-output source runs; any other intent is
+ * refused as `conversion_intent_not_checkable` (ADR 0055 ground rule 1).
+ */
+export interface ConversionIntentWire {
+  readonly output: ConversionOutputWire;
+  /** Ordered; at most 64 steps. The vendor picker only first. */
+  readonly spectrumFilters: readonly SpectrumStepWire[];
+  /** Ordered; at most 64 steps. */
+  readonly chromatogramFilters: readonly ChromatogramStepWire[];
+  /** A set; Rust answers it in its own order. */
+  readonly switches: readonly ConversionSwitchWire[];
+}
+
+export type ConversionBitsWire = 32 | 64;
+export type LinearToleranceWire = { readonly kind: "relative" | "absolute"; readonly value: number };
+export type MzArrayWire =
+  | { readonly encoding: "plain"; readonly bits: ConversionBitsWire }
+  | { readonly encoding: "numpress_linear"; readonly tolerance: LinearToleranceWire };
+export type IntensityArrayWire =
+  | { readonly encoding: "plain"; readonly bits: ConversionBitsWire }
+  | { readonly encoding: "numpress_pic" }
+  | { readonly encoding: "numpress_slof"; readonly tolerance: number };
+/** mzMLb only: `truncation` 0 is off, -1 integers only, n drops n mantissa bits. */
+export type MzmlbPlainArrayWire = {
+  readonly encoding: "plain";
+  readonly bits: ConversionBitsWire;
+  readonly truncation: number;
+  readonly prediction: "none" | "delta" | "linear";
+};
+export type ConversionOutputWire =
+  | { readonly format: "mzml"; readonly mz: MzArrayWire; readonly intensity: IntensityArrayWire; readonly zlib: boolean; readonly index: boolean }
+  | { readonly format: "mzxml"; readonly bits: ConversionBitsWire; readonly zlib: boolean; readonly index: boolean }
+  | {
+      readonly format: "mzmlb";
+      readonly mz: MzmlbPlainArrayWire | { readonly encoding: "numpress_linear"; readonly tolerance: LinearToleranceWire };
+      readonly intensity: MzmlbPlainArrayWire | { readonly encoding: "numpress_pic" } | { readonly encoding: "numpress_slof"; readonly tolerance: number };
+      readonly zlib: boolean;
+      readonly chunkSize: number | null;
+      readonly compressionLevel: number | null;
+    }
+  | { readonly format: "mz5"; readonly mzBits: ConversionBitsWire; readonly intensityBits: ConversionBitsWire; readonly zlib: boolean }
+  | { readonly format: "mgf" | "text" | "ms1" | "cms1" | "ms2" | "cms2" };
+
+/** msconvert's `int_set`; `end: null` is open-ended. Rust merges it canonically. */
+export type IntSetWire = readonly { readonly start: number; readonly end: number | null }[];
+export type SelectionModeWire = "include" | "exclude";
+export type OrientationWire = "most_intense" | "least_intense";
+export type MzToleranceWire = { readonly value: number; readonly unit: "ppm" | "mz" };
+/** `count` and `count_after_ties` take a positive integer; the others a fraction from 0 to 1, or `absolute` any value from 0. */
+export type ThresholdCriterionWire = {
+  readonly type: "count" | "count_after_ties" | "absolute" | "bpi_relative" | "tic_relative" | "tic_cutoff";
+  readonly value: number;
+};
+export type LockmassWire = { readonly mz: number; readonly mzNegIons: number; readonly tol: number };
+export type TitleKeywordWire =
+  | "RunId" | "Index" | "Id" | "SourcePath" | "ScanNumber" | "IonMobility" | "ActivationType"
+  | "IsolationMz" | "PrecursorSpectrumId" | "SelectedIonMz" | "ChargeState" | "SpectrumType"
+  | "ScanStartTimeInSeconds" | "ScanStartTimeInMinutes" | "BasePeakMz" | "BasePeakIntensity"
+  | "TotalIonCurrent" | "MsLevel";
+
+export type SpectrumStepWire =
+  | { readonly kind: "index"; readonly indices: IntSetWire }
+  | { readonly kind: "id"; readonly ids: readonly string[] }
+  | { readonly kind: "ms_level"; readonly levels: IntSetWire }
+  | { readonly kind: "charge_state"; readonly charges: IntSetWire }
+  | { readonly kind: "precursor_recalculation" | "precursor_refine" | "peak_picking_default" | "sort_by_scan_time" | "strip_it" | "metadata_fixer" }
+  | ({ readonly kind: "lockmass_refiner" } & LockmassWire)
+  | { readonly kind: "peak_picking_vendor"; readonly msLevels: IntSetWire | null }
+  | { readonly kind: "scan_number"; readonly scanNumbers: IntSetWire }
+  | { readonly kind: "scan_event"; readonly scanEvents: IntSetWire }
+  | { readonly kind: "scan_time"; readonly startSeconds: number; readonly endSeconds: number }
+  | { readonly kind: "title_maker"; readonly template: readonly ({ readonly keyword: TitleKeywordWire } | { readonly literal: string })[] }
+  | { readonly kind: "threshold"; readonly criterion: ThresholdCriterionWire; readonly orientation: OrientationWire; readonly msLevels: IntSetWire | null }
+  | { readonly kind: "mz_window"; readonly low: number; readonly high: number }
+  | { readonly kind: "mz_precursors"; readonly mzs: readonly number[]; readonly mzTol: MzToleranceWire; readonly target: "selected" | "isolated"; readonly mode: SelectionModeWire }
+  | { readonly kind: "isolation_windows"; readonly windows: readonly (readonly [number, number])[]; readonly mzTol: MzToleranceWire; readonly mode: SelectionModeWire }
+  | { readonly kind: "isolation_width"; readonly widths: readonly number[]; readonly mzTol: MzToleranceWire; readonly mode: SelectionModeWire }
+  | { readonly kind: "default_array_length"; readonly peakCounts: IntSetWire }
+  | {
+      readonly kind: "zero_samples";
+      readonly mode: { readonly kind: "remove_extra" } | { readonly kind: "add_missing"; readonly flankingZeroCount: number | null };
+      readonly msLevels: IntSetWire | null;
+    }
+  | {
+      readonly kind: "mz_present"; readonly mzs: readonly number[]; readonly mzTol: MzToleranceWire;
+      readonly criterion: ThresholdCriterionWire; readonly orientation: OrientationWire; readonly mode: SelectionModeWire;
+    }
+  | { readonly kind: "scan_summing"; readonly precursorTol: number; readonly scanTimeTolSeconds: number; readonly ionMobilityTol: number }
+  | { readonly kind: "thermo_scan_filter"; readonly match: "exact" | "contains"; readonly mode: SelectionModeWire; readonly filter: string }
+  | { readonly kind: "mz_shift"; readonly shift: number; readonly unit: "ppm" | "da"; readonly msLevels: IntSetWire }
+  | { readonly kind: "ms2_denoise"; readonly peaksInWindow: number; readonly windowWidthDa: number; readonly multichargeFragmentRelaxation: boolean }
+  | {
+      readonly kind: "ms2_deisotope";
+      readonly method:
+        | { readonly kind: "markey" }
+        | { readonly kind: "markey_high_resolution"; readonly mzTolerance: number }
+        | { readonly kind: "poisson"; readonly minCharge: number; readonly maxCharge: number };
+    }
+  | {
+      readonly kind: "etd_filter"; readonly removePrecursor: boolean; readonly removeChargeReduced: boolean;
+      readonly removeNeutralLoss: boolean; readonly blanketRemoval: boolean; readonly matchingTolerance: MzToleranceWire;
+    }
+  | {
+      readonly kind: "demultiplex"; readonly massError: number; readonly massErrorUnit: "ppm" | "da"; readonly nnlsMaxIter: number;
+      readonly nnlsEps: number; readonly noWeighting: boolean; readonly demuxBlockExtra: number; readonly variableFill: boolean;
+      readonly noSumNormalize: boolean; readonly optimization: "none" | "overlap_only"; readonly interpolateRt: boolean;
+      readonly minWindowSize: number; readonly removeNonOverlappingEdges: boolean;
+    }
+  | {
+      readonly kind: "charge_state_predictor"; readonly overrideExistingCharge: boolean; readonly maxMultipleCharge: number;
+      readonly minMultipleCharge: number; readonly singleChargeFractionTic: number; readonly maxKnownCharge: number; readonly makeMs2: boolean;
+    }
+  | {
+      readonly kind: "turbocharger"; readonly minCharge: number; readonly maxCharge: number; readonly precursorsBefore: number;
+      readonly precursorsAfter: number; readonly halfIsoWidth: number; readonly defaultMinCharge: number;
+      readonly defaultMaxCharge: number; readonly useVendorPeaks: boolean;
+    }
+  | {
+      readonly kind: "activation";
+      readonly type: "etd" | "cid" | "sa" | "hcd" | "hecid" | "bird" | "ecd" | "irmpd" | "pd" | "psd" | "pqd" | "sid" | "sori";
+      readonly mode: SelectionModeWire;
+    }
+  | { readonly kind: "collision_energy"; readonly low: number; readonly high: number; readonly mode: SelectionModeWire; readonly acceptNonCid: boolean; readonly acceptMissingCe: boolean }
+  | { readonly kind: "analyzer"; readonly analyzer: "quad" | "orbi" | "ft" | "it" | "tof" }
+  | { readonly kind: "polarity"; readonly polarity: "positive" | "negative" };
+
+export type ChromatogramStepWire =
+  | { readonly kind: "index"; readonly indices: IntSetWire }
+  | ({ readonly kind: "lockmass_refiner" } & LockmassWire);
+
+export type ConversionSwitchWire =
+  | "simAsSpectra" | "srmAsSpectra" | "combineIonMobilitySpectra" | "ddaProcessing"
+  | "ignoreCalibrationScans" | "acceptZeroLengthSpectra" | "ignoreMissingZeroSamples"
+  | "ignoreUnknownInstrumentError" | "singleThreaded"
+  | "stripLocationFromSourceFiles" | "stripVersionFromSoftware";
 
 /**
  * What one `BEGIN` produced, before any folder was chosen.

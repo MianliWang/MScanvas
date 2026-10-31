@@ -23,7 +23,7 @@ function row(overrides: Partial<SpectrumRow> & { readonly index: number }): Spec
     identifier: `controllerType=0 controllerNumber=1 scan=${String(overrides.index + 1)}`,
     scanNumber: overrides.index + 1,
     msLevel: 1,
-    retentionTime: { value: overrides.index, unitKnown: false },
+    retentionTime: { value: overrides.index, unit: "notReported" },
     basePeakMz: 400,
     basePeakIntensity: 10,
     totalIonCurrent: 100,
@@ -61,8 +61,8 @@ describe("reading a preview's spectrum table as the scan model", () => {
   it("places a scan at the retention time its own row reported", () => {
     const model = buildPreviewScanModel(
       table([
-        row({ index: 0, retentionTime: { value: 4.5, unitKnown: false } }),
-        row({ index: 1, retentionTime: { value: 9.25, unitKnown: false } }),
+        row({ index: 0, retentionTime: { value: 4.5, unit: "notReported" } }),
+        row({ index: 1, retentionTime: { value: 9.25, unit: "notReported" } }),
       ]),
     );
 
@@ -80,9 +80,9 @@ describe("reading a preview's spectrum table as the scan model", () => {
     // them apart, and the table position is what Previous/Next later walks.
     const model = buildPreviewScanModel(
       table([
-        row({ index: 7, retentionTime: { value: 9, unitKnown: false } }),
-        row({ index: 8, retentionTime: { value: 3, unitKnown: false } }),
-        row({ index: 9, retentionTime: { value: 6, unitKnown: false } }),
+        row({ index: 7, retentionTime: { value: 9, unit: "notReported" } }),
+        row({ index: 8, retentionTime: { value: 3, unit: "notReported" } }),
+        row({ index: 9, retentionTime: { value: 6, unit: "notReported" } }),
       ]),
     );
 
@@ -126,7 +126,7 @@ describe("reading a preview's spectrum table as the scan model", () => {
   it("has no model when a retention time cannot be placed on an axis", () => {
     expect(
       buildPreviewScanModel(
-        table([row({ index: 0, retentionTime: { value: Number.NaN, unitKnown: false } })]),
+        table([row({ index: 0, retentionTime: { value: Number.NaN, unit: "notReported" } })]),
       ),
     ).toEqual({ status: "unavailable", reason: "unusable-retention-time" });
   });
@@ -139,18 +139,23 @@ describe("reading a preview's spectrum table as the scan model", () => {
     ).toEqual({ status: "unavailable", reason: "unusable-intensity" });
   });
 
-  it("forwards a reported retention-time unit rather than deciding it is absent", () => {
-    // The boolean the wire carries is passed through, and the model refuses.
-    // Reading it here as "no unit" would be the adapter answering a scientific
-    // question that is not its to answer, and the axis would be labelled as
-    // though nothing had been reported.
+  it("forwards each row's declared unit, so rows in mixed units have no model", () => {
+    // The unit the wire carries is passed through, and the model decides.
     expect(
       buildPreviewScanModel(
         table([
-          row({ index: 0, retentionTime: { value: 0, unitKnown: false } }),
-          row({ index: 1, retentionTime: { value: 1, unitKnown: true } }),
+          row({ index: 0, retentionTime: { value: 0, unit: "minute" } }),
+          row({ index: 1, retentionTime: { value: 1, unit: "second" } }),
         ]),
       ),
-    ).toEqual({ status: "unavailable", reason: "unsupported-retention-time-unit" });
+    ).toEqual({ status: "unavailable", reason: "mixed-retention-time-units" });
+  });
+
+  it("keeps a run in one declared unit, and carries that unit", () => {
+    const model = buildPreviewScanModel(table([
+      row({ index: 0, retentionTime: { value: 1, unit: "minute" } }),
+      row({ index: 1, retentionTime: { value: 2, unit: "minute" } }),
+    ]));
+    expect(model.status === "ready" ? model.retentionTimeUnit : model.reason).toBe("minute");
   });
 });

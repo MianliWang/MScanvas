@@ -12,6 +12,8 @@ use std::sync::Arc;
 use mscanvas_proteowizard::{ConversionSource, ConversionSourceRejection, MzmlScanLimits};
 use mscanvas_proteowizard::{Sha256Digest, sciex_wiff_companion_path};
 
+pub(crate) use crate::project::record::NotVerifiedByMscanvas;
+
 use super::dto::{
     DatasetSourceKindDto, MAX_CANDIDATE_NAME_CHARS, MAX_RELATIVE_CONTEXT_CHARS,
     MAX_WORKSPACE_DATASETS, PreviewErrorDto, SelectedFileDto, bounded_text,
@@ -1627,6 +1629,12 @@ pub(super) struct RegisteredDataset {
     id: DatasetId,
     file: AcceptedFile,
     origin: DatasetOrigin,
+    /// The "not verified by MSCanvas" label of the conversion that produced
+    /// this row's object, when this session adopted it from one (ADR 0055;
+    /// owner decision 2 of 2026-10-29). A property of the object, not of the
+    /// route: a row the user had already added keeps its origin and gains the
+    /// label when the same object is adopted.
+    not_verified: Option<NotVerifiedByMscanvas>,
 }
 
 impl RegisteredDataset {
@@ -1658,6 +1666,18 @@ impl RegisteredDataset {
 
     pub(super) const fn origin(&self) -> &DatasetOrigin {
         &self.origin
+    }
+
+    pub(crate) const fn not_verified(&self) -> Option<&NotVerifiedByMscanvas> {
+        self.not_verified.as_ref()
+    }
+
+    /// Gains a label, merged with any the row has: what either says stays said.
+    fn gain(&mut self, label: NotVerifiedByMscanvas) {
+        self.not_verified = Some(match self.not_verified.take() {
+            Some(held) => held.merged(label),
+            None => label,
+        });
     }
 }
 
@@ -1806,7 +1826,7 @@ impl DatasetRegistry {
     /// none, and would report a row they already have as a file they failed to
     /// add.
     pub(super) fn add_direct(&mut self, file: AcceptedFile) -> AddDatasetOutcome {
-        self.add(file, DatasetOrigin::Direct)
+        self.add(file, DatasetOrigin::Direct, None)
     }
 
     /// Adds an output this session converted and the user asked to adopt.
@@ -1820,6 +1840,7 @@ impl DatasetRegistry {
         source: DatasetId,
         source_display_name: String,
         queue_operation: u64,
+        not_verified: Option<NotVerifiedByMscanvas>,
     ) -> AddDatasetOutcome {
         self.add(
             file,
@@ -1828,6 +1849,7 @@ impl DatasetRegistry {
                 source_display_name,
                 queue_operation,
             },
+            not_verified,
         )
     }
 
@@ -1844,15 +1866,28 @@ impl DatasetRegistry {
         file: AcceptedFile,
         relative_parents: Vec<OsString>,
     ) -> AddDatasetOutcome {
-        self.add(file, DatasetOrigin::Folder { relative_parents })
+        self.add(file, DatasetOrigin::Folder { relative_parents }, None)
     }
 
-    fn add(&mut self, file: AcceptedFile, origin: DatasetOrigin) -> AddDatasetOutcome {
+    fn add(
+        &mut self,
+        file: AcceptedFile,
+        origin: DatasetOrigin,
+        not_verified: Option<NotVerifiedByMscanvas>,
+    ) -> AddDatasetOutcome {
         // Keyed on the whole acquisition, not on the object it is named by. A
         // `.wiff` whose `.wiff.scan` has been replaced is a different
         // acquisition, and handing back the existing row for it would give the
         // user a dataset bound to a companion that is no longer there.
         if let Some(&existing_id) = self.by_identity.get(&file.dataset_identity()) {
+            // The label goes onto the row the object already is, merged with
+            // any it has: adopting an object the user had added another way
+            // must not leave it unlabelled.
+            if let (Some(existing), Some(label)) =
+                (self.datasets.get_mut(&existing_id), not_verified)
+            {
+                existing.gain(label);
+            }
             // The same objects, and possibly not the same bytes. A bundle
             // remembers what each member held, so a member rewritten in place
             // -- same file id, new content -- makes the existing row stale:
@@ -1891,14 +1926,33 @@ impl DatasetRegistry {
             .checked_add(1)
             .expect("a session cannot allocate more than u64::MAX datasets");
         self.by_identity.insert(file.dataset_identity(), id);
-        self.datasets
-            .insert(id, RegisteredDataset { id, file, origin });
+        self.datasets.insert(
+            id,
+            RegisteredDataset {
+                id,
+                file,
+                origin,
+                not_verified,
+            },
+        );
         self.order.push(id);
         AddDatasetOutcome::Added { id }
     }
 
     pub(super) fn get(&self, id: DatasetId) -> Option<&RegisteredDataset> {
         self.datasets.get(&id)
+    }
+
+    /// Gives one row a label, merged with any it has, and answers the row's
+    /// label now; `None` where the row has gone.
+    pub(super) fn label(
+        &mut self,
+        id: DatasetId,
+        label: NotVerifiedByMscanvas,
+    ) -> Option<NotVerifiedByMscanvas> {
+        let row = self.datasets.get_mut(&id)?;
+        row.gain(label);
+        row.not_verified.clone()
     }
 
     pub(super) fn contains(&self, id: DatasetId) -> bool {
@@ -2074,6 +2128,7 @@ pub(super) fn selected_file_dto(
     id: DatasetId,
     file: &AcceptedFile,
     relative_context: Option<String>,
+    not_verified: Option<&NotVerifiedByMscanvas>,
 ) -> SelectedFileDto {
     SelectedFileDto {
         handle: id.handle(),
@@ -2081,6 +2136,7 @@ pub(super) fn selected_file_dto(
         byte_length: file.acquisition_byte_length(),
         source_kind: source_kind_dto(file.source_kind()),
         relative_context,
+        not_verified_by_mscanvas: not_verified.cloned(),
     }
 }
 
@@ -2635,7 +2691,7 @@ mod tests {
         let mut registry = DatasetRegistry::default();
 
         let id = registry.add_direct(file.clone()).id();
-        let dto = selected_file_dto(id, &file, None);
+        let dto = selected_file_dto(id, &file, None, None);
 
         assert_eq!(dto.file_name, "sample.mzML");
         let rendered = serde_json::to_string(&dto).expect("the handle serializes");
@@ -2753,6 +2809,36 @@ mod tests {
             DatasetId(2),
             "a re-added file is a new dataset, not the one that was removed"
         );
+    }
+
+    /// ADR 0055, owner decision 2 of 2026-10-29: adopting a labelled output
+    /// the user had already added another way labels that row, keeps its
+    /// origin, and merges with a label it already holds.
+    #[test]
+    fn adopting_an_object_already_held_labels_the_row_it_is() {
+        let directory = TestDirectory::new("label");
+        let file = accepted(&directory, "converted.mzML", b"<mzML/>");
+        let mut registry = DatasetRegistry::default();
+        let id = registry.add_direct(file.clone()).id();
+        assert_eq!(registry.get(id).expect("row").not_verified(), None);
+
+        let settings = NotVerifiedByMscanvas::of(true, None);
+        let outcome =
+            registry.add_converted(file.clone(), id, "run.raw".to_owned(), 7, settings.clone());
+        assert_eq!(outcome, AddDatasetOutcome::Duplicate { existing_id: id });
+        let row = registry.get(id).expect("row");
+        assert_eq!(row.not_verified(), settings.as_ref());
+        assert_eq!(row.origin(), &DatasetOrigin::Direct);
+
+        let build = NotVerifiedByMscanvas::of(false, Some("3.0.26204".to_owned()));
+        let _ = registry.add_converted(file.clone(), id, "run.raw".to_owned(), 8, build);
+        assert_eq!(
+            registry.get(id).expect("row").not_verified(),
+            NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned())).as_ref()
+        );
+        // Adding it directly again never removes a label.
+        let _ = registry.add_direct(file);
+        assert!(registry.get(id).expect("row").not_verified().is_some());
     }
 
     #[test]

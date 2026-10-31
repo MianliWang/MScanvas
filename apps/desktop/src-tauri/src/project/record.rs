@@ -24,18 +24,36 @@ use mscanvas_proteowizard::Sha256Digest;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// The only schema this build reads or writes.
+/// The only schema this build writes, and one of the two it reads.
 ///
-/// A document carrying anything else is refused as unsupported, not migrated.
 /// Schema 1 was the shape before layers existed, schema 2 the shape before a
 /// run could consume a layer and an artifact could hold a QC snapshot, and
 /// schema 3 the shape before a run could execute a reviewed recipe plan and an
 /// artifact could reference a result stored beside the document. None of them
-/// was published outside development, so a document carrying any of them is
-/// refused exactly as any other version is: a migration path would be code for
-/// a format no user ever held. A later schema belongs to the build that wrote
-/// it.
-pub const SCHEMA_VERSION: u32 = 4;
+/// was published outside development, and a document carrying any of them is
+/// refused as unsupported, not migrated.
+///
+/// Schema 4 ([`PUBLISHED_SCHEMA_VERSION`]), the shape before an input could
+/// carry the "not verified by MSCanvas" label of a conversion
+/// ([`NotVerifiedByMscanvas`]), was published in beta 1 and is read: exactly,
+/// through its own types, and held in memory as this schema with a `null`
+/// label on every input. Opening writes nothing, and nor does a Save with
+/// nothing unsaved; the first Save after a change writes this schema, which
+/// beta 1 refuses. A later schema belongs to the build that wrote it.
+pub const SCHEMA_VERSION: u32 = 5;
+
+/// The schema beta 1 published, which this build reads and never writes.
+///
+/// Frozen at beta 1's words and fields. Its reader shares every record type
+/// below the top level and the input with schema 5, so a word added to one of
+/// their closed vocabularies, or a field added to one of them, must also be
+/// refused on this path: a schema-4 document cannot hold what beta 1 did not
+/// write. `project::tests::schema_four_shares_only_beta_one_words_and_fields`
+/// lists every one of them without a wildcard, so a variant or a field added
+/// does not compile until it is decided there. A serde attribute changed on an
+/// existing one (`alias`, `other`, `rename`, `default`, `skip`) compiles all
+/// the same and is caught only by review.
+pub const PUBLISHED_SCHEMA_VERSION: u32 = 4;
 
 /// The largest project document this build will read.
 ///
@@ -293,6 +311,54 @@ pub struct InputRecord {
     pub label: String,
     pub locator: Locator,
     pub members: Vec<MemberRecord>,
+    /// The label of the conversion that produced this input's primary, when
+    /// this session converted and adopted that object and the conversion was
+    /// not verified by MSCanvas. `null` means nothing is recorded, never that
+    /// the input was verified. Explicit like every optional value here: the
+    /// field must be present, so an omitted one is refused rather than read as
+    /// nothing recorded. History, like the baseline: written once, at
+    /// registration.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub not_verified_by_mscanvas: Option<NotVerifiedByMscanvas>,
+}
+
+/// The "not verified by MSCanvas" label of one conversion (ADR 0055; owner
+/// decision 2 of 2026-10-29): its settings were outside the verified rows,
+/// its build has no measured row, or both. It stays with an adopted output,
+/// in the session and in the project, so "converted" is not read as
+/// "verified".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NotVerifiedByMscanvas {
+    pub unverified_settings: bool,
+    /// The release of the build without a measured row, as the conversion
+    /// reported it. Explicit `null` on a measured build: an omitted one is
+    /// refused rather than read as a measured build.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub unverified_build_release: Option<String>,
+}
+
+impl NotVerifiedByMscanvas {
+    /// The label of one conversion, or `None` when nothing about it was
+    /// unverified.
+    #[must_use]
+    pub fn of(unverified_settings: bool, unverified_build_release: Option<String>) -> Option<Self> {
+        (unverified_settings || unverified_build_release.is_some()).then_some(Self {
+            unverified_settings,
+            unverified_build_release,
+        })
+    }
+
+    /// Two labels of one object as one: what either says stays said.
+    #[must_use]
+    pub fn merged(self, other: Self) -> Self {
+        Self {
+            unverified_settings: self.unverified_settings || other.unverified_settings,
+            unverified_build_release: self
+                .unverified_build_release
+                .or(other.unverified_build_release),
+        }
+    }
 }
 
 /// What one member's bytes actually were when an operation looked.
@@ -1209,7 +1275,8 @@ pub enum DocumentProblem {
     /// Not JSON, not this shape, an unknown field, or a value outside its
     /// domain.
     Malformed,
-    /// Readable enough to find a `schemaVersion`, and it is not this one.
+    /// Readable enough to find a `schemaVersion`, and it is not one this build
+    /// reads.
     UnsupportedVersion,
     /// Longer than [`MAX_DOCUMENT_BYTES`], or over one of the count bounds.
     /// Never fully parsed, never partly loaded.
@@ -1270,6 +1337,11 @@ impl DocumentProblem {
 /// build as malformed, which is both untrue and the wrong thing to offer to
 /// replace.
 ///
+/// A schema-4 document is read through `SchemaFourDocument`, which refuses
+/// every schema-5 field as unknown (`malformed`), and is answered as schema 5
+/// with a `null` label on every input. Every rule below then applies to it
+/// unchanged.
+///
 /// Nothing in here touches the filesystem. Validation is entirely structural,
 /// which is what lets the caller replace live state only after the whole
 /// document has been accepted.
@@ -1278,23 +1350,23 @@ impl DocumentProblem {
 ///
 /// A [`DocumentProblem`] naming the first rule the document broke.
 pub fn parse(bytes: &[u8]) -> Result<ProjectDocument, DocumentProblem> {
-    /// Tolerant on purpose: this exists only to find the version, so a document
-    /// full of fields from another build must still get past it.
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct VersionProbe {
-        schema_version: Option<u32>,
-    }
-
-    let probe: VersionProbe =
-        serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?;
-    match probe.schema_version {
-        Some(SCHEMA_VERSION) => {}
+    let mut document: ProjectDocument = match declared_schema(bytes) {
+        Some(SCHEMA_VERSION) => {
+            serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?
+        }
+        Some(PUBLISHED_SCHEMA_VERSION) => {
+            let published: SchemaFourDocument =
+                serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?;
+            // The same defence in depth as below, for the version this path
+            // reads.
+            if published.schema_version != PUBLISHED_SCHEMA_VERSION {
+                return Err(DocumentProblem::UnsupportedVersion);
+            }
+            published.upgraded()
+        }
         Some(_) => return Err(DocumentProblem::UnsupportedVersion),
         None => return Err(DocumentProblem::Malformed),
-    }
-    let mut document: ProjectDocument =
-        serde_json::from_slice(bytes).map_err(|_| DocumentProblem::Malformed)?;
+    };
     // One spelling for a digest, from here on.
     //
     // `valid_digest` accepts either case, because a hexadecimal digest written
@@ -1311,6 +1383,79 @@ pub fn parse(bytes: &[u8]) -> Result<ProjectDocument, DocumentProblem> {
     }
     validate(&document)?;
     Ok(document)
+}
+
+/// The `schemaVersion` a document's bytes declare, or `None` where they are
+/// not a JSON object with a whole-number one.
+///
+/// Tolerant on purpose: this exists only to find the version, so a document
+/// full of fields from another build must still get past it. It says nothing
+/// about whether the rest of the document is readable; [`parse`] does.
+pub(crate) fn declared_schema(bytes: &[u8]) -> Option<u32> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct VersionProbe {
+        schema_version: Option<u32>,
+    }
+
+    serde_json::from_slice::<VersionProbe>(bytes)
+        .ok()?
+        .schema_version
+}
+
+/// A schema-4 document exactly as beta 1 wrote it: [`ProjectDocument`] whose
+/// inputs cannot carry a label. Read by [`parse`] alone, and never written.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SchemaFourDocument {
+    schema_version: u32,
+    project_id: ProjectId,
+    revision: u64,
+    name: String,
+    inputs: Vec<SchemaFourInput>,
+    artifacts: Vec<ArtifactRecord>,
+    runs: Vec<RunRecord>,
+    layers: Vec<LayerRecord>,
+    plans: Vec<TargetedMs1Plan>,
+}
+
+/// A schema-4 input: [`InputRecord`] before `notVerifiedByMscanvas`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SchemaFourInput {
+    id: InputId,
+    label: String,
+    locator: Locator,
+    members: Vec<MemberRecord>,
+}
+
+impl SchemaFourDocument {
+    /// The same document as schema 5 holds it. No input gains a label: beta 1
+    /// recorded none, and a `null` label means nothing is recorded, never that
+    /// a conversion was verified.
+    fn upgraded(self) -> ProjectDocument {
+        ProjectDocument {
+            schema_version: SCHEMA_VERSION,
+            project_id: self.project_id,
+            revision: self.revision,
+            name: self.name,
+            inputs: self
+                .inputs
+                .into_iter()
+                .map(|input| InputRecord {
+                    id: input.id,
+                    label: input.label,
+                    locator: input.locator,
+                    members: input.members,
+                    not_verified_by_mscanvas: None,
+                })
+                .collect(),
+            artifacts: self.artifacts,
+            runs: self.runs,
+            layers: self.layers,
+            plans: self.plans,
+        }
+    }
 }
 
 /// Rewrites every stored digest in the one spelling this build produces.
@@ -2022,6 +2167,16 @@ pub fn validate_qc_snapshot(snapshot: &AcquisitionQcSnapshotV1) -> Result<(), Do
 fn validate_input(input: &InputRecord) -> Result<(), DocumentProblem> {
     bounded_label(&input.label)?;
     validate_locator(&input.locator)?;
+    if let Some(label) = &input.not_verified_by_mscanvas {
+        // A label that says nothing is not a label, and a stored one is never
+        // dropped to make the document fit.
+        if !label.unverified_settings && label.unverified_build_release.is_none() {
+            return Err(DocumentProblem::InconsistentRecord);
+        }
+        if let Some(release) = &label.unverified_build_release {
+            bounded_label(release)?;
+        }
+    }
     if input.members.is_empty() || input.members.len() > MAX_MEMBERS {
         return Err(DocumentProblem::InconsistentRecord);
     }

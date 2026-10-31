@@ -193,13 +193,38 @@ failure.
 
 ## 4. Schema 4 — the canonical disposition
 
+*Note, 2026-10-29:* superseded on `be/integrate` (draft PR #161) by schema 5,
+which adds the "not verified by MSCanvas" label to an input (ADR 0055, owner
+decision 2). The canonical document is now `schema_5_canonical.json`, read and
+written back by
+`project::tests::the_canonical_schema_five_document_reads_and_writes_back_unchanged`.
+Beta 1 published schema 4, which began its promise below, so the schema-5
+build on `be/integrate` **reads** `schema_4_canonical.json` exactly as schema 4
+and holds it as schema 5 with a `null` label on every input
+(`the_canonical_schema_four_document_is_read_as_schema_five_with_no_label`);
+opening writes nothing, nor does a Save with nothing unsaved, and the first
+Save after a change writes schema 5, which beta 1 can no longer open. That
+disposition is a release decision for the owner before merge (ADR 0055, the
+note of 2026-10-29 on a schema-4 document). *The owner decided on 2026-10-30:
+it ships, and this record's position, that publication began schema 4's
+promise, stands.* Schema 4 is now frozen at beta 1's
+words and fields: a word or field added to a shared type later belongs to
+schema 5 or later and must be refused on the schema-4 read path.
+`project::tests::schema_four_shares_only_beta_one_words_and_fields` makes an
+added variant or field fail to compile; a serde attribute changed on an
+existing one is left to review (ADR 0049, decision 4 note). Below, schema 4 as
+it stood at the M9 closure; each statement marked "as of the M9 closure" is superseded by this
+note.
+
 **Schema 4 is the current unpublished development schema, and its
 compatibility promise begins only if and when this source line is published.**
+*(As of the M9 closure; see the note above.)*
 
 - The one current meaning is the canonical document
   [`schema_4_canonical.json`](../../apps/desktop/src-tauri/src/project/schema_4_canonical.json),
   read and written back to the same JSON value by
-  `project::tests::the_canonical_schema_four_document_reads_and_writes_back_unchanged`.
+  `project::tests::the_canonical_schema_four_document_reads_and_writes_back_unchanged`
+  (as of the M9 closure; see the note above).
   It holds every word listed below. Reading it recomputes both plan digests
   and the target-list digest, so a change to a plan's canonical form fails
   there, as does renaming or removing any stored word. A word *added* to a
@@ -219,7 +244,7 @@ compatibility promise begins only if and when this source line is published.**
   on open and before every write. Every object refuses unknown fields; every
   closed vocabulary refuses an unknown word (`malformed`); every optional
   value is an explicit `null`; a version other than 4 is `unsupportedVersion`
-  and nothing migrates.
+  and nothing migrates (as of the M9 closure; see the note above).
 - **Earlier M9 development builds are not compatible with each other.** M9.3
   added `verifiedSnapshotInWorkArea` and `insufficientWorkAreaSpace` to schema
   4 without advancing it, so an M9.1 or M9.2 build refuses a document that
@@ -330,6 +355,14 @@ append-only. Sharing one target list between plans (deduplication or reference
 normalization) is a future storage-model optimization (§13); closure did not
 add a shared target-list entity.
 
+*2026-10-30:* a member whose new plan alone no longer fits is now refused
+`oversized` before its worker starts; in the measurement above that is the
+fifth batch's thirteenth member (`halted_batch_attempts=12`,
+[evidence §4](../spikes/M9_CLOSURE_EVIDENCE.md#4-document-growth)). A member
+whose plan fits but whose run and result records do not is still refused after
+its worker ran, as described above
+([plan section 7.2](../development/AFTER_BETA1_PLAN.md#72-polish-and-limits)).
+
 ## 9. What is persisted, and what is not
 
 Checked in code and by a scan of a real run's saved documents and stores
@@ -414,7 +447,7 @@ and batch correction stay later (S-4); both decisions are open.
 | Filesystem and network confinement of the worker not enforced | the fixed adapter makes no network call; nothing prevents one | no by code review; not enforced | an enforced sandbox, if required | release security review |
 | Retained hard-link scratch has no user cleanup | a retained link keeps a file's clusters allocated if the user deletes their own name | no (resource leakage) | an explicit recovery UX or tool | UI/UX cleanup or later |
 | M9.1-era unmarked attempt directories are never swept | they stay | no | a person, or a future tool | same |
-| Payload `.staging/` and Save As pending stores left by a crash are not collected; a Save As whose document publish fails leaves its whole store published beside a destination with no document, and a retry to that name is refused `destinationStoreExists` | disk space beside the document; the user chooses another name or removes the folder | no (reported, never undone silently) | payload GC and store-recovery design | later |
+| Payload `.staging/` and Save As pending stores left by a crash are not collected; a Save As whose document publish fails leaves its whole store published beside a destination with no document, and a retry to that name is refused `destinationStoreExists` | disk space beside the document; the user chooses another name or removes the folder. *2026-10-30: a Save As with no result now publishes an empty store first too, which reserves the name, so this also applies to it* | no (reported, never undone silently) | payload GC and store-recovery design | later |
 | Unreferenced results (published, never saved) are counted and not shown | invisible disk use | no | UI decision | UI/UX cleanup |
 | No clipboard copy of a stored result | use SVG/PNG export | no | a native harness with a stored-result project | UI/UX cleanup or release |
 | Native save dialogs for stored-result exports not natively qualified | write path tested in Rust; dialog mocked in the browser | no known defect | native harness run | installed qualification |
@@ -423,7 +456,7 @@ and batch correction stay later (S-4); both decisions are open.
 | Spreadsheet formula interpretation of exported text | a spreadsheet may evaluate a label such as `=…` | **security/interoperability decision open** | release security review: keep raw, add a separate spreadsheet-safe export, or document | before public release |
 | History is append-only | nothing can be pruned; a full project stays full | no | history pruning design | later |
 | Every plan stores its whole target list | ≈ 0.84 MiB per 16 × 200 batch with short labels (four fit), up to ≈ 3.1 MB with 200-character CJK labels (one fits) | no | shared target-list storage | future storage-model revision |
-| The 4 MiB bound is met after the member's worker ran | up to 10 minutes of work discarded; the sentence says the project is too large, not what to do | no (nothing corrupted) | a size check before the attempt; clearer wording | UI/UX cleanup |
+| The 4 MiB bound is met after the member's worker ran | up to 10 minutes of work discarded; the sentence says the project is too large, not what to do | no (nothing corrupted) | a size check before the attempt; clearer wording. *2026-10-30: a run whose new plan alone does not fit is refused before its worker starts; one that fits with its plan is still measured after its attempt, and the wording is unchanged* | UI/UX cleanup |
 | Batch state is session-only | after restart, which members a batch never started is unknown; the history shows only runs | no | only if users need batch history | later |
 | A failed member's reason appears only once the batch ends | mid-batch it reads *Failed* | no | UI | UI/UX cleanup |
 | Source availability is known only after **Check links** | a reopened result reads *Not checked* | no | UI | UI/UX cleanup |

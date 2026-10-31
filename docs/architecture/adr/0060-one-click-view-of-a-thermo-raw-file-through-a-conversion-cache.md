@@ -11,6 +11,8 @@ library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/1
 ([slice 2 notes](#slice-2-notes-2026-10-30)); nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
+Amended 2026-10-30 by ADR 0056 slice 2: the data documents' version numbers
+(a note under Exports).
 Related: [0005](0005-mzml-preview-boundary.md),
 [0006](0006-multi-dataset-workspace-boundary.md),
 [0011](0011-private-workspace-conversion-path.md),
@@ -206,6 +208,10 @@ It lowers, after the source, to `--mzML --zlib`. That is exactly the argv the
     replaces profile peaks with centroids" or "Lossy: removes spectra".
   - Advanced-tier intents are not in the menu. That includes "MS2 and up"
     vendor centroiding while it stays labelled. They go through Conversion.
+    *2026-10-30, later: "MS2 and up" is now a verified row with a Thermo RAW
+    domain ([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)),
+    so it joins the menu through the table as "MS1 and up" does. Every other
+    vendor scope stays advanced and out of the menu.*
   - The choice applies to that one view. It is never remembered, and View
     never starts from it. This is ADR 0058's reasoning against restoring a
     last-used preset: a lossy step must not come back without being chosen.
@@ -802,6 +808,14 @@ source, and states the conversion.
     gets a version above 2. The chromatogram document takes the next version
     of its own sequence.
   - An export from an mzML row stays byte-identical to today.
+
+  > **2026-10-30: [ADR 0056](0056-project-owned-mzml-reader-for-viewing.md)
+  > slice 2 took spectrum versions 3 (full source) and 4 (range) and
+  > chromatogram version 2** for an mzML row's documents, whose representation
+  > and unit fields now carry the file's declared values. Each
+  > provenance-bearing spectrum kind therefore gets a version above 4, and the
+  > chromatogram's provenance-bearing document takes version 3. "Byte-identical
+  > to today" means identical to what an mzML row writes from that change on.
 - No export carries a cache path or the cache key.
 
 **The project document: the cached file stays a private viewing artifact.**
@@ -1171,9 +1185,9 @@ it says so; the decisions stand otherwise.
    user's file. A RAW whose name the plan cannot stage fails with
    `conversion_not_plannable`. Follow-up: a plan with a fixed output name, once
    `be/integrate` (PR #161) has reshaped `ConversionPlan`. That PR also makes
-   `plan_conversion` take a bound intent, so the view's call to it, with
-   `SHIPPED`, is adapted when the second of the two merges. Accepted by the
-   owner, 2026-10-30 (A0060).
+   `plan_conversion` take a bound intent; since the merge of 2026-10-31 the
+   view's call passes `BoundIntent::Row(SHIPPED)` and never an advanced
+   intent. Accepted by the owner, 2026-10-30 (A0060).
 4. **Hashing. A miss reads the RAW in full four times.** Checking file is the
    conversion crate's own admission
    (`ConversionSource::open_thermo_raw_file_reporting`), read in chunks with
@@ -1192,9 +1206,9 @@ it says so; the decisions stand otherwise.
    reporting, cancellable form of the crate's post-run revalidation would
    remove one read; it waits until PR #161 has reshaped the crate's run. Until
    then this is a known ceiling: up to 1.5 GiB read twice with no bar.
-5. **The key's intent line** is `ConversionIntent::SHIPPED.stable_id()`. Once
-   PR #161 merges, it becomes the structured intent's canonical serialization,
-   and the key's version line changes (decision 7).
+5. **The key's intent line** is `ConversionIntent::SHIPPED.stable_id()`. PR
+   #161 has merged; moving it to the structured intent's canonical
+   serialization, with the key's version line (decision 7), is still to do.
 6. **Deferred, each with its reason.**
    - `backend_not_found` and `provider_build_not_evidenced` need the help
      probe, so they end the operation `failed` once its worker has bound the
@@ -1215,28 +1229,21 @@ it says so; the decisions stand otherwise.
 7. **ADR 0056 decision 3 for a Thermo RAW row, as implemented.**
    `open_mzml_preview` and `load_selected_spectrum` still refuse a vendor row
    with `dataset_not_previewable`. Only `open_raw_view` opens one, and every
-   read of that preview, a spectrum's included, goes to the pinned entry.
-   Neither that open nor a spectrum load re-admits or hashes the RAW: View
-   re-accepted the row, and the pin and the entry's generation stand in
-   (decision 12). The next open of any row ends that preview and its pin, in
-   the order opens start in across every dataset, which the workspace records
-   under its lock: only the latest open ends a cached view at its commit, and
-   a viewed open that a newer open has passed installs nothing and answers
-   `selection_superseded`. Follow-up: when the
-   native reader of PR #175 replaces these reads, its table and spectrum reads
-   of a viewed row take the entry's path too, never the RAW's. A textual
-   merge with PR #175 conflicts in the open and spectrum paths of
-   `preview/service.rs`, and also leaves three lines outside those hunks that
-   the second of the two to merge must change: the table read
-   `read_spectrum_table(file.path(), …)` reads the pinned entry for a viewed
-   row, and `qc_producer_identified` and `qc_snapshot_token` are both
-   conditioned on `!viewed`. The viewed open must still pass #175's
-   cross-dataset supersession check, withholding only the run-summary token;
-   that check replaces the workspace's `latest_open` record. The viewed open
-   and spectrum paths keep skipping the RAW's `revalidate`.
+   read of that preview goes to the pinned entry: `msaccess`'s metadata and
+   run summary, and, since the merge with PR #175 on 2026-10-31, the native
+   reader's table and selected spectrum (ADR 0056), so no spectrum of a
+   cached view is read by `msaccess`. Neither that open nor a spectrum load
+   re-admits or hashes the RAW: View re-accepted the row, and the pin and the
+   entry's generation stand in (decision 12). The next open of any row ends
+   that preview and its pin through ADR 0056 decision 4's open ticket: an
+   open's start drops every other row's retained preview, and a viewed open
+   that a newer open has passed installs nothing and answers
+   `selection_superseded`. A viewed open passes the same ticket check as any
+   open and installs its chromatogram, but retains no run summary (decision
+   11). The ticket replaced the workspace's own record of the latest open.
    `a_miss_converts_the_verified_default_publishes_once_and_opens_the_entry_not_the_raw`
-   fails if any of the three is left: a native read of the RAW fails the
-   open, and the test asserts no token and no producer.
+   fails if a native read of a viewed row takes the RAW's path, or if a
+   viewed open retains a token or a producer.
 8. **After review (2026-10-30).** The items marked as pending await the
    owner's confirmation; the rest follow decisions above.
    - **The wire, beyond decision 12.** `running` also carries
@@ -1288,10 +1295,18 @@ it says so; the decisions stand otherwise.
      check and its removal. A workspace mutation waits for a Clear meanwhile.
    - **View begins after an accepted native drop,** as a queue does, so the
      slot never turns that drop's commit into a refusal.
+   - **The entry points PRs #161 and #179 added (2026-10-31 merge).** Begin
+     with a structured intent (ADR 0055) is the same Begin and answers
+     `raw_view_busy` before the intent is read. Planning one and the four
+     preset commands stay allowed, as composing conversion settings is
+     (decision 5): they take no slot, no gate and no row. Per-output adoption
+     (ADR 0052) shares the queue-wide action's body and takes no new guard.
    - **The next open of any row ends a cached view and its pin when that open
      is accepted,** not when it commits, so an open that then fails does not
-     leave a preview off screen holding an entry. The commit ends them again,
-     for a viewed open that was still reading when the other began.
+     leave a preview off screen holding an entry. Since the merge with PR #175
+     this is ADR 0056 decision 4's ticket, taken with the other rows' previews
+     dropped under one hold, and only the latest open commits, so a viewed
+     open that was still reading when the other began installs nothing.
    - **Dated notes** are written in ADR 0005, ADR 0006, ADR 0012, ADR 0056
      decision 3 and ADR 0057 decision 2. ADR 0043 (CNV-D8) and ADR 0055 take
      theirs with slice 3, whose interface shows the progress and the reuse.
