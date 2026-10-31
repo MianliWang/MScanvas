@@ -107,6 +107,8 @@ const DRAWN: SpectrumProjection = {
   intensity: [10, 40, 25],
   sourcePoints: 3,
   reduced: false,
+  outsideLow: null,
+  outsideHigh: null,
 };
 
 /** The same window, truthfully holding no reported point. */
@@ -117,6 +119,8 @@ const NO_POINT_IN_WINDOW: SpectrumProjection = {
   intensity: [],
   sourcePoints: 0,
   reduced: false,
+  outsideLow: null,
+  outsideHigh: null,
 };
 
 const PROJECTION_ERROR: PreviewError = {
@@ -1832,6 +1836,8 @@ describe("what the plot draws, and what it says it is drawing", () => {
       intensity: [10, 40, 25],
       sourcePoints: 3,
       reduced: false,
+      outsideLow: null,
+      outsideHigh: null,
     });
     send({ type: "gesture-started", domain: mzDomain(200, 300) });
 
@@ -2134,6 +2140,8 @@ describe("a viewport that is admitted and has nothing to do", () => {
       intensity: [70],
       sourcePoints: 1,
       reduced: false,
+      outsideLow: null,
+      outsideHigh: null,
     });
 
     expect(sticks()).not.toBeNull();

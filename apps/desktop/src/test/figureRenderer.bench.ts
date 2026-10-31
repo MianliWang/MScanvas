@@ -12,11 +12,10 @@
  * pnpm --filter @mscanvas/desktop exec vitest bench --run
  * ```
  *
- * **What these scenes are.** `StickSpectrum` is the only screen renderer this
- * product has, and it draws sticks for every input -- it takes no plot kind and
- * no representation, only a `representationKnown` boolean that changes the
- * caption. So the scenes below are *point-shape stress inputs to the stick
- * renderer*, not four different screen rendering modes. `chromatogram-100k`
+ * **What these scenes are.** `StickSpectrum` draws sticks unless a declared
+ * profile spectrum is drawn over a viewport (P175), and these scenes pass no
+ * representation. So the scenes below are *point-shape stress inputs to the
+ * stick renderer*, not four different screen rendering modes. `chromatogram-100k`
  * measures what 100,000 ordered points cost that renderer; it does **not**
  * measure a chromatogram screen path, because no continuous-trace screen
  * renderer exists yet. Building one is M4.1's slice, not this harness's.

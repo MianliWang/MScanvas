@@ -18,16 +18,18 @@ mod staging_recovery;
 mod workspace_clear;
 
 use mscanvas_proteowizard::{
-    ConversionSourceKind, LocalFileWriteError, LocalFileWriteFailure, MetadataEntry,
-    MetadataResult, MetadataSectionKind, MsLevelBucket, PreviewNoResult, PreviewOutcome,
-    PreviewValue, Redactor, RunSummaryResult, SelectedSpectrumResult, Sha256Digest,
-    SpectrumIdentity, SpectrumTableResult, UnitState as SourceUnitState, write_new_local_file,
+    ArrayProblem, ConversionSourceKind, LocalFileWriteError, LocalFileWriteFailure, MetadataEntry,
+    MetadataResult, MetadataSectionKind, MsLevelBucket, MzmlOpenError, MzmlScanError,
+    MzmlScanLimits, MzmlSpectrumError, MzmlSpectrumTable, PreviewOutcome, PreviewValue, Redactor,
+    RetentionTimeUnitState, RunSummaryResult, SelectedSpectrumResult, Sha256Digest,
+    SpectrumIdentity, SpectrumRepresentationState, SpectrumTableRow, ValueUnitState,
+    read_selected_spectrum, read_spectrum_table, write_new_local_file,
 };
 
 use super::chromatogram::{
-    ChromatogramExportFormat, ChromatogramSource, LinkedFigureFormat, RangeRequest, TraceSet,
-    data_document as chromatogram_data, figure_spec as chromatogram_figure, linked_figure_spec,
-    svg_document as chromatogram_svg,
+    ChromatogramExportFormat, ChromatogramSource, LinkedFigureFormat, MixedRetentionTimeUnits,
+    RangeRequest, TraceSet, data_document as chromatogram_data, figure_spec as chromatogram_figure,
+    linked_figure_spec, shared_retention_time_unit, svg_document as chromatogram_svg,
 };
 use super::conversion::conversion_source_kind;
 #[cfg(test)]
@@ -50,7 +52,7 @@ use super::authority::{
 };
 use super::backend::{
     ConversionBackend, ConversionBackendAttempt, OperationAttempt, PreviewProvider,
-    open_operations, reporting_redactor, selected_spectrum_operation,
+    open_operations, reporting_redactor,
 };
 use super::configuration::{
     ConversionConfigurations, ReadAnswer, RowAdmission, intent_dto, read_configuration,
@@ -91,12 +93,12 @@ use super::dto::{
     MAX_METADATA_LINE_CHARS, MAX_MS_LEVELS, MAX_PRECURSORS, MAX_SPECTRUM_POINTS,
     MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
     PreviewDto, PreviewErrorDto, RememberedFolderDto, RetentionTimeDto, RetentionTimeRangeDto,
-    RunSummaryDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto, SpectrumRowDto,
-    SpectrumTableDto, ValidationModeDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
-    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
-    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
-    WorkspaceRosterDto, bounded_text, conversion_busy,
-    conversion_settings_not_evidenced_for_source, dataset_not_previewable,
+    RetentionTimeUnitDto, RunSummaryDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto,
+    SpectrumRepresentationDto, SpectrumRowDto, SpectrumTableDto, ValidationModeDto, ValueUnitDto,
+    WorkspaceAddOutcomeDto, WorkspaceAddResultDto, WorkspaceConversionReservationDto,
+    WorkspaceConversionUpdateDto, WorkspaceDropStateDto, WorkspaceDropSubscriptionReservationDto,
+    WorkspaceDropUpdateDto, WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text,
+    conversion_busy, conversion_settings_not_evidenced_for_source, dataset_not_previewable,
     invalid_conversion_reservation, queue_destination_changed, queue_is_empty,
     queue_output_name_collision, queue_too_large, redact_absolute_paths, require_finite,
     require_finite_option, workspace_full,
@@ -141,8 +143,9 @@ use super::dto::{
     conversion_item_not_skippable, conversion_not_stoppable,
 };
 use super::dto::{
-    SpectrumDomainRefusalDto, SpectrumProjectionDto, SpectrumViewportDomainDto,
-    spectrum_projection_no_domain, spectrum_projection_stale, spectrum_projection_window_refused,
+    ProjectionSampleDto, SpectrumDomainRefusalDto, SpectrumProjectionDto,
+    SpectrumViewportDomainDto, spectrum_projection_no_domain, spectrum_projection_stale,
+    spectrum_projection_window_refused,
 };
 use super::dto::{
     WorkspaceOutputAdoptionOutcomeDto, WorkspaceOutputAdoptionResultDto, adoption_in_progress,
@@ -150,10 +153,9 @@ use super::dto::{
 };
 use super::export::{
     BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
-    ClaimedSpectrumExport, FigureFailure, LinkedTokens, PreviewOpenTicket, RunSummaryToken,
-    ScientificExportSlots, SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest,
-    data_document, exported_point_count, figure_raster, png_document, png_of, raster_of,
-    svg_document,
+    ClaimedSpectrumExport, FigureFailure, LinkedTokens, ScientificExportSlots,
+    SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest, data_document,
+    exported_point_count, figure_raster, png_document, png_of, raster_of, svg_document,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -292,6 +294,21 @@ impl Workspace {
         state.request_epoch += 1;
         state.preview = None;
         Some((state.request_epoch, file))
+    }
+
+    /// Drops every other dataset's retained preview.
+    //
+    // Native preview state is kept for one dataset at a time (ADR 0056,
+    // decision 4): the screen shows one preview, and a table at the reader's
+    // limit is a million rows and offsets. Called by an open's start, under
+    // the same hold as its ticket, so it cannot fall between another open's
+    /// commit check and its write.
+    fn drop_other_previews(&mut self, keep: DatasetId) {
+        for (id, state) in &mut self.runtime {
+            if *id != keep {
+                state.preview = None;
+            }
+        }
     }
 
     /// Starts a request that reads one dataset and changes nothing about it:
@@ -501,13 +518,20 @@ struct DatasetRuntimeState {
 
 /// What one open action established about one dataset.
 //
-// The generation, the backend that read it and the rows a later spectrum is
-// reconciled against, committed together. Held apart they made two states
-// representable that must never occur: a recorded generation with no rows to
-/// reconcile against, and rows with no record of which backend produced them.
+// The generation of the file it read, the native table with its offsets, and
+// the rows a later spectrum is reconciled against, committed together and
+// dropped together. Held apart they made states representable that must never
+// occur: a recorded generation with no rows to reconcile against, or offsets
+/// that outlive the table they index.
 #[derive(Debug, Clone)]
 struct DatasetPreviewState {
-    opened: OpenedPreview,
+    /// Which generation of the file the open read.
+    source: SourceGeneration,
+    /// The native table, kept for the byte offset of every spectrum (ADR 0056,
+    // decision 4). A selected spectrum is read from it and from nothing else,
+    // and no read holds a file handle: each opens the file and closes it.
+    /// Shared by handle, so a read never copies it under the workspace lock.
+    table: Arc<MzmlSpectrumTable>,
     /// The complete per-scan facts this preview reported.
     //
     // Shared rather than owned outright. A run of tens of thousands of scans
@@ -3325,21 +3349,13 @@ impl PreviewService {
     #[cfg(feature = "e2e")]
     pub(super) fn retained_rows_for_seed(
         &self,
-        table: &SpectrumTableResult,
+        table: &MzmlSpectrumTable,
     ) -> Arc<Vec<TableRowFacts>> {
         Arc::new(
             table
                 .rows()
                 .iter()
-                .map(|row| TableRowFacts {
-                    identity: row.identity().clone(),
-                    ms_level: row.ms_level(),
-                    retention_time: row.retention_time().value(),
-                    retention_time_unit_known: reported_unit_known(row.retention_time()),
-                    base_peak_mz: row.base_peak_mz(),
-                    base_peak_intensity: row.base_peak_intensity(),
-                    total_ion_current: row.total_ion_current(),
-                })
+                .map(|row| TableRowFacts::of(&SpectrumTableRow::from_native(row)))
                 .collect(),
         )
     }
@@ -3449,6 +3465,9 @@ impl PreviewService {
                 .map_err(|refusal| {
                     Self::projection_refusal(SpectrumProjectionRefusal::Source(refusal))
                 })?;
+        let sample = |outside: Option<(f64, f64)>| {
+            outside.map(|(mz, intensity)| ProjectionSampleDto { mz, intensity })
+        };
         Ok(SpectrumProjectionDto {
             low: projection.window().low(),
             high: projection.window().high(),
@@ -3456,6 +3475,8 @@ impl PreviewService {
             intensity: projection.intensity().to_vec(),
             source_points: projection.source_points(),
             reduced: projection.reduced(),
+            outside_low: sample(projection.outside()[0]),
+            outside_high: sample(projection.outside()[1]),
         })
     }
 
@@ -3858,44 +3879,6 @@ impl PreviewService {
     }
 
     // ------------------------------------------------- chromatogram export
-
-    /// Retains, or revokes, the chromatogram one committed preview can export.
-    //
-    // The eligibility is the visible viewer's, deliberately and not
-    // approximately: Rust holds every row the backend reported while the
-    // webview receives a bounded prefix, so a run whose table could not be
-    // transferred whole has no chromatogram on screen -- and issuing a token
-    // for it would let an export reach science the product does not otherwise
-    // show. A truncated viewer has no chromatogram and no chromatogram export.
-    //
-    // Answers the opaque name the webview receives, or `None` where there is
-    // nothing to name. The previous chromatogram is already gone by this point:
-    // the ticket this open took at its beginning revoked it there, because a
-    // token naming a run the user is no longer looking at must fail as stale
-    // rather than quietly export whatever happens to be loaded now.
-    //
-    // `ticket` is what decides whether this completion may speak at all. The
-    // per-dataset request epoch checked before this cannot: two opens of two
-    // *different* datasets are each the newest request for their own dataset,
-    // so by that test both are current and whichever finishes last would own
-    // the one chromatogram the session has -- which is the older one whenever
-    /// the newer open is the faster read.
-    fn reconcile_chromatogram_export(
-        &self,
-        ticket: PreviewOpenTicket,
-        owner: DatasetId,
-        rows: &Arc<Vec<TableRowFacts>>,
-        truncated: bool,
-    ) -> Option<String> {
-        // Decided before the lock: whether a run is one the viewer would draw is
-        // a question about the science, and the answer does not depend on what
-        // any other open is doing. What must not be split is the ownership test
-        // and the installation, and those are one call below.
-        let source = ChromatogramSource::from_rows(rows, truncated);
-        self.spectrum_export_slot()
-            .reconcile_preview_chromatogram(ticket, owner, source)
-            .map(|snapshot| snapshot.token().as_wire())
-    }
 
     /// Binds one chromatogram export and reserves the one scientific lane.
     //
@@ -7097,10 +7080,12 @@ impl PreviewService {
 }
 
 impl PreviewService {
-    /// Loads metadata, run summary and the spectrum table for one open action.
+    /// Loads metadata and the run summary through `msaccess`, and the spectrum
+    // table natively (ADR 0056), for one open action.
     //
-    // All three share a single discovery and capability probe, so opening a
-    // file resolves the backend once rather than once per panel.
+    // The two `msaccess` operations share a single discovery and capability
+    // probe, so opening a file resolves the backend once rather than once per
+    // panel.
     // Converts one accepted dataset to mzML in a folder the caller names.
     //
     // Private, and not on the way to being anything else. No command reaches
@@ -7247,8 +7232,18 @@ impl PreviewService {
         // return above -- so none of them is a reason to take the chromatogram
         // away from the preview still on screen.
         //
-        // The export slots are a leaf, and this holds nothing else.
-        let preview_open = self.spectrum_export_slot().begin_preview_open();
+        // Taken while the workspace is held, with the export slot inside it as
+        // the leaf it is, and every other dataset's retained preview dropped in
+        // the same hold (ADR 0056, decision 4). A commit checks this ticket
+        // under the same lock, so a newer open's start either comes before an
+        // older open's check, which then fails, or after its write, which this
+        // then drops: retained preview state is one dataset's at a time.
+        let preview_open = {
+            let mut workspace = self.workspace();
+            let ticket = self.spectrum_export_slot().begin_preview_open();
+            workspace.drop_other_previews(id);
+            ticket
+        };
         // Now the conditions that are about this moment rather than this target.
         //
         // Once a stop could not be confirmed this session does not start another
@@ -7298,10 +7293,10 @@ impl PreviewService {
         let file = revalidate(&remembered)?;
         let redactor = reporting_redactor(file.path());
         let operations = open_operations();
-        // The three operations read the file separately. If it is rewritten
-        // between them, their results describe different generations of the
-        // run, and combining those into one preview would present an
-        // acquisition that never existed.
+        // The two operations and the native table pass read the file
+        // separately. If it is rewritten between them, their results describe
+        // different generations of the run, and combining those into one
+        // preview would present an acquisition that never existed.
         let before = SourceGeneration::of(&file);
         // Held for the whole batch, so the file cannot be swapped away and
         // swapped back between the two comparisons around it. Required: losing
@@ -7325,9 +7320,6 @@ impl PreviewService {
         let observed = attempts
             .first()
             .map(|attempt| (attempt.installation.clone(), attempt.preview_availability));
-        let installation = observed
-            .as_ref()
-            .and_then(|(installation, _)| installation.clone());
         // An open is a look at the backend like any other, and it is recorded
         // as one -- still under the gate. An open that resolved a backend
         // nothing had seen yet and kept it to itself left the sequence naming
@@ -7349,7 +7341,19 @@ impl PreviewService {
                 self.note_resolved(installation, preview_availability)
             },
         );
-        let generation = projection.revision.wire();
+        // The native table pass (ADR 0056, decision 3), under the same gate and
+        // the same hold on the file as the batch, so both readers describe one
+        // generation of it. Skipped where the batch already failed: that
+        // failure is the open's answer, and a full pass would only delay it.
+        //
+        // Kept, not answered here. A file that changed while it was read is
+        // reported as changed below, not as whatever the reader made of it.
+        // And whatever it answers, the operation fixes the reader: a refusal is
+        // shown, never reread with `msaccess`.
+        let native_table = attempts
+            .iter()
+            .all(|attempt| attempt.outcome.is_ok())
+            .then(|| read_spectrum_table(file.path(), MzmlScanLimits::default()));
         drop(guard);
         drop(running);
         if SourceGeneration::capture(file.path()) != before {
@@ -7362,8 +7366,6 @@ impl PreviewService {
         }
         let mut metadata = None;
         let mut run_summary = None;
-        let mut spectrum_table = None;
-        let mut table_rows = Vec::new();
         let mut handled = 0_usize;
         for attempt in attempts {
             handled += 1;
@@ -7386,27 +7388,11 @@ impl PreviewService {
                         // copies. The projection drops the three middle
                         // retention times and caps the buckets, so a snapshot
                         // built from it would record less than was established.
-                        run_summary = Some((run_summary_dto(&result)?, result, ran_on));
+                        run_summary = Some((result, ran_on));
                     }
-                    PreviewValue::SpectrumTable(result) => {
-                        table_rows = result
-                            .rows()
-                            .iter()
-                            .map(|row| TableRowFacts {
-                                identity: row.identity().clone(),
-                                ms_level: row.ms_level(),
-                                retention_time: row.retention_time().value(),
-                                retention_time_unit_known: reported_unit_known(
-                                    row.retention_time(),
-                                ),
-                                base_peak_mz: row.base_peak_mz(),
-                                base_peak_intensity: row.base_peak_intensity(),
-                                total_ion_current: row.total_ion_current(),
-                            })
-                            .collect();
-                        spectrum_table = Some(spectrum_table_dto(&result, &redactor)?);
-                    }
-                    PreviewValue::Tic(_) | PreviewValue::SelectedSpectrum(_) => {
+                    PreviewValue::SpectrumTable(_)
+                    | PreviewValue::Tic(_)
+                    | PreviewValue::SelectedSpectrum(_) => {
                         return Err(PreviewErrorDto::new(
                             "unexpected_preview_result",
                             "The preview returned a result MSCanvas did not request.",
@@ -7446,13 +7432,34 @@ impl PreviewService {
         // `availability()`: either of those answers which build is configured
         // *now*, which is a different question from which one produced these
         // facts.
-        let (run_summary, run_summary_facts, producer_installation) =
+        let (run_summary_facts, producer_installation) =
             run_summary.ok_or_else(|| missing("run summary"))?;
-        let spectrum_table = spectrum_table.ok_or_else(|| missing("spectrum table"))?;
+        let table = native_table
+            .ok_or_else(|| missing("spectrum table"))?
+            .map_err(spectrum_table_refused)?;
+        let (spectrum_table, table_rows) = spectrum_table_dto(&table, &redactor)?;
+        // The page's retention-time range is the native rows', not the run
+        // summary's: `msaccess` prints its own scale, which beside the table
+        // would put two scales on one page (ADR 0056, decision 3).
+        let run_summary =
+            run_summary_dto(&run_summary_facts, retention_time_range_dto(&table_rows));
+
+        // Decided before any lock: whether a run is one the viewer would draw
+        // is a question about the science, the answer does not depend on what
+        // any other open is doing, and ordering a run at the reader's limit is
+        // not work to do while the workspace waits.
+        let table_rows = Arc::new(table_rows);
+        let chromatogram =
+            ChromatogramSource::from_rows(&table_rows, spectrum_table.truncated).ok();
+        let qc_producer_identified = producer_installation
+            .as_ref()
+            .and_then(InstallationIdentity::producer_facts)
+            .is_some();
 
         // One commit, under one lock, of facts that are only true together: the
-        // generation this was read at, the backend that read it, and the rows a
-        // later spectrum is reconciled against.
+        // generation this was read at, the table with its offsets, the rows a
+        // later spectrum is reconciled against, and the chromatogram and run
+        // summary the session may export or copy.
         let mut workspace = self.workspace();
         // The dataset can have been revoked while this ran, and a newer request
         // for it can have been made: the workspace stays answerable throughout,
@@ -7464,14 +7471,34 @@ impl PreviewService {
         if !workspace.request_is_current(id, epoch) {
             return Err(superseded());
         }
-        let table_rows = Arc::new(table_rows);
+        // And only if this is still the latest open across every dataset (ADR
+        // 0056, decision 4). The export slot is taken inside the workspace
+        // lock, as the leaf it is, and the ticket is compared by the slot's own
+        // compare-and-install: a stale one installs nothing, revokes nothing
+        // and answers as superseded, and the preview state below is not written
+        // either. Every production ticket is taken under the workspace lock
+        // too, so no newer open can begin between this and the write -- without
+        // it an older open of another dataset could commit after a newer one
+        // began, and two datasets would retain native tables.
+        let mut slots = self.spectrum_export_slot();
+        let Some(qc_snapshot_token) = slots.reconcile_preview_run_summary(
+            preview_open,
+            id,
+            run_summary_facts,
+            producer_installation,
+        ) else {
+            return Err(superseded());
+        };
+        // Install *or* revoke, never neither: this open is the one the session
+        // is on, so a run with no chromatogram leaves the session with none.
+        let chromatogram_export_token = slots
+            .reconcile_preview_chromatogram(preview_open, id, chromatogram)
+            .map(|snapshot| snapshot.token().as_wire());
+        drop(slots);
         workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
-            opened: OpenedPreview {
-                source: before,
-                generation,
-                installation,
-            },
-            table_rows: Arc::clone(&table_rows),
+            source: before,
+            table: Arc::new(table),
+            table_rows,
         });
         // Described as the roster describes it, so a preview header and the row
         // it belongs to cannot disagree about which of two identically named
@@ -7486,35 +7513,6 @@ impl PreviewService {
         let described =
             dataset_dto(&workspace, id).unwrap_or_else(|| selected_file_dto(id, &file, None, None));
         drop(workspace);
-        // After the workspace lock, because the export slots are a leaf. Every
-        // path here takes them in that order and none takes them together, so
-        // there is no inversion to reason about.
-        //
-        // Install *or* revoke, never neither -- and only if this open is still
-        // the one the session is on. A completion that a newer open has passed
-        // installs nothing and revokes nothing: the answer it is carrying is one
-        // the webview has already decided not to look at.
-        let chromatogram_export_token = self.reconcile_chromatogram_export(
-            preview_open,
-            id,
-            &table_rows,
-            spectrum_table.truncated,
-        );
-        // By the same ordering rule and in the same slot: only the latest open
-        // may retain a summary a QC snapshot can copy.
-        let qc_producer_identified = producer_installation
-            .as_ref()
-            .and_then(InstallationIdentity::producer_facts)
-            .is_some();
-        let qc_snapshot_token = self
-            .spectrum_export_slot()
-            .reconcile_preview_run_summary(
-                preview_open,
-                id,
-                run_summary_facts,
-                producer_installation,
-            )
-            .map(RunSummaryToken::as_wire);
 
         Ok(PreviewDto {
             authority: projection.to_dto(),
@@ -7523,7 +7521,7 @@ impl PreviewService {
             metadata,
             run_summary,
             spectrum_table,
-            qc_snapshot_token,
+            qc_snapshot_token: Some(qc_snapshot_token.as_wire()),
             qc_producer_identified,
         })
     }
@@ -7553,11 +7551,10 @@ impl PreviewService {
         if !matches!(outcome, Ok(SelectedSpectrumOutcomeDto::Spectrum { .. })) {
             self.spectrum_export_slot().forget_if_current(owned);
         }
-        // A spectrum read launches the backend, so it observes like every other
-        // gate-taker and must deliver what it observed. Read after the outcome
-        // rather than beside it: the read's own `note_resolved` has already run
-        // by then, so this is the authority its own observation left, not the
-        // one it found on the way in.
+        // A spectrum read takes the backend gate like every other gate-taker
+        // and delivers the authority as it stands after it. Since ADR 0056 the
+        // read is native and observes no installation itself, so this is the
+        // authority the session already held, read after the outcome.
         //
         // A read that *fails* carries no projection, and that is the rule
         // rather than an omission: a failure is judged by the receipt its
@@ -7571,7 +7568,12 @@ impl PreviewService {
         })
     }
 
-    /// The read itself. Requests stay direct and uncached in this slice.
+    /// The read itself: native, from the offset the open recorded (ADR 0056).
+    //
+    // Admitted and serialized exactly as the `msaccess` read it replaces was
+    // (decision 3): a usable backend, no conversion running, the backend gate,
+    // and supersession checked after the wait. What it drops is the process
+    // and the installation check, because no installation reads it.
     fn interpret_spectrum(
         &self,
         handle: &str,
@@ -7605,18 +7607,12 @@ impl PreviewService {
         // reason: the queue this read waited behind may have ended by failing
         // to confirm that its converter died.
         self.require_usable_backend()?;
-        // A selected spectrum is shown beside the metadata and the table from
-        // the open action. If the file has changed since then, this spectrum
-        // would belong to a different run than everything around it. Read in
-        // the same lock as the supersession check, so the preview facts belong
-        // to the request that was just found to be current.
-        //
-        // The recorded preview is not cloned whole. Its table holds one entry
-        // per spectrum of the acquisition, and copying tens of thousands of
-        // them under this lock -- while also holding the backend gate -- would
-        // stall every other command for the length of the copy. Only the two
-        // facts this read uses are taken.
-        let (remembered, opened, expected_row) = {
+        // The open's facts, read in the same lock as the supersession check so
+        // they belong to the request that was just found to be current. Taken
+        // by handle: the table holds an entry and an offset per spectrum of
+        // the acquisition, and copying them under this lock -- while also
+        // holding the backend gate -- would stall every other command.
+        let (remembered, preview) = {
             let workspace = self.workspace();
             if !workspace.request_is_current(id, epoch) {
                 return Err(superseded());
@@ -7630,161 +7626,111 @@ impl PreviewService {
             let preview = workspace
                 .runtime
                 .get(&id)
-                .and_then(|state| state.preview.as_ref());
-            let opened = preview.map(|preview| preview.opened.clone());
-            let expected_row =
-                preview.and_then(|preview| preview.table_rows.get(index as usize).cloned());
-            (remembered, opened, expected_row)
+                .and_then(|state| state.preview.as_ref())
+                .map(|preview| {
+                    (
+                        preview.source.clone(),
+                        Arc::clone(&preview.table),
+                        usize::try_from(index)
+                            .ok()
+                            .and_then(|position| preview.table_rows.get(position))
+                            .cloned(),
+                    )
+                });
+            (remembered, preview)
+        };
+        // A spectrum is read from the offset its open recorded, so a dataset
+        // with no retained preview has nothing to read it from (decision 4).
+        let Some((opened_source, table, expected_row)) = preview else {
+            return Err(preview_not_open());
+        };
+        // An index the open's table does not have is the answer the panel
+        // already has a state for, and no read can change it.
+        let Some(expected_row) = expected_row else {
+            return Ok(SelectedSpectrumOutcomeDto::Unavailable {
+                requested_index: index,
+            });
         };
         let file = revalidate(&remembered)?;
-        // Two refusals, before anything is launched, and neither replaces the
-        // other. The table's rows are what this spectrum is reconciled against,
-        // and they were read by whichever backend was in use then; reconciling
-        // across a change would compare two backends' readings and call the
-        // difference a finding about the file. Dropping the comparison is not
-        // the alternative -- it is the check that keeps the row the user
-        // clicked and the panel beside it describing the same spectrum.
-        //
-        // The sequence number is cheap and known already, so a deliberate
-        // change costs nothing to catch.
-        if let Some(opened) = opened.as_ref()
-            && opened.generation != running.installation
-        {
-            return Err(installation_changed_since_preview());
-        }
-        // The sequence only counts changes something looked at, so a backend
-        // replaced on disk since the last look advances nothing. This asks the
-        // filesystem directly -- and only the filesystem: resolving again would
-        // mean two help probes and two executable hashes on every row a user
-        // clicks, for a check whose whole purpose is to refuse cheaply. It
-        // catches the tools being deleted, replaced or rewritten, which is what
-        // a stale preview looks like from here, and the operation below reports
-        // the identity it actually ran with for everything else.
-        if let Some(opened) = opened.as_ref()
-            && let Some(installation) = opened.installation.as_ref()
-            && !installation.still_the_same_files()
-        {
-            return Err(installation_changed_since_preview());
-        }
-        let opened_generation = opened.as_ref().map(|opened| opened.source.clone());
-        if let Some(expected) = opened_generation.as_ref()
-            && SourceGeneration::capture(file.path()) != *expected
-        {
+        // A selected spectrum is shown beside the metadata and the table from
+        // the open action. If the file has changed since then, this spectrum
+        // would belong to a different run than everything around it -- and
+        // the offset it is read from would point into a different file.
+        if SourceGeneration::capture(file.path()) != opened_source {
             return Err(source_changed_since_preview());
         }
-
         // Also compared against the handle's own accepted identity, so a file
-        // replaced between validation and spawn is caught even when no preview
-        // generation has been recorded yet.
+        // replaced between validation and the read is caught.
         if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
             return Err(source_changed_since_preview());
         }
 
         let redactor = reporting_redactor(file.path());
-        let operation = selected_spectrum_operation(index);
         let guard = lock_against_replacement(file.path())?;
-        let attempt = self.provider.run(file.path(), &operation)?;
-        // As above: whatever this spectrum read is about to answer, a process
-        // it could not account for is the session's business.
-        self.observe_owned_processes(std::slice::from_ref(&attempt));
-        // What ran, recorded before how it went. An operation can fail for
-        // reasons that say nothing about which backend ran it -- a launch that
-        // was refused, a wait that was interrupted, output that could not be
-        // captured -- and propagating that error first would throw away the one
-        // fact that says whether it even came from the installation this
-        // preview belongs to. The banner would then keep describing the old
-        // installation while every retry ran the new one.
-        self.note_resolved(attempt.installation.clone(), attempt.preview_availability);
-        // And once more on what actually ran. The pre-flight above looked at
-        // the recorded tools a moment before this launched, which leaves a
-        // window the size of that moment; this closes it with the identity the
-        // operation itself reports, which is the only one that describes this
-        // spectrum.
-        if let Some(opened) = opened.as_ref()
-            && opened.installation != attempt.installation
-        {
-            return Err(installation_changed_since_preview());
-        }
-        // Same installation, so the operation's own failure is the truth about
-        // this read -- kept as it is, retryability and all.
-        let outcome = attempt.outcome?;
+        let read = read_selected_spectrum(file.path(), &table, index);
         drop(guard);
         drop(running);
-        if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
-            return Err(source_changed_since_preview());
-        }
-        if let Some(expected) = opened_generation.as_ref()
-            && SourceGeneration::capture(file.path()) != *expected
+        if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file)
+            || SourceGeneration::capture(file.path()) != opened_source
         {
             return Err(source_changed_since_preview());
         }
-        // Nothing is rechecked against the workspace from here on. A request
-        // that had already started is not cancelled by a later selection, and
-        // the rows this result is reconciled against were read above, under the
-        // same lock that found this request current -- so the comparison below
-        // is against the preview this spectrum actually belongs to, whatever
-        // has happened to the workspace since.
-        match outcome {
-            PreviewOutcome::Value(value) => match *value {
-                PreviewValue::SelectedSpectrum(spectrum) => {
-                    // The table and the binary formatter are separate readings.
-                    // If they disagree about which scan this index is, the row
-                    // the user clicked and the panel beside it would describe
-                    // different spectra, so the result is refused instead.
-                    if let Some(expected) = expected_row {
-                        if expected.identity.reconcile(spectrum.identity()).is_err() {
-                            return Err(PreviewErrorDto::new(
-                                "spectrum_identity_conflict",
-                                "The spectrum list and this spectrum disagree about which scan \
-                                 that row is, so MSCanvas did not show one beside the other.",
-                                false,
-                            ));
-                        }
-                        if expected.contradicts(&spectrum) {
-                            return Err(PreviewErrorDto::new(
-                                "spectrum_facts_conflict",
-                                "The spectrum list and this spectrum disagree about what that \
-                                 row measures, so MSCanvas did not show one beside the other.",
-                                false,
-                            ));
-                        }
-                    }
-                    // Retained before the projection shortens it. This is the
-                    // one place the complete reading exists, and the token
-                    // below is the only way the webview can name it -- so an
-                    // export identifies this spectrum rather than
-                    // reconstructing one from the arrays it is about to
-                    // receive, which may be a prefix of them.
-                    let snapshot = self.spectrum_export_slot().install(id, spectrum);
-                    let projected = selected_spectrum_dto(
-                        snapshot.spectrum(),
-                        &redactor,
-                        snapshot.token().as_wire(),
-                        // The verdict this snapshot settled when it was
-                        // retained, so the panel and every later projection
-                        // over it read one answer.
-                        snapshot.viewport_domain(),
-                    );
-                    match projected {
-                        Ok(spectrum) => Ok(SelectedSpectrumOutcomeDto::Spectrum {
-                            spectrum: Box::new(spectrum),
-                        }),
-                        Err(error) => {
-                            // Nothing on screen names this spectrum, so nothing
-                            // may export it either.
-                            self.spectrum_export_slot().forget();
-                            Err(error)
-                        }
-                    }
-                }
-                _ => Err(PreviewErrorDto::new(
-                    "unexpected_preview_result",
-                    "The preview returned a result MSCanvas did not request.",
-                    false,
-                )),
-            },
-            PreviewOutcome::NoResult(PreviewNoResult::SpectrumUnavailable { requested_index }) => {
-                Ok(SelectedSpectrumOutcomeDto::Unavailable { requested_index })
+        let spectrum = match read {
+            Ok(spectrum) => SelectedSpectrumResult::from_native(spectrum),
+            Err(MzmlSpectrumError::NotInTable) => {
+                return Ok(SelectedSpectrumOutcomeDto::Unavailable {
+                    requested_index: index,
+                });
+            }
+            Err(error) => return Err(spectrum_refused(error)),
+        };
+        // The reader has already checked that it landed on the index and the
+        // native ID the table recorded, so a disagreement here means the same
+        // terms were read twice and differ: refused rather than shown beside a
+        // row that describes a different spectrum.
+        if expected_row
+            .identity
+            .reconcile(spectrum.identity())
+            .is_err()
+        {
+            return Err(PreviewErrorDto::new(
+                "spectrum_identity_conflict",
+                "The spectrum list and this spectrum disagree about which scan that row is, so \
+                 MSCanvas did not show one beside the other.",
+                false,
+            ));
+        }
+        if expected_row.contradicts(&spectrum) {
+            return Err(PreviewErrorDto::new(
+                "spectrum_facts_conflict",
+                "The spectrum list and this spectrum disagree about what that row measures, so \
+                 MSCanvas did not show one beside the other.",
+                false,
+            ));
+        }
+        // Retained before the projection shortens it. This is the one place
+        // the complete reading exists -- the stored values, widened exactly --
+        // and the token below is the only way the webview can name it, so an
+        // export writes this spectrum rather than reconstructing one from the
+        // arrays it is about to receive, which may be a prefix of them.
+        let snapshot = self.spectrum_export_slot().install(id, spectrum);
+        let projected = selected_spectrum_dto(
+            snapshot.spectrum(),
+            &redactor,
+            snapshot.token().as_wire(),
+            // The verdict this snapshot settled when it was retained, so the
+            // panel and every later projection over it read one answer.
+            snapshot.viewport_domain(),
+        );
+        match projected {
+            Ok(spectrum) => Ok(SelectedSpectrumOutcomeDto::Spectrum {
+                spectrum: Box::new(spectrum),
+            }),
+            Err(error) => {
+                // Nothing on screen names this spectrum, so nothing may export
+                // it either.
+                self.spectrum_export_slot().forget();
+                Err(error)
             }
         }
     }
@@ -7851,6 +7797,205 @@ mod source_generation_tests {
     }
 }
 
+/// The native table's projections (ADR 0056, decision 5), over documents built
+/// in memory, at a transfer bound small enough to reach.
+#[cfg(test)]
+mod native_projection_tests {
+    use std::io::Cursor;
+    use std::sync::Arc;
+
+    use mscanvas_proteowizard::{
+        MzmlScanLimits, MzmlSpectrumTable, Redactor, RetentionTimeUnitState,
+        SelectedSpectrumResult, read_spectrum_table_from,
+    };
+
+    use super::super::chromatogram::{ChromatogramSource, NoChromatogram};
+    use super::super::dto::{RetentionTimeRangeDto, RetentionTimeUnitDto};
+    use super::super::mzml_fixture::{FixtureSpectrum, document};
+    use super::{TableRowFacts, bounded_spectrum_table_dto, retention_time_range_dto};
+
+    fn spectrum(id: &str, retention_time: f64, unit: Option<&'static str>) -> FixtureSpectrum {
+        let mut spectrum =
+            FixtureSpectrum::new(id, 1, retention_time, (400.0, 10.0), 20.0, &[(400.0, 10.0)]);
+        spectrum.retention_time_unit = unit;
+        spectrum
+    }
+
+    fn table(spectra: &[FixtureSpectrum]) -> MzmlSpectrumTable {
+        read_spectrum_table_from(
+            Cursor::new(document(spectra).into_bytes()),
+            MzmlScanLimits::default(),
+        )
+        .expect("the table opens")
+    }
+
+    fn facts(table: &MzmlSpectrumTable) -> Vec<TableRowFacts> {
+        bounded_spectrum_table_dto(table, &Redactor::new(), usize::MAX)
+            .expect("the table projects")
+            .1
+    }
+
+    #[test]
+    fn a_table_above_the_bound_crosses_as_a_prefix_while_rust_retains_every_row() {
+        const MINUTES: Option<&str> = Some("UO:0000031");
+        let table = table(&[
+            spectrum("scan=1", 1.0, MINUTES),
+            spectrum("scan=2", 3.0, MINUTES),
+            spectrum("scan=3", 2.0, MINUTES),
+        ]);
+
+        let (dto, facts) =
+            bounded_spectrum_table_dto(&table, &Redactor::new(), 2).expect("the table projects");
+
+        assert_eq!(dto.rows.len(), 2);
+        assert_eq!(dto.total_row_count, 3);
+        assert!(dto.truncated);
+        assert_eq!(
+            dto.rows[1].retention_time.unit,
+            RetentionTimeUnitDto::Minute
+        );
+        assert_eq!(facts.len(), 3);
+        // The page's range is every retained row's, not the prefix's.
+        assert_eq!(
+            retention_time_range_dto(&facts),
+            RetentionTimeRangeDto::Reported {
+                minimum: 1.0,
+                maximum: 3.0,
+                unit: RetentionTimeUnitDto::Minute,
+            }
+        );
+        // And a prefix is no chromatogram, on screen or in export.
+        assert_eq!(
+            ChromatogramSource::from_rows(&Arc::new(facts), dto.truncated).err(),
+            Some(NoChromatogram::Truncated)
+        );
+    }
+
+    #[test]
+    fn rows_of_mixed_or_partly_declared_units_have_no_range() {
+        for units in [
+            [Some("UO:0000010"), Some("UO:0000031")],
+            [Some("UO:0000031"), None],
+        ] {
+            let table = table(&[
+                spectrum("scan=1", 1.0, units[0]),
+                spectrum("scan=2", 2.0, units[1]),
+            ]);
+            assert_eq!(
+                retention_time_range_dto(&facts(&table)),
+                RetentionTimeRangeDto::MixedUnits,
+                "{units:?}"
+            );
+        }
+        // Rows that all declare none have a range, with no unit claimed.
+        let undeclared = table(&[spectrum("scan=1", 1.0, None), spectrum("scan=2", 2.0, None)]);
+        assert_eq!(
+            retention_time_range_dto(&facts(&undeclared)),
+            RetentionTimeRangeDto::Reported {
+                minimum: 1.0,
+                maximum: 2.0,
+                unit: RetentionTimeUnitDto::NotReported,
+            }
+        );
+        assert_eq!(retention_time_range_dto(&[]), RetentionTimeRangeDto::NoRows);
+    }
+
+    #[test]
+    fn reconciliation_with_the_table_row_is_exact() {
+        // Base peak (400, 10), total ion current 12, retention time 0.
+        let spectrum =
+            SelectedSpectrumResult::from_points_for_tests(0, vec![400.0, 500.0], vec![10.0, 2.0]);
+        let row = |total_ion_current: f64, unit| {
+            TableRowFacts::for_test(0, None, 1, 0.0, unit, total_ion_current, 10.0)
+        };
+        assert!(!row(12.0, RetentionTimeUnitState::NotEmitted).contradicts(&spectrum));
+        // Inside the printed-text tolerance this replaces, and a contradiction now.
+        assert!(row(12.01, RetentionTimeUnitState::NotEmitted).contradicts(&spectrum));
+        let next = f64::from_bits(12.0_f64.to_bits() + 1);
+        assert!(row(next, RetentionTimeUnitState::NotEmitted).contradicts(&spectrum));
+        // The same number in another unit is another time.
+        assert!(row(12.0, RetentionTimeUnitState::Minute).contradicts(&spectrum));
+    }
+
+    /// Every native refusal kind, with whether it may be retried and the
+    /// detail the webview's copy and recovery are keyed on.
+    #[test]
+    fn each_native_refusal_maps_to_its_kind_retryability_and_detail() {
+        use mscanvas_proteowizard::{
+            ArrayProblem, ArrayRole, MzmlOpenError, MzmlScanError, MzmlSpectrumError,
+        };
+        use std::io::ErrorKind;
+
+        use super::{preview_not_open, spectrum_refused, spectrum_table_refused};
+
+        let io = MzmlScanError::Io {
+            kind: ErrorKind::NotFound,
+        };
+        let array = |role, problem| MzmlSpectrumError::Array { role, problem };
+        for (refusal, kind, retryable, detail) in [
+            (preview_not_open(), "preview_not_open", false, None),
+            (
+                spectrum_table_refused(MzmlOpenError::Scan(io)),
+                "spectrum_table_unreadable",
+                true,
+                Some(io.stable_id()),
+            ),
+            (
+                spectrum_table_refused(MzmlOpenError::MultipleScans),
+                "spectrum_table_refused",
+                false,
+                Some(MzmlOpenError::MultipleScans.stable_id()),
+            ),
+            (
+                spectrum_refused(MzmlSpectrumError::Document(io)),
+                "spectrum_unreadable",
+                true,
+                Some(io.stable_id()),
+            ),
+            (
+                spectrum_refused(MzmlSpectrumError::NotAsRecorded),
+                "spectrum_not_as_recorded",
+                false,
+                Some("not_as_recorded"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Intensity, ArrayProblem::IntegerNotExact)),
+                "spectrum_value_not_exact",
+                false,
+                Some("intensity:integer_not_exact"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Mz, ArrayProblem::Numpress)),
+                "spectrum_encoding_unsupported",
+                false,
+                Some("mz:numpress"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Mz, ArrayProblem::TruncationOrPrediction)),
+                "spectrum_encoding_unsupported",
+                false,
+                Some("mz:truncation_or_prediction"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Mz, ArrayProblem::UnitNotAnAccession)),
+                "spectrum_refused",
+                false,
+                Some("mz:unit_not_an_accession"),
+            ),
+            (
+                spectrum_refused(MzmlSpectrumError::ArrayLengthsDiffer),
+                "spectrum_refused",
+                false,
+                Some(MzmlSpectrumError::ArrayLengthsDiffer.stable_id()),
+            ),
+        ] {
+            assert_eq!(refusal.kind, kind);
+            assert_eq!(refusal.retryable, retryable, "{kind}");
+            assert_eq!(refusal.detail.as_deref(), detail, "{kind}");
+        }
+    }
+}
+
 /// A spectrum identifier is backend text like every other line the boundary
 // forwards, so it is redacted and bounded the same way. A file is free to put
 /// an unrelated path, or an arbitrarily long value, in a native identifier.
@@ -7862,25 +8007,38 @@ pub(super) fn displayable_identifier(raw: &str, redactor: &Redactor) -> String {
 /// What the spectrum table said about one row.
 //
 // Kept so a selected spectrum can be checked against the row that produced
-// it: the two come from different formatters, and a highlighted row paired
-/// with a panel describing different measurements is worse than no panel.
+// it: a highlighted row paired with a panel describing different measurements
+/// is worse than no panel.
 #[derive(Debug, Clone)]
 pub(super) struct TableRowFacts {
     identity: SpectrumIdentity,
     ms_level: u32,
     retention_time: f64,
-    /// Whether this boundary reports a unit for that retention time.
+    /// The unit that retention time is stated in.
     //
     // Carried rather than assumed, so the viewer's refusal to draw a run whose
-    // unit it cannot name and the export's refusal to write one are the same
-    /// fact read twice rather than two rules free to drift.
-    retention_time_unit_known: bool,
+    // rows state different units and the export's refusal to write one are the
+    /// same fact read twice rather than two rules free to drift.
+    retention_time_unit: RetentionTimeUnitState,
     base_peak_mz: f64,
     base_peak_intensity: f64,
     total_ion_current: f64,
 }
 
 impl TableRowFacts {
+    /// The facts one shared table row states.
+    fn of(row: &SpectrumTableRow) -> Self {
+        Self {
+            identity: row.identity().clone(),
+            ms_level: row.ms_level(),
+            retention_time: row.retention_time().value(),
+            retention_time_unit: row.retention_time().unit(),
+            base_peak_mz: row.base_peak_mz(),
+            base_peak_intensity: row.base_peak_intensity(),
+            total_ion_current: row.total_ion_current(),
+        }
+    }
+
     pub(super) const fn identity(&self) -> &SpectrumIdentity {
         &self.identity
     }
@@ -7893,8 +8051,8 @@ impl TableRowFacts {
         self.retention_time
     }
 
-    pub(super) const fn retention_time_unit_known(&self) -> bool {
-        self.retention_time_unit_known
+    pub(super) const fn retention_time_unit(&self) -> RetentionTimeUnitState {
+        self.retention_time_unit
     }
 
     pub(super) const fn base_peak_intensity(&self) -> f64 {
@@ -7915,7 +8073,7 @@ impl TableRowFacts {
         scan_number: Option<u64>,
         ms_level: u32,
         retention_time: f64,
-        retention_time_unit_known: bool,
+        retention_time_unit: RetentionTimeUnitState,
         total_ion_current: f64,
         base_peak_intensity: f64,
     ) -> Self {
@@ -7923,36 +8081,29 @@ impl TableRowFacts {
             identity: SpectrumIdentity::from_index_for_tests(index, scan_number),
             ms_level,
             retention_time,
-            retention_time_unit_known,
+            retention_time_unit,
             base_peak_mz: 400.0,
             base_peak_intensity,
             total_ion_current,
         }
     }
 
+    /// Whether a selected spectrum states something other than its row.
+    //
+    // Exact, recorded by ADR 0056 (decision 5). The tolerance this replaces
+    // existed for `msaccess`'s printed text, where the table's rounded values
+    // and the binary formatter's full ones differed on nearly every real file.
+    // Both are now read natively from the same terms, so any difference means
+    // a read landed on another spectrum -- which the reader's own index and ID
+    /// check refuses first -- and none is tolerated.
     fn contradicts(&self, spectrum: &SelectedSpectrumResult) -> bool {
         self.ms_level != spectrum.ms_level()
-            || differs(self.retention_time, spectrum.retention_time().value())
-            || differs(self.base_peak_mz, spectrum.base_peak_mz())
-            || differs(self.base_peak_intensity, spectrum.base_peak_intensity())
-            || differs(self.total_ion_current, spectrum.total_ion_current())
+            || self.retention_time != spectrum.retention_time().value()
+            || self.retention_time_unit != spectrum.retention_time().unit()
+            || self.base_peak_mz != spectrum.base_peak_mz()
+            || self.base_peak_intensity != spectrum.base_peak_intensity()
+            || self.total_ion_current != spectrum.total_ion_current()
     }
-}
-
-/// Whether two readings of the same quantity contradict each other.
-//
-// The table prints rounded values and the binary formatter prints full
-// precision, so exact equality would report a conflict on nearly every real
-// file. The tolerance is deliberately generous — a percent, with an absolute
-// floor for values near zero — because its job is to catch a different
-// spectrum, not to police rounding. MS level is compared exactly instead,
-/// since an integer cannot be a rounding artefact.
-fn differs(left: f64, right: f64) -> bool {
-    const RELATIVE: f64 = 0.01;
-    const ABSOLUTE: f64 = 0.05;
-
-    let tolerance = ABSOLUTE.max(RELATIVE * left.abs().max(right.abs()));
-    (left - right).abs() > tolerance
 }
 
 impl PreviewService {
@@ -7978,12 +8129,8 @@ impl PreviewService {
     /// [ADR 0044]: ../../../../../docs/architecture/adr/0044-conversion-configuration-authority.md
     fn try_enter_backend(&self) -> Option<BackendRun<'_>> {
         match self.backend_gate.try_lock() {
-            Ok(guard) => Some(BackendRun {
-                installation: self.authority_projection().revision.wire(),
-                _guard: guard,
-            }),
+            Ok(guard) => Some(BackendRun { _guard: guard }),
             Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(BackendRun {
-                installation: self.authority_projection().revision.wire(),
                 _guard: poisoned.into_inner(),
             }),
             Err(std::sync::TryLockError::WouldBlock) => None,
@@ -8012,41 +8159,13 @@ impl PreviewService {
             .backend_gate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        BackendRun {
-            installation: self.authority_projection().revision.wire(),
-            _guard: guard,
-        }
+        BackendRun { _guard: guard }
     }
 }
 
-/// The backend gate, held, and what was true when it was taken.
-//
-// The installation generation travels with the guard so that reading it after
-// the gate is released stops compiling. An installation change queued behind
-// this run acquires the gate the instant it is dropped, so a value read after
-// that can name the installation which *replaced* the one whose work is being
-// recorded -- and a preview stamped that way passes the check that exists to
-// refuse it, putting one installation's spectrum beside another's rows.
-//
-// `use_installation` deliberately does not use this field: it observes after
-// taking the gate, so the value it must report is the revision after its own
-/// observation, not the one it found.
+/// The backend gate, held. Dropping it releases the next caller.
 struct BackendRun<'a> {
     _guard: std::sync::MutexGuard<'a, ()>,
-    installation: u64,
-}
-
-/// What one open action read, and which backend read it.
-#[derive(Debug, Clone)]
-struct OpenedPreview {
-    source: SourceGeneration,
-    /// Where the sequence stood. Cheap, and known before anything is launched,
-    /// so a deliberate change is refused without spending a process.
-    generation: u64,
-    /// Which backend actually produced the rows. `None` when the batch reported
-    // none, which compares equal to nothing and so refuses rather than
-    /// assumes.
-    installation: Option<InstallationIdentity>,
 }
 
 /// The parents of a discovered candidate, which is its location without its
@@ -8151,16 +8270,6 @@ fn folder_error(kind: DiscoveryErrorKind) -> PreviewErrorDto {
     }
 }
 
-fn installation_changed_since_preview() -> PreviewErrorDto {
-    PreviewErrorDto::new(
-        "installation_changed_since_preview",
-        "The ProteoWizard installation changed after this file was opened, so this spectrum \
-         was not compared against a table that a different installation produced. Open the \
-         file again to continue.",
-        false,
-    )
-}
-
 fn source_changed_since_preview() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "source_changed_since_preview",
@@ -8168,6 +8277,97 @@ fn source_changed_since_preview() -> PreviewErrorDto {
          beside metadata that no longer describes it. Open the file again to continue.",
         false,
     )
+}
+
+/// What a spectrum read answers for a dataset with no retained preview.
+//
+// A selected spectrum is read from the offsets its open recorded (ADR 0056,
+// decision 4), and those are dropped with the preview: by a reopen that failed,
+// by another dataset's open, by removing the row or clearing the workspace.
+fn preview_not_open() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "preview_not_open",
+        "This file's preview is no longer open, so there is nothing to read this spectrum \
+         from. Open the file again to continue.",
+        false,
+    )
+}
+
+/// The open's native table pass refused the file (ADR 0056, decision 1).
+//
+// Shown as it is and never reread with `msaccess`: the operation fixes the
+// reader. The reader's stable identifier travels as the detail.
+fn spectrum_table_refused(error: MzmlOpenError) -> PreviewErrorDto {
+    let refusal = match error {
+        MzmlOpenError::Scan(MzmlScanError::Io { .. } | MzmlScanError::Source(_)) => {
+            PreviewErrorDto::new(
+                "spectrum_table_unreadable",
+                "MSCanvas could not read this file's spectrum list. Check that the file is still \
+                 there and readable, then open it again.",
+                true,
+            )
+        }
+        _ => PreviewErrorDto::new(
+            "spectrum_table_refused",
+            "MSCanvas cannot read this file's spectrum list as mzML 1.1 without guessing, so \
+             the file was not opened.",
+            false,
+        ),
+    };
+    refusal.with_detail(error.stable_id())
+}
+
+/// The reader refused one selected spectrum. The open and every other spectrum
+/// stand (ADR 0056, decision 1); the reader's stable identifier travels as the
+/// detail.
+fn spectrum_refused(error: MzmlSpectrumError) -> PreviewErrorDto {
+    let refusal = match error {
+        MzmlSpectrumError::Document(MzmlScanError::Io { .. } | MzmlScanError::Source(_)) => {
+            PreviewErrorDto::new(
+                "spectrum_unreadable",
+                "MSCanvas could not read this spectrum from the file. Check that the file is \
+                 still there and readable, then try again.",
+                true,
+            )
+        }
+        MzmlSpectrumError::NotAsRecorded => PreviewErrorDto::new(
+            "spectrum_not_as_recorded",
+            "The file no longer holds the spectrum its preview recorded at this position. Open \
+             the file again to continue.",
+            false,
+        ),
+        MzmlSpectrumError::Array {
+            problem: ArrayProblem::IntegerNotExact,
+            ..
+        } => PreviewErrorDto::new(
+            "spectrum_value_not_exact",
+            "This spectrum stores a 64-bit integer above 2^53, which cannot be shown exactly, so \
+             it was not shown rather than rounded.",
+            false,
+        ),
+        MzmlSpectrumError::Array {
+            problem: ArrayProblem::Numpress | ArrayProblem::TruncationOrPrediction,
+            ..
+        } => PreviewErrorDto::new(
+            "spectrum_encoding_unsupported",
+            "This spectrum's values are stored with numpress, truncation or prediction, which \
+             MSCanvas does not decode, so it was not shown.",
+            false,
+        ),
+        _ => PreviewErrorDto::new(
+            "spectrum_refused",
+            "MSCanvas cannot read this spectrum's values from the file without guessing, so it \
+             was not shown.",
+            false,
+        ),
+    };
+    let detail = match error {
+        MzmlSpectrumError::Array { role, problem } => {
+            format!("{}:{}", role.stable_id(), problem.stable_id())
+        }
+        other => other.stable_id().to_owned(),
+    };
+    refusal.with_detail(detail)
 }
 
 /// What a configuration read answers when the session is bound to nothing.
@@ -8287,41 +8487,61 @@ fn retention_time_dto(
 ) -> Result<RetentionTimeDto, PreviewErrorDto> {
     Ok(RetentionTimeDto {
         value: require_finite(value.value())?,
-        unit_known: reported_unit_known(value),
+        unit: retention_time_unit_dto(value.unit()),
     })
 }
 
-/// Whether this boundary reports a unit for one retention time.
+/// The unit this boundary reports for one retention time.
 //
-// Exhaustive, with no wildcard arm: a backend that starts emitting a real unit
-// must arrive here as a compile error and be mapped from that evidence rather
-// than falling into a default that happens to keep building.
-//
-// One answer, read by the row the webview receives and by the export
-// eligibility beside it. The viewer refuses to draw a run whose retention-time
-// unit it cannot name, and the export refuses to write one; two hard-coded
-/// `false`s would have been two rules free to drift apart.
-const fn reported_unit_known(value: mscanvas_proteowizard::RetentionTime) -> bool {
-    match value.unit() {
-        // The measured formatter emits a numeric value without a unit, so none
-        // is claimed.
-        SourceUnitState::NotEmitted => false,
+// Exhaustive, with no wildcard arm: a state added to the evidence must arrive
+// here as a compile error and be mapped from that evidence rather than
+// falling into a default that happens to keep building. A file that declares
+// no unit, and `msaccess` printing none, are both reported as none; nothing
+/// converts between seconds and minutes.
+const fn retention_time_unit_dto(unit: RetentionTimeUnitState) -> RetentionTimeUnitDto {
+    match unit {
+        RetentionTimeUnitState::Second => RetentionTimeUnitDto::Second,
+        RetentionTimeUnitState::Minute => RetentionTimeUnitDto::Minute,
+        RetentionTimeUnitState::NotEmitted | RetentionTimeUnitState::NotDeclared => {
+            RetentionTimeUnitDto::NotReported
+        }
     }
 }
 
-fn run_summary_dto(result: &RunSummaryResult) -> Result<RunSummaryDto, PreviewErrorDto> {
-    let retention_time_range = result
-        .retention_time_range()
-        .map(|range| {
-            Ok::<_, PreviewErrorDto>(RetentionTimeRangeDto {
-                minimum: retention_time_dto(range.minimum())?,
-                maximum: retention_time_dto(range.maximum())?,
-            })
-        })
-        .transpose()?;
+/// The page's retention-time range: the lowest and highest retention time of
+/// every retained row, in their one unit (ADR 0056, decision 3).
+//
+// All the rows, not the transferred prefix. A selection from read values, not
+// a computation: nothing is interpolated and nothing converts between seconds
+// and minutes, so rows that state different units, or where only some state
+/// one, have no range -- for the reason the chromatogram gives none.
+fn retention_time_range_dto(rows: &[TableRowFacts]) -> RetentionTimeRangeDto {
+    match shared_retention_time_unit(rows) {
+        Err(MixedRetentionTimeUnits) => RetentionTimeRangeDto::MixedUnits,
+        Ok(None) => RetentionTimeRangeDto::NoRows,
+        Ok(Some(unit)) => {
+            let (minimum, maximum) = rows
+                .iter()
+                .map(TableRowFacts::retention_time)
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), value| {
+                    (low.min(value), high.max(value))
+                });
+            RetentionTimeRangeDto::Reported {
+                minimum,
+                maximum,
+                unit: retention_time_unit_dto(unit),
+            }
+        }
+    }
+}
 
+/// The run summary the page is shown, with the range the native rows give.
+fn run_summary_dto(
+    result: &RunSummaryResult,
+    retention_time_range: RetentionTimeRangeDto,
+) -> RunSummaryDto {
     let total_ms_level_count = result.counts_by_ms_level().len();
-    Ok(RunSummaryDto {
+    RunSummaryDto {
         total_spectrum_count: result.total_spectrum_count(),
         ms_levels: result
             .counts_by_ms_level()
@@ -8339,38 +8559,98 @@ fn run_summary_dto(result: &RunSummaryResult) -> Result<RunSummaryDto, PreviewEr
         ms_levels_truncated: total_ms_level_count > MAX_MS_LEVELS,
         chromatogram_count: result.chromatogram_count(),
         retention_time_range,
+    }
+}
+
+/// The table the webview receives and the facts Rust retains, from one pass
+/// over the native rows through the shared row type.
+//
+// One path: every row becomes a `SpectrumTableRow` (ADR 0056, decision 5), and
+// both the bounded projection and the retained facts are read from that. No
+// intermediate vector of every row is built, so a table at the reader's limit
+// is not held three times over while this runs. The webview receives at most
+/// `MAX_SPECTRUM_TABLE_ROWS` rows with their total; Rust retains them all.
+fn spectrum_table_dto(
+    table: &MzmlSpectrumTable,
+    redactor: &Redactor,
+) -> Result<(SpectrumTableDto, Vec<TableRowFacts>), PreviewErrorDto> {
+    bounded_spectrum_table_dto(table, redactor, MAX_SPECTRUM_TABLE_ROWS)
+}
+
+/// [`spectrum_table_dto`] at a given transfer bound, so a test can reach the
+/// prefix without writing a hundred thousand spectra.
+fn bounded_spectrum_table_dto(
+    table: &MzmlSpectrumTable,
+    redactor: &Redactor,
+    bound: usize,
+) -> Result<(SpectrumTableDto, Vec<TableRowFacts>), PreviewErrorDto> {
+    let total_row_count = table.rows().len();
+    let truncated = total_row_count > bound;
+    let mut rows = Vec::with_capacity(total_row_count.min(bound));
+    let mut facts = Vec::with_capacity(total_row_count);
+    for native in table.rows() {
+        let row = SpectrumTableRow::from_native(native);
+        if rows.len() < bound {
+            rows.push(spectrum_row_dto(&row, redactor)?);
+        }
+        facts.push(TableRowFacts::of(&row));
+    }
+    Ok((
+        SpectrumTableDto {
+            rows,
+            total_row_count,
+            truncated,
+        },
+        facts,
+    ))
+}
+
+/// One row as the webview receives it, its identifier redacted and bounded.
+fn spectrum_row_dto(
+    row: &SpectrumTableRow,
+    redactor: &Redactor,
+) -> Result<SpectrumRowDto, PreviewErrorDto> {
+    let identity = row.identity();
+    Ok(SpectrumRowDto {
+        index: identity.index(),
+        identifier: identity.representations().first().map_or_else(
+            || identity.index().to_string(),
+            |representation| displayable_identifier(representation.sensitive_raw(), redactor),
+        ),
+        scan_number: identity.scan_number(),
+        ms_level: row.ms_level(),
+        retention_time: retention_time_dto(row.retention_time())?,
+        base_peak_mz: require_finite(row.base_peak_mz())?,
+        base_peak_intensity: require_finite(row.base_peak_intensity())?,
+        total_ion_current: require_finite(row.total_ion_current())?,
+        precursor_mz: require_finite_option(row.precursor_mz())?,
     })
 }
 
-fn spectrum_table_dto(
-    result: &SpectrumTableResult,
-    redactor: &Redactor,
-) -> Result<SpectrumTableDto, PreviewErrorDto> {
-    let total_row_count = result.rows().len();
-    let truncated = total_row_count > MAX_SPECTRUM_TABLE_ROWS;
-    let mut rows = Vec::with_capacity(total_row_count.min(MAX_SPECTRUM_TABLE_ROWS));
-    for row in result.rows().iter().take(MAX_SPECTRUM_TABLE_ROWS) {
-        let identity = row.identity();
-        rows.push(SpectrumRowDto {
-            index: identity.index(),
-            identifier: identity.representations().first().map_or_else(
-                || identity.index().to_string(),
-                |representation| displayable_identifier(representation.sensitive_raw(), redactor),
-            ),
-            scan_number: identity.scan_number(),
-            ms_level: row.ms_level(),
-            retention_time: retention_time_dto(row.retention_time())?,
-            base_peak_mz: require_finite(row.base_peak_mz())?,
-            base_peak_intensity: require_finite(row.base_peak_intensity())?,
-            total_ion_current: require_finite(row.total_ion_current())?,
-            precursor_mz: require_finite_option(row.precursor_mz())?,
-        });
+/// Whether a spectrum is centroid or profile, from its own terms.
+//
+/// Exhaustive with no wildcard, for the reason [`retention_time_unit_dto`] is.
+const fn representation_dto(state: SpectrumRepresentationState) -> SpectrumRepresentationDto {
+    match state {
+        SpectrumRepresentationState::Centroid => SpectrumRepresentationDto::Centroid,
+        SpectrumRepresentationState::Profile => SpectrumRepresentationDto::Profile,
+        SpectrumRepresentationState::NotEmitted | SpectrumRepresentationState::NotDeclared => {
+            SpectrumRepresentationDto::NotReported
+        }
     }
-    Ok(SpectrumTableDto {
-        rows,
-        total_row_count,
-        truncated,
-    })
+}
+
+/// One array's unit, by the accession its role term declares.
+//
+// The reader admits only an accession of ASCII letters and digits around one
+/// colon, so it carries no path and no markup and needs no redaction.
+fn value_unit_dto(unit: &ValueUnitState) -> ValueUnitDto {
+    match unit {
+        ValueUnitState::Declared(accession) => ValueUnitDto::Declared {
+            accession: accession.clone(),
+        },
+        ValueUnitState::NotEmitted | ValueUnitState::NotDeclared => ValueUnitDto::NotReported,
+    }
 }
 
 fn selected_spectrum_dto(
@@ -8397,8 +8677,9 @@ fn selected_spectrum_dto(
     for precursor in spectrum.precursors().iter().take(MAX_PRECURSORS) {
         precursors.push(PrecursorDto {
             index: precursor.index(),
-            mz: require_finite(precursor.mz())?,
-            intensity: require_finite(precursor.intensity())?,
+            // Unstated stays `None`, never zero.
+            mz: require_finite_option(precursor.mz())?,
+            intensity: require_finite_option(precursor.intensity())?,
         });
     }
 
@@ -8416,18 +8697,18 @@ fn selected_spectrum_dto(
         point_count,
         mz,
         intensity,
-        mz_low: require_finite(spectrum.mz_low())?,
-        mz_high: require_finite(spectrum.mz_high())?,
+        // The range the spectrum states, or none; never the array's ends.
+        mz_low: require_finite_option(spectrum.mz_low())?,
+        mz_high: require_finite_option(spectrum.mz_high())?,
         base_peak_mz: require_finite(spectrum.base_peak_mz())?,
         base_peak_intensity: require_finite(spectrum.base_peak_intensity())?,
         total_ion_current: require_finite(spectrum.total_ion_current())?,
         precursors,
         total_precursor_count,
         precursors_truncated: total_precursor_count > MAX_PRECURSORS,
-        // The measured selected-spectrum formatter emits neither a
-        // profile/centroid marker nor array units, so both stay unknown.
-        representation_known: false,
-        value_units_known: false,
+        representation: representation_dto(spectrum.representation()),
+        mz_unit: value_unit_dto(spectrum.mz_unit()),
+        intensity_unit: value_unit_dto(spectrum.intensity_unit()),
         truncated,
         export_token,
         // The verdict settled when this spectrum was retained, from the

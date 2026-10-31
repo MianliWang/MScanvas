@@ -658,7 +658,11 @@ describe("what a failed read says about a row", () => {
     // Everything else is about this attempt rather than about the row.
     expect(rowStateForError("not_a_regular_file")).toBe("failed");
     expect(rowStateForError("backend_launch_failed")).toBe("failed");
-    expect(rowStateForError("selection_superseded")).toBe("failed");
+  });
+
+  it("says nothing against a row whose open was superseded (ADR 0056)", () => {
+    // A newer open took the read's place; the file was not refused.
+    expect(rowStateForError("selection_superseded")).toBe("ready");
   });
 });
 

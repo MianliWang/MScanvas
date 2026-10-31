@@ -521,7 +521,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(firstRequest.source.spectrumToken.length).toBeGreaterThan(0);
       expect(firstRequest.source.chromatogramToken.length).toBeGreaterThan(0);
       expect(first.svg).toContain("spectrum index 1");
-      expect(first.svg).toContain("&quot;Selected scan&quot; at 60.");
+      expect(first.svg).toContain("&quot;Selected scan&quot; at 1.");
       await capture("linked-entry-selected-source");
       await returnToViewer();
       const beforeNoTrace = (await previewCalls()).length;
@@ -536,7 +536,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(restoredRequest.source).toMatchObject({ kind: "linked", chromatogramToken: firstRequest.source.chromatogramToken,
         spectrumToken: firstRequest.source.spectrumToken, traces: { tic: false, bpc: true } });
       expect(restored.svg).toContain("spectrum index 1");
-      expect(restored.svg).toContain("&quot;Selected scan&quot; at 60.");
+      expect(restored.svg).toContain("&quot;Selected scan&quot; at 1.");
       await returnToViewer();
       await reveal('.spectrum-table-panel [data-source-index="2"]');
       await browser.$('.spectrum-table-panel [data-source-index="2"]').click();
@@ -548,7 +548,7 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       expect(nextRequest.source.spectrumToken).not.toBe(firstRequest.source.spectrumToken);
       expect(next.specId).not.toBe(restored.specId);
       expect(next.svg).toContain("spectrum index 2");
-      expect(next.svg).toContain("&quot;Selected scan&quot; at 120.");
+      expect(next.svg).toContain("&quot;Selected scan&quot; at 2.");
       record({ kind: "linked entry real source and recovery", sourceSha256: digest(path), loadedRoster, firstRequest, restoredRequest, nextRequest,
         firstSpecId: first.specId, restoredSpecId: restored.specId, nextSpecId: next.specId });
       const saved = join(output, "linked-entry-current-source.svg");
@@ -624,12 +624,12 @@ describe("M7.4 current native conversion, recovery and figures", function () {
       const emptyCsv = join(output, "spectrum-empty-current.csv"); await save(FIGURE, "Export CSV…", "Export spectrum data", emptyCsv); expect(data(emptyCsv, ",")).toHaveLength(0);
       await returnToViewer();
 
-      await edit("rt", "60", "180");
+      await edit("rt", "1", "3");
       await exportFigure(CHROMATOGRAM); await scope(FIGURE, "Current range"); const chrom = await preview();
       const chromSvg = join(output, "chromatogram-current.svg"); await save(FIGURE, "Export SVG…", "Export chromatogram figure", chromSvg); expect(readFileSync(chromSvg, "utf8")).toBe(chrom.svg);
       const rtCsv = join(output, "chromatogram-current.csv"); await save(FIGURE, "Export CSV…", "Export chromatogram data", rtCsv);
       expect(data(rtCsv, ",").map(row => row[0])).toEqual([1, 2, 3]);
-      expect(data(rtCsv, ",").map(row => row[3])).toEqual([60, 120, 180]);
+      expect(data(rtCsv, ",").map(row => row[3])).toEqual([1, 2, 3]);
       expect(await browser.$(FIGURE).getText()).toContain("Full run"); await returnToViewer();
       await choosePlotMenuItem(CHROMATOGRAM, en.figurePreviewLinked); const linked = await preview();
       expect(await browser.$(FIGURE).getText()).toContain("Full run"); expect(await browser.$(FIGURE).$("button=Export CSV…").isExisting()).toBe(false);

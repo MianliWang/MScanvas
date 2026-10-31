@@ -11,7 +11,8 @@ import { retentionTimeInput } from "./viewer/plotInputAdapters";
 import { usePlotInput } from "./viewer/usePlotInput";
 import { usePlotTextSize } from "./viewer/usePlotTextSize";
 
-import { formatCount, formatIntensity } from "./format";
+import type { RetentionTimeUnit } from "./contracts";
+import { formatCount, formatIntensity, retentionTimeUnitSymbol, withRetentionTimeUnit } from "./format";
 import type {
   ViewerEvent,
   ViewerInteractionState,
@@ -200,7 +201,8 @@ export const Chromatogram = memo(function Chromatogram({
           {/* The range on screen, in the head beside the controls it refuses
               (P4): the visible reason for a refused Fit all and −. */}
           {domain === null ? null : (() => {
-            const range = t("viewerShowing", { low: domain.low.toFixed(4), high: domain.high.toFixed(4) }) + (showingFullRange ? t("viewerFullRange") : "");
+            const range = t("viewerShowing", { low: domain.low.toFixed(4), high: withRetentionTimeUnit(domain.high, model.retentionTimeUnit) }) +
+              (showingFullRange ? t("viewerFullRange") : "");
             return <span className="plot-range chromatogram-axis-caption chromatogram-range" id={AXIS_CAPTION_ID} title={range}>{range}</span>;
           })()}
           {/* An export's result, on the head's line beside its tools, never
@@ -235,6 +237,7 @@ export const Chromatogram = memo(function Chromatogram({
             selected={interaction.selection?.index ?? null}
             selectionAvailability={selectionAvailability}
             traces={traces}
+            unit={model.retentionTimeUnit}
             rangeEditing={rangeEditor.editing}
             onRangeEditorClose={rangeEditor.close}
           />
@@ -265,10 +268,13 @@ export const Chromatogram = memo(function Chromatogram({
  */
 const UNAVAILABLE = {
   truncated: "viewerTicPrefix", "unusable-retention-time": "viewerTicRt",
-  "unusable-intensity": "viewerTicIntensity", "unsupported-retention-time-unit": "viewerTicUnit",
+  "unusable-intensity": "viewerTicIntensity", "mixed-retention-time-units": "viewerTicUnit",
 } as const satisfies Record<Exclude<ScanModelRefusal, "no-spectra">, string>;
 
+
 interface PlotProps {
+  /** The one unit every row declares; nothing converts it. */
+  readonly unit: RetentionTimeUnit;
   readonly points: readonly ScanPoint[];
   readonly domain: RetentionTimeDomain;
   readonly full: RetentionTimeDomain;
@@ -284,6 +290,7 @@ interface PlotProps {
 }
 
 function ChromatogramPlot({
+  unit,
   points,
   domain,
   traces,
@@ -297,6 +304,7 @@ function ChromatogramPlot({
   onRangeEditorClose,
 }: PlotProps) {
   const t = useUiMessages();
+  const rtSymbol = retentionTimeUnitSymbol(unit);
   const plotRef = useRef<SVGSVGElement | null>(null);
   const sizeText = usePlotTextSize();
 
@@ -477,9 +485,9 @@ function ChromatogramPlot({
     }
     // The range line is in the plot head, outside the plot's own frame.
     const line = node.closest(".chromatogram-panel")?.querySelector(".chromatogram-range");
-    if (line) line.textContent = t("viewerShowing", { low: shown.low.toFixed(4), high: shown.high.toFixed(4) }) +
+    if (line) line.textContent = t("viewerShowing", { low: shown.low.toFixed(4), high: withRetentionTimeUnit(shown.high, unit) }) +
       (state.committedDomain === null && state.gesture === null ? t("viewerFullRange") : "");
-  }, [readInteraction, activeTraces, points, byIndex, t, domain, extent, scale, marks]);
+  }, [readInteraction, activeTraces, points, byIndex, t, domain, extent, scale, marks, unit]);
   const input = usePlotInput({ port: inputPort, geometry: { width: PLOT_WIDTH, left: PADDING_LEFT, drawnWidth: USABLE_WIDTH }, paintFrame,
     onInspect: retentionTime => {
       if (selectionAvailability.status !== "available") return;
@@ -598,10 +606,10 @@ function ChromatogramPlot({
             hidden={x < PADDING_LEFT || x > PLOT_WIDTH - PADDING_RIGHT}
             style={{ left: `${at.toFixed(3)}%` }}>
             {t("viewerCursorLabel", { scan: selectedPoint.scanNumber === null ? formatCount(selectedPoint.spectrumIndex) : formatCount(selectedPoint.scanNumber),
-              rt: selectedPoint.retentionTime.toFixed(4) })}
+              rt: withRetentionTimeUnit(selectedPoint.retentionTime, unit) })}
           </span>;
         })()}
-        <PlotRangeActions port={inputPort} editing={rangeEditing} onClose={onRangeEditorClose} />
+        <PlotRangeActions port={inputPort} editing={rangeEditing} onClose={onRangeEditorClose} rtUnit={unit} />
       </div>
       {/* One line under the ticks: the hovered scan while the pointer or the
           keyboard is on the plot, then the position title at the right. */}
@@ -616,11 +624,13 @@ function ChromatogramPlot({
           <span className="chromatogram-readout" id="chromatogram-readout" data-hover={hoveredPoint === null ? undefined : ""}
             data-idle={hoveredPoint === null && selectedPoint === null ? "" : undefined}>
             {hoveredPoint === null
-              ? selectedPoint === null ? t("viewerNoSelection") : describeScan(selectedPoint, t("viewerSelected"), t)
-              : describeScan(hoveredPoint, t("viewerHover"), t)}
+              ? selectedPoint === null ? t("viewerNoSelection") : describeScan(selectedPoint, t("viewerSelected"), unit, t)
+              : describeScan(hoveredPoint, t("viewerHover"), unit, t)}
           </span>
         </p>
-        <p className="plot-axis-title plot-axis-title-x" id={AXIS_X_ID}>{t("plotAxisRt")}</p>
+        {/* The unit the file declares, or that it declares none; never a guess. */}
+        <p className="plot-axis-title plot-axis-title-x" id={AXIS_X_ID}>{rtSymbol === null
+          ? t("plotAxisRt") : t("plotAxisRtUnit", { unit: rtSymbol })}</p>
       </div>
     </div>
   );
@@ -674,12 +684,12 @@ function pathOf(
 
 
 /** What the readout says about one scan. */
-function describeScan(point: ScanPoint, verb: string, t: UiMessage): string {
+function describeScan(point: ScanPoint, verb: string, unit: RetentionTimeUnit, t: UiMessage): string {
   const scan =
     point.scanNumber === null
       ? t("viewerScanUnreported")
       : t("viewerReportedScan", { index: formatCount(point.scanNumber) });
   return t("viewerScanReadout", { name: verb, index: formatCount(point.spectrumIndex), scan,
-    level: formatCount(point.msLevel), rt: point.retentionTime.toFixed(4),
+    level: formatCount(point.msLevel), rt: withRetentionTimeUnit(point.retentionTime, unit),
     tic: formatIntensity(point.totalIonCurrent), bpc: formatIntensity(point.basePeakIntensity) });
 }

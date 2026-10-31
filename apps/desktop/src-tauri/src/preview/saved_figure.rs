@@ -56,7 +56,7 @@ use crate::project::record::{
 };
 
 use super::chromatogram::{
-    ChromatogramSource, RangeRequest, RangeScope, ResolvedRange, TraceSet,
+    ChromatogramSource, NoChromatogram, RangeRequest, RangeScope, ResolvedRange, TraceSet,
     figure_spec as chromatogram_figure, linked_figure_spec,
 };
 use super::dialog::SaveDialogFacts;
@@ -890,8 +890,9 @@ pub(super) enum RegenerationRefusal {
     SourceNotRead(PreviewErrorDto),
     /// The reader answered with a spectrum other than the one asked for.
     WrongSpectrum,
-    /// The source's table is not one the viewer draws a chromatogram for.
-    NoChromatogram,
+    /// The source's table is not one the viewer draws a chromatogram for, and
+    /// why.
+    NoChromatogram(NoChromatogram),
     /// The saved range reaches outside the run.
     RangeOutsideSource,
     /// The linked spectrum is not a scan of the source's table.
@@ -995,15 +996,9 @@ fn read_chromatogram(
         .spectrum_table(from_start(source)?)
         .map_err(RegenerationRefusal::SourceNotRead)?;
     // The eligibility the viewer and the export apply, through their own
-    // constructor.
-    //
-    // Read through `into_iter` so this line reads the same whether the
-    // constructor answers an `Option` or a `Result` with its reason. When it
-    // answers a reason (PR #175), `NoChromatogram` should carry it.
+    // constructor, with its reason.
     ChromatogramSource::from_rows(&table.rows, table.truncated)
-        .into_iter()
-        .next()
-        .ok_or(RegenerationRefusal::NoChromatogram)
+        .map_err(RegenerationRefusal::NoChromatogram)
 }
 
 /// Resolves a saved m/z window against the regenerated spectrum, through the

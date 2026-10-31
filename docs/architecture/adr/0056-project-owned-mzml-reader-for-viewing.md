@@ -6,6 +6,13 @@ product crate (both already in `Cargo.lock`, so the lock gains no package).
 Proposed 2026-10-28.
 Amended 2026-10-30 by the owner: decision 1's version rule (a note there).
 Amended 2026-10-30 by ADR 0060: decision 4, the view cache's pin (a note there).
+Amended 2026-10-30 by the owner: decision 1's selected-spectrum refusals gain
+`unit_not_an_accession` (a note there), and decisions 5 and 9's removal of the
+two `msaccess` operations waits for decision 3's admission follow-up (the
+slice-2 note under decision 9).
+Amended 2026-10-30 by the owner (P175): decision 9's profile line is delivered
+in slice 2, in export and, in its webview commit, on screen (the slice-2
+note under decision 9).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -164,6 +171,20 @@ for:
   lengths;
 - a non-finite value (NaN or infinity), which today's parser also refuses;
 - a 64-bit integer value that `f64` cannot hold exactly (decision 5).
+
+> **Amended 2026-10-30 by the owner's decision**, ratifying what slice 2 added.
+> The list above stays as written and gains one entry, and is closed again with
+> it:
+>
+> - a declared array unit that is not an accession: the m/z or intensity
+>   term's `unitAccession` must be `PREFIX:ID`, 1 to 32 ASCII letters and
+>   digits on each side of one colon (`unit_not_an_accession`). A unit reaches
+>   the CSV/TSV preamble and the figure's labels, which admit no quoting. An
+>   undeclared unit stays undeclared.
+>
+> The desktop answers it with slice 2's `spectrum_refused` kind, detail
+> `mz:unit_not_an_accession` or `intensity:unit_not_an_accession`, so it adds
+> no error kind or webview resource beyond slice 2's eight.
 
 **It must not panic or abort on any input.** That is a requirement slice 1
 proves with its probes (decision 9). The spike did not establish it (see
@@ -688,6 +709,93 @@ Slice 1 therefore meets this decision's merge condition.
    - Copy for the new refusals.
    - Rendered QA.
 
+> **2026-10-30: slice 2 is implemented**, its Rust side and its webview commit
+> together, in one PR. What the implementation records:
+>
+> - **The `msaccess` operations stay in the crate, ratified by the owner on
+>   2026-10-30.** Decisions 5 and 9 say slice 2 removes them; the owner accepted
+>   keeping them. The provider's open asks only for metadata and the run
+>   summary, and the selected-spectrum operation,
+>   `SELECTED_SPECTRUM_PRECISION` and the installation staleness check are
+>   removed from the desktop. The crate keeps `SpectrumTable` and
+>   `SpectrumByIndex` and their parsers, as it keeps `Tic`: capability evidence,
+>   discovery and the M0 spike example use them. Availability is still judged
+>   against all four operations, because changing it is the admission change
+>   decision 3 leaves to its follow-up. **Condition for removal:** that
+>   follow-up removes the two operations and their parsers, in the change that
+>   stops judging availability against them. Until it lands, they stay and
+>   availability stays judged against all four.
+> - **Shared types.** The `msaccess`-only fields stay, optional, and a native row
+>   or spectrum leaves them unreported. Printed-text precision becomes
+>   `SpectrumValueOrigin`, whose native variant carries the two arrays' stored
+>   widths. Each unit state keeps `msaccess`'s "not emitted" apart from a file's
+>   "not declared"; both reach the webview as not reported.
+> - **One reader refusal added, ratified by the owner on 2026-10-30** as an
+>   amendment of decision 1's closed list (the note there). A declared array
+>   unit that is not an accession (`PREFIX:ID`, each part 1 to 32 ASCII
+>   letters and digits) refuses the spectrum (`unit_not_an_accession`): a unit
+>   reaches the CSV/TSV preamble and figure labels, which admit no quoting.
+> - **Figures: slice 3's export half, delivered early.** Decision 9 gives
+>   profile lines on screen and in export to slice 3; slice 2 delivers the
+>   export half. That reorder is a third deviation from the delivery order. The
+>   owner ratified the other two, and accepted this one on 2026-10-30 (P175,
+>   below). The export maps a declared profile spectrum to a joined
+>   trace, so its SVG, PNG, `Copy plot` and figure preview draw a line.
+>   Where the line crosses a current range's edge between two samples, it is
+>   cut there at the interpolated height, and that height also sets the
+>   window's value scale, as the chromatogram's does. The caption states the
+>   declared representation and units; the linked figure's caption gives each
+>   panel its own units, because the chromatogram's intensity has none. The
+>   webview commit draws the same line on screen over a viewport: a profile
+>   projection carries the measured sample beyond each edge, and the plot's
+>   clip cuts the line there, scaled to those heights as the export is. In a
+>   window holding more samples than a screen projection carries, the
+>   reduction keeps each column's greatest and least value (the figure
+>   contract's `MinMaxPerColumn`, never the sticks' per-sign rule), so the
+>   line keeps its valleys; it also keeps the window's first and last
+>   samples, so each edge is cut from the same two samples as in the export,
+>   at the same height (one column fewer keeps them in the budget). With
+>   no viewport (no admitted m/z domain) a profile spectrum stays sticks and
+>   Details says why. Centroid and undeclared spectra are unchanged.
+>
+>   **Owner decision P175 (2026-10-30).** Shown the decisions that block work
+>   now, the owner replied "全部按推荐，继续" ("all as recommended,
+>   continue"), accepting P175's recommendation, option (a): the profile line
+>   stays in slice 2's export, and the on-screen line, slice 3's drawing of it,
+>   is drawn in slice 2's webview commit (in
+>   [PR #175](https://github.com/MianliWang/MScanvas/pull/175)), so the screen
+>   and the export agree and no sentence explains a difference. Slice 3 keeps
+>   the rest of its list.
+> - **Data-document versions, decided by the owner on 2026-10-30.** The
+>   spectrum documents and the chromatogram document keep their keys. The
+>   spectrum's representation and unit fields and the chromatogram's
+>   retention-time unit now carry the file's declared values, and retention
+>   times are in the declared unit, never converted. A reader of the old
+>   versions could not tell which posture it holds, so each document takes a
+>   new version: spectrum full source 1 → 3 and range 2 → 4 (one version
+>   sequence for one `#format`), chromatogram 1 → 2. Versions 1 and 2 are no
+>   longer written. Dated notes in ADRs 0029, 0034, 0040 and 0060 record it.
+> - **Reconciliation is exact** (`TableRowFacts::contradicts`), including the
+>   retention-time unit.
+> - **Decision 4.** An open takes its ticket and drops every other dataset's
+>   preview state in one hold of the workspace lock. Its commit holds the
+>   workspace lock with the export slot inside it: the epoch check, the slot's
+>   own compare-and-install of the run summary and the chromatogram, and the
+>   write of the preview state are one critical section, so the slot still
+>   answers no "is this ticket current" question on its own. An older open of
+>   another dataset that finishes after a newer one began answers
+>   `selection_superseded` and retains nothing.
+> - **Typed refusals**, with the reader's stable identifier as the detail:
+>   `spectrum_table_refused`, `spectrum_table_unreadable`, `preview_not_open`,
+>   `spectrum_not_as_recorded`, `spectrum_value_not_exact`,
+>   `spectrum_encoding_unsupported`, `spectrum_unreadable` and
+>   `spectrum_refused`. An index outside the open's table stays the existing
+>   unavailable outcome.
+> - **Exports.** CSV and TSV write the stored values exactly, tested with 32- and
+>   64-bit floats that do not survive eight decimals. The chromatogram's data
+>   document writes `second`, `minute` or `unreported`; the spectrum's writes the
+>   representation and each array's unit accession.
+
 ## Evidence
 
 The spike ran on `main` at `cd27279`, in a local scratch directory that is not
@@ -965,3 +1073,25 @@ keeps today's row-capped state (decision 5). Two other ways:
 - **[The after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md#9-open-owner-decisions),
   section 9.** On acceptance, the open decision on a project-owned reader is
   answered here.
+
+> **2026-10-30, slice 2.** The list above stays as written. Slice 2's Rust
+> side (the slice-2 note under decision 9) adds these:
+>
+> - **[ADR 0028](0028-figure-renderer-and-semantic-specification.md).** The
+>   export and the screen draw the profile line from slice 2, the screen in its
+>   webview commit. The owner accepted that reorder on 2026-10-30 (P175, the
+>   slice-2 note).
+> - **[ADR 0029](0029-first-visible-spectrum-figure-and-data-export.md).**
+>   "Representation and units stay unreported" holds for a spectrum that
+>   declares neither. A native spectrum's figure and data document carry the
+>   representation and array units the file declares. The full-source data
+>   document is version 3 (a dated note there).
+> - **[ADR 0034](0034-chromatogram-export-and-range-scope.md).** The
+>   document's `#retention_time_unit` is `second` or `minute` where every row
+>   declares that unit, and stays `unreported` where none does. The document
+>   is version 2 (a dated note there).
+> - **[ADR 0040](0040-spectrum-range-export.md).** The product is no longer
+>   only in the discrete branch. A spectrum the file declares profile takes
+>   the established-profile branch, clipped with an interpolated boundary
+>   value. Centroid and undeclared spectra stay discrete. The range data
+>   document is version 4 (a dated note there).

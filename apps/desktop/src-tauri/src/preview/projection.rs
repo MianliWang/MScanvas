@@ -36,7 +36,7 @@
 
 use mscanvas_plot_spec::spec::{Domain, MeasurementRefusal, SpecError, measurement_domains};
 
-use mscanvas_proteowizard::SelectedSpectrumResult;
+use mscanvas_proteowizard::{SelectedSpectrumResult, SpectrumRepresentationState};
 
 /// The most columns a screen projection reduces to.
 ///
@@ -208,6 +208,11 @@ pub(super) struct ScreenProjection {
     intensity: Vec<f64>,
     source_points: usize,
     reduced: bool,
+    /// For a declared profile spectrum only, the measured sample just outside
+    /// each edge, which the joined line crosses that edge from: the screen cuts
+    /// it there, as the export does. `None` for a discrete spectrum and where
+    /// the window reaches the source's own end.
+    outside: [Option<(f64, f64)>; 2],
 }
 
 impl ScreenProjection {
@@ -231,6 +236,12 @@ impl ScreenProjection {
     /// Whether fewer points are drawn than the window measured.
     pub(super) const fn reduced(&self) -> bool {
         self.reduced
+    }
+
+    /// The measured samples just below and just above the window, for a
+    /// profile spectrum.
+    pub(super) const fn outside(&self) -> [Option<(f64, f64)>; 2] {
+        self.outside
     }
 
     /// Whether the window holds no reported observation at all.
@@ -292,6 +303,22 @@ pub(super) fn project(
     let start = mz.partition_point(|value| *value < window.low());
     let end = mz.partition_point(|value| *value <= window.high());
     let source_points = end.saturating_sub(start);
+    // A joined profile line crosses each edge from the sample beyond it, so the
+    // screen is handed that measured sample and cuts the line at the edge, as
+    // the export does (P175). A discrete spectrum has nothing between samples.
+    let joined = matches!(
+        spectrum.representation(),
+        SpectrumRepresentationState::Profile
+    );
+    let outside = if joined {
+        let sample = |at: usize| Some((mz[at], intensity[at]));
+        [
+            start.checked_sub(1).and_then(sample),
+            (end < mz.len()).then_some(end).and_then(sample),
+        ]
+    } else {
+        [None, None]
+    };
 
     if source_points <= MAX_PROJECTION_POINTS {
         // Everything the window holds fits the budget, so the drawing is the
@@ -302,15 +329,20 @@ pub(super) fn project(
             intensity: intensity[start..end].to_vec(),
             source_points,
             reduced: false,
+            outside,
         });
     }
 
-    Ok(reduce(
-        window,
-        &mz[start..end],
-        &intensity[start..end],
-        source_points,
-    ))
+    Ok(ScreenProjection {
+        outside,
+        ..reduce(
+            window,
+            &mz[start..end],
+            &intensity[start..end],
+            source_points,
+            joined,
+        )
+    })
 }
 
 /// Keeps the extremes of each column, at the m/z the source measured them.
@@ -323,16 +355,36 @@ pub(super) fn project(
 /// safe to look at -- a tall peak can never be replaced by a shorter neighbour,
 /// and no value is drawn that the window does not contain.
 ///
-/// Points are emitted in ascending m/z so the result is a series the same
-/// ordering rule admits.
-fn reduce(window: Domain, mz: &[f64], intensity: &[f64], source_points: usize) -> ScreenProjection {
+/// Points are emitted in the source's order, which is ascending m/z, so the
+/// result is a series the same ordering rule admits.
+///
+/// **A joined profile line keeps each column's greatest and least value**, of
+/// either sign (the figure contract's `MinMaxPerColumn`), because the line is
+/// drawn through them: the per-sign rule above would keep only an all-positive
+/// column's top and draw a profile's valleys as a flat line at its peaks. It
+/// also keeps the window's first and last samples, whatever their columns
+/// kept: the line crosses each edge from the sample beyond it to those, as the
+/// export's line does, so the edge cut and the value scale it sets are the
+/// export's. One column fewer keeps those two within the budget.
+fn reduce(
+    window: Domain,
+    mz: &[f64],
+    intensity: &[f64],
+    source_points: usize,
+    joined: bool,
+) -> ScreenProjection {
     let span = window.high() - window.low();
-    let columns = MAX_PROJECTION_COLUMNS;
-    // Two candidates per column, held by the m/z they were measured at.
-    let mut highest: Vec<Option<(f64, f64)>> = vec![None; columns];
-    let mut lowest: Vec<Option<(f64, f64)>> = vec![None; columns];
+    let columns = MAX_PROJECTION_COLUMNS - usize::from(joined);
+    // Two candidates per column, held by their index in the window.
+    let mut highest: Vec<Option<usize>> = vec![None; columns];
+    let mut lowest: Vec<Option<usize>> = vec![None; columns];
 
-    for (value, height) in mz.iter().copied().zip(intensity.iter().copied()) {
+    for (index, (value, height)) in mz
+        .iter()
+        .copied()
+        .zip(intensity.iter().copied())
+        .enumerate()
+    {
         let fraction = if span > 0.0 {
             (value - window.low()) / span
         } else {
@@ -346,38 +398,54 @@ fn reduce(window: Domain, mz: &[f64], intensity: &[f64], source_points: usize) -
             reason = "the fraction is clamped into [0, 1] and columns is small"
         )]
         let column = ((fraction.clamp(0.0, 1.0) * columns as f64) as usize).min(columns - 1);
+        if joined {
+            if highest[column].is_none_or(|kept| height > intensity[kept]) {
+                highest[column] = Some(index);
+            }
+            if lowest[column].is_none_or(|kept| height < intensity[kept]) {
+                lowest[column] = Some(index);
+            }
+            continue;
+        }
         let slot = if height >= 0.0 {
             &mut highest[column]
         } else {
             &mut lowest[column]
         };
-        match slot {
-            Some((_, kept)) => {
-                let better = if height >= 0.0 {
-                    height > *kept
-                } else {
-                    height < *kept
-                };
-                if better {
-                    *slot = Some((value, height));
-                }
+        let better = slot.is_none_or(|kept| {
+            if height >= 0.0 {
+                height > intensity[kept]
+            } else {
+                height < intensity[kept]
             }
-            None => *slot = Some((value, height)),
+        });
+        if better {
+            *slot = Some(index);
         }
     }
 
-    let mut points: Vec<(f64, f64)> = Vec::with_capacity(MAX_PROJECTION_POINTS);
+    let mut kept: Vec<usize> = Vec::with_capacity(MAX_PROJECTION_POINTS);
     for column in 0..columns {
-        for kept in [highest[column], lowest[column]].into_iter().flatten() {
-            points.push(kept);
+        kept.extend(highest[column]);
+        // A joined column of one observation kept it as both; it is drawn once.
+        if lowest[column] != highest[column] {
+            kept.extend(lowest[column]);
         }
     }
-    // By measured m/z, so a column that kept both signs emits them in the order
-    // the source has them rather than in the order this loop happened to visit.
-    points.sort_by(|left, right| left.0.total_cmp(&right.0));
+    if joined && !mz.is_empty() {
+        kept.extend([0, mz.len() - 1]);
+    }
+    // In the source's order, so a column that kept both signs emits them as the
+    // source has them rather than in the order this loop happened to visit; an
+    // edge sample its column also kept is drawn once.
+    kept.sort_unstable();
+    kept.dedup();
 
-    let drawn = points.len();
-    let (mz, intensity) = points.into_iter().unzip();
+    let drawn = kept.len();
+    let (mz, intensity) = kept
+        .into_iter()
+        .map(|index| (mz[index], intensity[index]))
+        .unzip();
     ScreenProjection {
         window,
         mz,
@@ -386,6 +454,7 @@ fn reduce(window: Domain, mz: &[f64], intensity: &[f64], source_points: usize) -
         // A reduction that dropped nothing is not one, and saying otherwise
         // would make a caption claim measurements were removed when none were.
         reduced: drawn < source_points,
+        outside: [None, None],
     }
 }
 

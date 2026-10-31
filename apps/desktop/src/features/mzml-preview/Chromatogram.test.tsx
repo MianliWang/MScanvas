@@ -14,12 +14,12 @@
 
 import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import appStyles from "../../app/app.css?raw";
 import { Chromatogram } from "./Chromatogram";
-import type { SpectrumRow } from "./contracts";
+import type { RetentionTimeUnit, SpectrumRow } from "./contracts";
 import type { TraceVisibility } from "./usePreviewWorkspace";
 import type { ViewerInteractionState } from "./viewer/interactionState";
 import { renderedDomain } from "./viewer/interactionState";
@@ -50,13 +50,13 @@ interface Scan {
 }
 
 /** A run with exactly the per-scan values a case needs. */
-function runOf(scans: readonly Scan[], truncated = false): ScanModel {
+function runOf(scans: readonly Scan[], truncated = false, unit: RetentionTimeUnit = "notReported"): ScanModel {
   const rows: SpectrumRow[] = scans.map((scan, index) => ({
     index,
     identifier: `controllerType=0 controllerNumber=1 scan=${String(index + 1)}`,
     scanNumber: index + 1,
     msLevel: 1,
-    retentionTime: { value: scan.rt, unitKnown: false },
+    retentionTime: { value: scan.rt, unit },
     basePeakMz: 400,
     basePeakIntensity: scan.bpc,
     totalIonCurrent: scan.tic,
@@ -86,12 +86,14 @@ function Harness({
   onSelect,
   onToggleTrace,
   selectionAvailability,
+  exportTools,
 }: {
   readonly model: ScanModel;
   readonly initialTraces: TraceVisibility;
   readonly onSelect: (index: number) => void;
   readonly onToggleTrace: (trace: keyof TraceVisibility) => void;
   readonly selectionAvailability?: SpectrumSelectionAvailability;
+  readonly exportTools?: ComponentProps<typeof Chromatogram>["exportTools"];
 }) {
   const viewer = useViewerInteraction();
   controller = viewer;
@@ -117,6 +119,7 @@ function Harness({
       }}
       readInteraction={viewer.current}
       traces={traces}
+      exportTools={exportTools}
     />
   );
 }
@@ -126,6 +129,7 @@ function renderChromatogram(
     readonly model?: ScanModel;
     readonly traces?: TraceVisibility;
     readonly selectionAvailability?: SpectrumSelectionAvailability;
+    readonly exportTools?: ComponentProps<typeof Chromatogram>["exportTools"];
   } = {},
 ) {
   const onSelect = vi.fn();
@@ -138,6 +142,7 @@ function renderChromatogram(
       onSelect={onSelect}
       onToggleTrace={onToggleTrace}
       selectionAvailability={options.selectionAvailability}
+      exportTools={options.exportTools}
     />,
   );
   if (model.status === "ready") {
@@ -399,6 +404,26 @@ describe("what the traces are made of", () => {
     // Zero is always in it, so a flat trace high above the axis is not drawn as
     // structure.
     expect(axisLow()).toBe("0");
+  });
+
+  it("puts the declared retention-time unit on the axis, never converted", () => {
+    renderChromatogram({ model: runOf([{ rt: 1, tic: 10, bpc: 5 }, { rt: 3, tic: 20, bpc: 8 }], false, "minute") });
+
+    expect(document.querySelector("#chromatogram-axis-x")).toHaveTextContent("Retention time (min)");
+    // The run's own minutes: 1 to 3, not 60 to 180.
+    expect(document.querySelector(".chromatogram-range")).toHaveTextContent("Showing 1.0000 to 3.0000 min");
+  });
+
+  it("puts the run's unit on the range editor's fields and on the range it commits", () => {
+    renderChromatogram({ model: runOf([{ rt: 1, tic: 10, bpc: 5 }, { rt: 3, tic: 20, bpc: 8 }], false, "minute"),
+      exportTools: items => <button onClick={event => items[0]?.onSelect(event.currentTarget)} type="button">open range</button> });
+
+    fireEvent.click(screen.getByRole("button", { name: "open range" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "From (min)" }), { target: { value: "1.5" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "To (min)" }), { target: { value: "2.5" } });
+    fireEvent.submit(screen.getByRole("form", { name: UI_RESOURCES.en.rangeSet }));
+
+    expect(document.querySelector(".plot-committed-range")).toHaveTextContent("namely 1.5000 to 2.5000 min");
   });
 
   it("says neither axis carries a unit, in each axis's title", () => {
@@ -1073,10 +1098,11 @@ describe("when there is no chromatogram", () => {
     expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
   });
 
-  it("refuses a retention-time unit it cannot name, without blaming the file", () => {
+  it("refuses rows in mixed retention-time units, without blaming the file", () => {
+    // Only row 7 declares minutes; the rest declare none (ADR 0056).
     const rows = buildRows(20).map((row, index) =>
       index === 7
-        ? { ...row, retentionTime: { value: row.retentionTime.value, unitKnown: true } }
+        ? { ...row, retentionTime: { value: row.retentionTime.value, unit: "minute" as const } }
         : row,
     );
     renderChromatogram({

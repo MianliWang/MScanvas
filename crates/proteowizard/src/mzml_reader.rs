@@ -207,6 +207,8 @@ pub enum ArrayProblem {
     IntegerNotExact,
     /// The allocator refused a reservation the caps allowed.
     AllocationRefused,
+    /// The role term's `unitAccession` is not an accession.
+    UnitNotAnAccession,
 }
 
 impl ArrayProblem {
@@ -234,6 +236,7 @@ impl ArrayProblem {
             Self::NonFiniteValue => "non_finite_value",
             Self::IntegerNotExact => "integer_not_exact",
             Self::AllocationRefused => "allocation_refused",
+            Self::UnitNotAnAccession => "unit_not_an_accession",
         }
     }
 }
@@ -461,9 +464,9 @@ impl BinaryDataType {
 /// width they were stored with.
 #[derive(Clone, PartialEq)]
 pub struct MzmlArray {
-    values: Vec<f64>,
-    unit: ArrayUnit,
-    stored_as: Option<BinaryDataType>,
+    pub(crate) values: Vec<f64>,
+    pub(crate) unit: ArrayUnit,
+    pub(crate) stored_as: Option<BinaryDataType>,
 }
 
 impl MzmlArray {
@@ -506,10 +509,10 @@ impl fmt::Debug for MzmlArray {
 /// One selected spectrum: its metadata, every precursor, and its two arrays.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MzmlSelectedSpectrum {
-    row: MzmlSpectrumRow,
-    precursors: Vec<MzmlPrecursor>,
-    mz: MzmlArray,
-    intensity: MzmlArray,
+    pub(crate) row: MzmlSpectrumRow,
+    pub(crate) precursors: Vec<MzmlPrecursor>,
+    pub(crate) mz: MzmlArray,
+    pub(crate) intensity: MzmlArray,
 }
 
 impl MzmlSelectedSpectrum {
@@ -1508,17 +1511,21 @@ impl<'t> Pass<'t> {
                 prepared
             }
         };
-        let encoded = std::mem::take(&mut array.encoded);
-        let values =
-            decode(prepared, encoded).map_err(|problem| array_fail(prepared.role, problem))?;
-        let unit = array
+        let unit = match array
             .terms
             .get(match prepared.role {
                 ArrayRole::Mz => Term::MzArray,
                 ArrayRole::Intensity => Term::IntensityArray,
             })
             .and_then(|stated| stated.unit.clone())
-            .map_or(ArrayUnit::NotDeclared, ArrayUnit::Declared);
+        {
+            None => ArrayUnit::NotDeclared,
+            Some(accession) if is_accession(&accession) => ArrayUnit::Declared(accession),
+            Some(_) => return Err(array_fail(prepared.role, ArrayProblem::UnitNotAnAccession)),
+        };
+        let encoded = std::mem::take(&mut array.encoded);
+        let values =
+            decode(prepared, encoded).map_err(|problem| array_fail(prepared.role, problem))?;
         let decoded = MzmlArray {
             values,
             unit,
@@ -1829,6 +1836,19 @@ fn widen(bytes: &[u8], data_type: BinaryDataType) -> Result<Vec<f64>, ArrayProbl
         values.push(value);
     }
     Ok(values)
+}
+
+/// Whether a declared unit is an accession, `PREFIX:ID` with each part 1 to 32
+/// ASCII letters or digits. A unit reaches export documents and figure labels,
+/// which admit no delimiter, line break or markup, so anything else is refused
+/// rather than carried.
+fn is_accession(value: &str) -> bool {
+    let part = |part: &str| {
+        (1..=32).contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    };
+    value
+        .split_once(':')
+        .is_some_and(|(prefix, id)| part(prefix) && part(id))
 }
 
 /// `value` as `f64`, when `f64` holds it exactly.

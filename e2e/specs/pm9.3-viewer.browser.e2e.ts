@@ -119,13 +119,13 @@ function eightScans() {
   preview.spectrumTable.rows.forEach((row, index) =>
     Object.assign(row, {
       identifier: `${index === 3 || index === 7 ? "rare" : "raw"}-${String(index)}-controllerType=0 controllerNumber=1 scan=${String(index + 1)}`,
-      retentionTime: { value: index, unitKnown: false },
+      retentionTime: { value: index, unit: "notReported" },
       msLevel: (index % 2) + 1,
       totalIonCurrent: (index + 1) * 10,
     }),
   );
   Object.assign(preview.runSummary, {
-    retentionTimeRange: { minimum: { value: 0, unitKnown: false }, maximum: { value: 7, unitKnown: false } },
+    retentionTimeRange: { state: "reported", minimum: 0, maximum: 7, unit: "notReported" },
     msLevels: [
       { msLevel: 1, spectrumCount: 4 },
       { msLevel: 2, spectrumCount: 4 },
@@ -154,7 +154,7 @@ function longScans() {
   const preview = eightScans();
   preview.spectrumTable.rows.forEach((row, index) =>
     Object.assign(row, {
-      retentionTime: { value: 1234.5678 + index * 317.4602, unitKnown: false },
+      retentionTime: { value: 1234.5678 + index * 317.4602, unit: "notReported" },
       basePeakMz: 1234.5678 + index * 107.5838,
       basePeakIntensity: 12_345_678 + index * 1_111_111,
       totalIonCurrent: (index + 1) * 123_456_789,
@@ -162,10 +162,7 @@ function longScans() {
     }),
   );
   Object.assign(preview.runSummary, {
-    retentionTimeRange: {
-      minimum: { value: 1234.5678, unitKnown: false },
-      maximum: { value: 1234.5678 + 7 * 317.4602, unitKnown: false },
-    },
+    retentionTimeRange: { state: "reported", minimum: 1234.5678, maximum: 1234.5678 + 7 * 317.4602, unit: "notReported" },
   });
   return preview;
 }
@@ -260,6 +257,8 @@ async function answerBySource(fixture: typeof SPECTRUM = SPECTRUM) {
             intensity: kept.map((i) => fixture.intensity[i]),
             sourcePoints: kept.length,
             reduced: false,
+            outsideLow: null,
+            outsideHigh: null,
           };
         }
         return invoke(command, args);

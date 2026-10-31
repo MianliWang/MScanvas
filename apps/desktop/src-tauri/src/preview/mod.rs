@@ -60,6 +60,10 @@ mod figure;
 #[cfg(test)]
 pub(crate) mod idle_provider;
 mod installation;
+/// Small mzML documents written in memory, for this module's suite, the QC
+/// suite and the rendered tests' seed. Never in a shipped build.
+#[cfg(any(test, feature = "e2e"))]
+pub(crate) mod mzml_fixture;
 mod operation;
 mod output_opening;
 /// What a spectrum viewport may know about a retained spectrum: whether it has
