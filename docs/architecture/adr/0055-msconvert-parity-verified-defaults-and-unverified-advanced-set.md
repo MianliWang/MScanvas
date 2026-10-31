@@ -682,9 +682,9 @@ Each later in its own slice:
   > "Saving upgrades this beta 1 project, and beta 1 cannot open it
   > afterwards. Keep a copy first if you still need beta 1.", with the
   > keyboard on "Save and upgrade"; Cancel writes nothing. A Save with nothing
-  > unsaved writes nothing and is not asked. Save As is not asked: any other
-  > location leaves beta 1's file as it is, and choosing that file again in
-  > the dialog is the explicit choice.
+  > unsaved writes nothing and is not asked. Save As is asked whenever the
+  > bound document is schema 4, with or without a change, because choosing
+  > that file again in the dialog writes schema 5 over it.
 
   > **Implemented on `be/integrate` (draft PR #161), 2026-10-29.**
   >

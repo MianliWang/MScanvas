@@ -715,27 +715,40 @@ export function ProjectPanel({
   /**
    * Asks before the Save that upgrades a beta-1 project (ADR 0055, risks).
    *
-   * Only a Save that writes: one with nothing unsaved leaves beta 1's file as
-   * it is, so a warning there would be false. Every Save goes through here,
-   * so neither the head's nor the unsaved question's can skip it. Save As is
-   * not asked: anywhere but the bound file leaves beta 1's file untouched,
-   * and choosing that file again in the dialog is the explicit choice.
+   * Only a write: a Save with nothing unsaved leaves beta 1's file as it is,
+   * so a warning there would be false. Save As is asked whenever the bound
+   * file is beta 1's, because choosing that file again writes schema 5 over
+   * it even with nothing unsaved. Every Save and Save As goes through here,
+   * so neither the head's nor the unsaved question's can skip it.
    */
-  const [upgradeAsked, setUpgradeAsked] = useState(false);
-  const upgradeShown = upgradeAsked && state.savingUpgradesSchema === true && state.dirty;
+  const [upgradeAsked, setUpgradeAsked] = useState<"save" | "saveAs" | null>(null);
+  const upgrades = state.savingUpgradesSchema === true;
+  const upgradeShown = upgradeAsked !== null && upgrades && (upgradeAsked === "saveAs" || state.dirty);
   const save = () => {
-    if (state.savingUpgradesSchema === true && state.dirty) setUpgradeAsked(true);
+    if (upgrades && state.dirty) setUpgradeAsked("save");
     else void session.saveProject();
   };
+  const saveAs = () => {
+    if (upgrades) setUpgradeAsked("saveAs");
+    else void session.saveProjectAs();
+  };
   const saveRef = useRef<HTMLButtonElement | null>(null);
+  const saveAsRef = useRef<HTMLButtonElement | null>(null);
   const upgradeRef = useRef<HTMLButtonElement | null>(null);
-  // The question takes the keyboard when it appears; Cancel hands it back to Save.
+  // The question takes the keyboard when it appears; Cancel hands it back to
+  // the control that asked.
   useLayoutEffect(() => {
     if (upgradeShown) upgradeRef.current?.focus();
   }, [upgradeShown]);
   const cancelUpgrade = () => {
-    setUpgradeAsked(false);
-    saveRef.current?.focus();
+    const from = upgradeAsked === "saveAs" ? saveAsRef : saveRef;
+    setUpgradeAsked(null);
+    from.current?.focus();
+  };
+  const confirmUpgrade = () => {
+    const asked = upgradeAsked;
+    setUpgradeAsked(null);
+    void (asked === "saveAs" ? session.saveProjectAs() : session.saveProject());
   };
 
   return (
@@ -798,11 +811,12 @@ export function ProjectPanel({
                 {t("projectSave")}
               </Button>
               <Button
+                ref={saveAsRef}
                 variant={headPrimary === "saveAs" ? "primary" : "secondary"}
                 size="sm"
                 refused={working}
                 reasonId={BUSY_ID}
-                onClick={() => void session.saveProjectAs()}
+                onClick={saveAs}
               >
                 {t("projectSaveAs")}
               </Button>
@@ -832,10 +846,7 @@ export function ProjectPanel({
             refused={working}
             reasonId={BUSY_ID}
             data-project-upgrade-save=""
-            onClick={() => {
-              setUpgradeAsked(false);
-              void session.saveProject();
-            }}
+            onClick={confirmUpgrade}
           >
             {t("projectUpgradeSave")}
           </Button>
@@ -894,7 +905,7 @@ export function ProjectPanel({
             size="sm"
             refused={working}
             reasonId={BUSY_ID}
-            onClick={() => (state.published ? save() : void session.saveProjectAs())}
+            onClick={() => (state.published ? save() : saveAs())}
           >
             {t("projectUnsavedSaveFirst")}
           </Button>

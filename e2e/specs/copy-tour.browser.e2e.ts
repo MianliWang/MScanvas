@@ -150,6 +150,46 @@ const COLLIDED = {
   }),
 };
 
+/** STARTED on the unmeasured build: the waiting and the running row say it before any report. */
+const STARTED_LABELLED = {
+  ...STARTED,
+  queue: queueOf(STARTED.queue.items.map((item) => ({ ...item, notVerifiedByMscanvas: LABEL }))),
+};
+
+/** Thermo's picker wrote no record of the scope asked for: the second row's own sentence. */
+const PICKER_REFUSED = {
+  ...FINISHED,
+  queue: queueOf([
+    FINISHED.queue.items[0]!,
+    queueItem(SECOND.handle, SECOND.fileName, {
+      state: "failed",
+      attempts: 1,
+      result: {
+        kind: "single",
+        report: {
+          datasetHandle: SECOND.handle, sourceKind: "thermo_raw", outcome: "output_rejected", detailedOutcome: "picker_scope_record_mismatch",
+          outputFileName: null, output: null, validationMode: "output_only", validation: null, backend: null, stagingResidue: null, receipt: 1,
+          unverifiedSettings: false, unverifiedBuildRelease: null,
+        },
+      },
+    }),
+  ]),
+};
+
+/** 1,024 mzML rows: every one excluded from conversion, and listed. */
+const MANY_MZML: readonly SelectedFile[] = MANY.map((row) => ({ ...row, fileName: row.fileName.replace(/\.raw$/u, ".mzML"), sourceKind: "mzml" }));
+
+/** Add over LONG_FINISHED, refused for a full workspace: every output it did not add, listed. */
+const ADOPTION_REFUSED = {
+  operationId: OPERATION,
+  retryRound: 0,
+  roster: { datasets: MANY, capacity: 1024 },
+  outcomes: LONG_FINISHED.queue.items.flatMap((item, index) => item.state !== "finalized" ? [] : [{
+    kind: "refused", itemIndex: index, memberIndex: 0, sourceHandle: item.datasetHandle,
+    outputFileName: item.fileName.replace(/\.raw$/u, ".mzML"), reason: "workspace_full",
+  }]),
+};
+
 /** The roster after an adoption from the unmeasured build: the adopted row keeps the label. */
 const ADOPTED: SelectedFile = { handle: "adopted", fileName: "QC_pool_01.mzML", byteLength: 2_097_152, sourceKind: "mzml", relativeContext: null, notVerifiedByMscanvas: LABEL };
 
@@ -646,6 +686,45 @@ const STOPS: readonly Stop[] = [
       await waitUntilOffered(CONVERT);
     },
     anchor: "[data-plan-not-verified]",
+  },
+  {
+    // A labelled queue under way: the running and the waiting row say it
+    // before either has a report (the label BEGIN binds).
+    name: "conversion-running-not-verified",
+    table: (locale) => conversionWorld(locale, STARTED_LABELLED),
+    drive: () => go(2),
+    anchor: '.conversion-run-list li[data-item-state="pending"] [data-not-verified]',
+  },
+  {
+    // Thermo's picker wrote no record of the scope asked for: its own sentence.
+    name: "conversion-picker-scope-refused",
+    table: (locale) => conversionWorld(locale, PICKER_REFUSED),
+    drive: () => go(2),
+    anchor: 'li[data-item-state="failed"] .conversion-queue-reason',
+  },
+  {
+    // 1,024 mzML rows over the whole workspace: every excluded name, windowed.
+    name: "conversion-excluded-long",
+    table: (locale) => conversionWorld(locale, { status: "idle" }, MANY_MZML),
+    drive: async () => {
+      await go(2);
+      await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+      await browser.$(".conversion-excluded-group > button").waitForExist({ timeout: 30_000 });
+      await browser.$(".conversion-excluded-group > button").click();
+    },
+    anchor: '.conversion-excluded .conversion-name-list[data-windowed="true"]',
+  },
+  {
+    // Add over 1,024 results, refused for a full workspace: every output it
+    // did not add, and why, windowed.
+    name: "conversion-adoption-refused-long",
+    table: (locale) => ({ ...conversionWorld(locale, LONG_FINISHED, MANY), adopt_workspace_conversion_outputs: ADOPTION_REFUSED }),
+    drive: async () => {
+      await go(2);
+      await browser.$(".conversion-adoption .conversion-actions button").waitForExist({ timeout: 30_000 });
+      await browser.$(".conversion-adoption .conversion-actions button").click();
+    },
+    anchor: '.conversion-adoption .conversion-name-list[data-windowed="true"]',
   },
   {
     // A finished labelled queue: its rows and Add say it.

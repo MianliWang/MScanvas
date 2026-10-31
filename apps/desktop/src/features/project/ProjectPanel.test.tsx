@@ -1033,6 +1033,21 @@ describe("the project surface", () => {
       expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
     });
 
+    it("asks before Save As even with nothing unsaved, which can write over beta 1's file", async () => {
+      const api = mount(beta1(false));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      const saveAs = screen.getByRole("button", { name: en.projectSaveAs });
+      await press(saveAs);
+      expect(api.saveProjectAs).not.toHaveBeenCalled();
+      await press(screen.getByRole("button", { name: en.projectUpgradeCancel }));
+      expect(document.activeElement).toBe(saveAs);
+      expect(api.saveProjectAs).not.toHaveBeenCalled();
+      await press(saveAs);
+      await press(screen.getByRole("button", { name: en.projectUpgradeSave }));
+      expect(api.saveProjectAs).toHaveBeenCalledTimes(1);
+      expect(api.saveProject).not.toHaveBeenCalled();
+    });
+
     it("does not ask for a Save that writes nothing", async () => {
       const api = mount(beta1(false));
       await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
