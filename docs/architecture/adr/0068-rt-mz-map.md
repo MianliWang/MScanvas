@@ -21,7 +21,7 @@ research of 2026-10-30 put it on the track that needs no Python runtime, as
 "a Rust-binned raster from a streaming MS1 pass", and asked that it be
 measured on real files first.
 
-Three records constrain it:
+Four records constrain it:
 
 - **ADR 0056, decision 7.** The project-owned reader decodes; "any computation
   over the decoded arrays is an algorithm, and it needs its own record". This
@@ -99,9 +99,15 @@ read polarity yet; branch `be/reader-meta` adds it.
     except the last, which also holds the view's upper bound.
   - At most 2^21 cells (`MAX_MAP_CELLS`, 16 MiB of `f64`). The caller picks the
     bin counts from the view's size in device pixels.
-  - Bounds must be finite with a finite, positive width, and a bin at least
-    four `f64` units in the last place of the larger bound wide, so every bin
-    has width; anything else is refused before any spectrum is read.
+  - More retention-time bins than MS1 spectra in the window leave rows empty:
+    the measured middle tenth puts 192 spectra in 1,024 bins. Empty rows are
+    drawn as the background, never interpolated (decision 1). Whether the
+    desktop caps the retention-time bins at the window's MS1 count is left to
+    slices 2 and 3.
+  - Bounds must be finite with a finite, positive width, and a bin non-zero and
+    at least 4·ε times the larger bound's magnitude wide (`f64::EPSILON`; four
+    to eight units in the last place), so every bin has width; anything else is
+    refused before any spectrum is read.
 - **Recomputed per view, within bounds.** A zoom or pan is a new pass over the
   source for the new window, never a resampling of the previous raster.
 - **Never the arrays.** Only the raster crosses to the webview, as one bounded
@@ -122,17 +128,18 @@ read polarity yet; branch `be/reader-meta` adds it.
   are each one point with one intensity. Nothing converts one into the other.
 - **Why the greatest value.** A sum adds every stored point in the cell, so it
   measures how the spectra were stored as much as the signal.
-  - Over the same 2,748 MS1 scans of one run, the profile file stores
-    24,766,275 points and its vendor-centroided conversion 1,724,215: about 14
-    profile samples per centroid. Where the centroided map adds one peak, a sum
-    over the profile map would add about 14 samples.
+  - Over the same 2,748 MS1 scans of one run, the profile file's MS1 spectra
+    store 24,766,276 points and its vendor-centroided conversion's 1,724,216:
+    about 14 profile samples per centroid. Where the centroided map adds one
+    peak, a sum over the profile map would add about 14 samples.
   - Sampling also changes with m/z and with the instrument. In the Orbitrap
     profile file's largest MS1 spectrum (23,308 points) the median spacing of
     adjacent samples is 0.0027 at m/z 400–500 (118 pairs), 0.0073 at 800–900
     and 0.0128 at 1200–1300, so a fixed-width cell holds about 4.7 times as
     many samples at low m/z. In the LTQ Velos ion-trap file's largest MS1
-    spectrum (a full scan, 20,399 points) the spacing is 0.0833 at every m/z;
-    its 14 zoom-scan MS1 spectra are sampled at 0.020.
+    spectrum (a full scan, 20,399 points) the spacing is 0.0833 in each of the
+    same three ranges; each of its 14 zoom-scan MS1 spectra holds 500 points,
+    and the one measured (m/z 447–457) is sampled at 0.020.
   - The greatest stored value is the height of the tallest sample or peak in
     the cell. Profile and centroid values are comparable only where a centroid's
     intensity is a peak height, and that depends on the instrument:
@@ -147,11 +154,16 @@ read polarity yet; branch `be/reader-meta` adds it.
       MS1 spectra include the zoom scans) and states that "the ion-trap vendor
       intensity is not an apex height". The LTQ Velos conversion measured
       here also holds 15 MS1 full scans acquired as centroid
-      (`ITMS + c`). Each was paired with the profile
-      full scan acquired after it (at most 0.0022 min later), and the greatest
-      intensity in m/z 400–1400 taken from each: the centroid scan's is 6.39 to
-      24.03 times the profile scan's, median 11.07, over 15 pairs. On a log10
-      scale that is about one decade.
+      (`ITMS + c`). Each was paired with the profile full scan nearest in
+      retention time (in this file always the next one, at most 0.0022 min
+      later), and the greatest intensity in m/z 400–1400 taken from each: the
+      centroid scan's is 6.39 to 24.03 times the profile scan's, median 11.07,
+      over 15 pairs. On a log10 scale that is about one decade. Pairing each
+      with the preceding full profile scan instead gives 5.86 to 17.72, median
+      13.63, over 14 pairs. This comparison, the zoom-scan counts and windows
+      and the zoom spacing were not made with the project's reader, which does
+      not report scan type: `ltq_check.py`, a read-only Python standard-library
+      decoder, and a `grep` of the filter strings made them (Evidence).
 - **The representation is stated; whether a mix is mapped is open.** The result
   counts binned spectra as profile, centroid and not declared, and the caption
   names the representation or states the counts when they differ. Slice 1's
@@ -273,15 +285,18 @@ Release build of the example at commit `a8eae524`, two runs per file, on a
 hashed just before its runs). Inputs are
 public and not committed. Each column names its source, the ProteoWizard
 build and argv that wrote it, and its digest; the local manifest under
-`D:\tmp\public-data\` (items 2 and 3a) holds the same. No ProteoWizard program
-ran for this measurement.
+`D:\tmp\public-data\` (items 2, 3a and 3b) holds the same. Every run's console
+output and peak, the poller and the A/B record are in
+`D:\tmp\public-data\map2d\`, listed in its `NOTES.md`, which also records
+`ltq_check.py` (digest, command and output) and the zoom-scan `grep`. No
+ProteoWizard program ran for this measurement.
 
 | | Orbitrap MS1 profile | Orbitrap MS1 vendor-centroided | LTQ Velos, mixed |
 | --- | --- | --- | --- |
 | File | PXD081190 RAW → mzML ([source, build and argv](../../spikes/ADR0056_R0_REAL_FILE_COMPARISON.md#inputs)), 546,327,287 bytes, SHA-256 `82328655…de4fc3`, CC0 | [`TE1`](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md), 284,183,742 bytes, SHA-256 `4727d25e…540983`, CC0 | `msconvert` output of ProteoWizard's LTQ Velos test RAW (source, build and argv below), 5,060,221 bytes, SHA-256 `c72e2c8c…b63ec9`, from the Apache-2.0 ProteoWizard repository |
 | Spectra, of which MS1 | 43,878; 2,748 profile | 43,878; 2,748 centroid | 85; 44 (29 profile: 15 full, 14 zoom; 15 centroid, acquired as centroid) |
 | Table pass (exists after the open) | 3,937–4,180 ms | 3,575–4,422 ms | 9 ms |
-| Full extent, 1,024 × 2,048 cells | 3,652–3,768 ms (3,519–4,444 ms over five runs, see below); 24,766,275 points; 726,465 cells hold a value | 598–654 ms; 1,724,215 points; 670,590 cells | 71–88 ms; 326,354 points; 43,894 cells |
+| Full extent, 1,024 × 2,048 cells | 3,652–3,768 ms (3,519–4,444 ms over five runs, see below); 24,766,275 points binned; 726,465 cells hold a value | 598–654 ms; 1,724,215 points binned; 670,590 cells | 71–88 ms; 326,354 points binned; 43,894 cells |
 | Middle tenth of each axis | 324–333 ms; 192 spectra | 48–49 ms; 192 spectra | 9–12 ms; 3 spectra |
 | Points outside the stated m/z range | 1 | 1 | 16 |
 | Peak working set, whole process | 36.3–36.4 MB | 36.0–36.9 MB | not captured: the 0.1 s run ended between polls |

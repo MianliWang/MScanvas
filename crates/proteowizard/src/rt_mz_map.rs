@@ -408,9 +408,11 @@ impl Axis {
         }
         let step = width / f64::from(bins);
         // Each edge is within about two units in the last place of the larger
-        // bound, so a bin four of them wide keeps every edge above the last;
-        // a narrower bin would have no width.
-        if step < low.abs().max(high.abs()) * f64::EPSILON * 4.0 {
+        // bound, so a bin of 4·ε times that bound (four to eight units) keeps
+        // every edge above the last; a narrower bin would have no width. The
+        // threshold underflows to zero for subnormal bounds, so a zero step is
+        // refused as well.
+        if step == 0.0 || step < low.abs().max(high.abs()) * f64::EPSILON * 4.0 {
             return Err(MapError::InvalidBounds);
         }
         Ok(Self {

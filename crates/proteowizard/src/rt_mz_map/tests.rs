@@ -367,8 +367,18 @@ fn units_must_agree_and_nothing_converts() {
 
 #[test]
 fn requests_are_checked_before_anything_is_read() {
-    let document = document(&[ms1(0, "1", &[100.0], &[1.0])]);
+    // The one MS1 spectrum is refused when it is read, so a request that
+    // reaches the read returns that refusal, and a refused request never does.
+    let numpress = arrays_with(&[100.0], &[1.0], (MZ, COUNTS), NUMPRESS);
+    let document = document(&[spectrum(0, 1, PROFILE, ("1", MINUTE), 1, &numpress)]);
     let check = |request| map(&document, request).err();
+    let read = Some(MapError::Spectrum {
+        index: 0,
+        error: MzmlSpectrumError::Array {
+            role: ArrayRole::Intensity,
+            problem: ArrayProblem::Numpress,
+        },
+    });
 
     for bounds in [
         (f64::NAN, 1.0),
@@ -393,9 +403,15 @@ fn requests_are_checked_before_anything_is_read() {
         check(request((0.0, 2.0), 1, (1000.0, 1000.0 + 1e-10), 2048)),
         Some(MapError::InvalidBounds)
     );
+    // A subnormal range's threshold underflows; its zero-width bins are still
+    // refused.
+    assert_eq!(
+        check(request((0.0, 2.0), 1, (0.0, 5e-324), 2)),
+        Some(MapError::InvalidBounds)
+    );
     assert_eq!(
         check(request((0.0, 2.0), 1, (1000.0, 1000.001), 2048)),
-        None
+        read
     );
     assert_eq!(
         check(request((0.0, 2.0), 0, (99.0, 101.0), 1)),
@@ -405,7 +421,7 @@ fn requests_are_checked_before_anything_is_read() {
         check(request((0.0, 2.0), 2049, (99.0, 101.0), 1024)),
         Some(MapError::InvalidBins)
     );
-    assert_eq!(check(request((0.0, 2.0), 2048, (99.0, 101.0), 1024)), None);
+    assert_eq!(check(request((0.0, 2.0), 2048, (99.0, 101.0), 1024)), read);
 }
 
 #[test]
