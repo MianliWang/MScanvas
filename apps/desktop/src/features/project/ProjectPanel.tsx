@@ -377,6 +377,8 @@ const UPGRADE_ID = "project-upgrade-question";
 interface UpgradeQuestion {
   readonly kind: "save" | "saveAs";
   readonly projectId: string | null;
+  /** `session.replacements` when asked: an Open of a copy keeps the id but not this. */
+  readonly replacement: number;
   readonly from: RefObject<HTMLButtonElement | null>;
 }
 
@@ -733,8 +735,15 @@ export function ProjectPanel({
   const upgradeRef = useRef<HTMLButtonElement | null>(null);
   const [upgradeAsked, setUpgradeAsked] = useState<UpgradeQuestion | null>(null);
   const upgrades = state.savingUpgradesSchema === true;
-  // A question belongs to the open project it was asked in.
-  const asked = upgradeAsked !== null && state.open && upgradeAsked.projectId === state.projectId ? upgradeAsked : null;
+  // A question belongs to the open project it was asked in, which another copy
+  // with the same identifiers is not.
+  const asked =
+    upgradeAsked !== null &&
+    state.open &&
+    upgradeAsked.projectId === state.projectId &&
+    upgradeAsked.replacement === session.replacements
+      ? upgradeAsked
+      : null;
   const upgradeShown = asked !== null && upgrades && (asked.kind === "saveAs" || state.dirty);
   // One that stops being shown is gone: a closed, replaced or saved project
   // never brings it back on its own.
@@ -742,11 +751,13 @@ export function ProjectPanel({
     if (upgradeAsked !== null && !upgradeShown) setUpgradeAsked(null);
   }, [upgradeAsked, upgradeShown]);
   const save = (from: RefObject<HTMLButtonElement | null> = saveRef) => {
-    if (upgrades && state.dirty) setUpgradeAsked({ kind: "save", projectId: state.projectId, from });
+    if (upgrades && state.dirty)
+      setUpgradeAsked({ kind: "save", projectId: state.projectId, replacement: session.replacements, from });
     else void session.saveProject();
   };
   const saveAs = (from: RefObject<HTMLButtonElement | null> = saveAsRef) => {
-    if (upgrades) setUpgradeAsked({ kind: "saveAs", projectId: state.projectId, from });
+    if (upgrades)
+      setUpgradeAsked({ kind: "saveAs", projectId: state.projectId, replacement: session.replacements, from });
     else void session.saveProjectAs();
   };
   // The question takes the keyboard when it appears, on Cancel: a held or

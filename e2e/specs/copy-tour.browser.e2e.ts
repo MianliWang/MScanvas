@@ -25,7 +25,7 @@ import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "..
 import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered } from "../support/conversion";
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
-import { EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
+import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
   admittedIntents,
@@ -226,6 +226,21 @@ function beta1Project(locale: Locale) {
     inputs: project.inputs.map((input, index) => index === 0 ? { ...input, notVerifiedByMscanvas: LABEL } : input),
   };
   return onUnmeasured(table);
+}
+
+/** A saved project whose one reference is from a labelled conversion, with nothing unsaved. */
+function labelledProject(locale: Locale) {
+  const table = scenario("populated", locale);
+  const project = capturedProject({ name: "Plasma QC batch 08", published: true });
+  table.get_project_state = { ...project, inputs: project.inputs.map((input) => ({ ...input, notVerifiedByMscanvas: LABEL })) };
+  return onUnmeasured(table);
+}
+
+/** The project's Details on that reference. */
+async function inspectLabelledReference() {
+  await go(3);
+  await browser.$(`[data-project-inspect="${CAPTURED_INPUT}"]`).click();
+  await revealInDetails('#workbench-inspector [data-provenance="input"]');
 }
 
 /** The populated world with its mzML row adopted from a labelled conversion. */
@@ -859,6 +874,23 @@ const STOPS: readonly Stop[] = [
       await browser.$(".project-actions > button:nth-child(3)").click();
     },
     anchor: "[data-project-upgrade-cancel]:focus",
+  },
+  {
+    // The project's Details on a labelled reference: the label under its name.
+    name: "project-details-not-verified",
+    table: labelledProject,
+    drive: inspectLabelledReference,
+    anchor: '#workbench-inspector [data-provenance="input"] [data-not-verified]',
+  },
+  {
+    // The run that used it: the label on the link back, after its current state.
+    name: "project-details-run-not-verified",
+    table: labelledProject,
+    drive: async () => {
+      await inspectLabelledReference();
+      await browser.$(`#workbench-inspector [data-provenance-link="${CAPTURED_RUN}"]`).click();
+    },
+    anchor: '#workbench-inspector [data-provenance="run"] [data-not-verified]',
   },
   { name: "project-result", table: (locale) => scenario("projectWithResult", locale), drive: () => go(3), anchor: `[data-project-inspect-artifact="${RESULT}"]` },
   {

@@ -224,8 +224,10 @@ default.
 >
 > **Review, 2026-10-31 (PR #161).** A project reference added back to the
 > Workbench brings its label to the row, and the viewer's Details names it
-> beside the file. The Metadata tab's File row and an exported figure's
-> source line do not carry it; whether they should is open for the owner.
+> beside the file. The project's Details names it beside the reference and
+> on every link to it. The viewer's file title, the Metadata tab's File row
+> and an exported figure's source line do not carry it; whether they should
+> is open for the owner.
 > The diagnostics export of a refused, stopped or set item, which has no
 > single-output report of its own, carries the label `BEGIN` bound to its
 > row, so it names the same release the queue row does.
@@ -710,11 +712,15 @@ Each later in its own slice:
   >   (`unverifiedSettings`, `unverifiedBuildRelease`), and the adopted row
   >   keeps it as `notVerifiedByMscanvas` on the roster row. A row the user
   >   had added another way gains the label when the same object is adopted.
+  >   Until then a row from Add files… or Add mzML folder… carries none, even
+  >   for a finalized output (review, 2026-10-31); whether those routes should
+  >   match the session's finalized outputs is open for the owner.
   >   Advanced outputs are offered for adoption again.
   > - **Project.** Schema 5 adds `notVerifiedByMscanvas` to an input. It is
   >   recorded at registration when the object whose bytes were hashed is a
   >   row this session adopted from a labelled conversion, whatever route
-  >   registered it. `null` means nothing is recorded, never verified. The
+  >   registered it, so a reference registered from a row those routes added
+  >   records `null`. `null` means nothing is recorded, never verified. The
   >   field is required on every input, and `unverifiedBuildRelease` is
   >   explicit `null` on a measured build, like every optional value in the
   >   document: an omitted one is `malformed`. A label with neither half set

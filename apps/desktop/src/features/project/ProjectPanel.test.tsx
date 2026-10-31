@@ -1074,6 +1074,20 @@ describe("the project surface", () => {
       expect(api.saveProjectAs).not.toHaveBeenCalled();
     });
 
+    it("drops an unanswered Save As question when Open replaces its project with a copy of it", async () => {
+      const api = mount(beta1(false));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      await press(screen.getByRole("button", { name: en.projectSaveAs }));
+      expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
+
+      // The same durable project id, from another file: a replacement all the same.
+      api.set({ ...beta1(false), name: "Copy of the same project" });
+      await press(screen.getByRole("button", { name: en.projectOpen }));
+      await waitFor(() => expect(screen.getByText("Copy of the same project")).toBeTruthy());
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(api.saveProjectAs).not.toHaveBeenCalled();
+    });
+
     it("asks before Save As even with nothing unsaved, which can write over beta 1's file", async () => {
       const api = mount(beta1(false));
       await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());

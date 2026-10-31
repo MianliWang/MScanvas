@@ -26,6 +26,7 @@ import {
   openProject,
   projectArtifact,
   projectInput,
+  projectLayer,
   projectRun,
   type FakeProjectApi,
 } from "../../test/projectFixtures";
@@ -421,6 +422,54 @@ describe("the provenance consumer", () => {
     expect(within(hint).getByRole("button", { name: en.provenanceShowDetails })).toBeTruthy();
     // The button says where the answer went; no sentence restates it.
     expect(hint.textContent).toBe(en.provenanceShowDetails);
+  });
+
+  describe("a reference recorded from a conversion MSCanvas did not verify", () => {
+    // ADR 0055, decision 2: the label is carried into the adopted output's
+    // provenance, and this region is that provenance.
+    const RELEASE = "3.0.26204";
+    const labelled = () => ({
+      ...capturedProject({ input: { notVerifiedByMscanvas: { unverifiedSettings: false, unverifiedBuildRelease: RELEASE } } }),
+      layers: [projectLayer({ sourceInputId: INPUT })],
+    });
+    const tags = () => [...details().querySelectorAll("[data-not-verified]")].map((tag) => tag.textContent);
+
+    it("carries the label on the reference and on every link to it", async () => {
+      mount(labelled());
+      const label = en.m74CnvNotVerifiedBuild.replace("{{release}}", RELEASE);
+      await pressWhenReady(`[data-project-inspect="${INPUT}"]`);
+      expect(describing()).toBe("input");
+      // Beside the heading, so the heading's name is still only the file's.
+      expect(within(details()).getByRole("heading", { name: "QC_pool_01.mzML" })).toBeTruthy();
+      expect(tags()).toEqual([label]);
+
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${RUN}"]`)!);
+      expect(describing()).toBe("run");
+      expect(tags()).toEqual([label]);
+
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${ARTIFACT}"]`)!);
+      expect(describing()).toBe("artifact");
+      expect(tags()).toEqual([label]);
+
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${INPUT}"]`)!);
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${projectLayer().id}"]`)!);
+      expect(describing()).toBe("layer");
+      expect(tags()).toEqual([label]);
+    });
+
+    it("says it in Simplified Chinese", async () => {
+      mount(labelled(), { locale: "zh-CN" });
+      await pressWhenReady(`[data-project-inspect="${INPUT}"]`);
+      expect(tags()).toEqual([zh.m74CnvNotVerifiedBuild.replace("{{release}}", RELEASE)]);
+      expect(zh.m74CnvNotVerifiedBuild).not.toEqual(en.m74CnvNotVerifiedBuild);
+    });
+
+    it("shows nothing for a reference with nothing recorded", async () => {
+      mount({ ...capturedProject(), layers: [projectLayer({ sourceInputId: INPUT })] });
+      await pressWhenReady(`[data-project-inspect="${INPUT}"]`);
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${RUN}"]`)!);
+      expect(tags()).toEqual([]);
+    });
   });
 
   it("renders the provenance region in Simplified Chinese", async () => {

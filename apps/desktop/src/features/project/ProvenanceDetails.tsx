@@ -37,6 +37,7 @@
 import { useLayoutEffect, useRef } from "react";
 
 import { Button, Icon, IconButton } from "../../components/ui";
+import { NotVerifiedTag } from "../mzml-preview/NotVerifiedTag";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import {
   artifactKey,
@@ -210,6 +211,20 @@ export function ProvenanceDetails({
     );
   }
 
+  /**
+   * What follows a link to a reference: its current state, then the label a
+   * conversion MSCanvas did not verify left on it (ADR 0055, decision 2), in
+   * one span so the list's indent is not padding inside the tag's border.
+   */
+  function inputFacts(input: ProjectInput) {
+    return (
+      <span className="provenance-current-row">
+        {currentState(input)}
+        <NotVerifiedTag label={input.notVerifiedByMscanvas} />
+      </span>
+    );
+  }
+
   // The schema records a closed set of operations, and a document naming any
   // other is refused when it is opened -- so each run and each record is named
   // by the one kind it can be.
@@ -272,6 +287,9 @@ export function ProvenanceDetails({
         <div data-provenance="input">
           <p className="provenance-kind">{t("provenanceKindInput")}</p>
           <h3 className="provenance-name" title={provenance.input.label}>{provenance.input.label}</h3>
+          {/* Recorded with the reference, beside the heading, so the heading's
+              name stays the file's. */}
+          <NotVerifiedTag label={provenance.input.notVerifiedByMscanvas} />
           {/* Current, and labelled as current. The section below is history. */}
           <p className="provenance-section-label">{t("provenanceCurrentFile")}</p>
           <p className="provenance-current-row">{currentState(provenance.input)}</p>
@@ -321,9 +339,7 @@ export function ProvenanceDetails({
           </p>
           <p className="provenance-section-label">{t("provenanceLayerSource")}</p>
           <ul className="provenance-list">
-            {link(provenance.source, "input", inputName, inspectInput, (input) =>
-              currentState(input),
-            )}
+            {link(provenance.source, "input", inputName, inspectInput, inputFacts)}
           </ul>
           {/* The layer's own history: the QC captures that consumed it. */}
           <p className="provenance-section-label">{t("provenanceLayerUsedBy")}</p>
@@ -346,7 +362,7 @@ export function ProvenanceDetails({
           <p className="provenance-section-label">{t("provenanceConsumed")}</p>
           <ul className="provenance-list">
             {provenance.inputs.map((related) =>
-              link(related, "input", inputName, inspectInput, (input) => currentState(input)),
+              link(related, "input", inputName, inspectInput, inputFacts),
             )}
             {provenance.layers.map((related, index) => {
               const name = provenance.layerSources[index]?.label ?? t("provenanceRelatedGone");
@@ -442,9 +458,7 @@ export function ProvenanceDetails({
               ) : (
                 <ul className="provenance-list">
                   {provenance.sources.map((related) =>
-                    link(related, "input", inputName, inspectInput, (input) =>
-                      currentState(input),
-                    ),
+                    link(related, "input", inputName, inspectInput, inputFacts),
                   )}
                 </ul>
               )}
@@ -469,7 +483,7 @@ export function ProvenanceDetails({
               <p className="provenance-section-label">{t("provenanceLayerSource")}</p>
               <ul className="provenance-list">
                 {provenance.layerSources.map((related) =>
-                  link(related, "input", inputName, inspectInput, (input) => currentState(input)),
+                  link(related, "input", inputName, inspectInput, inputFacts),
                 )}
               </ul>
               {provenance.artifact.qcSnapshot === null ? null : (
