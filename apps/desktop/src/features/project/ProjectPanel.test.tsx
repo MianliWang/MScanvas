@@ -981,4 +981,72 @@ describe("the project surface", () => {
     expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
     expect(screen.getByText(en.projectUnsaved).hasAttribute("data-project-unsaved")).toBe(true);
   });
+
+  it("labels a reference recorded from a conversion MSCanvas did not verify", async () => {
+    const labelled = projectInput({ id: "labelled", label: "converted.mzML", notVerifiedByMscanvas: { unverifiedSettings: true, unverifiedBuildRelease: null } });
+    const plain = projectInput({ id: "plain", label: "plain.mzML", notVerifiedByMscanvas: null });
+    mount(openProject({ inputs: [labelled, plain] }));
+    await waitFor(() => expect(screen.getByText("converted.mzML")).toBeTruthy());
+    expect(row("labelled").querySelector("[data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
+    expect(row("plain").querySelector("[data-not-verified]")).toBeNull();
+  });
+
+  describe("before the Save that upgrades a beta-1 project", () => {
+    const beta1 = (dirty: boolean) =>
+      openProject({ inputs: [projectInput()], dirty, published: true, savingUpgradesSchema: true });
+
+    it("asks first, and writes once only when the keyboard confirms", async () => {
+      const api = mount(beta1(true));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+      await press(screen.getByRole("button", { name: en.projectSave }));
+      expect(api.saveProject).not.toHaveBeenCalled();
+      expect(document.querySelector("[data-project-upgrade]")?.textContent).toContain(en.projectUpgradeWarning);
+      // The question has the keyboard, so the next key press is the answer.
+      const confirm = screen.getByRole("button", { name: en.projectUpgradeSave });
+      expect(document.activeElement).toBe(confirm);
+      await press(confirm);
+      expect(api.saveProject).toHaveBeenCalledTimes(1);
+      // Still one filled primary: the question adds none.
+      expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
+    });
+
+    it("writes nothing on Cancel and hands the keyboard back to Save", async () => {
+      const api = mount(beta1(true));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+      const save = screen.getByRole("button", { name: en.projectSave });
+      await press(save);
+      await press(screen.getByRole("button", { name: en.projectUpgradeCancel }));
+      expect(api.saveProject).not.toHaveBeenCalled();
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(document.activeElement).toBe(save);
+    });
+
+    it("asks before the unsaved question's Save first as well", async () => {
+      const api = mount(beta1(true));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      api.refuseOnce("closeProject", "unsavedChanges");
+      await press(screen.getByRole("button", { name: en.projectClose }));
+      await press(await screen.findByRole("button", { name: en.projectUnsavedSaveFirst }));
+      expect(api.saveProject).not.toHaveBeenCalled();
+      expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
+    });
+
+    it("does not ask for a Save that writes nothing", async () => {
+      const api = mount(beta1(false));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      await press(screen.getByRole("button", { name: en.projectSave }));
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(api.saveProject).toHaveBeenCalledTimes(1);
+    });
+
+    it("says it in Simplified Chinese", async () => {
+      mount(beta1(true), "zh-CN");
+      const save = await screen.findByRole("button", { name: zh.projectSave });
+      await press(save);
+      expect(document.querySelector("[data-project-upgrade]")?.textContent).toContain(zh.projectUpgradeWarning);
+      expect(zh.projectUpgradeWarning).not.toEqual(en.projectUpgradeWarning);
+    });
+  });
 });

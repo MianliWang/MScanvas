@@ -210,14 +210,16 @@ describe("PM9.4 O2: the excluded rows, named", () => {
     expect(within(screen.getByRole("row", { name: /Calibration_reference_/ })).getByRole("checkbox")).toBeChecked();
   });
 
-  it("names at most twenty and counts the rest", async () => {
+  it("names every excluded row, windowed past the threshold like every conversion list", async () => {
     const rows = Array.from({ length: 25 }, (_, index) => mzml(index + 1));
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: rows, availability: availableBackend }));
     fireEvent.click(within(panel).getByRole("radio", { name: "All workspace rows" }));
     const toggle = within(panel).getByRole("button", { name: "Excluded rows (25)" });
     const details = document.getElementById(toggle.getAttribute("aria-controls")!)!;
-    expect(details.querySelectorAll("li")).toHaveLength(20);
-    expect(within(details).getByText("5 more not listed here.")).toBeInTheDocument();
+    const list = details.querySelector(".conversion-name-list")!;
+    expect(list).toHaveAttribute("aria-label", "Excluded rows (25)");
+    expect(list.querySelectorAll("li")).toHaveLength(25);
+    expect(list).toHaveAttribute("data-windowed", "false");
   });
 });
 

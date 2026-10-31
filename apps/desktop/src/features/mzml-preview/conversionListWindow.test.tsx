@@ -130,6 +130,35 @@ describe("conversion lists at the queue's full size", () => {
     await waitFor(() => { expectWindowed(panel.querySelector(".conversion-run-list")); }, { timeout: 15_000 });
   }, 60_000);
 
+  it("windows every colliding name a refused queue lists", async () => {
+    const names = ROWS.map((row) => row.fileName.replace(/\.raw$/u, ".mzML"));
+    const refused: WorkspaceConversionState = {
+      status: "terminal",
+      reason: "completed",
+      operationId: "1",
+      queue: queueOf(ROWS.map((row) => queueItem(row.handle, row.fileName, { state: "notRun" })), {
+        kind: "queue_output_name_collision",
+        summary: "Two or more selected acquisitions would produce the same converted filename.",
+        detail: names.join(", ").slice(0, 400),
+        retryable: false,
+        context: { kind: "outputNameCollision", names },
+      }),
+    };
+    renderApp(createFakePreviewApi({ initialDatasets: ROWS, availability: availableBackend, initialConversion: refused }));
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => { expectWindowed(within(panel).getByRole("list", { name: "Names more than one acquisition would write" })); }, { timeout: 15_000 });
+  }, 60_000);
+
+  it("windows 1,024 excluded rows", async () => {
+    const mzml = ROWS.map((row) => ({ ...row, fileName: row.fileName.replace(/\.raw$/u, ".mzML"), sourceKind: "mzml" as const }));
+    renderApp(createFakePreviewApi({ initialDatasets: mzml, availability: availableBackend }));
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(within(panel).getByRole("radio", { name: "All workspace rows" }));
+    const toggle = await within(panel).findByRole("button", { name: /^Excluded rows \(1,?024\)$/u }, { timeout: 15_000 });
+    fireEvent.click(toggle);
+    await waitFor(() => { expectWindowed(panel.querySelector(".conversion-excluded .conversion-name-list")); }, { timeout: 15_000 });
+  }, 60_000);
+
   it("renders a short list whole, without a scroll box of its own", async () => {
     const rows = ROWS.slice(0, LIST_WINDOW_THRESHOLD);
     const running: WorkspaceConversionState = {

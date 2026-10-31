@@ -26,6 +26,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 
 import { useListWindow, type ListWindowRow } from "../mzml-preview/conversionListWindow";
+import { NotVerifiedTag } from "../mzml-preview/NotVerifiedTag";
 
 import { Button, Icon, IconButton } from "../../components/ui";
 import type { PreviewError } from "../mzml-preview/contracts";
@@ -370,6 +371,8 @@ const BUSY_ID = "project-busy-line";
 const SAVE_LOCATION_ID = "project-save-location";
 /** Why Check linked files and Capture file facts wait: nothing is referenced. */
 const NO_REFERENCES_ID = "project-no-references";
+/** The question before the Save that upgrades a beta-1 project. */
+const UPGRADE_ID = "project-upgrade-question";
 
 export function ProjectPanel({
   session,
@@ -709,6 +712,32 @@ export function ProjectPanel({
     if (!detailsPresent) onRevealDetails?.();
   }, [inspecting, detailsPresent, onRevealDetails]);
 
+  /**
+   * Asks before the Save that upgrades a beta-1 project (ADR 0055, risks).
+   *
+   * Only a Save that writes: one with nothing unsaved leaves beta 1's file as
+   * it is, so a warning there would be false. Every Save goes through here,
+   * so neither the head's nor the unsaved question's can skip it. Save As is
+   * not asked: anywhere but the bound file leaves beta 1's file untouched,
+   * and choosing that file again in the dialog is the explicit choice.
+   */
+  const [upgradeAsked, setUpgradeAsked] = useState(false);
+  const upgradeShown = upgradeAsked && state.savingUpgradesSchema === true && state.dirty;
+  const save = () => {
+    if (state.savingUpgradesSchema === true && state.dirty) setUpgradeAsked(true);
+    else void session.saveProject();
+  };
+  const saveRef = useRef<HTMLButtonElement | null>(null);
+  const upgradeRef = useRef<HTMLButtonElement | null>(null);
+  // The question takes the keyboard when it appears; Cancel hands it back to Save.
+  useLayoutEffect(() => {
+    if (upgradeShown) upgradeRef.current?.focus();
+  }, [upgradeShown]);
+  const cancelUpgrade = () => {
+    setUpgradeAsked(false);
+    saveRef.current?.focus();
+  };
+
   return (
     <div
       ref={surfaceRef}
@@ -759,11 +788,12 @@ export function ProjectPanel({
           {state.open ? (
             <>
               <Button
+                ref={saveRef}
                 variant={headPrimary === "save" ? "primary" : "secondary"}
                 size="sm"
                 refused={working || !state.published}
                 reasonId={working ? BUSY_ID : SAVE_LOCATION_ID}
-                onClick={() => void session.saveProject()}
+                onClick={save}
               >
                 {t("projectSave")}
               </Button>
@@ -789,6 +819,31 @@ export function ProjectPanel({
           ) : null}
         </div>
       </header>
+
+      {/* Before the write, never after it: beta 1 cannot open what this Save
+          writes, and reinstalling beta 1 does not undo it. */}
+      {upgradeShown ? (
+        <div className="project-unsaved" role="group" aria-labelledby={UPGRADE_ID} data-project-upgrade="">
+          <p id={UPGRADE_ID}>{t("projectUpgradeWarning")}</p>
+          <Button
+            ref={upgradeRef}
+            variant="secondary"
+            size="sm"
+            refused={working}
+            reasonId={BUSY_ID}
+            data-project-upgrade-save=""
+            onClick={() => {
+              setUpgradeAsked(false);
+              void session.saveProject();
+            }}
+          >
+            {t("projectUpgradeSave")}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={cancelUpgrade}>
+            {t("projectUpgradeCancel")}
+          </Button>
+        </div>
+      ) : null}
 
       {/* Mounted from the first render and empty until there is something to
           say, so what arrives is announced rather than appearing silently. */}
@@ -839,7 +894,7 @@ export function ProjectPanel({
             size="sm"
             refused={working}
             reasonId={BUSY_ID}
-            onClick={() => void (state.published ? session.saveProject() : session.saveProjectAs())}
+            onClick={() => (state.published ? save() : void session.saveProjectAs())}
           >
             {t("projectUnsavedSaveFirst")}
           </Button>
@@ -1079,6 +1134,9 @@ export function ProjectPanel({
                               {t("projectMemberCount", { count: input.members.length })}
                             </span>
                           ) : null}
+                          {/* Recorded with the reference (project schema 5),
+                              so it reads as unverified wherever it is reopened. */}
+                          <NotVerifiedTag label={input.notVerifiedByMscanvas} />
                         </p>
                       </div>
                       <div className="project-row-actions">
