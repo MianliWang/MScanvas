@@ -136,6 +136,7 @@
 /* One line that loses its middle, never a word broken across two (MiddleEllipsis). */
 .workbench-shell .grouped-roster .dataset-row-name { display: flex; max-width: 100%; overflow: hidden; color: var(--color-text-primary); font-size: 12px; font-weight: 600; line-height: 1.35; white-space: nowrap; }
 .dataset-row-facts { display: flex; flex-wrap: wrap; gap: 0 6px; color: var(--color-text-secondary); font-size: 11px; font-weight: 400; line-height: 1.45; }
+.dataset-row-facts .not-verified-tag { font-size: 11px; line-height: 15px; }
 .roster-row-controls { display: flex; align-items: center; }
 .row-drag-handle, .row-menu-trigger { display: inline-grid; place-items: center; width: 24px; min-height: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--color-text-secondary); }
 .row-drag-handle { cursor: grab; touch-action: none; }

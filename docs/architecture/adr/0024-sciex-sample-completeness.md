@@ -163,6 +163,12 @@ the `msconvert.exe` whose SHA-256 the provider-evidence row pins. A build with
 different wording has no evidence row and never reaches this code. Nothing here
 identifies the vendor DLLs, which remains the open gate ADR 0022 recorded.
 
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** Still
+true after the gate was relaxed for Thermo RAW and Shimadzu LCD: this family
+alone keeps the measured-row requirement, because a build that words the marker
+differently would have a lost sample judged complete — the exit-0, nine-of-ten
+loss measured above.
+
 ## Evidence
 
 [The M3.13 evidence record](../../spikes/M3_SCIEX_COMPLETENESS_EVIDENCE.md). The

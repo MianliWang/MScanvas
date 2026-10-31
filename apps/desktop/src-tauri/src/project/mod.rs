@@ -91,7 +91,8 @@ pub enum ProjectError {
     /// The chosen destination is not named as a project document.
     DestinationNotNamed,
     /// The chosen destination holds something that is not one of this build's
-    /// project documents. Nothing is replaced.
+    /// project documents, or a schema-4 document other than the one this
+    /// session is bound to. Nothing is replaced.
     DestinationNotAProject,
     /// The chosen destination is the same filesystem object as a file this
     /// project references. Nothing is replaced.
@@ -387,12 +388,17 @@ pub enum MemberState {
 /// Where this session last published the open project, and at which revision.
 ///
 /// The revision is what a Save compares against. A document at the bound name
-/// carrying a different project identifier or a different revision is somebody
-/// else's state, and replacing it would discard whatever they did.
+/// carrying a different project identifier, a different revision or a
+/// different schema is somebody else's state, and replacing it would discard
+/// whatever they did.
 #[derive(Debug, Clone)]
 struct PublishedBinding {
     path: PathBuf,
     revision: u64,
+    /// The schema the document at `path` declared: beta 1's
+    /// [`record::PUBLISHED_SCHEMA_VERSION`] for one only opened so far, and
+    /// [`record::SCHEMA_VERSION`] once this session has published there.
+    schema: u32,
 }
 
 impl PublishedBinding {
@@ -728,7 +734,7 @@ impl ProjectStore {
             session.refuse_during_analysis()?;
             refuse_unsaved(session.project.as_ref(), discard_unsaved)?;
         }
-        let document = read_document(path)?;
+        let (document, schema) = read_document(path)?;
         let revision = document.revision;
         // Outside the lock: this hashes every stored result, and says what it
         // found without repairing anything. A missing store is reported as
@@ -738,6 +744,7 @@ impl ProjectStore {
         project.binding = Some(PublishedBinding {
             path: path.to_path_buf(),
             revision,
+            schema,
         });
         project.payloads = payloads;
         let mut session = self.locked();
@@ -829,12 +836,7 @@ impl ProjectStore {
         // compare identities, and on a slow volume with a full roster that is
         // seconds of work. Holding the session lock through it would stop the
         // interface describing the project for that whole time.
-        refuse_unwritable_destination(
-            destination,
-            &resolved,
-            project_id,
-            binding.as_ref().map(|binding| binding.revision),
-        )?;
+        refuse_unwritable_destination(destination, &resolved, project_id, binding.as_ref())?;
         let destination_existed = std::fs::symlink_metadata(destination).is_ok();
         // The document this session is bound to, chosen again: its store is the
         // one it already has, and there is nothing to copy.
@@ -927,6 +929,7 @@ impl ProjectStore {
         project.binding = Some(PublishedBinding {
             path: destination.to_path_buf(),
             revision: project.document.revision,
+            schema: record::SCHEMA_VERSION,
         });
         project.dirty = false;
         if !same_document {
@@ -964,7 +967,13 @@ impl ProjectStore {
     ///
     /// Replaces that one name and nothing else, and only once what is published
     /// there is still the document this session last published: same project
-    /// identifier, same revision. Anything else is another writer's state.
+    /// identifier, same revision, same schema. Anything else is another
+    /// writer's state.
+    ///
+    /// A beta-1 (schema-4) document with no unsaved change is left exactly as
+    /// it is, and this succeeds without writing: publishing it would change
+    /// nothing but its schema, to one beta 1 cannot open (ADR 0055). The first
+    /// Save after a change writes schema 5.
     ///
     /// # Errors
     ///
@@ -987,8 +996,12 @@ impl ProjectStore {
 
         // Outside the lock: this reads a whole published document from a
         // location the user chose, which may be a network share.
-        let published = read_document(&binding.path).map_err(|_| ProjectError::StaleDocument)?;
-        if published.project_id != project_id || published.revision != binding.revision {
+        let (published, schema) =
+            read_document(&binding.path).map_err(|_| ProjectError::StaleDocument)?;
+        if published.project_id != project_id
+            || published.revision != binding.revision
+            || schema != binding.schema
+        {
             return Err(ProjectError::StaleDocument);
         }
 
@@ -1006,6 +1019,11 @@ impl ProjectStore {
         {
             return Err(ProjectError::StaleDocument);
         }
+        // Checked after the bound document was found unchanged, so a clean
+        // Save over a document another writer replaced is still refused.
+        if binding.schema == record::PUBLISHED_SCHEMA_VERSION && !project.dirty {
+            return Ok(());
+        }
 
         let mut candidate = project.document.clone();
         candidate.revision = next_revision(candidate.revision)?;
@@ -1016,6 +1034,7 @@ impl ProjectStore {
         project.binding = Some(PublishedBinding {
             path: binding.path,
             revision: project.document.revision,
+            schema: record::SCHEMA_VERSION,
         });
         project.dirty = false;
         Ok(())
@@ -1032,7 +1051,29 @@ impl ProjectStore {
     /// # Errors
     ///
     /// [`ProjectError::Unavailable`] where a member could not be observed.
+    #[cfg(test)]
     pub fn register_input(&self, primary: &Path) -> Result<InputId, ProjectError> {
+        self.register_input_labelled(primary, |_| None)
+    }
+
+    /// [`Self::register_input`], recording the "not verified by MSCanvas"
+    /// label the session holds for the object whose bytes were hashed (ADR
+    /// 0055; owner decision 2 of 2026-10-29).
+    ///
+    /// `label_of` is asked about the primary's object identity as read through
+    /// the handle its bytes were hashed through, with this store's lock
+    /// released, so the label belongs to what was measured rather than to a
+    /// name. A volume with no identity to give records no label: the session
+    /// admitted no row from one.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::register_input`].
+    pub fn register_input_labelled(
+        &self,
+        primary: &Path,
+        label_of: impl FnOnce(ObjectIdentity) -> Option<record::NotVerifiedByMscanvas>,
+    ) -> Result<InputId, ProjectError> {
         let (generation, base) = {
             let session = self.locked();
             let project = session.open()?;
@@ -1049,7 +1090,7 @@ impl ProjectStore {
         // and hashes the file, and a large one would otherwise block every
         // other description of the project for as long as it took.
         let companions = mandated_companions(primary);
-        let members =
+        let (members, identity) =
             observe::register_members(primary, &companions).map_err(ProjectError::Unavailable)?;
         let locator = observe::registered_locator(primary, base.as_deref());
         let label = display_label(primary);
@@ -1059,6 +1100,7 @@ impl ProjectStore {
             label,
             locator,
             members,
+            not_verified_by_mscanvas: identity.and_then(label_of),
         };
         record::validate_locator(&input.locator).map_err(ProjectError::Document)?;
 
@@ -1752,6 +1794,7 @@ impl ProjectStore {
             generation,
             path,
             identities: proved.identities().to_vec(),
+            not_verified: input.not_verified_by_mscanvas,
         })
     }
 
@@ -3382,6 +3425,8 @@ pub struct AdmissibleInput {
     /// companion was replaced after the proof is not the acquisition that was
     /// proved, and a proof covering the primary alone would say it was.
     identities: Vec<ObjectIdentity>,
+    /// The "not verified by MSCanvas" label the record carries (ADR 0055).
+    not_verified: Option<record::NotVerifiedByMscanvas>,
 }
 
 impl AdmissibleInput {
@@ -3389,6 +3434,13 @@ impl AdmissibleInput {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The label the proved record carries, which the row it is admitted as
+    /// gains once the project has claimed that row.
+    #[must_use]
+    pub const fn not_verified(&self) -> Option<&record::NotVerifiedByMscanvas> {
+        self.not_verified.as_ref()
     }
 
     /// The objects this proof is bound to.
@@ -3478,11 +3530,16 @@ fn names_a_project(destination: &Path) -> bool {
 /// project document -- which is the case the first rule cannot see, and the
 /// case a hard link creates. Identity is compared through open handles, so it
 /// is the objects being compared and not the names that reached them.
+///
+/// A schema-4 document is one this build reads but never wrote, and replacing
+/// it makes it unreadable to beta 1, which wrote it. Only the document this
+/// session is bound to is replaced, by the user choosing that document again;
+/// any other copy, even of this project at this revision, is refused.
 fn refuse_unwritable_destination(
     destination: &Path,
     referenced: &[PathBuf],
     project_id: record::ProjectId,
-    binding_revision: Option<u64>,
+    binding: Option<&PublishedBinding>,
 ) -> Result<(), ProjectError> {
     if local_document::unsafe_published_name(destination) {
         return Err(ProjectError::Document(DocumentProblem::UnsafeTarget));
@@ -3505,6 +3562,12 @@ fn refuse_unwritable_destination(
             let Ok(published) = record::parse(&bytes) else {
                 return Err(ProjectError::DestinationNotAProject);
             };
+            let schema = record::declared_schema(&bytes);
+            let bound =
+                binding.filter(|binding| same_published_document(&binding.path, destination));
+            if schema == Some(record::PUBLISHED_SCHEMA_VERSION) && bound.is_none() {
+                return Err(ProjectError::DestinationNotAProject);
+            }
             // Something is published there and it is one of this build\'s
             // projects. Two cases, and only one of them is a save.
             //
@@ -3521,7 +3584,12 @@ fn refuse_unwritable_destination(
             if published.project_id != project_id {
                 return Err(ProjectError::DestinationNotAProject);
             }
-            if binding_revision != Some(published.revision) {
+            if binding.map(|binding| binding.revision) != Some(published.revision) {
+                return Err(ProjectError::StaleDocument);
+            }
+            // The bound document in another schema than it was bound in was
+            // written by someone else, whatever its revision says.
+            if bound.is_some_and(|bound| schema != Some(bound.schema)) {
                 return Err(ProjectError::StaleDocument);
             }
         }
@@ -3540,8 +3608,9 @@ fn refuse_unwritable_destination(
     Ok(())
 }
 
-/// Reads and validates one published project document.
-fn read_document(path: &Path) -> Result<ProjectDocument, ProjectError> {
+/// Reads and validates one published project document, with the schema its
+/// bytes declare.
+fn read_document(path: &Path) -> Result<(ProjectDocument, u32), ProjectError> {
     let bytes = match local_document::read_bounded(path, MAX_DOCUMENT_BYTES) {
         Ok(Some(bytes)) => bytes,
         Ok(None) => {
@@ -3557,7 +3626,10 @@ fn read_document(path: &Path) -> Result<ProjectDocument, ProjectError> {
             return Err(ProjectError::Document(DocumentProblem::Unreadable));
         }
     };
-    record::parse(&bytes).map_err(ProjectError::Document)
+    let document = record::parse(&bytes).map_err(ProjectError::Document)?;
+    let schema = record::declared_schema(&bytes)
+        .ok_or(ProjectError::Document(DocumentProblem::Malformed))?;
+    Ok((document, schema))
 }
 
 /// Serializes and publishes a validated document.

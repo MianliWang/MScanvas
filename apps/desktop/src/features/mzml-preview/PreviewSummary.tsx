@@ -16,6 +16,7 @@ import {
   REPRESENTATION,
   unitText,
 } from "./format";
+import { NotVerifiedTag } from "./NotVerifiedTag";
 import { spectrumSourceDetails } from "./SpectrumViewport";
 import type { SpectrumViewportState } from "./viewer/spectrumViewport";
 
@@ -81,6 +82,9 @@ export const PreviewSummary = memo(function PreviewSummary({
         <h2 id="preview-summary-heading" className="preview-file-identity" title={fileLabel}>
           {t("summaryIdentity", { name: fileLabel, size: formatByteLength(file.byteLength, t) })}
         </h2>
+        {/* An adopted output keeps its label wherever it is read (ADR 0055):
+            beside the heading, so the file's name stays the heading's name. */}
+        <NotVerifiedTag label={file.notVerifiedByMscanvas} />
       </div>
       <div className="inspector-section">
         <h3>{t("viewerSpectrum")}</h3>

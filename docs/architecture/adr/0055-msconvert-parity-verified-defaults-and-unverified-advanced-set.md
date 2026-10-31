@@ -46,7 +46,16 @@ Vendor families convert only on that one executable digest.
 - **`peakPicking cwt`**. It silently returned one of three peaks, and it
   aborted with an unterminated document on unflanked input (M6.2).
 - **Vendor centroiding** stays evidence-blocked. No lawful profile-mode
-  vendor acquisition exists for it.
+  vendor acquisition exists for it. *2026-10-30: superseded for Thermo RAW.
+  Two public profile acquisitions were measured
+  ([evidence](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)).
+  `peakPicking vendor msLevel=1-` is now a verified row, and other vendor
+  scopes on Thermo RAW are advanced and labelled, with output checks
+  ([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).
+  On other vendor families it stays unchecked and refused. Later the same day
+  a third acquisition measured Orbitrap profile MS2, and
+  `peakPicking vendor msLevel=2-` became a verified row too; every other
+  vendor scope stays advanced.*
 - **"Settings outside the admitted catalog"**, which the after-beta-1 plan
   lists as staying refused.
 
@@ -204,6 +213,25 @@ There is one label and no explanatory paragraph, in keeping with the owner's
 direction to remove secondary explanations. The disclosure is collapsed by
 default.
 
+> **Rendered 2026-10-30 on `be/integrate` (PR #161).** "Not verified by
+> MSCanvas" (`未经 MSCanvas 验证`), followed by "ProteoWizard *release*" when the
+> build is why. It is on every plan row and counted in the plan summary before
+> Run; on each queue row while it waits, runs and after it settles, from the
+> label `BEGIN` binds to the item; beside Add, which it describes, with how
+> many of the outputs carry it (decision 2); on the roster row an adopted
+> output becomes; and on the project reference. No surface sends an advanced
+> intent yet, so the Advanced disclosure and its steps carry no label.
+>
+> **Review, 2026-10-31 (PR #161).** A project reference added back to the
+> Workbench brings its label to the row, and the viewer's Details names it
+> beside the file. The project's Details names it beside the reference and
+> on every link to it. The viewer's file title, the Metadata tab's File row
+> and an exported figure's source line do not carry it; whether they should
+> is open for the owner.
+> The diagnostics export of a refused, stopped or set item, which has no
+> single-output report of its own, carries the label `BEGIN` bound to its
+> row, so it names the same release the queue row does.
+
 ### 4. An ordered filter chain replaces the nine fixed rows
 
 `ConversionIntent` becomes:
@@ -272,6 +300,13 @@ and "is this verified?" remains one lookup in it: the intent equals a row, the
 installed build can express it, the executable is the verified build, and the
 source is in the row's source domain. These are decision 1's four conditions.
 Every other buildable intent is advanced. Steps are lowered in chain order.
+*2026-10-30: ten rows. The tenth is Thermo vendor centroiding of every MS
+level, `peakPicking vendor msLevel=1-`. It is mzML at m/z 64-bit and intensity
+32-bit with zlib, cases `TV1` and `TE1`, and its source domain is Thermo RAW
+([ADR 0059](0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).
+Later on 2026-10-30: eleven rows. The tenth also cites `TQ1`, and the eleventh
+is Thermo vendor centroiding of MS2 and above, `peakPicking vendor msLevel=2-`,
+with the same encoding and source domain, cases `TV2`, `TE2` and `TQ2`.*
 
 The existing capability probe reads which formats, switches and filters a build
 accepts, from that build's own help. This is evidence of spelling only, as
@@ -344,6 +379,27 @@ a different algorithm fails. `-g` waits for a dependency decision, because the
 checks would have to read through gzip and the conversion crate has no gzip
 reader.
 
+> **Implemented 2026-10-30 on `be/integrate`.** No check runs, and nothing is
+> finalized, while the run's owned process tree is not confirmed gone, even
+> after exit 0: the attempt settles as `backend_not_terminated`, or
+> `cancellation_failed` where a stop was requested, so the desktop's
+> owned-process quarantine sees it. This holds for the single-output run and
+> for a SCIEX output set, and for both of decision 6's runs.
+>
+> Two corrections from the PR #161 review, both of which had refused correct
+> outputs:
+>
+> - **A step that changes point counts may empty a spectrum.** Examples are an
+>   m/z window, a threshold and the other steps that set
+>   `spectrum_array_lengths`. The source's payload presence is then not
+>   compared. The output answers for itself instead: a declared point with no
+>   payload still fails, and payload presence against the source is reported
+>   unverified.
+> - **Unpaired spectra inherit an unknown history, never an empty one.** When
+>   a population step unpairs the spectra, a source picker the output copied
+>   cannot be told from one this run added. The requested processing is then
+>   unverified rather than refused as `processing_algorithm_mismatch`.
+
 ### 6. Every other format is written from a private mzML intermediate
 
 **Every non-mzML output is written from a private mzML intermediate.** No
@@ -413,6 +469,71 @@ fails, the set fails whole. Progress shows two phases.
 Non-mzML outputs are finalized as files. They are **not adoptable and not
 previewable**, because the viewer reads mzML only, and the queue item says so.
 
+> **Implemented on `be/two-step`, stacked on draft PR #161, 2026-10-30.**
+> mgf, text, ms1, ms2, cms1, cms2, mz5 and mzMLb, in the conversion crate,
+> tested against the fake provider. No ProteoWizard program ran.
+>
+> - **Route.** `StructuredIntent::intermediate_route` judges run 1's
+>   intermediate at its own encoding (64/64, zlib, indexed), with the changes
+>   the chains and switches ask for; `integrity_route` stays mzML-only. The
+>   plan names the output with the format's extension, and the intermediate as
+>   a direct mzML conversion of the source would be named.
+> - **One staging area, two private directories.** Run 1 writes into the
+>   staging area's output directory. Once the intermediate passes, a second
+>   directory is created exclusively inside it, and run 2 writes there. One
+>   area keeps one staging creation per cancellation, which the live recovery
+>   record requires. The intermediate is never finalized: the same
+>   object-bound teardown removes it with the area, after the final file was
+>   published or refused.
+> - **Run 1's checks.** Every check of decision 5, judged as above. Then the
+>   intermediate is pinned (read sharing only, rehashed against the judged
+>   bytes) and held to the end of run 2, and it must hold something the
+>   format keeps (`output_contains_no_records` otherwise).
+> - **Run 2's argv**, typed: the intermediate, the format flag, that format's
+>   encoding options and the writer switches, then `--outdir` and `--outfile
+>   target`. No filter. The stem is fixed because the evidenced build appends
+>   the format's extension after stripping a known one, and `.txt` is not one
+>   it strips (`msconvert.cpp:82-117`), so a planned `<stem>.txt` would be
+>   written as `<stem>.txt.txt`. The staged `target.<ext>` takes the planned
+>   name when it is finalized. The extensions are `msconvert.cpp:627-661`'s.
+>   Both were read from the source at `47b13cf`, not measured; a build that
+>   names the file otherwise fails closed (`unexpected_output_name`).
+> - **The final file's checks:** exit 0, exactly the expected file, non-zero
+>   length, the format's signature and first record. They read and hash the
+>   handle that is then renamed, no-clobber, onto the planned name.
+> - **Outcome.** `finalized_file` is its own outcome, so no consumer can take
+>   it for an adoptable mzML output; it carries the intermediate's judgement.
+>   It is always advanced, "not verified by MSCanvas": no verified row writes
+>   another format.
+> - **Steps.** Every report of an attempt that reached run 1 names the step
+>   it settled in (`intermediate`, `target`); one settled before run 1 (a
+>   taken name, a stop before anything ran) names none. A refused decision-6
+>   check is `format_check_refused`, detailed by the check's own identifier,
+>   so an intermediate with no records the format keeps reports
+>   `output_contains_no_records` under `output_rejected` when decision 5
+>   refuses it and under `format_check_refused` when decision 6 does. A stop
+>   is answered during run 1, between the runs and during run 2; between the
+>   runs, what it states about the attempt's processes is what run 1's own
+>   ending established, and the staged reading is run 1's directory at
+>   `provider_returned`. While run 1's owned tree is not confirmed gone,
+>   nothing of its output is judged and run 2 is never launched: the attempt
+>   settles in `intermediate`, `backend_not_terminated` (or
+>   `cancellation_failed` where a stop was requested), and the staging area
+>   is kept. Run 2 leaving its tree unconfirmed settles the same way in
+>   `target`, its file unjudged and unpublished. A stop between the runs
+>   settles in `target` only once the intermediate passed its checks.
+> - **Not built:**
+>   - mzXML stays refused (`intent_not_checkable`). Its comparison exists in
+>     the output inspectors but is not wired into a run;
+>   - a SCIEX output set's 1 + N runs;
+>   - the desktop, which still refuses every format but mzML before planning.
+>     The queue's output name and the not-adoptable label are interface work.
+>     Two-phase progress also needs a step signal the crate does not yet give
+>     while a run is live: the step is reported only once the attempt
+>     settles;
+>   - a measurement on the real build, which needs a bounded release of the
+>     ProteoWizard hold.
+
 #### mzXML
 
 mzXML adds two checks to this route.
@@ -464,7 +585,9 @@ is the list. In short:
   local-maximum picker instead.
 - **`peakPicking vendor` anywhere but first.** The help requires first.
 - **Bare `peakPicking` on Thermo RAW.** The vendor picker runs, and the check
-  refuses it (M6.10 S1).
+  refuses it (M6.10 S1). *2026-10-30: still blocked. The request names the
+  default picker; the Thermo vendor picker is asked for as `peakPicking
+  vendor` (ADR 0059).*
 - **Picker parameters a picker ignores.**
 - **Encoding options the chosen format's writer does not read** (decision 4's
   table), truncation and prediction outside mzMLb among them. They could not
@@ -572,6 +695,106 @@ Each later in its own slice:
   > schema 4 (`project/record.rs`), which refuses every other version today, so
   > the slice that bumps it states what the new build does with a schema-4
   > document.
+
+  > **What this build does with a schema-4 document, 2026-10-29. A release
+  > decision for the owner before merge.** The M9 closure says beta 1's
+  > publication began schema 4's compatibility promise
+  > ([M9 closure §4](../../product/M9_CLOSURE.md#4-schema-4--the-canonical-disposition)),
+  > so this build reads it. Beta 1's published
+  > [`INSTALL_AND_SUPPORT.md`](../../release/beta-1/INSTALL_AND_SUPPORT.md#roll-back)
+  > says instead that no compatibility between betas is promised; the owner
+  > decides which one stands, and whether this disposition or the refusal it
+  > replaced ships:
+  >
+  > - The version probe admits 4 and 5. A schema-4 document is read through
+  >   its own exact types: unknown fields are refused, and a schema-5 field
+  >   in it (`notVerifiedByMscanvas`, even `null`) is `malformed`. Every
+  >   schema-4 rule still applies, with the answer schema 5 gives.
+  > - It is held in memory as schema 5 with `notVerifiedByMscanvas: null` on
+  >   every input: nothing is recorded, never verified; beta 1 ran only the
+  >   measured build and recorded no label.
+  > - Opening writes nothing and leaves the project with no unsaved changes.
+  >   A Save with nothing unsaved writes nothing either and succeeds. The
+  >   first Save after a change writes schema 5. Nothing is dropped; besides
+  >   the version, each input gains its `null` label, and a digest is written
+  >   in upper case, the one spelling this build writes (beta 1 wrote no
+  >   other).
+  > - Save As replaces a schema-4 document only where it is the one this
+  >   session is bound to, chosen again in the dialog; that writes schema 5
+  >   with or without a change. Any other copy, even of this project at this
+  >   revision, is refused as `destinationNotAProject` and left as it is.
+  > - The bound document found in another schema than it was bound in, at
+  >   the same project and revision, was written by someone else: Save and
+  >   Save As onto it are refused as `staleDocument`.
+  > - Schemas 1–3 and 6 or later stay `unsupportedVersion`; a document with
+  >   no version stays `malformed`.
+  >
+  > **The consequence: beta 1 cannot open a document this build has
+  > written.** Beta 1 refuses schema 5 as `unsupportedVersion`, and
+  > reinstalling beta 1 (its Roll back) does not undo that. A beta-1 project
+  > that is only opened, saved with nothing unsaved, and closed stays
+  > readable by beta 1. Nothing in the interface says so before the first
+  > write yet: a prompt there is later work (since added: "The prompt",
+  > below), and the next release notes'
+  > known limitations and roll-back section must state the consequence.
+  >
+  > **Known limitation: a beta-1 document near the size bound.** Beta 1
+  > published documents up to 4 MiB. The `null` label adds 37 bytes per
+  > input when written, so a beta-1 document whose size plus 37 bytes per
+  > input exceeds the bound opens but can never be saved by this build
+  > (`a_schema_four_document_without_room_for_its_labels_opens_and_is_never_written`):
+  > every Save after
+  > a change and every Save As is refused as `oversized`, and the file is
+  > left as beta 1 wrote it. Where the size is history that cannot be
+  > removed, the project stays read-only here. No data is lost.
+
+  > **Decided by the owner, 2026-10-30.** This read-and-upgrade disposition
+  > ships, and the M9 closure's position stands: beta 1's publication began
+  > schema 4's compatibility promise. Beta 1's `INSTALL_AND_SUPPORT.md` keeps
+  > its words and gains a dated correction under Roll back. The next release
+  > notes state the upgrade on the first Save after a change, the advice to
+  > keep a copy of a project before saving it in the new version, and the
+  > size limitation above (`CHANGELOG.md`, Unreleased). The prompt before the
+  > first schema-5 write is still interface work (since added: "The prompt",
+  > below).
+
+  > **The prompt, 2026-10-30 (PR #161).** The project state says when the
+  > bound document is schema 4 (`savingUpgradesSchema`). A Save that would
+  > write it, from the head or from the unsaved-changes question, first asks
+  > "Saving upgrades this beta 1 project, and beta 1 cannot open it
+  > afterwards. Keep a copy first if you still need beta 1.", with the
+  > keyboard on Cancel, so a held or repeated Enter on Save never lands on
+  > "Save and upgrade" (review, 2026-10-31); Cancel writes nothing. A
+  > question belongs to the project it was asked in and is dropped once that
+  > project closes or is replaced. A Save with nothing
+  > unsaved writes nothing and is not asked. Save As is asked whenever the
+  > bound document is schema 4, with or without a change, because choosing
+  > that file again in the dialog writes schema 5 over it.
+
+  > **Implemented on `be/integrate` (draft PR #161), 2026-10-29.**
+  >
+  > - **Session.** An adoption ticket carries the item report's label
+  >   (`unverifiedSettings`, `unverifiedBuildRelease`), and the adopted row
+  >   keeps it as `notVerifiedByMscanvas` on the roster row. A row the user
+  >   had added another way gains the label when the same object is adopted.
+  >   Until then a row from Add files… or Add mzML folder… carries none, even
+  >   for a finalized output (review, 2026-10-31); whether those routes should
+  >   match the session's finalized outputs is open for the owner.
+  >   Advanced outputs are offered for adoption again.
+  > - **Project.** Schema 5 adds `notVerifiedByMscanvas` to an input. It is
+  >   recorded at registration when the object whose bytes were hashed is a
+  >   row this session adopted from a labelled conversion, whatever route
+  >   registered it, so a reference registered from a row those routes added
+  >   records `null`. `null` means nothing is recorded, never verified. The
+  >   field is required on every input, and `unverifiedBuildRelease` is
+  >   explicit `null` on a measured build, like every optional value in the
+  >   document: an omitted one is `malformed`. A label with neither half set
+  >   is refused as inconsistent.
+  > - ~~**A schema-4 document is refused as `unsupportedVersion`**, like every
+  >   other version, and nothing migrates. Beta 1's projects therefore do not
+  >   open in this build.~~ Replaced the same day by the read-and-upgrade
+  >   disposition in the note above. Either one is a release decision for the
+  >   owner before merge. *The owner chose read and upgrade on 2026-10-30.*
 - **A larger settings surface.** It cuts against the owner's direction to
   remove secondary explanations. It is collapsed by default, with one label
   and no prose.

@@ -31,13 +31,13 @@ use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
     BackendDiagnosticText, CancellationFailure, CancellationReport, CancellationRequest,
-    ConversionIntent, FinalizedOutput, OperationRunIdentity, OwnedTreeDisposition,
-    ProcessAttemptOutcome, StagedOutputEvidence, StagingResidue, Termination,
+    FinalizedOutput, OperationRunIdentity, OwnedTreeDisposition, ProcessAttemptOutcome,
+    StagedOutputEvidence, StagingResidue, Termination,
 };
 
 use super::adoption::FinalizedOutputAdoptionTicket;
 use super::adoption::FinalizedOutputSetAdoptionTicket;
-use super::conversion::{process_dto, staged_output_dto};
+use super::conversion::{BoundIntent, process_dto, staged_output_dto};
 use super::destination::{
     DestinationHold, DestinationIdentity, DestinationLease, lease_destination,
 };
@@ -59,7 +59,7 @@ use super::dto::{
     queue_is_empty, queue_too_large,
 };
 use super::installation::InstallationIdentity;
-use super::selection::{DatasetId, DatasetSourceKind};
+use super::selection::{DatasetId, DatasetSourceKind, NotVerifiedByMscanvas};
 
 const CONVERSION_RESERVATION_PREFIX: &str = "conversion-reservation-";
 
@@ -436,7 +436,7 @@ pub(super) const fn item_state_of(class: super::conversion::OutcomeClass) -> Ite
 pub(super) fn item_output_topology(
     kind: DatasetSourceKind,
     file_name: &str,
-    intent: ConversionIntent,
+    intent: &BoundIntent,
 ) -> Result<ItemOutputTopology, PreviewErrorDto> {
     // Convertibility first, and for both arms. Producing an output set is a
     // statement about cardinality rather than a licence to convert: a family the
@@ -549,6 +549,9 @@ pub(super) struct QueueItem {
     // where the latest attempt is worth diagnosing, replaced whole when a later
     /// attempt settles, and dropped with the queue.
     diagnostic: Option<Arc<ConversionFailureDiagnosticTicket>>,
+    /// The "not verified by MSCanvas" label the plan stated for this row
+    /// (ADR 0055), so the row says it before any report exists.
+    not_verified: Option<NotVerifiedByMscanvas>,
 }
 
 /// What a stop established about one attempt, path-free.
@@ -631,7 +634,14 @@ impl QueueItem {
             staging_recovery: None,
             published: Vec::new(),
             diagnostic: None,
+            not_verified: None,
         }
+    }
+
+    /// The "not verified by MSCanvas" label this row runs under, bound at
+    /// `BEGIN` from the plan's own rule.
+    pub(super) fn set_not_verified(&mut self, label: Option<NotVerifiedByMscanvas>) {
+        self.not_verified = label;
     }
 
     pub(super) const fn dataset(&self) -> DatasetId {
@@ -747,6 +757,7 @@ impl QueueItem {
             file_name: self.dataset_dto.file_name.clone(),
             source_kind: self.dataset_dto.source_kind,
             output: self.output.to_dto(),
+            not_verified_by_mscanvas: self.not_verified.clone(),
             state: self.state.to_dto(),
             attempts: self.attempts,
             retryable: self.retryable,
@@ -899,7 +910,7 @@ pub(super) struct ConversionQueue {
     // keeping it here: a retry that re-derived an intent could convert the
     // second time under something the first attempt was never judged against,
     // and the user asked for one thing.
-    intent: ConversionIntent,
+    intent: BoundIntent,
     items: Vec<QueueItem>,
     /// Which item is running, or how many have finished when none is.
     current: usize,
@@ -955,7 +966,7 @@ impl ConversionQueue {
     pub(super) fn new(
         document_epoch: u64,
         conflict: ConversionConflictPolicyDto,
-        intent: ConversionIntent,
+        intent: BoundIntent,
         policy: DestinationPolicy,
         items: Vec<QueueItem>,
     ) -> Result<Self, PreviewErrorDto> {
@@ -965,7 +976,8 @@ impl ConversionQueue {
         if items.len() > MAX_CONVERSION_QUEUE_ITEMS {
             return Err(queue_too_large());
         }
-        // Quadratic over at most sixteen items, and deliberately so: a set
+        // Quadratic over at most `MAX_CONVERSION_QUEUE_ITEMS` items, about half
+        // a million integer comparisons at 1,024, and deliberately so: a set
         // would need one more thing to keep in step with the order, and the
         // order is the part that matters here.
         for (index, item) in items.iter().enumerate() {
@@ -1000,8 +1012,8 @@ impl ConversionQueue {
     }
 
     /// What this queue converts under, first attempt and every retry alike.
-    pub(super) const fn intent(&self) -> ConversionIntent {
-        self.intent
+    pub(super) const fn intent(&self) -> &BoundIntent {
+        &self.intent
     }
 
     /// The bound membership, in the order it will run.
@@ -2311,20 +2323,28 @@ impl ConversionSlot {
                     item.set_run = None;
                 }
                 let planned = item.output.planned_name().unwrap_or_default().to_owned();
-                item.adoption = finalized.zip(destination).map(|(finalized, destination)| {
-                    QueueAdoptionAuthority::Single(Arc::new(FinalizedOutputAdoptionTicket::new(
+                // The label the item's own report carries, so the adopted row
+                // and the queue outcome cannot disagree (ADR 0055; owner
+                // decision 2 of 2026-10-29).
+                let not_verified = item.report.as_ref().and_then(|report| {
+                    NotVerifiedByMscanvas::of(
+                        report.unverified_settings(),
+                        report.unverified_build_release().map(str::to_owned),
+                    )
+                });
+                let ticket = finalized.zip(destination).map(|(finalized, destination)| {
+                    Arc::new(FinalizedOutputAdoptionTicket::new(
                         operation,
                         item.dataset,
                         item.dataset_dto.file_name.clone(),
                         planned,
                         destination,
                         *finalized,
-                    )))
+                        not_verified,
+                    ))
                 });
-                item.finalized_outputs = match &item.adoption {
-                    Some(QueueAdoptionAuthority::Single(ticket)) => vec![Arc::clone(ticket)],
-                    _ => Vec::new(),
-                };
+                item.finalized_outputs = ticket.iter().cloned().collect();
+                item.adoption = ticket.map(QueueAdoptionAuthority::Single);
             }
             ItemOutcome::ReportedSet(settlement) => {
                 let settlement = *settlement;
@@ -2337,7 +2357,7 @@ impl ConversionSlot {
                     item.diagnostic_identity(operation, index),
                     &mut settlement,
                 )
-                .map(Arc::new);
+                .map(|ticket| Arc::new(ticket.labelled(item.not_verified.as_ref())));
                 item.error = None;
                 item.report = None;
                 item.set_state = Some(settlement.state());
@@ -2367,15 +2387,18 @@ impl ConversionSlot {
                     item.set_state = None;
                     item.set_run = None;
                 }
-                item.diagnostic = Some(Arc::new(ConversionFailureDiagnosticTicket::of_refusal(
-                    item.diagnostic_identity(operation, index),
-                    retryable,
-                    &error,
-                    // The same facts the row just recorded. One origin, so the
-                    // saved document cannot describe an attempt the queue is
-                    // describing differently.
-                    attempt,
-                )));
+                item.diagnostic = Some(Arc::new(
+                    ConversionFailureDiagnosticTicket::of_refusal(
+                        item.diagnostic_identity(operation, index),
+                        retryable,
+                        &error,
+                        // The same facts the row just recorded. One origin, so the
+                        // saved document cannot describe an attempt the queue is
+                        // describing differently.
+                        attempt,
+                    )
+                    .labelled(item.not_verified.as_ref()),
+                ));
                 item.report = None;
                 item.error = Some(error);
             }
@@ -2408,7 +2431,7 @@ impl ConversionSlot {
                     diagnostics,
                     stopped_set,
                 )
-                .map(Arc::new);
+                .map(|ticket| Arc::new(ticket.labelled(item.not_verified.as_ref())));
                 item.report = None;
                 item.error = None;
                 item.published.clear();

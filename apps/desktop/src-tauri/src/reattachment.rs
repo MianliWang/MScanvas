@@ -133,11 +133,12 @@ pub(crate) fn add_project_input_to_workspace_between(
 ) -> Result<WorkspaceAddResultDto, AdmissionRefusal> {
     let proof = projects.prove_admissible(job, input)?;
     between();
-    let result = service.add_files(std::slice::from_ref(&proof.path().to_path_buf()))?;
+    let mut result = service.add_files(std::slice::from_ref(&proof.path().to_path_buf()))?;
     // Only where a row actually names this object. A rejected candidate has no
     // row to remember, and remembering one for it would make the surface offer
     // to show something that does not exist.
-    if let Some(handle) = admitted_handle(&result) {
+    if let Some(handle) = admitted_handle(&result).map(str::to_owned) {
+        let handle = handle.as_str();
         // The row's own answer about what it admitted, not a second question
         // put to the path. The workspace opened the file for itself after this
         // module's read handles closed, so the only thing that can say whether
@@ -153,6 +154,11 @@ pub(crate) fn add_project_input_to_workspace_between(
             // and ripping a row out of a collection this module does not own
             // would be a worse answer than declining to name it.
             projects.record_admission(&proof, handle, &admitted)?;
+            // Claimed, so the row is the object the record's label is about,
+            // and the label is the object's whichever route brought it in.
+            if let Some(label) = proof.not_verified() {
+                service.label_admitted_row(&mut result, handle, label.clone());
+            }
         }
     }
     Ok(result)

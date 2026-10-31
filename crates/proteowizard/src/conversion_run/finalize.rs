@@ -140,6 +140,19 @@ pub(super) fn finalize_validated(
     // occupying it for every later run. Renaming does not change which object
     // this is, so nothing about the retention goes stale below.
     let retained = FinalizedOutput::retain(&file, valid)?;
+    publish(file, destination, final_name).map(|()| retained)
+}
+
+/// Gives the object `file` holds the planned final name inside `destination`,
+/// refusing to replace anything. Nothing is retained: a file written from an
+/// intermediate (ADR 0055 decision 6) is not adoptable, so nothing will ask
+/// later whether the name still means it.
+#[cfg(windows)]
+pub(super) fn publish(
+    file: File,
+    destination: &DestinationDirectory,
+    final_name: &OsStr,
+) -> io::Result<()> {
     let renamed = single_component(final_name)
         .map(|name| destination.path().join(name))
         .and_then(|target| rename_object_to(&file, &target));
@@ -147,7 +160,7 @@ pub(super) fn finalize_validated(
     // that withholds write sharing, and every moment it is held past its purpose
     // is a moment the user cannot write their own file.
     drop(file);
-    renamed.map(|()| retained)
+    renamed
 }
 
 /// Gives the validated object the planned final name inside `destination`.
@@ -165,14 +178,27 @@ pub(super) fn finalize_validated(
     final_name: &OsStr,
 ) -> io::Result<FinalizedOutput> {
     let (file, valid) = validated.into_parts();
-    // Released before the link so cleanup is never blocked by this reading.
     // Nothing is retained: the link is made from the staged *name*, so there is
     // no renamed object to hold and this platform does not claim one.
+    publish(file, destination, staged, final_name)?;
+    Ok(FinalizedOutput::unbound(valid))
+}
+
+/// Links the staged name to the planned final name, which fails rather than
+/// replacing an existing one. The object-bound guarantee is Windows-only.
+#[cfg(not(windows))]
+pub(super) fn publish(
+    file: File,
+    destination: &DestinationDirectory,
+    staged: &Path,
+    final_name: &OsStr,
+) -> io::Result<()> {
+    // Released before the link so cleanup is never blocked by this reading.
     drop(file);
     let target = destination.path().join(single_component(final_name)?);
     std::fs::hard_link(staged, target)?;
     let _ = std::fs::remove_file(staged);
-    Ok(FinalizedOutput::unbound(valid))
+    Ok(())
 }
 
 /// Refuses anything that is not one plain name.

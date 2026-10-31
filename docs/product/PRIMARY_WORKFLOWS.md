@@ -513,7 +513,8 @@ find, add to the session on purpose, and read -- one file's failure costs only
 that file, and the interface never claims more about any of them than
 output-only validation established.
 
-**Not included:** more than 16 items in one queue, any other vendor family,
+**Not included:** more than 16 items in one queue (1,024 under ADR 0057,
+decision 3, on `be/integrate` (draft PR #161)), any other vendor family,
 taking a row out of a running queue, pausing or resuming one, retrying a stopped
 queue, a progress percentage, parallel conversion, a queue that survives closing
 the application, overwrite, adopting a subset of a queue's outputs, adopting

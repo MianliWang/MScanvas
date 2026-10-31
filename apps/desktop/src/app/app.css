@@ -490,7 +490,7 @@ button:disabled,
 }
 
 .conversion-notice { align-items: flex-start; justify-content: space-between; flex-wrap: nowrap; }
-.conversion-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.conversion-notice > .conversion-notice-text { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
 
 .conversion-plan,
 .conversion-running,
@@ -669,6 +669,41 @@ button:disabled,
   line-height: 18px;
   white-space: nowrap;
 }
+
+/* ADR 0055's one label, the same tag wherever a conversion or its output
+   appears. It wraps rather than clipping the release it names. */
+.not-verified-tag {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0 6px;
+  border: 1px solid var(--color-warning);
+  border-radius: 4px;
+  color: var(--color-warning);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+/* A list of names under a sentence (excluded rows, refused outputs, colliding
+   names): its own scroll box once windowed, like every conversion list. */
+.conversion-name-list {
+  /* Under its sentence, never beside it, inside a flex notice too. */
+  flex-basis: 100%;
+  min-width: 0;
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.conversion-name-list > li { padding: 1px 0; }
+.conversion-name-list[data-windowed="true"] {
+  max-height: 200px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+}
+.conversion-name-list > li.list-window-spacer { margin: 0; padding: 0; border: 0; list-style: none; }
 
 /* A refused choice, marked by more than one channel: a dashed edge and
    secondary ink, and its reason is said once for the form. */
@@ -990,6 +1025,8 @@ button:disabled,
 }
 
 .conversion-run-detail:empty { display: none; }
+.conversion-run-label { min-width: 0; grid-column: 2 / -1; }
+.conversion-plan-list .not-verified-tag { margin-left: 2.2em; }
 
 .conversion-queue-attempts,
 .conversion-queue-facts,

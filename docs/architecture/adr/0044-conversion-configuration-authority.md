@@ -3053,3 +3053,41 @@ occasions that wake this obligation**, which is the general loop bound of
 Decision 4b applied to the one fact this obligation raises for itself; every
 other path that raises it either delivers a reading, discharging the obligation,
 or fails and leaves the reader the control Decision 4 requires as the floor.
+
+## Amendment, 2026-10-29 — the structured intent on the wire (ADR 0055)
+
+[ADR 0055](0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)
+decision 9 step 1 puts the structured intent on this boundary. Decisions 6, 9
+and 13 hold; what changes is what the request may name and what the plan echoes.
+
+- **A plan or `BEGIN` request names its settings exactly once:** `intentId` (a
+  row's stable identity, still resolved only from `ConversionIntent::ADMITTED`)
+  or `intent` (a structured intent). Both or neither is refused as
+  `conversion_intent_ambiguous`. The rows keep their identities, so every
+  existing caller is unchanged.
+- **A structured intent is rebuilt in Rust.** It deserializes into
+  `StructuredIntentParts`, each value validated by its own constructor, and is
+  then built by `StructuredIntent::new` (owner decision 1: serde is a direct
+  dependency of `mscanvas-proteowizard`; no package was added). A value Rust
+  cannot build is refused as `conversion_intent_rejected` with the rule in
+  `context.reason`. One equal to a row is that row: it runs, is judged and is
+  labelled as the row.
+- **The plan echoes Rust's answer.** `intent` is the row descriptor, or `null`
+  for an advanced intent; `canonicalIntent` is the structured intent the queue
+  will be bound to, in canonical form. A plan whose canonical intent differs from
+  what the webview would send now is not current (decision 9). `BEGIN` rebuilds
+  the intent from its own request and binds the queue to that value; a retry
+  reads it back off the queue.
+- **"Verified" stays a row lookup** (ADR 0055 decision 1): `tier()` answers
+  verified only where the intent is a row, the build can express it, the
+  executable is the measured one and the row's evidence covers the family. Every
+  plan row and item outcome carries `unverifiedSettings`, and so does each
+  diagnostics item.
+- **Availability for an advanced intent** is the bound catalog's grammar asked
+  for every option and filter the lowering emits; a missing one is refused as
+  `conversion_intent_unsupported` naming it. Ground rule 1 refuses an intent
+  with no output checks on a family as `conversion_intent_not_checkable` (today
+  every format but mzML, every SCIEX source and the vendor picker), and decision
+  7's source blocks are `conversion_step_blocked_for_source`.
+- **Adoption** of an advanced output is withheld until the project record
+  carries the flag (owner decision 2); its result is reported with the label.

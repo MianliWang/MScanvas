@@ -6,6 +6,10 @@ mod local_document;
 /// purpose: it holds no scientific state, confers no authority and shares no
 /// lane with the conversion, process or roster locks.
 mod preferences;
+/// User-saved conversion presets (ADR 0055), stored beside the UI preferences
+/// under the same binding. Separate from both `preferences`, which holds
+/// nothing scientific, and `preview`, whose locks it never takes.
+mod presets;
 mod preview;
 /// The project record store: what a saved project references, what was run over
 /// it, and the only new write authority in M8.1. Separate from `preview` for
@@ -78,6 +82,66 @@ async fn save_ui_preferences(
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let preferences = Arc::clone(&preferences);
     off_the_async_runtime(move || preferences.save(&request)).await
+}
+
+/// The session's conversion preset store.
+type SharedPresets = Arc<presets::PresetStore>;
+
+/// Lists the user's saved conversion presets. Reads and never writes; a preset
+/// this build cannot express is listed as unusable, without its intent.
+#[tauri::command]
+async fn list_conversion_presets(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    presets: State<'_, SharedPresets>,
+) -> Result<presets::PresetListDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let presets = Arc::clone(&presets);
+    off_the_async_runtime(move || presets.list()).await
+}
+
+/// Saves one preset: a name and an intent this build can express. A taken name
+/// is refused unless the request confirms replacing it.
+#[tauri::command]
+async fn save_conversion_preset(
+    request: presets::PresetSaveRequest,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    presets: State<'_, SharedPresets>,
+) -> Result<presets::PresetWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let presets = Arc::clone(&presets);
+    off_the_async_runtime(move || presets.save(&request)).await
+}
+
+/// Renames one preset, never onto another's name.
+#[tauri::command]
+async fn rename_conversion_preset(
+    request: presets::PresetRenameRequest,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    presets: State<'_, SharedPresets>,
+) -> Result<presets::PresetWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let presets = Arc::clone(&presets);
+    off_the_async_runtime(move || presets.rename(&request)).await
+}
+
+/// Deletes one preset, usable or not.
+#[tauri::command]
+async fn delete_conversion_preset(
+    request: presets::PresetDeleteRequest,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    presets: State<'_, SharedPresets>,
+) -> Result<presets::PresetWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let presets = Arc::clone(&presets);
+    off_the_async_runtime(move || presets.delete(&request)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +374,9 @@ async fn save_project_as(
 ///
 /// Registering a file records where it is and what it currently contains. It
 /// asserts nothing about the file being a supported acquisition, and it admits
-/// nothing to the workspace roster.
+/// nothing to the workspace roster. Where the object hashed is a row this
+/// session adopted from a conversion not verified by MSCanvas, its label is
+/// recorded with it (ADR 0055; owner decision 2 of 2026-10-29).
 #[tauri::command]
 async fn add_project_input(
     app: tauri::AppHandle,
@@ -321,11 +387,16 @@ async fn add_project_input(
 ) -> Result<Option<project::dto::ProjectStateDto>, PreviewErrorDto> {
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let projects = Arc::clone(&projects);
+    let service = Arc::clone(&service);
     let Some(chosen) = chosen_file(&app, preview::dialog::PROJECT_INPUT_DIALOG).await? else {
         return Ok(None);
     };
     off_the_async_runtime(move || {
-        projects.register_input(&chosen).map_err(project_error)?;
+        projects
+            .register_input_labelled(&chosen, |identity| {
+                service.not_verified_label_of_object(identity)
+            })
+            .map_err(project_error)?;
         Ok(Some(projects.describe()))
     })
     .await?
@@ -1721,6 +1792,29 @@ async fn adopt_workspace_conversion_outputs(
         .await?
 }
 
+/// Adds one finalized mzML output of a terminal queue to the workspace.
+///
+/// The sibling of the queue-wide command above, through the same adoption
+/// (ADR 0052). The output is named by the opaque id its queue item already
+/// carries, and only an output the queue-wide command would offer is accepted:
+/// an output of a partial or incomplete set, of an item that did not finalize,
+/// or an unknown id is refused, and nothing is claimed.
+#[tauri::command]
+async fn adopt_workspace_conversion_output(
+    operation_id: String,
+    output_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.adopt_conversion_output(&operation_id, &output_id, document_epoch)
+    })
+    .await?
+}
+
 /// Binds one diagnostics export and reserves the right to choose a file.
 ///
 /// Deliberately synchronous and deliberately separate from saving, for the
@@ -2549,9 +2643,13 @@ pub fn run() {
             // resolved per-user directory. A binding that cannot be made leaves
             // a store that answers `unavailable`, so the application stays
             // completely usable on defaults rather than failing to start.
-            app.manage(SharedPreferences::new(UiPreferenceStore::bind(
-                app.handle(),
+            let preferences = UiPreferenceStore::bind(app.handle());
+            // Conversion presets live beside the preferences, under the same
+            // binding, so there is one path policy and one QA root.
+            app.manage(SharedPresets::new(presets::PresetStore::over(
+                preferences.sibling_directory(),
             )));
+            app.manage(SharedPreferences::new(preferences));
             // A ProteoWizard folder an earlier session remembered is where this
             // one's discovery starts. Nothing is launched here: the first
             // backend reading probes it, and searches automatically instead,
@@ -2609,6 +2707,10 @@ pub fn run() {
             get_bootstrap_status,
             load_ui_preferences,
             save_ui_preferences,
+            list_conversion_presets,
+            save_conversion_preset,
+            rename_conversion_preset,
+            delete_conversion_preset,
             get_project_state,
             create_project,
             close_project,
@@ -2667,6 +2769,7 @@ pub fn run() {
             cancel_current_workspace_conversion_item,
             skip_pending_workspace_conversion_item,
             adopt_workspace_conversion_outputs,
+            adopt_workspace_conversion_output,
             begin_workspace_conversion_diagnostics_export,
             save_workspace_conversion_diagnostics,
             begin_selected_spectrum_export,

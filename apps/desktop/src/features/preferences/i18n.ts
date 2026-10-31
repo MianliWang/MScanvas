@@ -78,8 +78,10 @@ export interface MessageParameters {
   readonly m74CnvNamedDestination: { readonly name: string };
   readonly m74CnvOutputBound: { readonly count: number };
   readonly m74CnvAdoptionSummary: { readonly added: string; readonly duplicates: string; readonly refused: string };
-  readonly m74CnvMoreRefused: { readonly count: number };
   readonly m74CnvManyReady: { readonly count: number };
+  readonly m74CnvNotVerifiedBuild: { readonly release: string };
+  readonly m74CnvNotVerifiedCount: { readonly labelled: string; readonly planned: string };
+  readonly m74CnvAddNotVerified: { readonly labelled: string };
   readonly m74CnvManyDiagnostics: { readonly count: number };
   readonly m74CnvConvertSelected: { readonly count: number };
   readonly m74CnvConvertAll: { readonly count: number };
