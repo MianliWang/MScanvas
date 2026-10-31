@@ -413,6 +413,13 @@ table:
   retained rows (about 76,000 at M0's row size). Without that cap on the table,
   this rule bounds them across the session instead. The worst case is one file
   at the reader's limit: 1,000,000 rows and offsets, and never arrays.
+
+  > **Amended 2026-10-30 by
+  > [ADR 0070](0070-computation-over-decoded-arrays.md), decision 2** (owner
+  > decision U7). The preview state still retains no arrays. A computation
+  > that its own record admits may run one bounded, cancellable pass over a
+  > file's spectra, decoding one spectrum's arrays at a time under decision
+  > 2's caps, and keep only its result.
 - **A selected spectrum needs its preview.** For a dataset with no retained
   preview state, a selected spectrum is refused with a typed error that asks
   for a reopen.
@@ -588,6 +595,13 @@ record. That is why the run summary's retention times at cumulative base-peak
 intensity stay `msaccess`'s (decision 3). Taking the lowest and highest of the
 table rows' own retention times, for the preview's range, is a selection from
 read values, not a computation.
+
+> **Amended 2026-10-30 by
+> [ADR 0070](0070-computation-over-decoded-arrays.md), decision 1** (owner
+> decision U7). The records this decision asks for are written under ADR 0070:
+> one per computation, for projections of stored values only, never a
+> reimplemented mature algorithm. Until a computation's record is accepted,
+> this decision applies to it unchanged.
 
 ### 8. Re-measure before implementing
 

@@ -19,6 +19,7 @@
     "check:repo": "python scripts/check_repo.py",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm check:repo",
     "e2e:browser": "wdio run ./e2e/wdio.browser.conf.ts",
+    "e2e:copy-tour": "wdio run ./e2e/wdio.copy-tour.conf.ts",
     "qa:m4.1": "pnpm e2e:typecheck && pnpm e2e:browser",
     "e2e:typecheck": "tsc -p ./e2e/tsconfig.json --noEmit",
     "e2e:build": "pnpm build && cargo build --release --features e2e --features tauri/custom-protocol --bin mscanvas-desktop --target-dir target/e2e",

@@ -350,13 +350,8 @@ async function metrics(width: number, height: number) {
 /** Goes to the Project surface, by the header's third destination. */
 async function toProject() {
   await browser.$(".workbench-header").waitForDisplayed();
-  await browser.execute(
-    (names: readonly string[]) => {
-      const buttons = [...document.querySelectorAll<HTMLButtonElement>(".workbench-header button")];
-      buttons.find((button) => names.includes(button.textContent ?? ""))?.click();
-    },
-    [en.projectSurface, zh.projectSurface],
-  );
+  // Project is the header's third tab (direction A).
+  await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
   await browser.$(`[data-project-targeted="${LAYERS[0]}"]`).waitForDisplayed();
 }
 

@@ -229,12 +229,28 @@ The three golden documents were regenerated for this change: they are the old
 figures with the new axes, titles and text, and their descriptions are
 byte-identical.
 
+## The saved figure — FIG-007, Rust side
+
+A `.msfigure` document is a recipe and a reference, never a `FigureSpec`: the
+figure kind, the resolved range, the traces, the size, the theme, the edited
+titles and the raster DPI, and the source's locator, byte length and SHA-256.
+Reopening refuses the source unless its bytes are the recorded ones,
+regenerates through `export::figure_spec`, `chromatogram::figure_spec` or
+`linked_figure_spec` and then `publication_figure`, and refuses a figure whose
+data digest differs from the saved one. That digest writes the plot kind, unit
+states, roles and scopes as the saved figure's own fixed tokens, not as this
+model's serialized form, so a `FigureSpec` schema bump refuses no saved figure;
+a new variant of one of those types needs a token in `saved_figure.rs` before
+it compiles. No interface reaches it yet. See
+[ADR 0062](adr/0062-saved-figurespec.md).
+
 ## Still open
 
 FIG-001 through FIG-006 cover the selected spectrum, the chromatogram, and the
 linked two-panel figure of the two — the first two over their full source or the
-range their own viewer has committed to. FIG-007 and FIG-008 are unimplemented.
-There is no XIC, no saved specification and no composer. The viewer's screen
+range their own viewer has committed to. FIG-007 has its Rust side and no
+interface; FIG-008 is unimplemented.
+There is no XIC, no saved-figure interface and no composer. The viewer's screen
 renderer still does not consume `FigureSpec` — screen and export agree by both
 being right rather than by sharing a type — except for a stored targeted MS1
 result, whose screen figure *is* the exported SVG (M9.2).

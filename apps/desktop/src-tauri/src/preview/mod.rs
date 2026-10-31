@@ -73,6 +73,10 @@ mod output_opening;
 /// the complete spectrum Rust retained -- never the complete arrays, never a
 /// path -- and no scientific export is ever taken from one. See ADR 0037.
 mod projection;
+/// A saved figure specification: a recipe that names its source by locator and
+/// recorded bytes, and regenerates the figure through the export's own
+/// builders. No interface reaches it yet. See ADR 0062.
+mod saved_figure;
 pub(crate) mod scientific_output;
 /// The bytes a lawful SCIEX acquisition fixture is made of. Shared by this
 /// module's own suite and the project bridge's, so a compound-file header is

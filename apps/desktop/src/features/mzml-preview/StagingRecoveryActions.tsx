@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { StagingRecovery, StagingReclaimOutcome, StagingReclaimRefusal } from "./contracts";
 
@@ -38,9 +39,9 @@ export function StagingRecoveryActions({ recovery, enabled, refusedBy, reclaim, 
   return <div className="conversion-recovery" role="group" aria-label={t("stagingRecoveryTitle")}>
     <p>{status === "recoverable" ? t("stagingRecoveryOwned", { count: recovery.attempt }) : status === "cleaned" ? null : t(STATUS_MESSAGE[status])}</p>
     <p role="status" id={working ? STAGING_STATUS_ID : undefined}>{working ? t("stagingRecoveryWorking") : answer === "failed" ? t("stagingRecoveryFailed") : answer?.status === "refused" ? t(REFUSAL[answer.reason]) : status === "cleaned" ? t("stagingRecoveryCleaned") : ""}</p>
-    {status === "recoverable" || status === "cleaned" || status === "proofUnavailable" ? <button className="secondary-button" type="button" aria-disabled={!enabled || working}
-      aria-describedby={enabled ? undefined : refusedBy ?? undefined}
-      onClick={() => { if (!enabled || working) return; if (status === "recoverable") cleanup(); else onReview(); }}>
-      {t(status === "recoverable" ? "stagingRecoveryButton" : "stagingReviewNewPlan")}</button> : null}
+    {status === "recoverable" || status === "cleaned" || status === "proofUnavailable" ? <Button variant="secondary" size="sm"
+      refused={!enabled || working} reasonId={enabled ? (working ? STAGING_STATUS_ID : undefined) : refusedBy ?? undefined}
+      onClick={() => { if (status === "recoverable") cleanup(); else onReview(); }}>
+      {t(status === "recoverable" ? "stagingRecoveryButton" : "stagingReviewNewPlan")}</Button> : null}
   </div>;
 }

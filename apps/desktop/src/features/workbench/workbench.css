@@ -1,126 +1,168 @@
-/* M7.2 shell continuation. Scientific figure themes and specifications have their own owners. */
-.workbench-shell { grid-template-rows: auto auto minmax(0, 1fr); }
+/* The shell (direction A, 2.1): one 48 px header row, the notices track, the
+   workspace card and the 28 px status bar. The shell never scrolls; each
+   region scrolls itself. Every in-flow region names its area, so the live
+   regions, the drop overlay and anything else out of flow never take a track. */
+.workbench-shell { grid-template-rows: 48px auto minmax(0, 1fr) 28px; grid-template-areas: "header" "notices" "content" "status"; }
 .workbench-shell [hidden] { display: none !important; }
 /* One left edge for the header, the notices and the content: 16 px at every
-   width (PM9 UI-01). */
-.workbench-header { flex-wrap: wrap; gap: 0 24px; padding: 8px 16px 6px; }
-.workbench-home { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0; border: 0; background: transparent; color: var(--color-accent); }
-.workbench-home strong { color: var(--color-text-primary); font-size: 17px; letter-spacing: -0.02em; }
-.workbench-navigation { display: flex; align-self: stretch; gap: 16px; }
-.workbench-navigation > button { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 8px 0; border: 0; background: transparent; color: var(--color-text-secondary); min-height: 36px; }
-.workbench-navigation > button[aria-current] { color: var(--color-accent); font-weight: 600; }
-.navigation-underline { position: absolute; bottom: -1px; height: 2px; background: var(--color-accent); left: 0; right: 0; }
-.work-status-dot, .project-work-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); }
-.workbench-global-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
-/* Reset and Settings stay quiet. The two panel toggles keep the button's own
-   border, so Details reads as a control while it is closed by default below
-   1700px (PM9 L20); refused, they dim, but never their focus ring. */
-.workbench-global-actions .secondary-button:not([aria-controls]) { border-color: transparent; background: transparent; }
-.workbench-global-actions button[aria-expanded="true"] { background: var(--color-surface-selected); border-color: var(--color-border); }
-.workbench-global-actions button[aria-controls][aria-disabled="true"]:not(:focus-visible) { cursor: not-allowed; opacity: 0.48; }
-/* The header's second line: where the reader is, the folded backend reading,
-   then the drop hint. One row always (PM9 L14–L16): nothing wraps below it.
-   What gives way, and how far, is `fitContextLine`: the hint first and whole,
-   its gap with it, then each context item by rank down to its floor. So every
-   entry keeps its natural width here and takes the width that sets.
+   width (PM9 UI-01). One row down to 960 px, in both languages. */
+.workbench-header { grid-area: header; display: flex; flex-wrap: nowrap; align-items: center; gap: 0 16px; min-height: 0; height: 48px; padding: 0 16px; }
+.workbench-home { display: inline-flex; flex: none; align-items: center; gap: 9px; min-height: 36px; padding: 0; border: 0; background: transparent; color: var(--color-text-primary); }
+.workbench-mark { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 7px; background: var(--color-accent); color: #fff; }
+.workbench-home strong { font-size: 17px; font-weight: 750; letter-spacing: -0.02em; white-space: nowrap; }
+/* Three destinations, one tab style: text, an underline when current. */
+.workbench-navigation { display: flex; flex: none; align-self: stretch; gap: 1px; }
+.workbench-navigation > button { position: relative; display: inline-flex; align-items: center; padding: 0 14px; border: 0; background: transparent; color: var(--color-text-secondary); font-size: 13px; white-space: nowrap; }
+.workbench-navigation > button:hover { color: var(--color-text-primary); }
+.workbench-navigation > button[aria-current="page"] { color: var(--color-accent-hover); font-weight: 650; }
+/* The bold label's width, held by an invisible copy with no accessible text,
+   so the current tab's weight never moves the tabs after it. */
+.workbench-tab-label { display: inline-flex; flex-direction: column; align-items: center; }
+.workbench-tab-label::after { height: 0; overflow: hidden; visibility: hidden; font-weight: 650; content: attr(data-label) / ""; }
+/* v5.11's underline: 3 px, inset 13 px, along the header's foot. */
+.workbench-navigation > button[aria-current="page"]::after { position: absolute; right: 13px; bottom: 0; left: 13px; height: 3px; border-radius: 3px 3px 0 0; background: var(--color-accent); content: ""; }
+/* The nav buttons fill the row, so the ring is drawn inside them. */
+.workbench-navigation > button:focus-visible { outline-offset: -2px; }
+/* In the tab's right padding and out of flow, so a dot that comes and goes
+   never moves a tab (rendered review, issue 6). */
+.work-status-dot { position: absolute; top: 13px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); }
+.workbench-global-actions { display: flex; flex: none; align-items: center; gap: 6px; margin-left: auto; }
+/* A refused header toggle's reason, shown under it while it is hovered or holds
+   the keyboard (B4) rather than as a permanent line in the header. */
+.header-action { position: relative; display: inline-flex; }
+.header-action-reason { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); box-shadow: var(--shadow-panel); color: var(--color-text-primary); font-size: 12px; line-height: 1.4; white-space: nowrap; pointer-events: none; opacity: 0; }
+.header-action > .ui-button:is(:hover, :focus-visible) + .header-action-reason { opacity: 1; }
+/* A refused item dims its label, not its reason: the reason has to stay readable. */
+.roster-menu [role="menuitem"][aria-disabled="true"] { color: var(--color-text-secondary); cursor: not-allowed; }
+.status-tag { display: inline-flex; align-items: center; padding: 0 6px; border: 1px solid var(--color-warning); border-radius: 4px; color: var(--color-warning); font-size: 11px; font-weight: 600; line-height: 16px; white-space: nowrap; }
 
-   The shell is one `auto` grid column, sized by its widest item's min-content.
-   Unwrapped text on this line would count at full length there and widen the
-   whole shell past a narrow window, so the bar's width comes from the header
-   (`contain: inline-size`). */
-.workbench-context-bar { display: flex; flex-basis: 100%; flex-wrap: nowrap; align-items: center; gap: 2px 16px; min-width: 0; margin: 4px 0 0; contain: inline-size; }
-.workbench-context-bar .workspace-drop-hint { flex: none; }
-.shell-backend-toggle { flex: none; min-height: 32px; padding: 2px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.3; white-space: nowrap; }
-.shell-backend-toggle:hover { color: var(--color-text-primary); }
-.shell-backend-toggle[aria-expanded="true"] { background: var(--color-surface-selected); }
-/* Clips only past every floor, which the widths the line is tested at never reach. */
-.shell-context { display: flex; flex: 0 1 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; overflow: hidden; }
-.shell-context-item { flex: none; min-height: 32px; padding: 2px 8px; overflow: hidden; border: 1px solid transparent; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
-/* The floor keeps a readable prefix on every pill that gives way -- "Inspect…",
-   "正在检…" -- so none is left an empty focusable box or a stub that cannot
-   tell viewing from inspecting. An operation's status (rank 1) never gives way.
-   With the hint gone, a 960px line holds one status and four floors; two
-   statuses at once put it at its edge. */
-.shell-context-item:not([data-priority="1"]) { min-width: 5.5em; }
-/* A project with unsaved changes leads with that fact, and its floor keeps the
-   whole word -- "Unsaved…", "未保存的…" -- rather than "Unsave…" (PM9 UI-03). */
-.shell-context-item[data-unsaved] { min-width: 7em; }
-.shell-context-item:hover { border-color: var(--color-border); color: var(--color-text-primary); }
-/* The line clips its overflow for the ellipsis, so the global focus ring, drawn
-   outside the button, would be cut off; draw it inside instead. */
-.shell-context-item:focus-visible { outline-offset: -2px; }
-.workbench-shell .shell-notices { max-height: min(24vh, 180px); overflow: auto; padding: 6px 16px 0; }
-/* With nothing to show -- the backend banner folded, no other notice -- the
-   track keeps no height at all (PM9 L10). */
-.workbench-shell .shell-notices:not(:has(> .notice)) { padding: 0; }
+/* Notices: v5.11's .note, one under another in the track. */
+.workbench-shell .shell-notices { grid-area: notices; display: flex; flex-direction: column; gap: 6px; max-height: min(24vh, 180px); overflow: auto; padding: 12px 16px 0; }
+/* With nothing to show -- ProteoWizard usable, no other notice -- the track
+   keeps no height at all (PM9 L10). */
+.workbench-shell .shell-notices:not(:has(> .notice:not([data-backend-mode="popover"]))) { padding: 0; }
 /* A status that appears is bounded so it cannot take the workspace's height.
-   A disclosure the reader opened is a different thing: it was asked for, and
-   at 180px the setup help was eight paragraphs inside a scrollport the height
-   of two. So the bound relaxes while it is open, and returns when it is not. */
-.workbench-shell .shell-notices:has([data-backend-help][open]) { max-height: min(60vh, 520px); }
-.workbench-shell .workspace-layout { display: grid; gap: 12px; padding: 12px 16px 16px; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; }
-.workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 280px minmax(0, 1fr); grid-template-areas: "roster main"; }
+   The setup help the reader opened was asked for, so the bound relaxes while
+   it is open, and returns when it is not. */
+.workbench-shell .shell-notices:has([data-backend-mode="notice"] [data-backend-help][aria-expanded="true"]) { max-height: min(60vh, 520px); }
+.shell-notices > .notice { align-items: center; }
+.notice-dismiss { margin-left: auto; }
+
+/* The status bar: 28 px, never wrapping; the drop notice gives way first
+   (whole or gone: StatusBar.tsx hides it), then the project name's ellipsis. */
+.workbench-status { grid-area: status; min-width: 0; }
+.workbench-status .ui-status-bar { height: 28px; min-height: 0; flex-wrap: nowrap; gap: 12px; padding: 0 16px; overflow: hidden; background: #fafcff; }
+.workbench-status .ui-status-bar__start { flex: 0 1 auto; flex-wrap: nowrap; gap: 6px; overflow: hidden; }
+.workbench-status .ui-status-bar__end { flex: 0 1000 auto; flex-wrap: nowrap; gap: 12px; overflow: hidden; }
+.workbench-status .ui-button { min-height: 22px; max-width: 100%; padding: 0 8px; font-weight: 500; }
+/* The bar clips its overflow, so the ring is drawn inside each control. */
+.workbench-status .ui-button:focus-visible { outline-offset: -2px; }
+/* Only the project name gives way to an ellipsis; an operation's status, the
+   backend and the busy reason stay whole. */
+.status-item { flex: none; }
+.status-item[data-shell-context="project"] { flex: 0 1 auto; min-width: 0; }
+.status-item-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ProteoWizard: an icon whose colour repeats what the label says. Green only
+   when ready. */
+.status-backend { padding-left: 6px; }
+.status-icon { display: inline-flex; color: var(--color-text-secondary); }
+.status-icon[data-tone="ready"] { color: var(--color-success); }
+.status-icon[data-tone="attention"] { color: var(--color-warning); }
+.status-icon[data-tone="danger"] { color: var(--color-danger); }
+.status-busy { flex: none; overflow: hidden; padding: 0 4px; color: var(--color-text-primary); text-overflow: ellipsis; white-space: nowrap; }
+.status-layout { display: flex; min-width: 0; align-items: center; gap: 6px; margin: 0; }
+.workbench-status .workspace-drop-hint { flex: 0 1000 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The notice gives way; its one recovery does not. */
+.workbench-status .drop-reconnect { flex: none; }
+
+/* Flat (direction A 2.7, GOALS V12): no outer card. The regions run edge to
+   edge between the header and the status bar and are divided by hairlines. */
+.workbench-shell .workspace-layout { grid-area: content; position: relative; display: grid; gap: 0; margin: 0; padding: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; background: var(--color-surface); }
+.workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 264px minmax(0, 1fr); grid-template-areas: "roster main"; }
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }
-.workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 280px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
-.workbench-shell .workspace-sidebar { grid-area: roster; display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: hidden; }
+.workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 264px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
+.workbench-shell .workspace-sidebar { grid-area: roster; display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: hidden; border-right: 1px solid var(--color-border); background: #fbfcfe; }
 /* Each region positions its own out-of-flow accessible text, so none of it is
-   placed against the shell below the window, where it gave the document a
-   height the body cannot scroll (PM9 L22). Each region stays the scroll owner
-   of its own content. A surface is a column: its title, then its content,
-   which fills what is left and scrolls beyond it. */
-.workbench-evidence, .workbench-conversion { position: relative; display: flex; flex-direction: column; grid-area: main; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.workbench-inspector { position: relative; grid-area: inspector; min-width: 0; min-height: 0; overflow: auto; }
+   placed against the shell below the window (PM9 L22). Each region stays the
+   scroll owner of its own content. */
+.workbench-evidence, .workbench-conversion, .workbench-project { position: relative; display: flex; flex-direction: column; grid-area: main; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.workbench-evidence { padding: 12px; }
+.workbench-conversion, .workbench-project { padding: 16px; scrollbar-gutter: stable; }
+.workbench-inspector { position: relative; grid-area: inspector; min-width: 0; min-height: 0; overflow: auto; border-left: 1px solid var(--color-border); background: var(--color-surface); }
 .surface-title { flex: none; margin: 0 0 8px; color: var(--color-text-primary); font-size: 16px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
-.workbench-shell .panel { border-radius: 8px; box-shadow: 0 1px 2px rgb(23 35 55 / 0.03); }
-.workbench-shell .dataset-roster-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.workbench-shell .dataset-roster-panel > .panel-header { flex: 0 0 auto; padding: 12px; }
-.workbench-shell .dataset-roster-panel .panel-header p { white-space: normal; overflow: visible; text-overflow: clip; font-size: 12px; }
-.workbench-shell .dataset-roster-filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 0 12px 8px; }
-.workbench-shell .roster-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; }
-.workbench-shell .roster-field label { font-size: 12px; }
-.workbench-shell .roster-field input, .workbench-shell .roster-field select { width: 100%; min-width: 0; min-height: 32px; font-size: 13px; }
-.workbench-shell .roster-field .link-button { grid-column: 2; justify-self: end; }
-.workbench-shell .dataset-roster-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; border-bottom: 1px solid var(--color-border); }
-.workbench-shell .dataset-roster-actions button { font-size: 12px; min-height: 32px; padding: 4px 8px; }
-.workbench-shell .dataset-roster-actions [data-contextual]:disabled { border-color: transparent; background: transparent; }
-/* Emptying the whole list is the block's least frequent action; it stays
-   where it is, quieter than adding and than acting on the picked rows (L9). */
-.workbench-shell .dataset-roster-actions [data-list-wide] { border-color: transparent; background: transparent; }
-.organization-toolbar { display: flex; flex-wrap: wrap; align-items: center; flex: 0 0 auto; gap: 4px 8px; padding: 6px 12px; }
-.organization-toolbar button { font-size: 12px; }
-.organization-toolbar .secondary-button { border-color: transparent; background: transparent; }
-.organization-toolbar .roster-selection-context { margin-left: auto; padding: 0; }
-/* Each count stays with its word, in either language: the resources join them
-   with a no-break space, and `keep-all` keeps CJK words whole, so the line
-   breaks only at the separators (PM9 UI-16). */
-.roster-selection-context { margin: 0; padding: 4px 12px 8px; font-size: 12px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; word-break: keep-all; }
-.grouped-roster { flex: 1 1 auto; min-height: 80px; padding: 0 4px 8px; margin: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
-.roster-group-header { display: grid; grid-template-columns: 24px minmax(0, 1fr) 28px; align-items: center; min-height: 40px; padding: 2px 4px; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-primary); }
+/* The card is the panel: a column's own panel loses its frame inside it. */
+.workbench-shell .workspace-sidebar > .panel, .workbench-inspector > .panel { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+/* Out of the card's flow: under a drawer, over everything else in the card. */
+.workspace-scrim { position: absolute; z-index: 2; inset: 0; background: rgb(23 32 51 / 0.2); }
+.workbench-shell .panel { border-radius: 6px; box-shadow: none; }
+/* Roster column (v5.11 `.roster`): head, search, list, footer. The card that
+   holds it and the border beside it belong to the shell. */
+.workbench-shell .dataset-roster-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; background: #fbfcfe; }
+.roster-head { flex: none; display: grid; gap: 8px; padding: 12px 12px 10px; }
+.roster-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.roster-title h2 { margin: 0; color: var(--color-text-primary); font-size: 13px; font-weight: 650; line-height: 1.4; }
+.roster-count-tag { margin-left: auto; padding: 0 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Two text-only actions on one row at the 264 px column in either language
+   (direction A 2.1); a longer label wraps rather than clips. */
+.roster-acquire { display: flex; flex-wrap: wrap; gap: 4px; }
+.roster-acquire > .ui-button { padding-inline: 8px; }
+.roster-acquire-reason { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.4; }
+/* v5.11 `.search`: the icon inside the field, the clear action at its edge.
+   The browser's own clear glyph would be a second, unnamed one. */
+.roster-search { position: relative; flex: none; margin: 0 12px 10px; }
+.roster-search > .ui-icon { position: absolute; top: 8.5px; left: 10px; color: var(--color-text-secondary); pointer-events: none; }
+.roster-search > input { width: 100%; min-height: 32px; padding: 4px 34px 4px 32px; border: 1px solid var(--color-border-strong); border-radius: 5px; background: var(--color-surface); color: var(--color-text-primary); font: inherit; font-size: 13px; }
+.roster-search > input::placeholder { color: var(--color-text-secondary); }
+.roster-search > input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.roster-search > .ui-icon-button { position: absolute; top: 1px; right: 1px; }
+.grouped-roster { flex: 1 1 auto; min-height: 80px; margin: 0; padding: 4px 8px 8px; border-top: 1px solid var(--color-border); overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
+/* v5.11 `.group-label`: small, muted, the name first; the count, the group
+   checkbox and its menu on the right, in columns that line up across groups. */
+.roster-group-header { display: grid; grid-template-columns: minmax(0, 1fr) 24px 26px; align-items: center; min-height: 36px; padding: 6px 2px 2px; color: var(--color-text-secondary); }
 .group-disclosure-cell { min-width: 0; }
-.group-disclosure { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; min-height: 32px; padding: 3px; text-align: left; background: transparent; border: 0; font-size: 13px; font-weight: 600; }
-.group-disclosure > span:nth-child(2) { overflow-wrap: anywhere; flex: 1; }
-.group-disclosure > span:first-child { display: inline-block; flex: 0 0 auto; }
-.group-count { color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
-.workbench-shell .grouped-roster .dataset-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) 48px; gap: 2px; align-items: center; margin: 0; padding: 5px 4px; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; font-size: 13px; }
+.group-disclosure { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; min-height: 28px; padding: 2px 4px; border: 0; border-radius: 5px; background: transparent; color: var(--color-text-secondary); font-size: 11px; font-weight: 650; text-align: left; }
+.group-disclosure:hover { background: var(--color-row-hover); color: var(--color-text-primary); }
+.group-disclosure > span:nth-child(2) { flex: 1; overflow-wrap: anywhere; }
+.group-disclosure > span:first-child { display: inline-flex; flex: 0 0 auto; }
+.group-count { color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+/* v5.11 `.data-row`. Spacing comes from padding, never margin: the window
+   measures each row's box, and a margin would drift every row below it. */
+.workbench-shell .grouped-roster .dataset-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px; align-items: center; height: auto; margin: 0; padding: 4px 2px 4px 4px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; }
 .workbench-shell .dataset-roster-panel[data-density="comfortable"] .dataset-row { min-height: 44px; }
 .workbench-shell .dataset-roster-panel[data-density="compact"] .dataset-row { min-height: 32px; padding-top: 1px; padding-bottom: 1px; }
-.grouped-roster input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; margin: 3px; accent-color: var(--color-accent); }
-.workbench-shell .grouped-roster .dataset-row-label { min-width: 0; gap: 1px; }
-.workbench-shell .grouped-roster .dataset-row-name, .workbench-shell .grouped-roster .dataset-row-context { display: block; overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.3; }
-.dataset-row-facts { display: flex; flex-wrap: wrap; gap: 2px 6px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.25; }
+.grouped-roster input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 3px; accent-color: var(--color-accent); }
+.workbench-shell .grouped-roster .dataset-row-label { display: block; min-width: 0; }
+.workbench-shell .grouped-roster .dataset-row-context { display: block; overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.35; }
+/* One line that loses its middle, never a word broken across two (MiddleEllipsis). */
+.workbench-shell .grouped-roster .dataset-row-name { display: flex; max-width: 100%; overflow: hidden; color: var(--color-text-primary); font-size: 12px; font-weight: 600; line-height: 1.35; white-space: nowrap; }
+.dataset-row-facts { display: flex; flex-wrap: wrap; gap: 0 6px; color: var(--color-text-secondary); font-size: 11px; font-weight: 400; line-height: 1.45; }
 .roster-row-controls { display: flex; align-items: center; }
-.row-drag-handle, .row-menu-trigger { display: inline-grid; place-items: center; width: 24px; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--color-text-secondary); }
+.row-drag-handle, .row-menu-trigger { display: inline-grid; place-items: center; width: 24px; min-height: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--color-text-secondary); }
 .row-drag-handle { cursor: grab; touch-action: none; }
-.row-menu-trigger { font-size: 19px; }
-.row-drag-handle:hover, .row-menu-trigger:hover { background: var(--color-surface-selected); color: var(--color-accent); }
+.row-drag-handle:hover, .row-menu-trigger:hover { background: var(--color-surface-selected); color: var(--color-accent-hover); }
+.workbench-shell .grouped-roster .dataset-row:hover { background: var(--color-row-hover); }
+/* Highlighted rows take the blue-soft fill; the viewed row adds the border, and
+   its facts say "Viewed acquisition" in words, so it is not told by shade alone. */
 .workbench-shell .grouped-roster .dataset-row.is-selected { background: var(--color-surface-selected); }
-.workbench-shell .grouped-roster .dataset-row.is-active { box-shadow: inset 3px 0 var(--color-accent); }
+.workbench-shell .grouped-roster .dataset-row.is-active { border-color: var(--color-selected-border); background: var(--color-surface-selected); box-shadow: none; }
 .grouped-roster .is-drop-target { background: #dcecff !important; outline: 2px solid var(--color-accent); outline-offset: -2px; }
 .grouped-roster [data-drag-source="true"] { opacity: 0.35; }
 .roster-drag-overlay { display: inline-block; padding: 8px 12px; border: 1px solid var(--color-accent); border-radius: 6px; color: var(--color-text-primary); background: white; box-shadow: 0 4px 16px rgb(23 35 55 / 0.16); font-size: 13px; white-space: nowrap; pointer-events: none; }
 .organization-notice { flex: 0 0 auto; margin: 0; padding: 5px 12px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.4; }
 .organization-notice:empty { padding: 0; }
 .roster-empty { padding: 16px 10px; font-size: 13px; }
+/* Direction A 2.1: one 48 px row at every width and in both languages -- the
+   checked count, Undo, the list menu, then Convert. The controls never wrap or
+   shrink; only the count gives way, by an ellipsis it never needs short of
+   four-digit counts beside Undo (its whole text is its title). */
+.roster-foot { flex: none; display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; height: 48px; padding: 0 12px; border-top: 1px solid var(--color-border); background: var(--color-surface); }
+.roster-foot > .ui-button { flex: none; }
+.roster-foot-actions { flex: none; display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.roster-foot-actions > .ui-button { flex: none; }
+.roster-selection-context { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 1.35; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.roster-menu .roster-menu-context { padding: 4px 9px 6px; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.roster-menu [role="menuitem"][aria-haspopup="menu"] { display: flex; align-items: center; justify-content: space-between; }
+.roster-menu [role="menuitem"][aria-haspopup="menu"]::after { content: "›"; padding-left: 12px; color: var(--color-text-secondary); }
 .roster-menu { z-index: 100; min-width: 170px; max-width: min(340px, calc(100vw - 24px)); max-height: min(420px, var(--radix-dropdown-menu-content-available-height)); overflow: auto; padding: 5px; border: 1px solid var(--color-border); border-radius: 8px; background: white; color: var(--color-text-primary); box-shadow: 0 6px 20px rgb(23 35 55 / 0.14); font-family: var(--font-ui); font-size: 13px; }
 .roster-menu [role="menuitem"] { padding: 7px 9px; min-height: 32px; border-radius: 4px; overflow-wrap: anywhere; cursor: pointer; }
 .roster-menu [data-highlighted] { background: var(--color-surface-selected); }
@@ -128,127 +170,284 @@
 .roster-menu [role="separator"] { height: 1px; background: var(--color-border); margin: 5px; }
 .roster-menu [data-radix-collection-item] ~ div:not([role]) { color: var(--color-text-secondary); }
 .group-name-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(420px, calc(100vw - 32px)); z-index: 120; padding: 24px; background: white; color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 12px 40px rgb(23 35 55 / 0.18); }
-.group-name-dialog h2 { margin: 0 0 10px; font-size: 18px; }
+.group-name-dialog h2 { margin: 0 0 10px; font-size: 17px; }
 .group-name-dialog p { margin: 0 0 20px; font-size: 13px; line-height: 1.5; color: var(--color-text-secondary); }
 .group-name-dialog label { display: block; font-size: 13px; margin-bottom: 6px; }
 .group-name-dialog input { width: 100%; min-height: 36px; border: 1px solid var(--color-border-strong); border-radius: 6px; padding: 6px 8px; }
+/* Why Save is refused, shown only while it is. */
+.group-name-dialog .group-name-reason { margin: 8px 0 0; font-size: 12px; }
 .group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
-.workbench-shell .viewer-column { flex: 1 0 auto; }
-.workbench-shell .viewer-stack { display: flex; flex-direction: column; gap: 8px; overflow: visible; min-height: 0; }
-.workbench-shell .chromatogram-panel { flex: 0 0 auto; min-height: 0; }
-.workbench-shell .spectrum-table-panel { flex: none; min-height: 0; }
-.workbench-shell .spectrum-table-viewport { flex: none; }
-.scan-view-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 8px 12px; }
-.scan-view-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
-.scan-view-controls input, .scan-view-controls select { min-height: 32px; font: inherit; border: 1px solid var(--color-border); border-radius: 6px; padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
-.scan-view-controls input { width: min(260px, 55vw); }
-.scan-view-controls details { flex: 1 1 110px; font-size: 12px; }
-.scan-view-controls summary { cursor: pointer; min-height: 32px; align-content: center; }
-.scan-view-controls details p { max-width: 65ch; white-space: normal; }
-.spectrum-table-panel .scan-result-count { white-space: normal; overflow: visible; }
-.scan-hidden-selection { margin: 0; padding: 6px 12px; font-size: 12px; }
-.scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 4px; width: 100%; min-height: 32px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+/* The open file (direction A, section 2.1): one 36 px row with the file's name
+   and its three view tabs, then the view. Flat: no evidence padding and no
+   boxes; regions are divided by hairlines. The tab list and its panel are grid
+   items of the row (`display: contents` on the Tabs wrapper), so the name and
+   the tabs share one line. */
+.workbench-evidence[data-evidence="loaded"] { padding: 0; }
+.viewer-file { display: grid; flex: 1 1 auto; grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr); grid-template-rows: 36px minmax(0, 1fr); min-width: 0; min-height: 0; }
+.viewer-file-name { grid-row: 1; grid-column: 1; min-width: 0; margin: 0; padding: 0 16px 0 12px; overflow: hidden; color: var(--color-text-primary); font-size: 14px; font-weight: 600; line-height: 36px; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-tabs { display: contents; }
+.viewer-tabs > .ui-tablist { grid-row: 1; grid-column: 2; gap: 2px; overflow: visible; border-bottom: 0; }
+.viewer-tabs .ui-tab { height: 36px; min-height: 0; padding: 2px 10px 0; color: var(--color-text-secondary); font-size: 13px; }
+.viewer-tabs .ui-tab:hover { color: var(--color-text-primary); }
+.viewer-tabs .ui-tab[aria-selected="true"] { color: var(--color-text-primary); font-weight: 600; }
+/* The view scrolls inside its panel only when a window is too short for the
+   plots' floors (a notice open at 960x640); the tab row stays put. */
+.viewer-tabs > .ui-tabpanel { display: flex; grid-row: 2; grid-column: 1 / -1; flex-direction: column; min-height: 0; overflow: auto; border-top: 1px solid var(--color-border); }
+/* Why a scan cannot be selected: the row's right end, in amber. */
+.viewer-file > .viewer-selection-notice { grid-row: 1; grid-column: 3; align-self: center; justify-self: end; min-width: 0; max-width: 100%; margin: 0; padding: 0 12px; overflow: hidden; color: var(--color-warning); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+/* Chromatogram and spectrum: the chromatogram at its own height, then the
+   scan list beside the spectrum, which takes the rest. On the Scans tab the
+   full table is above the spectrum. */
+/* The chromatogram row is its content, never less: a short window scrolls the
+   view rather than sliding the lower row over the chromatogram's foot. */
+.viewer-view { display: grid; flex: 1 1 auto; grid-template-rows: max-content minmax(240px, 1fr); min-width: 0; min-height: 0; }
+.viewer-view[data-view="scans"] { grid-template-rows: minmax(360px, 1fr); }
+.viewer-lower { display: grid; grid-template-columns: 380px minmax(0, 1fr); min-width: 0; min-height: 0; }
+.viewer-view[data-view="spectra"] > .viewer-lower { border-top: 1px solid var(--color-border); }
+.workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
+.workbench-shell .viewer-view[data-view="scans"] > .viewer-lower { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) minmax(240px, 1.2fr); }
+.viewer-lower > section { min-width: 0; min-height: 0; }
+.viewer-lower > .spectrum-table-panel { border-right: 1px solid var(--color-border); }
+.viewer-view[data-view="scans"] .spectrum-table-panel { border-right: 0; border-bottom: 1px solid var(--color-border); }
+/* Plot regions (direction A): one 32 px head -- the title, what is shown, one
+   toolbar -- then the plot, then one line under its ticks. Every link from the
+   region to the svg is a flex column with a zero minimum, so a pane that is
+   given height passes it on. What comes and goes (an export's result, the
+   range editor, a drawing's status) sits over the plot and never takes its
+   height. */
+.plot-box { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.workbench-shell .plot-box { border: 0; border-radius: 0; box-shadow: none; background: var(--color-surface); }
+/* 36 px, so a focus ring (offset 2, width 2) around a 30 px control stays
+   inside the region that holds it. */
+.plot-head { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 6px; height: 36px; min-width: 0; padding: 0 8px 0 12px; }
+.plot-head h2 { flex: none; margin: 0 4px 0 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.plot-head .ui-button { min-height: 30px; padding-block: 3px; }
+.plot-head .ui-icon-button.ui-button--sm { width: 30px; }
+/* A plot region never clips: its overlays and its controls' rings stay whole. */
+.workbench-shell .viewer-lower > .spectrum-panel { overflow: visible; }
+/* What the spectrum is: the scan between its steps, then its MS level and size,
+   which give way first so the tools keep the head's one line. */
+.spectrum-stepper { display: flex; flex: none; align-items: center; gap: 4px; }
+.spectrum-scan { min-width: 4ch; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+/* One line that drops whole facts from its end, never a cut word: a fact that
+   does not fit wraps onto a second line the fixed height hides (P5, the point
+   count first, then the representation). */
+.spectrum-head-facts { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: 0 8px; min-width: 0; height: 18px; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.spectrum-head-facts > span { flex: none; }
+.plot-tools { flex: none; flex-wrap: nowrap; gap: 4px; margin-left: auto; }
+.plot-tools-divider { flex: none; width: 1px; height: 18px; margin: 0 2px; background: var(--color-border); }
+.figure-quick-actions { display: flex; align-items: center; gap: 4px; }
+/* The traces: two toggles drawn as v5.11's segmented pair. Both may be on, or
+   neither, so they are pressed buttons rather than a single choice. */
+.plot-traces { display: inline-flex; flex: none; gap: 2px; padding: 2px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface-subtle); }
+.plot-traces > .ui-button { min-height: 24px; padding: 2px 8px; border: 0; }
+.plot-traces > .ui-button[aria-pressed="true"],
+.plot-traces > .ui-button[aria-pressed="true"]:hover:not([aria-disabled="true"]) { background: var(--color-surface); box-shadow: var(--shadow-segment-checked); color: var(--color-accent-hover); font-weight: 650; }
+.chromatogram-swatch { width: 18px; height: 8px; }
+.chromatogram-swatch > path { stroke: currentcolor; stroke-width: 2; }
+.plot-menu-reason { display: block; color: var(--color-text-secondary); font-size: 11px; }
+/* A refused plot export stays legible, because its reason is printed inside it. */
+.plot-menu [role="menuitem"][aria-disabled="true"] { opacity: 1; color: var(--color-text-tertiary); }
+.plot-menu-note { max-width: 300px; padding: 4px 9px 6px; color: var(--color-text-secondary); font-size: 11px; line-height: 1.4; }
+.workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-height: 0; padding: 0; overflow: hidden; }
+.workbench-shell :is(.chromatogram-plot, .spectrum-viewport, .spectrum-viewport-plot, .spectrum-figure) { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-width: 0; min-height: 0; margin: 0; }
+/* The plot frame (review issue 2): the value title on its own row above the
+   drawing, the value ticks left of the drawing, the position ticks under it;
+   the position title is on the line under the ticks (`.plot-foot`), so no
+   tick ever gives way to a title. The labels are HTML placed by percentage
+   over the stretched drawing, so no plot height distorts them; nothing in the
+   svg is text. */
+.plot-frame { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 14px minmax(0, 1fr) 14px; flex: 1 1 auto; min-width: 0; min-height: 0; padding: 0 16px 0 6px; }
+.plot-frame > svg { display: block; grid-column: 2; grid-row: 2; width: 100%; height: 100%; min-height: 0; padding: 0; }
+.plot-axis-title { min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.plot-axis-title-y { grid-column: 1 / -1; grid-row: 1; justify-self: start; max-width: 100%; padding-left: 2px; }
+.plot-axis-title-x { flex: none; max-width: 50%; }
+.plot-x-ticks, .plot-y-ticks { position: relative; min-width: 0; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+.plot-x-ticks { grid-column: 2; grid-row: 3; }
+/* A fixed width, wide enough for the longest label the ticks write ("-1.5e+6"):
+   sized from the labels, the drawing would move when a gesture redraws them,
+   and a plot whose box moves abandons the gesture. */
+.plot-y-ticks { grid-column: 1; grid-row: 2; width: calc(7ch + 8px); }
+/* The chromatogram's value labels sit in its drawing's own left gutter. */
+.chromatogram-y-ticks { grid-column: 2; justify-self: start; width: 6.4%; }
+.plot-tick { position: absolute; color: var(--color-text-tertiary); line-height: 14px; white-space: nowrap; }
+.plot-x-ticks .plot-tick { top: 0; transform: translateX(-50%); }
+.plot-y-ticks .plot-tick { right: 5px; transform: translateY(-50%); }
+.plot-gridlines line { stroke: var(--color-chart-grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.plot-baseline { stroke: var(--color-border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* Plot bodies (direction A): the chromatogram 200 px at 768 px of window and
+   140 px at 640, growing with the window; the spectrum takes what its region
+   has left (260 and 180 px at those sizes). The minimums are explicit: an
+   svg's automatic minimum is its aspect ratio, which a stretched viewBox makes
+   meaningless. */
+.workbench-shell .chromatogram-svg { height: clamp(140px, calc(46.875vh - 160px), 360px); min-height: 0; }
+.workbench-shell .chromatogram-frame { flex: none; }
+.workbench-shell .spectrum-plot { min-height: 160px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
+/* The spectrum's floor, explicit so the view's grid rows (240 px) can hold
+   it: the drawing's 160 px, its title and tick rows, the head and the line
+   under it. A window too short for it scrolls the view instead of squeezing
+   the plot. */
+.workbench-shell .spectrum-frame { min-height: 188px; }
+.workbench-shell .viewer-lower > .spectrum-panel { min-height: 240px; }
+/* The plot bodies clip, so a focused plot, and a control along a body's
+   edge, draws its ring inside itself, as the status bar's do. */
+.workbench-shell :is(.chromatogram-svg, .spectrum-plot, .plot-range-actions .ui-button, .plot-status .ui-button):focus-visible { outline-offset: -2px; }
+/* One line under the ticks: what range is on screen (and, on the
+   chromatogram, which scan is selected or hovered), then the position title. */
+.plot-foot { display: flex; flex: none; align-items: center; gap: 12px; height: 16px; min-width: 0; padding: 0 16px 0 12px; color: var(--color-text-secondary); font-size: 11px; line-height: 16px; }
+.plot-foot > p { margin: 0; }
+.plot-readout { display: flex; flex: 1 1 auto; gap: 12px; min-width: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plot-readout > span { flex: none; }
+.plot-readout > span:last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.workbench-shell .plot-foot :is(.chromatogram-axis-caption, .chromatogram-readout, .spectrum-viewport-range) { margin: 0; font-size: 11px; line-height: 16px; }
+.workbench-shell .plot-foot .spectrum-viewport-range { display: block; overflow: hidden; text-overflow: ellipsis; }
+.plot-foot .chromatogram-readout[data-idle] { display: none; }
+/* The readout is the plot's description always, and on screen only while the
+   pointer or the keyboard is on the plot (P9: the table row and the spectrum
+   head already say what is selected). */
+.plot-foot .chromatogram-readout:not([data-hover]) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.chromatogram-panel:has(.chromatogram-svg:focus-visible) .plot-foot .chromatogram-readout { position: static; width: auto; height: auto; overflow: hidden; clip-path: none; }
+/* The range on screen, in the plot head beside Fit all (P4). */
+.plot-head .plot-range { flex: 0 1 auto; min-width: 7em; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* The selected scan's label at the top of its accent rule (P7). */
+.chromatogram-cursor-label { position: absolute; grid-column: 2; grid-row: 2; top: 2px; margin-left: 4px; padding: 0 4px; border-radius: 3px; background: rgb(255 255 255 / 0.88); color: var(--color-accent-hover); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 16px; white-space: nowrap; pointer-events: none; }
+.chromatogram-cursor-label[data-side="left"] { margin-left: -4px; transform: translateX(-100%); }
+/* The range editor and a pending band's two actions, over the drawing's top
+   right: opening them never moves the plot. */
+.plot-range-actions { position: absolute; z-index: 2; top: 16px; right: 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 6px; max-width: calc(100% - 32px); pointer-events: none; }
+.plot-range-actions > .plot-range-form { flex-basis: 100%; }
+.plot-range-actions > * { pointer-events: auto; }
+.plot-committed-range:not(.visually-hidden) { margin: 0; padding: 0 6px; border-radius: 4px; background: var(--color-surface); color: var(--color-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.plot-pending-actions { display: flex; gap: 6px; }
+.plot-range-form { display: grid; grid-template-columns: auto minmax(80px, 1fr) auto minmax(80px, 1fr) auto auto; gap: 6px; align-items: center; width: min(560px, 100%); padding: 8px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); font-size: 12px; }
+.plot-range-form input { min-width: 0; width: 100%; }
+.plot-range-form p { grid-column: 1 / -1; margin: 0; color: var(--color-text-secondary); font-size: 11px; }
+.plot-range-band { fill: rgb(42 108 201 / .12); stroke: #286ac5; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+/* What the drawing is doing (loading, failed, an empty window), over the plot. */
+.workbench-shell .spectrum-viewport { position: relative; }
+.spectrum-viewport-status:not(:empty) { position: absolute; z-index: 1; top: 40%; left: 50%; max-width: 80%; margin: 0; padding: 4px 10px; border-radius: 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; text-align: center; transform: translate(-50%, -50%); }
+.spectrum-viewport-retry { position: absolute; z-index: 1; top: calc(40% + 28px); left: 50%; transform: translateX(-50%); }
+.spectrum-body > .notice, .spectrum-body > .empty-state { margin: 8px 10px; }
+/* What the last export did, over the drawing's bottom right corner (the range
+   actions have the top right): a result never takes height from the plot.
+   Empty at rest. */
+/* On the plot head's line, never over the data: it takes the space the range
+   and the facts give up, and empties to nothing. */
+.plot-status { display: flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: 45%; color: var(--color-text-primary); font-size: 12px; }
+.plot-status .spectrum-export-status, .plot-status .spectrum-export-message { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plot-status-line { min-width: 0; }
+.plot-status > * { pointer-events: auto; }
+.plot-status .spectrum-export-status, .plot-status .spectrum-export-message { margin: 0; font-size: 12px; }
+.plot-status .spectrum-export-message { display: flex; flex-wrap: nowrap; align-items: center; gap: 0 6px; }
+/* The words give way, never the dismiss beside them. */
+.plot-status > .spectrum-export-status { display: flex; }
+.spectrum-export-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plot-status .spectrum-export-message > .ui-icon-button { flex: none; }
+.plot-status-line { display: flex; align-items: center; gap: 4px; }
+.plot-status > .spectrum-export-status:not(:empty),
+.plot-status-line:has(> .spectrum-export-status:not(:empty)) { padding: 4px 4px 4px 10px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); }
+
+/* The scan list (direction A): one head with the title, the count, the search
+   and the MS-level filter, then the table. */
+.workbench-shell .spectrum-table-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.scan-head { display: flex; flex: none; align-items: center; gap: 8px; height: 36px; min-width: 0; padding: 0 8px 0 12px; }
+.scan-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+/* The count stays whole beside its title; the search gives way first. */
+.scan-head .scan-result-count { flex: none; max-width: 40%; margin: 0 auto 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.plot-search { position: relative; flex: 0 1 180px; min-width: 64px; }
+.plot-search > .ui-icon { position: absolute; top: 7px; left: 8px; color: var(--color-text-secondary); pointer-events: none; }
+.scan-head input, .scan-head select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: 5px; padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
+.scan-head select { flex: none; max-width: 40%; }
+.scan-head .plot-search > input { width: 100%; padding-left: 28px; }
+.scan-hidden-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 0; padding: 4px 8px 4px 12px; font-size: 12px; }
+.spectrum-table-panel > .empty-state { flex: none; padding: 16px; }
+/* Compact enough for the side column: short labels that ellipsize rather
+   than run into the next header, and a small sort glyph. */
+.workbench-shell .spectrum-table-row { gap: 4px; padding: 0 8px 0 12px; }
+/* Every sortable field across the evidence (the Scans tab); the identifier
+   reads left to right like the text it is. */
+/* The scan number's floor holds "扫描编号" and its sort mark whole (the rows still fit 960 px). */
+.spectrum-table-panel[data-layout="full"] .spectrum-table-row { grid-template-columns: minmax(48px, 0.5fr) minmax(72px, 0.6fr) minmax(160px, 2.4fr) minmax(64px, 0.6fr) minmax(88px, 0.9fr) minmax(96px, 1fr) minmax(112px, 1fr) minmax(112px, 1fr) minmax(96px, 1fr); }
+.spectrum-table-panel[data-layout="full"] .spectrum-table-cell:nth-child(3) { padding-left: 16px; text-align: left; }
+.spectrum-table-panel[data-layout="full"] .spectrum-table-cell:nth-child(3) .scan-sort-button { justify-content: flex-start; }
+.scan-sort-button { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 100%; min-width: 0; min-height: 28px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.scan-sort-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* RT over "(unit not reported)": a second header line, never an assumed unit (P11). */
+.scan-sort-label:has(.scan-sort-unit) { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.1; }
+.scan-sort-unit { color: var(--color-text-secondary); font-size: 9.5px; font-weight: 400; white-space: nowrap; }
+.spectrum-table-cell:first-child .scan-sort-button { justify-content: flex-start; }
 .scan-sort-button svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; transition: opacity 120ms; }
 .scan-sort-button svg[data-direction="none"] { opacity: .65; }
 .scan-sort-button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .scan-sort-button:hover { color: var(--color-text-primary); }
-.spectrum-table-head .spectrum-table-cell { overflow: visible; }
+.spectrum-table-head .spectrum-table-cell { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .scan-sort-button svg { transition: none; } }
-.workbench-shell .spectrum-panel { flex: 0 0 auto; min-height: 0; }
-/* The header's own bottom padding already separates it from the plot's
-   controls, so the body adds little above them (PM9.3, 960x640). */
-.workbench-shell .chromatogram-body, .workbench-shell .spectrum-body { padding: 4px 12px 8px; }
-.workbench-shell .chromatogram-svg { flex: none; height: 150px; }
-.workbench-shell .spectrum-plot { height: 220px; touch-action: pan-y pinch-zoom; cursor: crosshair; }
-.workbench-shell .spectrum-summary { margin: 0; font-size: 13px; }
-.workbench-shell .spectrum-panel > .panel-header { flex-direction: row; align-items: start; flex-wrap: wrap; padding: 8px 12px; }
-.workbench-shell .chromatogram-panel > .panel-header { padding: 8px 12px; }
-/* The figure actions and the export disclosure share one line, as the
-   chromatogram's figure actions and its Export toggle do, rather than the
-   disclosure taking a line of its own under them. Opened, the disclosure
-   takes the whole width below. */
-.spectrum-export-header-actions { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: flex-end; gap: 6px; }
-/* A plot header's actions keep the heading's row wherever their buttons fit
-   beside it (PM9 UI-27, UI-28). The header decides that from the buttons
-   alone: the actions' floor is their controls in one line. Inside, the
-   caption goes before the buttons where there is room and under them where
-   there is not -- `wrap-reverse` stacks the line it wraps onto above the
-   first -- so it never costs the buttons their row. */
-.chromatogram-panel > .panel-header > .figure-quick-actions,
-.spectrum-panel > .panel-header > .spectrum-export-header-actions { flex: 1 1 0%; min-width: min-content; align-items: flex-start; justify-content: flex-end; }
-.chromatogram-panel > .panel-header > .figure-quick-actions,
-.spectrum-panel > .panel-header > .spectrum-export-header-actions:not(:has(> .spectrum-export-disclosure[open])) { flex-wrap: nowrap; }
-.panel-header .figure-quick-group { flex: 1 1 auto; min-width: min-content; flex-wrap: wrap-reverse; justify-content: flex-end; row-gap: 4px; }
-.panel-header .figure-quick-group > .figure-quick-actions { flex-wrap: nowrap; }
-.panel-header .figure-quick-actions > button { flex: none; white-space: nowrap; }
-/* Never paid for by the sentence about the spectrum: where heading and
-   controls do not fit side by side, the controls take their own row. */
-.spectrum-panel > .panel-header > div:not(.spectrum-export-header-actions) { flex: none; }
-.spectrum-export-disclosure { margin-left: auto; }
-.spectrum-export-disclosure[open] { width: 100%; }
-.spectrum-export-disclosure > summary { width: fit-content; margin-left: auto; white-space: nowrap; }
-.spectrum-export-disclosure > .spectrum-export { width: 100%; margin-top: 8px; }
-.spectrum-source-details, .plot-source-details, .plot-range-editor, .plot-gesture-help { font-size: 12px; color: var(--color-text-secondary); }
-.spectrum-export-disclosure > summary, .spectrum-source-details > summary,
-.plot-source-details > summary, .plot-range-editor > summary, .plot-gesture-help > summary {
-  cursor: pointer; min-height: 32px; align-content: center; border-radius: 4px;
-}
-.plot-range-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; margin: 4px 0; }
-/* A range line gives way inside its own box before the pending actions and
-   disclosures beside it take a second row: with a real run's values, and for
-   a pending retention-time band at a 699 px column with any values (PM9
-   UI-32). 12em is wider than any one formatted value, so no number breaks. */
-.plot-committed-range { flex: 1 1 12em; margin: 0; font-size: 12px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.plot-pending-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.plot-range-actions button { min-height: 32px; }
-.plot-range-form { display: grid; grid-template-columns: auto minmax(90px, 1fr) auto minmax(90px, 1fr); gap: 6px; align-items: center; padding: 8px 0; }
-.plot-range-form input { min-width: 0; width: 100%; }
-.plot-range-form p { grid-column: 1 / -1; margin: 0; max-width: 64ch; }
-.plot-gesture-help p, .plot-source-details p { margin: 4px 0 8px; line-height: 1.45; max-width: 85ch; }
-.plot-range-editor[open], .plot-gesture-help[open] { flex-basis: 100%; }
-.chromatogram-context { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; }
-.chromatogram-context > .chromatogram-axis-caption { flex: 1 1 auto; }
-.chromatogram-context > details[open] { flex-basis: 100%; }
-.workbench-shell .spectrum-body { gap: 4px; }
-.plot-range-band { fill: rgb(42 108 201 / .12); stroke: #286ac5; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
-.workbench-shell .spectrum-caption p, .workbench-shell .chromatogram-axis-caption, .workbench-shell .chromatogram-readout { margin: 4px 0; font-size: 12px; line-height: 1.4; }
-.spectrum-panel > .spectrum-export-status { padding: 0 12px; }
-.spectrum-panel > .spectrum-export-status:empty { margin: 0; padding: 0; }
-.spectrum-source-details .metadata-lines { overflow-wrap: anywhere; }
-@media (max-width: 600px) { .plot-range-form { grid-template-columns: auto minmax(90px, 1fr); } }
-.workbench-shell .workspace-placeholder { flex: 1 0 auto; }
+.workbench-shell .spectrum-panel { min-height: 0; }
+/* The rows fill the pane and never size it: the spectrum beside them sets the
+   lower row's floor, so a long run cannot push the evidence into scrolling. */
+.workbench-shell .spectrum-table-viewport { flex: 1 1 auto; min-height: 0; contain: size; }
+
+/* Details (spec 4, v5.11 .inspector) and the Metadata tab: dt left, dd right,
+   a light rule between rows, a 1 px rule between sections, sentence-case
+   headings (V4). The Metadata tab scrolls inside its panel. */
+.workbench-inspector .inspector-panel { position: relative; min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+.workbench-inspector .inspector-panel > .provenance-empty { padding: 14px; }
+/* Details' × only while it is a drawer; as a column the header toggle is beside it. */
+.inspector-panel > .inspector-close { display: none; }
+[data-drawer="details"] .inspector-panel > .inspector-close { position: absolute; z-index: 1; top: 8px; right: 8px; display: inline-flex; }
+[data-drawer="details"] .inspector-panel > .inspector-section:first-of-type { padding-right: 48px; }
+.preview-metadata { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.preview-metadata > .inspector-section { max-width: 720px; }
+:is(.workbench-inspector, .preview-metadata) .inspector-section { padding: 14px 14px 16px; border-bottom: 1px solid var(--color-border); }
+:is(.workbench-inspector, .preview-metadata) .inspector-section :is(h2, h3) { margin: 0 0 8px; color: var(--color-text-secondary); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+:is(.workbench-inspector, .preview-metadata) .inspector-section h4 { margin: 12px 0 6px; font-size: 12px; font-weight: 650; }
+.workbench-inspector .inspector-section h2.preview-file-identity { margin: 0; color: var(--color-text-primary); font-size: 14px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+:is(.workbench-inspector, .preview-metadata) .metadata-list { gap: 0; }
+:is(.workbench-inspector, .preview-metadata) .metadata-list > div { padding: 7px 0; border-bottom: 1px solid #edf1f5; }
+:is(.workbench-inspector, .preview-metadata) .metadata-list dt { color: var(--color-text-secondary); }
+:is(.workbench-inspector, .preview-metadata) .metadata-list dd { overflow-wrap: anywhere; }
+.workbench-inspector .spectrum-facts { grid-template-columns: minmax(0, 1fr); }
+.inspector-text { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+.metadata-disclosure { width: 100%; justify-content: flex-start; text-align: left; white-space: normal; }
+.metadata-section { padding: 2px 0 8px 22px; }
+/* Reading (S2): the viewer's final frame, empty. The frames appear after
+   300 ms so a quick read never flashes them. */
+.viewer-skeleton { display: grid; flex: 1 1 auto; grid-template-rows: 36px minmax(0, 2fr) minmax(0, 3fr); gap: 8px; min-height: 0; }
+.viewer-skeleton-name { align-self: center; padding: 0 12px; overflow: hidden; color: var(--color-text-primary); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-skeleton-plot { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.viewer-skeleton-lower { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 12px; min-height: 0; }
+.viewer-skeleton-head { flex: none; width: 40%; height: 16px; border-radius: 4px; background: var(--color-surface-subtle); }
+.viewer-skeleton-frame { flex: 1 1 auto; min-height: 0; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-surface-subtle); }
+.viewer-skeleton-table { display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow: hidden; }
+.viewer-skeleton-row { flex: none; height: 22px; border-radius: 4px; background: var(--color-surface-subtle); }
+.viewer-skeleton > [aria-hidden="true"] { animation: viewer-skeleton-in 120ms linear 300ms both; }
+@keyframes viewer-skeleton-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .viewer-skeleton > [aria-hidden="true"] { animation-duration: 1ms; } }
+/* Evidence states (spec 3.6), centred in the card: an icon, one heading, a
+   row of buttons. */
+.evidence-state { flex: 1 1 auto; min-height: 0; }
+.evidence-state .ui-empty-state__message { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 56ch; }
+.evidence-state .ui-empty-state__message > strong { color: var(--color-text-primary); font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.evidence-state .ui-empty-state__message > span { font-size: 12px; overflow-wrap: anywhere; }
+.evidence-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+/* A retained file's name can outrun the card; the action wraps rather than
+   being clipped at both ends. */
+.evidence-state .ui-button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+/* The first run is the drop target (spec 3.6). */
+.workbench-evidence[data-evidence="first-run"] .evidence-state { border: 1px dashed var(--color-border-strong); border-radius: 9px; }
 .workbench-conversion > .panel { flex: 1 0 auto; overflow: visible; }
 .workbench-inspector > .panel { min-height: 100%; }
+/* At 1050 px and below the roster and Details are drawers over the card (spec
+   3.1): absolute, 300 px, modal while open, with the scrim behind them. */
 @media (max-width: 1050px) {
-  .workbench-header { gap: 0 12px; }
-  .workbench-global-actions { gap: 3px; }
-  .workbench-navigation { gap: 12px; }
+  .workbench-header { gap: 0 8px; }
+  .workbench-navigation > button { padding: 0 12px; }
   .workbench-shell .workspace-layout,
   .workbench-shell[data-roster-open="true"] .workspace-layout,
   .workbench-shell[data-details-open="true"] .workspace-layout,
   .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main"; }
-  .workbench-shell .workspace-sidebar, .workbench-inspector { grid-area: main; }
-  .workbench-shell .dataset-roster-filters { grid-template-columns: 1fr 1fr; }
-}
-.roster-help { font-size: 12px; color: var(--color-text-secondary); }
-/* A compact control's 32 px, as every other disclosure summary here (PM9 UI-45). */
-.roster-help summary { min-height: 32px; padding-block: 6px; cursor: pointer; }
-/* The summary spans the clipping roster panel edge to edge, so its ring is
-   drawn inside it, as the context line's are (PM9.7 F15). */
-.roster-help summary:focus-visible { outline-offset: -2px; }
-.roster-help p { margin: 6px 0; }
-
-/* The panel arrangement is on screen either way; this says it will not survive
-   a restart. Takes its own header row, as the drop hint does, so a long label
-   wraps instead of pushing the global actions out of reach. */
-.workbench-header .workspace-layout-unsaved {
-  flex-basis: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
+  .workbench-shell .workspace-sidebar, .workbench-inspector { position: absolute; z-index: 3; inset-block: 0; grid-area: auto; width: min(300px, 100%); box-shadow: 0 8px 24px rgb(23 35 55 / 0.18); }
+  .workbench-shell .workspace-sidebar { left: 0; }
+  .workbench-inspector { right: 0; }
+  .viewer-lower, .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
 }

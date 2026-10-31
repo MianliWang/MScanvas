@@ -16,8 +16,10 @@ const inspect = vi.fn();
 function Surface<A extends "rt" | "mz", D extends Domain>({ port }: { readonly port: PlotInputPort<A, D> }) {
   publications += 1;
   const { attachPlot } = usePlotInput({ port, geometry: { width: 1000, left: 0, drawnWidth: 1000 }, onInspect: inspect });
-  return <div><svg role="img" aria-label="Scientific plot" tabIndex={0} ref={attachPlot}>
-    <rect className="plot-range-band" visibility="hidden" /></svg><PlotRangeActions port={port} /></div>;
+  // A plot box is a section, and its range actions sit in the box's foot, so
+  // they find the plot through the section as they do in the viewer.
+  return <section><svg role="img" aria-label="Scientific plot" tabIndex={0} ref={attachPlot}>
+    <rect className="plot-range-band" visibility="hidden" /></svg><div><PlotRangeActions port={port} editing={false} onClose={() => {}} /></div></section>;
 }
 function Harness({ axis }: { readonly axis: "rt" | "mz" }) {
   const rt = useViewerInteraction(); const mz = useSpectrumViewport();
