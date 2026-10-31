@@ -131,10 +131,10 @@ The owner was shown the list of the 20 decisions that block work now, which is a
 | G4 | (a): each analysis page enters the navigation when its first working function ships. There are no placeholder pages. FE-2's target leaves room for five page tabs at 960 px | None |
 | P175 | (a): #175 keeps exporting a declared profile spectrum as a line, and its webview commit draws the same line on screen | None. N-05 is 4 slices and N-06 is 1 |
 | A0060 | Q1: a View button. Q8: slice 3 builds on #164's structure (FE-1 (a)), with decision 1's content, the phases, Cancel and the CNV-D8 progress amendment as written. The pane's place moves with FE-2. ADR 0060's slice-2 notes 2 (#181's two cases) and 3 (the departure from decision 6) are accepted as written. The defaults of Q2–Q5 and Q7 stand | Open: Q6, the hold release, under HR-1 |
-| A0061 | ADR 0061's four questions as it recommends. Matching rows come back automatically, and restore is on by default. The checked state is restored, and the off switch is in the restore document. The roster stays out of the `.mscanvas` project file for now | Open: the roster in the project file comes back with S-6 |
+| A0061 | ADR 0061's four questions as it recommends. *2026-10-31:* Q1 is one explicit Restore workspace action the user starts, not automatic at start-up; this replaces the earlier "automatic". Restore is on by default. The checked state is restored, and the off switch is in the restore document. The roster stays out of the `.mscanvas` project file for now. *2026-10-31:* Q10, no: `matching` does not mean unchanged content. A restored row is a locator plus an arrangement, put-back admits the bytes there then as Add files does, and the interface says the row is added again, not verified | Open: the roster in the project file comes back with S-6. ADR 0061's questions 5 to 9 stay open |
 | A0062 | ADR 0062's seven questions as implemented: (1) a standalone `.msfigure` JSON file; (2) a changed source is refused, with no relink and no redraw; (3) the data digest and (4) the document digest are kept; (5) paths are relative inside the document's folder and absolute outside it; (6) no saved figure in project documents or stored targeted results in this slice; (7) a figure whose source is a cache entry cannot be saved. One change to Q5: the save dialog shows the recorded locator itself and no help sentence | Work: #180 drops Q5's help sentence. Open: the locator that would let a cache-entry figure be saved (Q7) |
-| A0063 | ADR 0063's five questions as recommended: (1) only the known root of the ProteoWizard folder is named; (2) the error ring is recorded at `PreviewErrorDto::new`; (3) a `Verified build` line is added after #161; (4) a Settings button, a read-only preview and the text clipboard; (5) workspace contents stay out | None. The button comes after #164 |
-| A0064 | ADR 0064's eight questions as recommended: (1) route A1 now; (2) MCP runs approved through elicitation, with clients without it refused; (3) the desktop refuses operations that would start ProteoWizard while the CLI holds the run lock; (4) the installer carries `mscanvas.exe` and does not change PATH; (5) the CLI requires roots; (6) `run --reclaim-staging` as written; (7) `CREATE_NO_WINDOW` for every backend process; (8) a fixed cap on the MCP store, with `planStoreFull`. ADR 0058 is amended in the same step, so a method can leave the app as a plan file | Work: the ADR 0058 amendment. Open: question 7's hold-release window, under HR-1 |
+| A0063 | ADR 0063's five questions as recommended: (1) only the known root of the ProteoWizard folder is named; (2) the error ring is recorded at `PreviewErrorDto::new`; (3) a `Verified build` line is added after #161; (4) a Settings button, a read-only preview and the text clipboard; (5) workspace contents stay out. *2026-10-31:* (6) the account-name check stays as implemented: only the value shapes that admit a word, matched as a whole word; (7) a failed conversion's outcome (`detailedOutcome`, else `outcome`) joins the recent-errors ring, recorded at the report projection, and decision 2 says the ring also holds conversion outcomes | Work: Q7 is implemented after #161 merges, because the report projection is #161's code. The button comes after #164 |
+| A0064 | ADR 0064's eight questions as recommended: (1) route A1 now; (2) MCP runs approved through elicitation, with clients without it refused; (3) the desktop refuses operations that would start ProteoWizard while the CLI holds the run lock; (4) the installer carries `mscanvas.exe` and does not change PATH; (5) the CLI requires roots; (6) `run --reclaim-staging` as written; (7) `CREATE_NO_WINDOW` for every backend process; (8) a fixed cap on the MCP store, with `planStoreFull`. ADR 0058 is amended in the same step, so a method can leave the app as a plan file. *2026-10-31:* Q3 confirmed again with the corrected cost: opening a new preview is refused too while the lock is held, because an open still runs `msaccess`, until the reader's own run summary replaces it (R-1) | Work: the ADR 0058 amendment. Open: question 7's hold-release window, under HR-1 |
 | RUN-1 | ADR 0065's five questions as recommended: (1) history is on by default; (2) Off forgets what is stored; (3) 200 runs and 64 MiB in total, 16 MiB per run; (4) the advanced intent is stored; (5) Clear keeps runs in progress. History is app-local and per user, never in the project. EXP-25's JSON is one run's redacted record | None |
 | DEF-1 | Both of #185's proposed changes are accepted. Save As, and every new project's first save, reserve the result-store name and leave `<name>.mscanvas.payloads`. Rows a refused queue never reached settle as Not run, and Retry leaves them | Work: squash-merge #185. The rendered retry-queue check belongs to N-01 and N-03 |
 | M161 | No: the 2026-10-29 rule covers #161 once its blockers 1–6 close | None |
@@ -161,10 +161,10 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 | 6 | G4 | When the analysis pages enter the navigation | Decided 2026-10-30: each page appears when its first working function ships. No placeholder pages | choice | now |
 | 7 | P175 | Export profile spectra as lines in slice 2, before slice 3 | Decided 2026-10-30: keep it, and draw the line on screen in the same webview commit | choice | now |
 | 8 | A0060 | ADR 0060 Q1 (entry point) and Q8 (direction); slice-2 notes | Decided 2026-10-30: a View button; slice 3 builds on #164's structure and moves with FE-2; accept the notes. Q2–Q7 defaults stand | choice | now |
-| 9 | A0061 | ADR 0061's four restore questions; the roster in the project file | Decided 2026-10-30: as recommended; the roster stays out of `.mscanvas` for now | confirm | now |
+| 9 | A0061 | ADR 0061's four restore questions; the roster in the project file | Decided 2026-10-30: as recommended; the roster stays out of `.mscanvas` for now. 2026-10-31: Q1 is one explicit Restore workspace action, not automatic; Q10, no | confirm | now |
 | 10 | A0062 | ADR 0062's seven saved-figure questions | Decided 2026-10-30: as implemented, except that Q5 drops its help sentence | confirm | now |
-| 11 | A0063 | ADR 0063's five diagnostics questions | Decided 2026-10-30: as recommended | confirm | now |
-| 12 | A0064 | ADR 0064's eight M10 route questions; ADR 0058's "presets stay in the app" | Decided 2026-10-30: as recommended; amend ADR 0058 so a method can leave the app as a file | confirm | now |
+| 11 | A0063 | ADR 0063's five diagnostics questions | Decided 2026-10-30: as recommended. 2026-10-31: Q6 and Q7 as recommended | confirm | now |
+| 12 | A0064 | ADR 0064's eight M10 route questions; ADR 0058's "presets stay in the app" | Decided 2026-10-30: as recommended; amend ADR 0058 so a method can leave the app as a file. 2026-10-31: Q3 confirmed again with the corrected cost | confirm | now |
 | 13 | RUN-1 | ADR 0065's five questions on conversion run history (RUN-007; EXP-23, EXP-25) | Decided 2026-10-30: as recommended: on by default, Off forgets, 200 runs and 64 MiB, the advanced intent stored, Clear keeps runs in progress; app-local, never in the project | confirm | now |
 | 14 | DEF-1 | #185's two proposed changes: every new project's first save and every Save As to a new name leaves a `.payloads` folder; rows a refused queue never reached settle as Not run, and Retry leaves them | Decided 2026-10-30: accept both | confirm | now |
 | 15 | M161 | Does #161 still need the owner's own merge? | Decided 2026-10-30: no. The 2026-10-29 rule covers it once blockers 1–6 close | confirm | now |
@@ -488,7 +488,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### A0061. Restore workspace (#177)
 
-*Decided 2026-10-30: as recommended (section 1b).*
+*Decided 2026-10-30: as recommended (section 1b). 2026-10-31: Q1 is one explicit Restore workspace action, replacing "automatic", and Q10 is no (section 1b).*
 
 - **Question.** ADR 0061 asks four questions:
   1. put matching rows back automatically, or only through an explicit Restore action;
@@ -498,9 +498,9 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
   Also: should the `.mscanvas` project file carry the roster too (EXP-22)?
 - **Recommendation:**
-  - Answer the four questions as the ADR recommends: automatic, on, checked state kept, switch in the document.
+  - Answer the four questions as the ADR recommends: automatic (replaced on 2026-10-31 by one explicit Restore workspace action the user starts), on, checked state kept, switch in the document.
   - Keep the roster out of the project file for now. The project already carries layers. Revisit with S-6, because sample metadata is keyed by `LayerId`.
-  - Why: rows come back as in v5.11 (RO-28), and the start-up re-check marks a changed or missing file without dropping or relinking it.
+  - Why: rows come back as in v5.11 (RO-28), and the start-up re-check marks a changed or missing file without dropping or relinking it. *2026-10-31:* automatic put-back was dropped for its start-up costs: it would hash every RAW, LCD and WIFF whole at every start, hold the mutation gate, lease every file and repeat in a second window.
 - **Blocks:** #177's interface slice (RO-28).
 - **Urgency:** now. **Kind:** confirm.
 - **Sources:** ADR 0061:200–208 (`origin/be/restore-workspace`); PR #177 body; GAP RO-28, EXP-22.
@@ -524,7 +524,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### A0063. Copy diagnostics (#178)
 
-*Decided 2026-10-30: as recommended (section 1b).*
+*Decided 2026-10-30: as recommended (section 1b). 2026-10-31: questions 6 and 7, added to ADR 0063 after A0063, answered as recommended (section 1b).*
 
 - **Question.** ADR 0063 asks five questions:
   1. name only the known root of the ProteoWizard folder;
@@ -539,12 +539,12 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### A0064. M10 automation route (#176)
 
-*Decided 2026-10-30: as recommended, with ADR 0058 amended in the same step (section 1b).*
+*Decided 2026-10-30: as recommended, with ADR 0058 amended in the same step (section 1b). 2026-10-31: question 3 confirmed again with the corrected cost (section 1b).*
 
 - **Question.** ADR 0064 asks eight questions on `origin/docs/m10-route` (`7f91c05b`). The sixth to eighth, and narrower wording for the second and third, come from the review answers since the PR opened:
   1. route A1, a small CLI package over the desktop library, now; A2 only on a measured need;
   2. MCP runs approved through elicitation. The adapter writes the approval text and no tool call can satisfy it, but it does not prove that a person answered; clients without elicitation are refused. The alternative is an approval record written with `mscanvas approve` in the person's own terminal, which trusts no client;
-  3. while the CLI holds the run lock, the desktop refuses operations that would start ProteoWizard and names the holder. Viewing an mzML is not refused once #175's reader is the preview's;
+  3. while the CLI holds the run lock, the desktop refuses operations that would start ProteoWizard and names the holder. Viewing an mzML is not refused once #175's reader is the preview's (wrong: an open still runs `msaccess`, so opening a new preview is refused too; confirmed again with that cost on 2026-10-31);
   4. the installer carries `mscanvas.exe` and does not change PATH (a release change);
   5. roots are required for the CLI;
   6. `run --reclaim-staging` removes a staging directory that a killed run left behind: only for its own plan's items, only while it holds the run lock, only one carrying MSCanvas's marker, and it reports each removal. Without the flag the item refuses (`StagingTargetExists`) and names the folder;
