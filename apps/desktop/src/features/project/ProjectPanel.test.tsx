@@ -1002,9 +1002,10 @@ describe("the project surface", () => {
       await press(screen.getByRole("button", { name: en.projectSave }));
       expect(api.saveProject).not.toHaveBeenCalled();
       expect(document.querySelector("[data-project-upgrade]")?.textContent).toContain(en.projectUpgradeWarning);
-      // The question has the keyboard, so the next key press is the answer.
+      // The question has the keyboard on Cancel: a held or repeated Enter on
+      // Save must not write what it warns about.
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: en.projectUpgradeCancel }));
       const confirm = screen.getByRole("button", { name: en.projectUpgradeSave });
-      expect(document.activeElement).toBe(confirm);
       await press(confirm);
       expect(api.saveProject).toHaveBeenCalledTimes(1);
       // Still one filled primary: the question adds none.
@@ -1055,6 +1056,22 @@ describe("the project surface", () => {
       await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
       expect(document.querySelector("[data-project-upgrade]")).toBeNull();
       expect(api.saveProject).not.toHaveBeenCalled();
+    });
+
+    it("drops an unanswered Save As question when its project closes, before another beta-1 project opens", async () => {
+      const api = mount(beta1(false));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      await press(screen.getByRole("button", { name: en.projectSaveAs }));
+      expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
+
+      api.set(NO_PROJECT);
+      await press(screen.getByRole("button", { name: en.projectClose }));
+      await waitFor(() => expect(screen.getByText(en.projectNone)).toBeTruthy());
+      api.set({ ...beta1(false), projectId: "aaaaaaaa-0000-4111-8111-000000000002", name: "Another beta-1 project" });
+      await press(screen.getByRole("button", { name: en.projectOpen }));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(api.saveProjectAs).not.toHaveBeenCalled();
     });
 
     it("asks before Save As even with nothing unsaved, which can write over beta 1's file", async () => {

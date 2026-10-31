@@ -138,19 +138,39 @@ const LONG_FINISHED = {
     : { state: "finalized", attempts: 1, finalizedOutputs: [{ outputId: `long-output-${String(index)}`, fileName: row.fileName.replace(/\.raw$/u, ".mzML") }], ...finalizedAttemptFacts(), notVerifiedByMscanvas: LABEL }))),
 };
 
+/** Every output name of MANY, as a collision refusal lists them. */
+const COLLIDING = MANY.map((row) => row.fileName.replace(/\.raw$/u, ".mzML"));
+const COLLISION = {
+  kind: "queue_output_name_collision",
+  summary: "Two or more selected acquisitions would produce the same converted filename, so nothing was queued.",
+  detail: COLLIDING.join(", ").slice(0, 400),
+  retryable: false,
+  context: { kind: "outputNameCollision" as const, names: COLLIDING },
+};
+
 /** A full queue refused before it ran, every output name colliding: the names, windowed. */
 const COLLIDED = {
   status: "terminal",
   reason: "completed",
   operationId: OPERATION,
-  queue: queueOf(MANY.map((row) => queueItem(row.handle, row.fileName, { state: "notRun" })), {
-    kind: "queue_output_name_collision",
-    summary: "Two or more selected acquisitions would produce the same converted filename, so nothing was queued.",
-    detail: MANY.map((row) => row.fileName.replace(/\.raw$/u, ".mzML")).join(", ").slice(0, 400),
-    retryable: false,
-    context: { kind: "outputNameCollision", names: MANY.map((row) => row.fileName.replace(/\.raw$/u, ".mzML")) },
-  }),
+  queue: queueOf(MANY.map((row) => queueItem(row.handle, row.fileName, { state: "notRun" })), COLLISION),
 };
+
+/**
+ * That a colliding-name list is outside every live region and that Convert,
+ * where it is on screen, is described without a single one of the names: a
+ * windowed list mounts rows as it scrolls, and neither an announcement nor a
+ * description should read them.
+ */
+async function expectNamesBesideTheSentence() {
+  const facts = await browser.execute((convert: string, names: readonly string[]) => {
+    const live = [...document.querySelectorAll(".conversion-name-list")].filter((list) => list.closest("[role='status'],[aria-live]") !== null).length;
+    const ids = document.querySelector(convert)?.getAttribute("aria-describedby")?.split(/\s+/u) ?? [];
+    const description = ids.map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+    return { live, described: names.filter((name) => description.includes(name)).length };
+  }, CONVERT, COLLIDING);
+  if (facts.live !== 0 || facts.described !== 0) throw new Error(`colliding names read aloud: ${JSON.stringify(facts)}`);
+}
 
 /** STARTED on the unmeasured build: the waiting and the running row say it before any report. */
 const STARTED_LABELLED = {
@@ -765,8 +785,39 @@ const STOPS: readonly Stop[] = [
     // A full queue refused for colliding names: every name, windowed.
     name: "conversion-collision-long",
     table: (locale) => conversionWorld(locale, COLLIDED, MANY),
-    drive: () => go(2),
+    drive: async () => {
+      await go(2);
+      await expectNamesBesideTheSentence();
+    },
     anchor: '.conversion-name-list[data-windowed="true"]',
+  },
+  {
+    // The same refusal where it first shows, from describe: the names under
+    // the plan's sentence, and Convert described by the sentence alone.
+    name: "conversion-plan-collision-long",
+    table: (locale) => ({ ...conversionWorld(locale, { status: "idle" }, MANY), describe_workspace_conversion_queue: { __reject: COLLISION } }),
+    drive: async () => {
+      await go(2);
+      await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+      await browser.$('.conversion-name-list[data-windowed="true"]').waitForExist({ timeout: 30_000 });
+      await expectNamesBesideTheSentence();
+    },
+    anchor: '.conversion-plan-pending ~ .conversion-name-list[data-windowed="true"]',
+  },
+  {
+    // And from BEGIN, after a plan: the request-failure banner lists them.
+    name: "conversion-begin-collision-long",
+    table: (locale) => ({ ...conversionWorld(locale, { status: "idle" }, MANY), begin_workspace_conversion_queue: { __reject: COLLISION } }),
+    drive: async () => {
+      await answerPlans(MANY);
+      await go(2);
+      await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+      await waitUntilOffered(CONVERT);
+      await browser.$(CONVERT).click();
+      await browser.$('.conversion-notice .conversion-name-list[data-windowed="true"]').waitForExist({ timeout: 30_000 });
+      await expectNamesBesideTheSentence();
+    },
+    anchor: '.conversion-notice .conversion-name-list[data-windowed="true"]',
   },
   {
     // An adopted output keeps its label on the roster row.
@@ -799,7 +850,7 @@ const STOPS: readonly Stop[] = [
   { name: "project-records", table: populated, drive: () => go(3), anchor: "[data-project-surface]" },
   {
     // Save on a beta-1 project with a change: asked first, the keyboard on
-    // the answer, and the labelled reference in the list below.
+    // Cancel, and the labelled reference in the list below.
     name: "project-upgrade-warning",
     table: beta1Project,
     keepFocus: true,
@@ -807,7 +858,7 @@ const STOPS: readonly Stop[] = [
       await go(3);
       await browser.$(".project-actions > button:nth-child(3)").click();
     },
-    anchor: "[data-project-upgrade-save]:focus",
+    anchor: "[data-project-upgrade-cancel]:focus",
   },
   { name: "project-result", table: (locale) => scenario("projectWithResult", locale), drive: () => go(3), anchor: `[data-project-inspect-artifact="${RESULT}"]` },
   {

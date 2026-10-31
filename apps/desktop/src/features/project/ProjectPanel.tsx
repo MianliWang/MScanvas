@@ -749,8 +749,10 @@ export function ProjectPanel({
     if (upgrades) setUpgradeAsked({ kind: "saveAs", projectId: state.projectId, from });
     else void session.saveProjectAs();
   };
-  // The question takes the keyboard when it appears; Cancel hands it back to
-  // the control that asked, or to the head's own where that one has gone.
+  // The question takes the keyboard when it appears, on Cancel: a held or
+  // repeated Enter on Save must not land on the write it warns about. Cancel
+  // hands it back to the control that asked, or to the head's own where that
+  // one has gone.
   useLayoutEffect(() => {
     if (upgradeShown) upgradeRef.current?.focus();
   }, [upgradeShown]);
@@ -853,7 +855,6 @@ export function ProjectPanel({
         <div className="project-unsaved" role="group" aria-labelledby={UPGRADE_ID} data-project-upgrade="">
           <p id={UPGRADE_ID}>{t("projectUpgradeWarning")}</p>
           <Button
-            ref={upgradeRef}
             variant="secondary"
             size="sm"
             refused={working}
@@ -863,7 +864,7 @@ export function ProjectPanel({
           >
             {t("projectUpgradeSave")}
           </Button>
-          <Button variant="secondary" size="sm" onClick={cancelUpgrade}>
+          <Button ref={upgradeRef} variant="secondary" size="sm" data-project-upgrade-cancel="" onClick={cancelUpgrade}>
             {t("projectUpgradeCancel")}
           </Button>
         </div>

@@ -226,6 +226,9 @@ default.
 > Workbench brings its label to the row, and the viewer's Details names it
 > beside the file. The Metadata tab's File row and an exported figure's
 > source line do not carry it; whether they should is open for the owner.
+> The diagnostics export of a refused, stopped or set item, which has no
+> single-output report of its own, carries the label `BEGIN` bound to its
+> row, so it names the same release the queue row does.
 
 ### 4. An ordered filter chain replaces the nine fixed rows
 
@@ -664,7 +667,8 @@ Each later in its own slice:
   > reinstalling beta 1 (its Roll back) does not undo that. A beta-1 project
   > that is only opened, saved with nothing unsaved, and closed stays
   > readable by beta 1. Nothing in the interface says so before the first
-  > write yet: a prompt there is later work, and the next release notes'
+  > write yet: a prompt there is later work (since added: "The prompt",
+  > below), and the next release notes'
   > known limitations and roll-back section must state the consequence.
   >
   > **Known limitation: a beta-1 document near the size bound.** Beta 1
@@ -684,14 +688,18 @@ Each later in its own slice:
   > notes state the upgrade on the first Save after a change, the advice to
   > keep a copy of a project before saving it in the new version, and the
   > size limitation above (`CHANGELOG.md`, Unreleased). The prompt before the
-  > first schema-5 write is still interface work.
+  > first schema-5 write is still interface work (since added: "The prompt",
+  > below).
 
   > **The prompt, 2026-10-30 (PR #161).** The project state says when the
   > bound document is schema 4 (`savingUpgradesSchema`). A Save that would
   > write it, from the head or from the unsaved-changes question, first asks
   > "Saving upgrades this beta 1 project, and beta 1 cannot open it
   > afterwards. Keep a copy first if you still need beta 1.", with the
-  > keyboard on "Save and upgrade"; Cancel writes nothing. A Save with nothing
+  > keyboard on Cancel, so a held or repeated Enter on Save never lands on
+  > "Save and upgrade" (review, 2026-10-31); Cancel writes nothing. A
+  > question belongs to the project it was asked in and is dropped once that
+  > project closes or is replaced. A Save with nothing
   > unsaved writes nothing and is not asked. Save As is asked whenever the
   > bound document is schema 4, with or without a change, because choosing
   > that file again in the dialog writes schema 5 over it.

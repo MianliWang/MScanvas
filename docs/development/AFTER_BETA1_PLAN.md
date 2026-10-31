@@ -223,7 +223,9 @@ there is capacity, no decompilation, and every other point as recommended):
    interface work ([ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
    risks).
    *Implemented on `be/integrate` (PR #161), 2026-10-30: Save, Save first and
-   Save As over a beta-1 file ask first (ADR 0055, "The prompt").*
+   Save As over a beta-1 file ask first (ADR 0055, "The prompt"): Save only
+   with unsaved changes, Save As whenever the bound document is schema 4, the
+   keyboard on Cancel.*
 2. **"MS2 and up" vendor centroiding is verified.** `peakPicking vendor
    msLevel=2-` becomes the eleventh verified row, for Thermo RAW on the
    evidenced build, with the same family domain and output check as "MS1 and
