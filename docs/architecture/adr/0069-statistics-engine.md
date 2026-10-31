@@ -240,10 +240,12 @@ The crate forbids `unsafe` code. No input panics it.
 
 The worst deviations were measured at commit `30b08db3`, before the
 deviation's residuals were rescaled; the reference tests pass at these
-tolerances after that change too. The fixture's Welch df are at most about 22. Against scipy 1.18.1, `statrs`'
-`sf` is within 3.3e-12 relative up to df 2e4, but 7.9e-11 at df 1e5 and
-3.8e-10 at df 1e6 (t = 2), so the p tolerance holds up to df 2e4, far above a
-cohort's.
+tolerances after that change too.
+
+The fixture's Welch df are at most about 22. Against scipy 1.18.1, `statrs`'
+`sf` is within 3.3e-12 relative at df 1e3 and 2e4 (t = 2, 5 and 10), but
+7.9e-11 at df 1e5 and 3.8e-10 at df 1e6 (t = 2). So the p tolerance holds up
+to df 2e4, far above a cohort's.
 
 **Unit tests** cover:
 
