@@ -66,7 +66,12 @@ then a selected spectrum is an `msaccess` process, and it stays refused with
   - supersession is checked after the wait, as ADR 0006 requires of a backend
     read;
   - an open's native table pass takes that lane after the backend gate, never
-    in the other order, so the two cannot deadlock.
+    in the other order, so the two cannot deadlock;
+  - *2026-10-30, [ADR 0071](0071-xic-re-entry-and-its-first-version.md)
+    decision 10, for its slice X4 (nothing implemented):* an XIC pass takes
+    this lane one spectrum at a time, never for a whole pass, and checks
+    cancellation and supersession between spectra, so a selected-spectrum read
+    interleaves with it.
 
 **What does not change:**
 
