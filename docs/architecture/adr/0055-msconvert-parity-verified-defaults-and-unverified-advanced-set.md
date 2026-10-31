@@ -370,6 +370,20 @@ reader.
 > `cancellation_failed` where a stop was requested, so the desktop's
 > owned-process quarantine sees it. This holds for the single-output run and
 > for a SCIEX output set, as decision 6's run 1 does on `be/two-step`.
+>
+> Two corrections from the PR #161 review, both of which had refused correct
+> outputs:
+>
+> - **A step that changes point counts may empty a spectrum.** Examples are an
+>   m/z window, a threshold and the other steps that set
+>   `spectrum_array_lengths`. The source's payload presence is then not
+>   compared. The output answers for itself instead: a declared point with no
+>   payload still fails, and payload presence against the source is reported
+>   unverified.
+> - **Unpaired spectra inherit an unknown history, never an empty one.** When
+>   a population step unpairs the spectra, a source picker the output copied
+>   cannot be told from one this run added. The requested processing is then
+>   unverified rather than refused as `processing_algorithm_mismatch`.
 
 ### 6. Every other format is written from a private mzML intermediate
 
