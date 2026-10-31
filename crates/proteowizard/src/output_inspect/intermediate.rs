@@ -319,4 +319,39 @@ mod tests {
             );
         }
     }
+
+    /// The attribute limits hold on an element no visitor reads from, here
+    /// the root: a caller's bound is the whole document's.
+    #[test]
+    fn attribute_limits_hold_on_an_element_nothing_captures() {
+        let cases: [(&str, MzmlScanLimits, Result<(), OutputCheckRefusal>); 4] = [
+            (
+                r#"<mzML id="xx"/>"#,
+                MzmlScanLimits::default().with_max_attribute_value_bytes(1),
+                Err(limit(MzmlLimitKind::AttributeValueBytes)),
+            ),
+            (
+                r#"<mzML a="1" b="2"/>"#,
+                MzmlScanLimits::default().with_max_attributes_per_element(1),
+                Err(limit(MzmlLimitKind::AttributesPerElement)),
+            ),
+            (
+                r#"<mzML attribute="1"/>"#,
+                MzmlScanLimits::default().with_max_name_bytes(4),
+                Err(limit(MzmlLimitKind::NameBytes)),
+            ),
+            (
+                r#"<mzML a="1" a="2"/>"#,
+                MzmlScanLimits::default(),
+                Err(malformed(MzmlMalformedKind::DuplicateAttribute)),
+            ),
+        ];
+        for (document, limits, expected) in cases {
+            assert_eq!(
+                scan_intermediate_reader(document.as_bytes(), limits).map(|_| ()),
+                expected,
+                "{document}"
+            );
+        }
+    }
 }
