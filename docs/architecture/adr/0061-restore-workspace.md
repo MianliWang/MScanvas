@@ -7,6 +7,19 @@ branch `be/restore-workspace` (`apps/desktop/src-tauri/src/workspace_restore.rs`
 No interface calls it yet, and the interface slice has prerequisites
 (decision 4). The questions for the owner are listed
 [at the end](#open-questions-for-the-owner).
+
+*2026-10-30, owner answers:* the
+[owner decision record](../../development/OWNER_DECISIONS_V511.md#a0061-restore-workspace-177),
+A0061, answers questions 1 to 4: matching rows come back automatically,
+restore is on by default, the checked state is restored, and the switch stays
+in the restore document; the roster stays out of the `.mscanvas` project file.
+Questions 2 to 4 match this record. Question 1 was put as "automatic,
+recommended", from an earlier draft; this record now recommends the explicit
+action because of the start-up costs in decision 4, so the answer to question
+1 is to be confirmed with those costs before decision 4 or the interface slice
+changes. Questions 5 to 9 are not answered yet. The status stays Proposed
+until they are.
+
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the workspace
 boundary, its *Persistence exclusion* and its collision-only relative context),
 [0057](0057-conversion-capacity-and-viewing-during-conversion.md) (capacity
@@ -419,7 +432,9 @@ change.
 1. Put matching rows back with one explicit Restore workspace action
    (recommended), or automatically at every start, at the costs listed in
    decision 4? The explicit route hashes at put-back as PRJ-004 does, but only
-   when asked, and needs the offer lifetime of question 8.
+   when asked, and needs the offer lifetime of question 8. (Answered
+   "automatically" on 2026-10-30 against an earlier draft's recommendation;
+   to be confirmed, see the note under the status.)
 2. Restore on by default (recommended), or off until the user turns it on? On
    by default records the paths of every acquisition the user adds, and with it
    the roster, membership and group names, which the M7.5 preference record
