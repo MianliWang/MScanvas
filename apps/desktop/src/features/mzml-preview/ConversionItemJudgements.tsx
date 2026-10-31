@@ -16,6 +16,7 @@
  */
 
 import type { ReactElement } from "react";
+import { Disclosure } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { ownedErrorDetail } from "./ownedErrorMessages";
 import type { UiMessage } from "../preferences/i18n";
@@ -46,7 +47,7 @@ import { formatByteLength, formatCount } from "./format";
 const TERMINATION_LABEL = { exited: "cnvTermExited", cancelled: "cnvTermStopped", not_started: "cnvTermNever" } as const;
 const STAGED_PHASE_LABEL = { provider_not_invoked: "cnvBeforeProvider", provider_returned: "cnvProviderReturned", output_refused: "cnvOutputRefusedAt", publication_settled: "cnvPublicationSettled" } as const;
 const MEMBER_STATE_LABEL = { finalized: "cnvMemberFinalized", validated_not_published: "cnvMemberValidated", rejected: "cnvMemberRejected", not_published: "cnvMemberUnpublished" } as const;
-const ADOPTION_REFUSAL_LABEL = { output_missing: "cnvAdoptionReasonMissing", output_changed: "cnvAdoptionReasonChanged", output_unreadable: "cnvAdoptionReasonUnreadable", output_not_mzml: "cnvAdoptionReasonNotMzml", workspace_full: "cnvAdoptionReasonFull" } as const;
+export const ADOPTION_REFUSAL_LABEL = { output_missing: "cnvAdoptionReasonMissing", output_changed: "cnvAdoptionReasonChanged", output_unreadable: "cnvAdoptionReasonUnreadable", output_not_mzml: "cnvAdoptionReasonNotMzml", workspace_full: "cnvAdoptionReasonFull" } as const;
 
 export function processSentence(process: ConversionProcessOutcome, t: UiMessage): string {
   switch (process.kind) {
@@ -252,9 +253,8 @@ export interface ConversionItemJudgementsProps {
  * The disclosure itself.
  *
  * The test hooks are derived from the row's position so two rows cannot share
- * one. The component emits no `id` and no `aria-describedby`: the disclosure's
- * accessible name is its own summary text, which names the row, so there is
- * nothing here for a static id to be duplicated by.
+ * one. A Disclosure button and the region it shows, closed to begin with; the
+ * region's id is generated, so no static id can be duplicated by two rows.
  */
 export function ConversionItemJudgements({
   item,
@@ -266,14 +266,12 @@ export function ConversionItemJudgements({
   const advisories = advisoriesOf(item);
   const set = item.result?.kind === "outputSet" ? item.result.report : null;
   return (
-    <details className="conversion-item-detail" data-testid={`${id}-detail`}>
-      <summary>
-        {/* The visible word is short; the accessible name says which row it is
-            about, because a list of sixteen identical "Details" is a list of
-            sixteen unlabelled controls. */}
-        <span aria-hidden="true">{t("cnvDetails")}</span>
-        <span className="visually-hidden">{t("cnvDetailsFor", { name: item.fileName })}</span>
-      </summary>
+    // The visible word is short; the accessible name says which row it is
+    // about, because a list of sixteen identical "Details" is a list of
+    // sixteen unlabelled controls.
+    <Disclosure label={t("cnvDetails")} aria-label={t("cnvDetailsFor", { name: item.fileName })}
+      className="conversion-item-toggle"
+      regionProps={{ className: "conversion-item-detail", "data-testid": `${id}-detail` }}>
       {item.error?.detail == null ? null : <p className="notice-detail">{ownedErrorDetail(item.error, t)}</p>}
       <dl className="metadata-list conversion-item-judgements">
         <div>
@@ -419,6 +417,6 @@ export function ConversionItemJudgements({
           </table>
         </div>
       )}
-    </details>
+    </Disclosure>
   );
 }

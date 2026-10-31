@@ -1,5 +1,5 @@
 /**
- * The Conversion & results surface, reached the way a reader reaches it since
+ * The Conversion surface, reached the way a reader reaches it since
  * M7.2.
  *
  * Three things changed under the M6 specs, and none of them is a product
@@ -22,7 +22,38 @@ import { revealRosterRow } from "./viewer";
 export const CONVERSION_SURFACE = "#workbench-conversion";
 
 /** The next conversion's start control, never the adoption that precedes it. */
-export const CONVERT = ".conversion-plan button.primary-button, .conversion-plan .conversion-start";
+export const CONVERT = "button.conversion-start";
+
+/** Under a finished queue, the control that brings the next conversion back. */
+export const START_ANOTHER = "button[data-conversion-start-another]";
+
+/**
+ * Opens the next conversion under a finished queue, as its reader does: the
+ * form, its summary and Convert stay off screen until asked for (rebuild
+ * review 6).
+ */
+export async function startAnother(): Promise<void> {
+  const control = browser.$(START_ANOTHER);
+  await control.waitForDisplayed({ timeout: 15_000, timeoutMsg: "no Start another conversion under the finished queue" });
+  await control.click();
+  await browser.$(CONVERT).waitForExist({ timeout: 15_000, timeoutMsg: "Start another conversion brought no Convert back" });
+}
+
+/**
+ * Makes sure the next conversion is on screen, for the real-app specs that run
+ * one queue after another: returns once Convert is there, pressing Start
+ * another conversion when a finished queue holds it back. A no-op on an idle
+ * slot, and it waits out a queue that is still settling on screen.
+ */
+export async function openNextConversion(scope = ""): Promise<void> {
+  const another = `${scope} ${START_ANOTHER}`.trim();
+  const convert = `${scope} ${CONVERT}`.trim();
+  await browser.waitUntil(async () => {
+    if (await browser.$(convert).isExisting()) return true;
+    if (await browser.$(another).isExisting() && !(await isRefused(another))) await browser.$(another).click();
+    return false;
+  }, { timeout: 60_000, interval: 250, timeoutMsg: "the next conversion never came on screen" });
+}
 
 /**
  * Ticks each row's conversion checkbox, leaving a row already ticked as it is.
@@ -43,7 +74,7 @@ export async function checkMembers(handles: readonly string[]): Promise<void> {
   }
 }
 
-/** Presses the header's Conversion & results destination and waits for the surface. */
+/** Presses the header's Conversion destination and waits for the surface. */
 export async function showConversion(): Promise<void> {
   await browser.execute((labels: readonly string[]) => {
     [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]

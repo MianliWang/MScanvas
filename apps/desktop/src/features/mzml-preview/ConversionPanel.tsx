@@ -1,7 +1,8 @@
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { ownedErrorDetail } from "./ownedErrorMessages";
 import { conversionCountParts, conversionErrorMessage, conversionJudgedOutputOnly, conversionNoticeMessage } from "./conversionMessages";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactElement, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
+import { useListWindow, type ListWindowRow } from "./conversionListWindow";
 
 import type {
   ConversionConflictPolicy,
@@ -10,16 +11,15 @@ import type {
   ConversionQueueItem,
   ConversionQueuePlanItem,
   ConversionReport,
-  DatasetSourceKind,
   DestinationPolicy,
 } from "./contracts";
 import { SOURCE_KIND_LABEL } from "./contracts";
 import type { ConversionAvailability } from "./conversionAvailability";
-import { ConversionSettings, conversionIntentDisclosures, CONVERSION_VALUE_LABEL } from "./ConversionSettings";
+import { axisValueLabel, changedAxes, ConversionSettings } from "./ConversionSettings";
 import { conversionAvailability, conversionNoticeId } from "./conversionAvailability";
 import { OutputOpenActions } from "./OutputOpenActions";
 import { STAGING_STATUS_ID, StagingRecoveryActions } from "./StagingRecoveryActions";
-import { ConversionItemJudgements } from "./ConversionItemJudgements";
+import { ADOPTION_REFUSAL_LABEL, ConversionItemJudgements } from "./ConversionItemJudgements";
 import type { ConversionRefusal } from "./conversionNoticeRegistry";
 import { conversionNotices, conversionRefusalNoticeId } from "./conversionNoticeRegistry";
 import { formatByteLength, formatCount, formatDuration } from "./format";
@@ -27,6 +27,8 @@ import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import type { ConversionOperation, ConversionRequestFailure } from "./useConversionOperation";
 import type { ConversionPlanView } from "./useConversionPlan";
 import type { ConversionScope, ResolvedConversionScope } from "./conversionScope";
+import { SORT_MODES, isSortMode, type SortMode } from "./rosterView";
+import { Button, Disclosure, Icon, IconButton, MiddleEllipsis } from "../../components/ui";
 const SORT_MESSAGE = { added: "sortAdded", "name-asc": "sortNameAsc", "name-desc": "sortNameDesc", "size-asc": "sortSizeAsc", "size-desc": "sortSizeDesc" } as const;
 import type { MessageKey, MessageParameters, UiMessage } from "../preferences/i18n";
 type StaticMessageKey = Exclude<MessageKey, keyof MessageParameters>;
@@ -43,6 +45,8 @@ const CONFLICT_POLICY_LABEL: Record<ConversionConflictPolicy, StaticMessageKey> 
 
 const CONFLICT_POLICIES: readonly ConversionConflictPolicy[] = ["fail", "skip"];
 
+const SCOPES: readonly ConversionScope[] = ["selected", "all"];
+
 const DESTINATION_LABEL: Record<DestinationPolicy["kind"], StaticMessageKey> = {
   customFolder: "m74CnvDestCustom",
   sourceSibling: "m74CnvDestSibling",
@@ -55,48 +59,15 @@ const DESTINATIONS: readonly DestinationPolicy["kind"][] = [
 function describeDestination(policy: DestinationPolicy, t: UiMessage): string {
   switch (policy.kind) {
     case "customFolder": return t("m74CnvDestinationCustomDescription");
-    case "sourceSibling": return t("m74CnvDestinationSiblingDescription");
+    case "sourceSibling": return t("m74CnvDestSibling");
     case "namedSubfolder": return t("m74CnvNamedDestination", { name: policy.name || "—" });
   }
 }
 
-/**
- * The one sentence this workflow must always say about what it verified.
- *
- * A vendor acquisition has no mzML reading, so nothing about the output can be
- * compared to a source model. Saying so before the conversion and again after
- * it is the difference between a checked file and a file that merely converted
- * without erroring.
- */
-
-
-/**
- * The plan summary sentence, family-aware.
- *
- * A homogeneous queue names its exact family, because "vendor" is vaguer than
- * what is known. A mixed queue counts first and then itemizes per family, in
- * plan order, so the sentence stays true for whatever combination the closed
- * vocabulary allows -- there is deliberately no generic vendor wording that a
- * new family could hide inside.
- */
-function describeQueueFamilies(items: readonly ConversionQueuePlanItem[], t: UiMessage): string {
-  const counts = new Map<DatasetSourceKind, number>();
-  for (const item of items) {
-    counts.set(item.sourceKind, (counts.get(item.sourceKind) ?? 0) + 1);
-  }
-  const count = items.length;
-  const first = items[0];
-  if (counts.size === 1 && first !== undefined) {
-    const family = SOURCE_KIND_LABEL[first.sourceKind];
-    return count === 1
-      ? t("m74CnvOneFamily", { family })
-      : t("m74CnvManyFamily", { count, family });
-  }
-  const perFamily = [...counts.entries()]
-    .map(([kind, familyCount]) => `${String(familyCount)} ${SOURCE_KIND_LABEL[kind]}`)
-    .join(" · ");
-  return t("m74CnvMixedFamilies", { count, families: perFamily || "—" });
-}
+/** How the plan rail names a setting that differs from the shipped one. */
+const PLAN_AXIS_LABEL = {
+  processing: "m74CnvPeaks", population: "m74CnvSpectra", precision: "m74CnvPrecision", compression: "m74CnvCompression",
+} as const;
 
 /**
  * What a backend-named set produces, said before it runs.
@@ -109,146 +80,6 @@ function describeQueueFamilies(items: readonly ConversionQueuePlanItem[], t: UiM
 function outputSetSummary(maxMembers: number, t: UiMessage): string {
   return t("m74CnvOutputBound", { count: maxMembers });
 }
-
-/**
- * Why no filename is shown for a set.
- *
- * Said rather than left blank. A user who sees a name for every other row and
- * nothing for this one is owed the reason, and the reason is not that MSCanvas
- * does not know yet -- it is that the name is the backend's to choose.
- */
-
-
-/**
- * What a full set publication establishes, in the only words the evidence
- * supports.
- *
- * Every clause is load-bearing. "Identified by the SCIEX reader" is narrower
- * than "in the acquisition", and the difference is exactly what this milestone
- * did not measure: the audit proves no sample the reader found was lost, not
- * that the reader found them all.
- */
-
-
-/**
- * What a partially finalized acquisition means for the user.
- *
- * Deliberately not "nothing was converted", which is what a count-of-items
- * reading would produce and which is false: the finalized prefix is real, it is
- * in the folder they chose, and nothing here removes it. What it is not is the
- * acquisition's output set, which is why MSCanvas will not offer it as one.
- */
-
-
-/** What each staging residue means for the folder the user chose. */
-
-
-/**
- * What Stop queue does, said before it is pressed.
- *
- * Both halves matter. The first is what the user is asking for; the second is
- * what they are not losing, and without it "stop" reads as "undo" over files
- * that are already written and already theirs.
- */
-
-
-/**
- * What ending one file does, said before it is pressed.
- *
- * The difference from Stop queue is the whole reason both exist, so it is
- * stated rather than implied: this one is about the acquisition being converted
- * now, and the queue keeps going.
- */
-
-
-/**
- * Why the control is unavailable, at the control.
- *
- * One sentence for the two ways there is nothing to end -- between items, or
- * the whole queue ending -- because a reader does not need the session's
- * internal state to know that pressing would do nothing.
- *
- * **Not for the third way**, which is this document having already asked. That
- * one is a different fact and gets its own sentence below: a note saying the
- * control is "available while a file is being converted" would appear exactly
- * while a file is being converted, which is when a reader is least able to
- * believe it.
- */
-
-
-/**
- * What is true while *this file's* stop is in flight.
- *
- * The per-item counterpart of `t("m74CnvStopInFlight")`, and silent about
- * which of ending and finishing happens for the same reason: that is decided
- * by what the process boundary observes first.
- *
- * **Not silent about the third outcome.** "The queue keeps going either way"
- * described two of the three. A stop whose process tree cannot be confirmed
- * gone ends the whole queue and quarantines the session, which is the branch a
- * reader most needs said and the only one they cannot undo -- and this sentence
- * is on screen exactly while it is undecided. `t("m74CnvCancelItemExplanation")` says it
- * before the press; dropping it afterwards left the promise standing at the one
- * moment it was in doubt.
- */
-
-
-/**
- * What is true while a stop is in flight.
- *
- * Deliberately silent about the current item. Whether it is cancelled or
- * finishes on its own is decided by which the process boundary observes first,
- * and a prediction here is a claim the next read could contradict.
- */
-
-
-/**
- * What adding the outputs does, said before it is pressed.
- *
- * The first half is the promise this workflow is unusual for making: the file
- * that enters the workspace is checked to still be the exact one this queue
- * wrote, not merely a file of that name. The second is what it deliberately
- * does not do -- reading a converted file is a separate thing to ask for, and a
- * workflow that opened one would decide what the user is looking at.
- */
-
-
-/**
- * What is true while an adoption is in flight.
- *
- * Not called converting: nothing is being converted, and a second word for the
- * same workflow would be the panel describing two things at once. No
- * percentage, because nothing measures a fraction of a file being checked.
- */
-
-
-/**
- * The one sentence this action must never be offered without.
- *
- * Three claims in order, and the order is the argument. Local, so nobody looks
- * for an upload. Redacted, so the effort is stated. And then the limit — backend
- * text is written by an instrument's software about a real acquisition, and no
- * amount of path removal makes that anonymous. It ends by asking for the one
- * thing that actually protects the user, which is reading the file.
- */
-
-
-/**
- * What is true while an export is being written.
- *
- * No percentage. The file is bounded at a couple of megabytes and is written in
- * one go, so a fraction would be a number invented to fill a progress bar.
- */
-
-
-/** Why one output was not added, in the user's terms rather than the boundary's. */
-const ADOPTION_REFUSAL_LABEL: Record<string, StaticMessageKey> = {
-  output_missing: "m74CnvAdoptMissing",
-  output_changed: "m74CnvAdoptChanged",
-  output_unreadable: "m74CnvAdoptUnreadable",
-  output_not_mzml: "m74CnvAdoptNotMzml",
-  workspace_full: "m74CnvAdoptFull",
-};
 
 export interface ConversionPanelProps {
   readonly conversion: ConversionOperation;
@@ -276,6 +107,10 @@ export interface ConversionPanelProps {
    */
   readonly resolvedScope: ResolvedConversionScope;
   readonly onScopeChange: (scope: ConversionScope) => void;
+  /** The execution order the queue takes, kept by the roster (`sortChanged`). */
+  readonly onSortChange: (sort: SortMode) => void;
+  /** The release the bound ProteoWizard build reports, for the plan rail (C11). */
+  readonly buildRelease?: string | null;
 }
 
 /**
@@ -290,6 +125,8 @@ export function ConversionPanel({
   plan,
   resolvedScope,
   onScopeChange,
+  onSortChange,
+  buildRelease = null,
 }: ConversionPanelProps): ReactElement | null {
   const t = useUiMessages();
   const { state } = conversion;
@@ -299,6 +136,22 @@ export function ConversionPanel({
   // Basic or Advanced, kept here rather than in the settings, which leave the
   // screen while a queue runs (PM9.4 R5).
   const [settingsView, setSettingsView] = useState<"basic" | "advanced">("basic");
+  // Under a finished queue the next conversion is off screen until the reader
+  // asks for it ("Start another conversion"), so a success is not followed by
+  // a refused Convert and a warning about an empty scope (rebuild review 6).
+  // Spent when the slot leaves the finished queue or a retry replaces it; a
+  // start that failed before Rust reported a queue keeps the form open.
+  const [startingAnother, setStartingAnother] = useState(false);
+  if (startingAnother && (!terminal || conversion.retrying)) setStartingAnother(false);
+  /** Whether the next conversion's form, summary and Convert are on screen. */
+  const planShown = !conversion.busy && (!terminal || startingAnother);
+  // The plan mounts in the commit after the press, so the keyboard follows it
+  // there rather than being dropped with the control that asked for it.
+  const focusPlan = useRef(false);
+  const startAnother = () => {
+    setStartingAnother(true);
+    focusPlan.current = true;
+  };
   const currentReturn = useRef<() => void>(() => {});
   // A later focus destination permanently cancels the return, including one
   // which disappears before the picker settles. Opening Settings is such a
@@ -390,7 +243,7 @@ export function ConversionPanel({
   // With rows to convert it is always offered and `startAvailability` says
   // whether it may be pressed and why not, which is what lets a failed plan and
   // one being read refuse it differently.
-  const startOffered = !conversion.busy;
+  const startOffered = planShown;
   const retryOffered =
     state.status === "terminal" &&
     state.reason === "completed" &&
@@ -413,9 +266,10 @@ export function ConversionPanel({
    * how one contended moment produces one sentence rather than two.
    */
   // The settings belong to the next conversion, which is not on screen while a
-  // queue runs (PM9.4 R5), and neither is their retry then.
+  // queue runs (PM9.4 R5) or under a finished one until it is asked for, and
+  // neither is their retry then.
   const settingsRefusal: ConversionRefusal | null =
-    !conversion.busy && configuration.retryOffered && configuration.refusal !== null
+    planShown && configuration.retryOffered && configuration.refusal !== null
       ? { source: "probe", refusal: configuration.refusal }
       : null;
 
@@ -469,6 +323,16 @@ export function ConversionPanel({
    * picker is still open: its return to Convert is the picker's own.
    */
   const panel = useRef<HTMLElement | null>(null);
+  // Before the return below, so the plan rather than the status line takes
+  // the keyboard from a "Start another conversion" that has just left.
+  useLayoutEffect(() => {
+    if (!focusPlan.current) return;
+    const next = panel.current?.querySelector<HTMLElement>(".conversion-plan") ?? null;
+    if (next === null) return;
+    focusPlan.current = false;
+    next.focus({ preventScroll: true });
+    next.scrollIntoView?.({ block: "nearest" });
+  });
   const lastFocused = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const node = panel.current;
@@ -506,77 +370,143 @@ export function ConversionPanel({
     status.focus();
   });
 
+  const queueShown = conversion.busy || terminal;
+  const planSummary = (
+    <PlanSummary
+      conversion={conversion}
+      configuration={configuration}
+      plan={plan}
+      resolvedScope={resolvedScope}
+      onScopeChange={onScopeChange}
+      startAvailability={startAvailability}
+      buildRelease={buildRelease}
+    />
+  );
+  // Direction A 2.2-2.4, flat: the form -- or the queue's rows -- on the left,
+  // and a plan rail on the right with what that adds up to. The rail's foot
+  // holds the action that starts it, pinned in view at every scroll position,
+  // with the availability notice that says why it is refused directly above
+  // it. The notice is mounted for the panel's life, so it is watched before
+  // its text arrives. No page head and no subtitle (D1, review issue 11): the
+  // selected tab says where this is, and each column names its own state.
   return (
     <section
       ref={panel}
       aria-busy={conversion.busy}
       aria-labelledby="conversion-panel-heading"
-      className="panel conversion-panel"
+      className="conversion-panel"
+      data-phase={conversion.busy ? "running" : terminal ? "finished" : "plan"}
     >
-      <header className="panel-header compact">
-        <div>
-          <h2 id="conversion-panel-heading">{t("m74CnvTitle")}</h2>
-          <p>{t("m74CnvSourceUnchanged")}</p>
-        </div>
-      </header>
+      <div className="conversion-main">
+        {conversion.failure === null ? null : (
+          <div className="notice notice-danger conversion-notice" role="status">
+            {/* Both halves. The summary says what happened; the detail is where a
+                refusal puts the part the user has to act on -- above all that a
+                failed export left a temporary file in their folder. Rendering
+                only the summary hid the one thing they could do about it.
+                Led by the name of the control whose request failed, because this
+                sits above all of them (PM9.4 O4). */}
+            <span>
+              <strong>{t("m74CnvRequestFailed", { action: requestLabel(conversion.failure, t) })}</strong>
+              {conversionErrorMessage(conversion.failure.error, t)}
+              {conversion.failure.error.detail === null ? null : (
+                <span className="notice-detail">{ownedErrorDetail(conversion.failure.error, t)}</span>
+              )}
+            </span>
+            <IconButton size="sm" icon={<Icon name="close" />} label={t("m74CnvDismiss")} onClick={conversion.dismissError} />
+          </div>
+        )}
 
-      {conversion.failure === null ? null : (
-        <div className="notice notice-danger" role="status">
-          {/* Both halves. The summary says what happened; the detail is where a
-              refusal puts the part the user has to act on -- above all that a
-              failed export left a temporary file in their folder. Rendering
-              only the summary hid the one thing they could do about it.
-              Led by the name of the control whose request failed, because this
-              sits above all of them (PM9.4 O4). */}
-          <span>
-            <strong>{t("m74CnvRequestFailed", { action: requestLabel(conversion.failure, t) })}</strong>
-            {conversionErrorMessage(conversion.failure.error, t)}
-            {conversion.failure.error.detail === null ? null : (
-              <span className="notice-detail">{ownedErrorDetail(conversion.failure.error, t)}</span>
-            )}
-          </span>
-          <button className="link-button" onClick={conversion.dismissError} type="button">{t("m74CnvDismiss")}</button>
+        {queueShown ? (
+          <QueueState
+            part="rows"
+            onReviewNewPlan={() => {
+              plan.invalidate();
+              startAnother();
+            }}
+            conversion={conversion}
+            retryAvailability={retryAvailability}
+            retryOffered={retryOffered}
+            refusedBy={refusedBy}
+          />
+        ) : null}
+        {/* Not while a queue is under way. The plan is an ordered list of file to
+            output and so is the running queue, and two of them side by side
+            -- one live, one hypothetical, and the hypothetical one's button
+            refused -- is the panel describing two different things in the same
+            shape. Under a finished queue the plan is how the user converts
+            something else, so it comes back, under its own heading below the
+            results, once they ask for it; its summary and Convert follow the
+            queue's in the summary column. The settings are the next
+            conversion's and go with it (PM9.4 R5). */}
+        {!planShown ? null : (
+          <div className="conversion-plan" tabIndex={-1} role={terminal ? "group" : undefined}
+            aria-labelledby={terminal ? "conversion-next-heading" : undefined}>
+            {terminal ? <h3 id="conversion-next-heading">{t("m74CnvNextConversion")}</h3> : null}
+            <PlanForm
+              conversion={conversion}
+              configuration={configuration}
+              settingsRefusalNoticeId={settingsRefusalNoticeId}
+              settingsView={settingsView}
+              onSettingsViewChange={setSettingsView}
+              plan={plan}
+              sort={resolvedScope.sort}
+              onSortChange={onSortChange}
+            />
+          </div>
+        )}
+      </div>
+      <div className="conversion-side">
+        <h2 id="conversion-panel-heading">{t("m74CnvTitle")}</h2>
+        {queueShown ? (
+          <QueueState
+            part="summary"
+            conversion={conversion}
+            retryAvailability={retryAvailability}
+            retryOffered={retryOffered}
+            refusedBy={refusedBy}
+            addPrimary={!startingAnother}
+            startAnother={terminal && !startingAnother ? (
+              // Removed once pressed, and the keyboard follows to the plan it
+              // brings back. The one primary when there is nothing to add.
+              <Button
+                variant={conversion.eligibleOutputCount > 0 ? "secondary" : "primary"}
+                className="conversion-wide-action"
+                refused={conversion.busy}
+                reasonId={heldBy ?? QUEUE_STATUS_ID}
+                data-conversion-start-another=""
+                onClick={startAnother}
+              >
+                {t("m74CnvStartAnother")}
+              </Button>
+            ) : null}
+          />
+        ) : null}
+        {!planShown ? null : terminal ? (
+          // The next conversion's half of the summary column, set apart from
+          // the finished queue's and named like the settings it describes.
+          <div className="conversion-next-summary" role="group" aria-labelledby="conversion-next-summary-label">
+            <p className="conversion-field-label" id="conversion-next-summary-label">{t("m74CnvNextConversion")}</p>
+            {planSummary}
+          </div>
+        ) : planSummary}
+        {/* The rail's last child, pinned to the bottom of whatever scrolls
+            (the rail, or the whole page in a short window). */}
+        <div className="conversion-rail-foot" data-start-offered={planShown || undefined}>
+          <AvailabilityNotice refusals={refusals} />
+          {!planShown ? null : (
+            <PlanStart
+              conversion={conversion}
+              configuration={configuration}
+              plan={plan}
+              resolvedScope={resolvedScope}
+              startAvailability={startAvailability}
+              convertButton={convertButton}
+              onCustomStart={() => { restoreAfterPicker.current = true; }}
+            />
+          )}
         </div>
-      )}
-
-      {conversion.busy || terminal ? (
-        <QueueState
-          onReviewNewPlan={() => {
-            plan.invalidate();
-            const panel = convertButton.current?.closest<HTMLElement>(".conversion-plan");
-            panel?.focus({ preventScroll: true });
-            panel?.scrollIntoView?.({ block: "nearest" });
-          }}
-          conversion={conversion}
-          retryAvailability={retryAvailability}
-          retryOffered={retryOffered}
-          refusedBy={refusedBy}
-        />
-      ) : null}
-      <AvailabilityNotice refusals={refusals} />
-      {/* Not while a queue is under way. The plan is an ordered list of file to
-          output and so is the running queue, and two of them one above the other
-          — one live, one hypothetical, and the hypothetical one's button
-          disabled — is the panel describing two different things in the same
-          shape. A finished queue is different: there the plan is how the user
-          converts something else, so it stays, under its own heading. The
-          settings are the next conversion's and go with it (PM9.4 R5). */}
-      {conversion.busy ? null : (
-        <PlanState
-          conversion={conversion}
-          configuration={configuration}
-          settingsRefusalNoticeId={settingsRefusalNoticeId}
-          settingsView={settingsView}
-          onSettingsViewChange={setSettingsView}
-          resolvedScope={resolvedScope}
-          onScopeChange={onScopeChange}
-          plan={plan}
-          repeating={terminal}
-          startAvailability={startAvailability}
-          convertButton={convertButton}
-          onCustomStart={() => { restoreAfterPicker.current = true; }}
-        />
-      )}
+      </div>
     </section>
   );
 }
@@ -666,11 +596,13 @@ interface QueueRefusals {
  * launches nothing. Retry and this are mutually exclusive because one of them
  * replaces the results the other is reading.
  */
-function AdoptOutputs({ conversion, refusedBy }: {
+function AdoptOutputs({ conversion, refusedBy, primary }: {
   readonly conversion: ConversionOperation;
   /** What says why Add is refused, while it is. */
   readonly refusedBy: string | null;
-}): ReactElement {
+  /** Whether Add is the state's one filled primary. */
+  readonly primary: boolean;
+}): ReactElement | null {
   const t = useUiMessages();
   const { adoption, eligibleOutputCount } = conversion;
   const added = adoption?.outcomes.filter((outcome) => outcome.kind === "added") ?? [];
@@ -678,20 +610,10 @@ function AdoptOutputs({ conversion, refusedBy }: {
     adoption?.outcomes.filter((outcome) => outcome.kind === "alreadyInWorkspace") ?? [];
   const refused = adoption?.outcomes.filter((outcome) => outcome.kind === "refused") ?? [];
 
+  // Nothing to offer. Each item's row and the queue's counts already say why,
+  // including a partial set whose finalized files stay in the folder.
   if (eligibleOutputCount === 0) {
-    // Nothing to offer -- but "nothing was converted" is only one of the two
-    // reasons for that, and the other one is false in exactly the case that
-    // needs the truth most. A partially finalized acquisition *did* convert
-    // files, they are in the user's folder, and what MSCanvas will not do is
-    // present the prefix as the acquisition's complete output set. Each item's
-    // own row explains itself; this says why the action is absent.
-    return (
-      <p className="quiet-text">
-        {conversion.hasIncompleteOutputSet
-          ? t("m74CnvNoCompleteSet")
-          : t("m74CnvNothingToAdd")}
-      </p>
-    );
+    return null;
   }
 
   return (
@@ -711,16 +633,14 @@ function AdoptOutputs({ conversion, refusedBy }: {
             ? ""
             : t("m74CnvAdoptionSummary", { added: String(added.length), duplicates: String(duplicates.length), refused: String(refused.length) })}
       </p>
-      {adoption !== null && added.length === 0 && refused.length === 0 ? (
-        <p>{t("m74CnvAllAlreadyAdded")}</p>
-      ) : adoption !== null ? (
+      {adoption !== null ? (
         <>
           {refused.slice(0, 3).map((outcome) => (
             <p
               className="quiet-text"
               key={`${String(outcome.itemIndex)}-${String(outcome.memberIndex)}`}
             >
-              {t("m74CnvNotAdded", { name: outcome.outputFileName, reason: t(ADOPTION_REFUSAL_LABEL[outcome.kind === "refused" ? outcome.reason : ""] ?? "m74CnvAdoptUnverified") })}
+              {t("m74CnvNotAdded", { name: outcome.outputFileName, reason: t((outcome.kind === "refused" ? ADOPTION_REFUSAL_LABEL[outcome.reason as keyof typeof ADOPTION_REFUSAL_LABEL] : undefined) ?? "m74CnvAdoptUnverified") })}
             </p>
           ))}
           {refused.length > 3 ? (
@@ -738,40 +658,31 @@ function AdoptOutputs({ conversion, refusedBy }: {
           recognises the file -- so the action stays rather than sending them to
           `Add files…` for something MSCanvas can still identify. */}
       <>
-        <p>
-          {adoption !== null
-            ? t("m74CnvAdoptAgain")
-            : eligibleOutputCount === 1
+        {adoption === null ? (
+          <p>
+            {eligibleOutputCount === 1
               ? t("m74CnvOneReady")
               : t("m74CnvManyReady", { count: eligibleOutputCount })}
-        </p>
+          </p>
+        ) : null}
         <div className="conversion-actions">
-          {/* `aria-disabled` and a guard rather than `disabled`, for the reason
-              the comment above gives: Chromium drops focus from a control that
-              becomes natively disabled (PM9.4 R11). */}
-          <button
-            type="button"
-            className="primary-button"
-            aria-describedby={refusedBy === null ? "conversion-adopt-scope" : `conversion-adopt-scope ${refusedBy}`}
-            aria-disabled={!conversion.canAdopt || undefined}
-            onClick={() => {
-              if (conversion.canAdopt) conversion.adopt();
-            }}
+          {/* Refused rather than `disabled`, for the reason the comment above
+              gives: Chromium drops focus from a control that becomes natively
+              disabled (PM9.4 R11). The one filled primary of a finished queue
+              until the next conversion is opened under it. */}
+          <Button
+            variant={primary ? "primary" : "secondary"}
+            className="conversion-wide-action"
+            refused={!conversion.canAdopt}
+            aria-describedby={refusedBy ?? undefined}
+            onClick={() => conversion.adopt()}
           >
             {eligibleOutputCount === 1
               ? t("m74CnvAddOne")
               : t("m74CnvAddMany")}
-          </button>
+          </Button>
         </div>
-        <p className="quiet-text" id="conversion-adopt-scope" role="note">
-          {t("m74CnvAdoptExplanation")}
-        </p>
       </>
-      {/* Said whether or not anything was added. A queue that is replaced drops
-          the way MSCanvas recognises these files, and nothing about that
-          removes them -- so the honest fallback is named rather than left to be
-          discovered. */}
-      <p className="quiet-text">{t("m74CnvFilesRemain")}</p>
     </div>
   );
 }
@@ -847,16 +758,14 @@ function ExportDiagnostics({
             runs (native disabled drops it to the document in WebView2), and a
             control another action refuses stays a Tab stop whose reason can be
             reached (PM9.4 O8). */}
-        <button
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Icon name="download" />}
+          refused={!conversion.canExportDiagnostics}
           aria-describedby={refusedBy === null ? "conversion-diagnostics-scope" : `conversion-diagnostics-scope ${refusedBy}`}
-          aria-disabled={!conversion.canExportDiagnostics || undefined}
-          className="secondary-button"
-          onClick={() => {
-            if (!conversion.canExportDiagnostics) return;
-            conversion.exportDiagnostics();
-          }}
-          type="button"
-        >{t("m74CnvDiagnosticsAction")}</button>
+          onClick={() => conversion.exportDiagnostics()}
+        >{t("m74CnvDiagnosticsAction")}</Button>
       </div>
       <p className="quiet-text" id="conversion-diagnostics-scope" role="note">
         {t("m74CnvDiagnosticsExplanation")}
@@ -866,34 +775,19 @@ function ExportDiagnostics({
 }
 
 /**
- * What a queue would do, and the one control that starts it.
- *
- * **Every state of the plan is rendered, and the control is rendered in all of
- * them.** A plan being worked out, a plan that failed and a plan the settings
- * make impossible are three different situations with three different things
- * for a reader to do, and a control that vanished for two of them would leave
- * the third looking like the only one there is. The button says what it cannot
- * do through the one availability rule; nothing here decides again.
- *
- * **In the order a reader decides it** (PM9.4 R5): which rows, with which
- * settings, to where and what if a name is taken -- then what that conversion
- * would do, and directly under it the control that starts it. The summary is
- * the answer to the inputs above it, so nothing it depends on sits between it
- * and the action.
+ * The settings a conversion is made with: what is written, where to, and what
+ * happens when a name is taken. The form column; its summary and the control
+ * that starts it are `PlanSummary`.
  */
-function PlanState({
+function PlanForm({
   conversion,
   configuration,
   settingsRefusalNoticeId,
   settingsView,
   onSettingsViewChange,
   plan,
-  resolvedScope,
-  onScopeChange,
-  startAvailability,
-  convertButton,
-  onCustomStart,
-  repeating,
+  sort,
+  onSortChange,
 }: {
   readonly conversion: ConversionOperation;
   readonly configuration: ConversionConfigurationView;
@@ -902,92 +796,13 @@ function PlanState({
   readonly settingsView: "basic" | "advanced";
   readonly onSettingsViewChange: (view: "basic" | "advanced") => void;
   readonly plan: ConversionPlanView;
-  readonly convertButton: RefObject<HTMLButtonElement | null>;
-  readonly onCustomStart: () => void;
-  /** The rows this panel would queue, for the control that names them. */
-  readonly resolvedScope: ResolvedConversionScope;
-  readonly onScopeChange: (scope: ConversionScope) => void;
-  /** Whether a conversion of these rows may start, and what to say when not. */
-  readonly startAvailability: ConversionAvailability;
-  /** Whether a previous result is on screen above this plan. */
-  readonly repeating: boolean;
-}): ReactElement | null {
+  /** The execution order the queue takes, kept by the roster. */
+  readonly sort: SortMode;
+  readonly onSortChange: (sort: SortMode) => void;
+}): ReactElement {
   const t = useUiMessages();
-  const current = plan.current;
-  const summary = current?.plan ?? null;
-  // The rows the control names, which is what the reader selected rather than
-  // what MSCanvas has finished describing. The plan is rendered in every state
-  // now, so reading this off the summary made the label say "Convert 0
-  // selected…" for the whole of the window a plan is being worked out -- a
-  // count that was never true of anything.
-  const count = resolvedScope.handles.length;
-  // Nothing to describe because there is nothing to describe *with*: no
-  // installation is bound, or the backend itself refuses. "Not yet known" would
-  // tell the reader to wait for an answer that is not coming (PM9.4 R3).
-  const noBackend =
-    configuration.configuration?.configuration === "unavailableForBinding" ||
-    (startAvailability.status === "unavailable" &&
-      (startAvailability.reason === "backend-unavailable" || startAvailability.reason === "backend-quarantined"));
-  const refused = startAvailability.status !== "available";
-  // The pending sentence only where it says something the notices do not
-  // (PM9.4 O3). With no rows to convert the notice says why and what to do,
-  // and over capacity the counts above say why; repeating either here put one
-  // fact into Convert's description twice. A lane refusal that outranks the
-  // empty scope leaves this sentence as the only place it is said.
-  const pendingSaid = summary === null && plan.capacityRefusal === null &&
-    !(plan.startPlan === "absent" && startAvailability.status === "unavailable" &&
-      startAvailability.reason === "no-convertible-target");
-  // The ellipsis promises a further step before anything starts, and only the
-  // custom folder has one: its picker (PM9.4 O5).
-  const picks = conversion.destinationPolicy.kind === "customFolder";
   return (
-    <div className="conversion-plan" tabIndex={-1} role={repeating ? "group" : undefined}
-      aria-labelledby={repeating ? "conversion-next-heading" : undefined}>
-      {/* Under a finished queue, this block is the next conversion and says
-          so, so the settings below cannot be read as the queue's (R5). */}
-      {repeating ? <h3 id="conversion-next-heading">{t("m74CnvNextConversion")}</h3> : null}
-      <fieldset className="conversion-scope" aria-describedby="conversion-scope-summary">
-        <legend>{t("m74CnvScope")}</legend>
-        <label><input type="radio" name="conversion-scope" value="selected"
-          checked={resolvedScope.scope === "selected"} onChange={() => onScopeChange("selected")} />{t("m74CnvSelected")}</label>
-        <label><input type="radio" name="conversion-scope" value="all"
-          checked={resolvedScope.scope === "all"} onChange={() => onScopeChange("all")} />{t("m74CnvAll")}</label>
-      </fieldset>
-      <p id="conversion-scope-summary" aria-live="polite">
-        {/* One template per language, so the punctuation between the two
-            sentences is the bundle's (R2). The excluded note joins the counts
-            rather than travelling as a parameter of its own: a resource
-            parameter may not be empty, and it is empty whenever nothing is
-            excluded. */}
-        {t("m74CnvScopeLine", {
-          counts: t("m74CnvScopeCounts", { requested: String(resolvedScope.requestedCount), eligible: String(count), excluded: String(resolvedScope.excludedCount) }) +
-            (resolvedScope.excludedCount > 0 ? t("m74CnvNotConvertible") : ""),
-          help: resolvedScope.scope === "all" ? t("m74CnvScopeAllHelp") : t("m74CnvScopeSelectedHelp"),
-        })}
-      </p>
-      {/* Which rows the count excludes, outside the live summary so a scope
-          change does not read them all out (PM9.4 O2). Read only: membership,
-          eligibility and order are the roster's and the plan's. */}
-      {resolvedScope.excluded.length === 0 ? null : (
-        <details className="conversion-excluded">
-          <summary>{t("m74CnvExcludedNames", { count: resolvedScope.excludedCount })}</summary>
-          <ul>
-            {resolvedScope.excluded.slice(0, EXCLUDED_LISTED).map((row) => (
-              <li key={row.handle}>{row.fileName}</li>
-            ))}
-          </ul>
-          {resolvedScope.excluded.length > EXCLUDED_LISTED ? (
-            <p className="quiet-text">{t("moreNotListed", { count: resolvedScope.excluded.length - EXCLUDED_LISTED })}</p>
-          ) : null}
-        </details>
-      )}
-      <p className="quiet-text">{t("m74CnvOrder", { order: t(SORT_MESSAGE[resolvedScope.sort]) })}</p>
-      <p className="quiet-text" data-testid="conversion-membership-help">{t("conversionMembershipHelp")}</p>
-      {summary === null ? null : <p className="quiet-text" data-testid="conversion-capacity">{t("m74CnvCapacity", { count: summary.capacity })}</p>}
-      {plan.capacityRefusal === null ? null : <p className="notice notice-warning" data-testid="conversion-capacity" id={CAPACITY_REFUSAL_ID}>
-        {t("m74CnvCapacityExceeded", { count: plan.capacityRefusal.requestedCount, capacity: plan.capacityRefusal.capacity })}
-      </p>}
-
+    <>
       <ConversionSettings
         configuration={configuration}
         onChoose={configuration.select}
@@ -996,22 +811,27 @@ function PlanState({
         onViewChange={onSettingsViewChange}
       />
 
-      <fieldset className="conversion-destination" aria-describedby="conversion-destination-scope">
-        <legend>{t("m74CnvSaveFiles")}</legend>
-        {DESTINATIONS.map((kind) => (
-          <label key={kind}>
-            <input
-              checked={conversion.destinationPolicy.kind === kind}
-              name="conversion-destination-policy"
-              onChange={() => conversion.setDestinationPolicy(
-                kind === "namedSubfolder" ? { kind, name: conversion.subfolderName } : { kind },
-              )}
-              type="radio"
-              value={kind}
-            />
-            {t(DESTINATION_LABEL[kind])}
-          </label>
-        ))}
+      {/* Where, what on a taken name, and in which order: compact radio rows in
+          the same label and control grid as the settings (direction A 2.2). */}
+      <div className="conversion-form conversion-output-form">
+      <fieldset className="conversion-destination conversion-form-row">
+        <legend className="conversion-form-label">{t("m74CnvSaveFiles")}</legend>
+        <div className="conversion-radio-row">
+          {DESTINATIONS.map((kind) => (
+            <label key={kind}>
+              <input
+                checked={conversion.destinationPolicy.kind === kind}
+                name="conversion-destination-policy"
+                onChange={() => conversion.setDestinationPolicy(
+                  kind === "namedSubfolder" ? { kind, name: conversion.subfolderName } : { kind },
+                )}
+                type="radio"
+                value={kind}
+              />
+              {t(DESTINATION_LABEL[kind])}
+            </label>
+          ))}
+        </div>
         {conversion.destinationPolicy.kind === "namedSubfolder" ? (
           <div className="conversion-subfolder">
             <label htmlFor="conversion-subfolder-name">{t("m74CnvSubfolderName")}</label>
@@ -1028,188 +848,340 @@ function PlanState({
                 conversion.setDestinationPolicy({ kind: "namedSubfolder", name });
               }}
             />
-            <p className="quiet-text" id="conversion-subfolder-help">{t("m74CnvSubfolderHelp")}</p>
+            <p className="visually-hidden" id="conversion-subfolder-help">{t("m74CnvSubfolderHelp")}</p>
           </div>
         ) : null}
-        <p className="quiet-text" id="conversion-destination-scope">{t("m74CnvDestinationScope")}</p>
       </fieldset>
 
-      <fieldset className="conversion-conflict" aria-describedby="conversion-conflict-scope">
-        <legend>{t("m74CnvConflict")}</legend>
-        {CONFLICT_POLICIES.map((policy) => (
-          <label key={policy}>
-            <input
-              checked={conversion.conflictPolicy === policy}
-              name="conversion-conflict-policy"
-              onChange={() => {
-                conversion.setConflictPolicy(policy);
-              }}
-              type="radio"
-              value={policy}
-            />
-            {t(CONFLICT_POLICY_LABEL[policy])}
-          </label>
-        ))}
-        <p className="quiet-text" id="conversion-conflict-scope">{t("m74CnvConflictScope")}</p>
+      <fieldset className="conversion-conflict conversion-form-row" aria-describedby="conversion-conflict-scope">
+        <legend className="conversion-form-label">{t("m74CnvConflict")}</legend>
+        <div className="conversion-radio-row">
+          {CONFLICT_POLICIES.map((policy) => (
+            <label key={policy}>
+              <input
+                checked={conversion.conflictPolicy === policy}
+                name="conversion-conflict-policy"
+                onChange={() => {
+                  conversion.setConflictPolicy(policy);
+                }}
+                type="radio"
+                value={policy}
+              />
+              {t(CONFLICT_POLICY_LABEL[policy])}
+            </label>
+          ))}
+        </div>
+        <p className="visually-hidden" id="conversion-conflict-scope">{t("m74CnvConflictScope")}</p>
       </fieldset>
+      {/* The order the queue runs in. The roster's arrangement and groups do
+          not change it; this does. */}
+      <div className="conversion-order conversion-form-row">
+        <label className="conversion-form-label" htmlFor="conversion-order">{t("executionSort")}</label>
+        <select id="conversion-order" aria-describedby="conversion-order-help" value={sort}
+          onChange={(event) => {
+            const chosen = event.currentTarget.value;
+            if (isSortMode(chosen)) onSortChange(chosen);
+          }}>
+          {SORT_MODES.map((mode) => <option key={mode} value={mode}>{t(SORT_MESSAGE[mode])}</option>)}
+        </select>
+        <p className="visually-hidden" id="conversion-order-help">{t("executionOrderHelp")}</p>
+      </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * What a queue would do, and the one control that starts it.
+ *
+ * **Every state of the plan is rendered, and the control is rendered in all of
+ * them.** A plan being worked out, a plan that failed and a plan the settings
+ * make impossible are three different situations with three different things
+ * for a reader to do, and a control that vanished for two of them would leave
+ * the third looking like the only one there is. The button says what it cannot
+ * do through the one availability rule; nothing here decides again.
+ *
+ * **In the order a reader decides it** (PM9.4 R5): the settings in the form
+ * beside this, then which rows and in which order, then what that conversion
+ * would do, and directly under it the control that starts it. The summary is
+ * the answer to the inputs before it, so nothing it depends on sits between it
+ * and the action.
+ */
+interface PlanProps {
+  readonly conversion: ConversionOperation;
+  readonly configuration: ConversionConfigurationView;
+  readonly plan: ConversionPlanView;
+  /** The rows this panel would queue, for the control that names them. */
+  readonly resolvedScope: ResolvedConversionScope;
+  /** Whether a conversion of these rows may start, and what to say when not. */
+  readonly startAvailability: ConversionAvailability;
+}
+
+/**
+ * What the plan's summary and the control that starts it both read, decided
+ * once so the rail and its foot cannot describe two different plans.
+ */
+function planFacts({ configuration, plan, resolvedScope, startAvailability }: PlanProps) {
+  const current = plan.current;
+  const summary = current?.plan ?? null;
+  // The rows the control names, which is what the reader selected rather than
+  // what MSCanvas has finished describing. The plan is rendered in every state
+  // now, so reading this off the summary made the label say "Convert 0
+  // selected…" for the whole of the window a plan is being worked out -- a
+  // count that was never true of anything.
+  const count = resolvedScope.handles.length;
+  // Nothing to describe because there is nothing to describe *with*: no
+  // installation is bound, or the backend itself refuses. "Not yet known" would
+  // tell the reader to wait for an answer that is not coming (PM9.4 R3).
+  const noBackend =
+    configuration.configuration?.configuration === "unavailableForBinding" ||
+    (startAvailability.status === "unavailable" &&
+      (startAvailability.reason === "backend-unavailable" || startAvailability.reason === "backend-quarantined"));
+  // The pending sentence only where it says something the notices do not
+  // (PM9.4 O3). With no rows to convert the notice says why and what to do,
+  // and over capacity the counts above say why; repeating either here put one
+  // fact into Convert's description twice. A lane refusal that outranks the
+  // empty scope leaves this sentence as the only place it is said. The same
+  // holds for a plan reason the notice already states; a failed plan keeps its
+  // specific error here, beside Describe again.
+  const pendingSaid = summary === null && plan.capacityRefusal === null &&
+    !(plan.startPlan === "absent" && startAvailability.status === "unavailable" &&
+      startAvailability.reason === "no-convertible-target") &&
+    !(startAvailability.status === "unavailable" &&
+      (startAvailability.reason === "plan-reading" ||
+        startAvailability.reason === "plan-selection-unavailable" ||
+        startAvailability.reason === "plan-selection-not-evidenced" ||
+        (startAvailability.reason === "plan-settings-unknown" && !noBackend)));
+  return { current, summary, count, noBackend, pendingSaid };
+}
+
+/**
+ * The control that starts the plan, pinned at the rail's foot (direction A
+ * 2.2): the end of the plan, in view at every scroll position. Its
+ * description is the summary above it, or what stands in for one.
+ */
+function PlanStart(props: PlanProps & {
+  readonly convertButton: RefObject<HTMLButtonElement | null>;
+  readonly onCustomStart: () => void;
+}): ReactElement {
+  const { conversion, plan, resolvedScope, startAvailability, convertButton, onCustomStart } = props;
+  const t = useUiMessages();
+  const { current, summary, count, pendingSaid } = planFacts(props);
+  const refused = startAvailability.status !== "available";
+  // The ellipsis promises a further step before anything starts, and only the
+  // custom folder has one: its picker (PM9.4 O5).
+  const picks = conversion.destinationPolicy.kind === "customFolder";
+  return (
+    <div className="conversion-actions conversion-start-actions">
+      <Button
+        ref={convertButton}
+        aria-describedby={describedBy(
+          summary !== null ? "conversion-plan-summary"
+            : pendingSaid ? PLAN_PENDING_ID
+            : plan.capacityRefusal !== null ? CAPACITY_REFUSAL_ID : "",
+          startAvailability,
+        )}
+        // One filled primary per state (R7). On screen under a finished queue
+        // only once the reader opened the next conversion, and Add then
+        // steps down to secondary.
+        variant="primary"
+        className="conversion-start conversion-wide-action"
+        // The one rule, and the whole of it. The empty-row case and the plan
+        // are inside it rather than beside it: a second clause here is
+        // exactly how this control came to answer a different question from
+        // the operation it starts. Refused rather than disabled so the
+        // control stays a Tab stop whose reason can be reached (PM9 UI-24,
+        // PM9.4 R6); a refused press does nothing.
+        refused={refused}
+        onClick={() => {
+          // The question the summary above answered, whole, and taken from
+          // the very value that summary was rendered from. Passing the rows
+          // alone would let a start mean something the reader never read;
+          // reaching for the question separately would be a second answer to
+          // which conversion this is.
+          if (current !== null) {
+            if (current.identity.destinationPolicy.kind === "customFolder") onCustomStart();
+            conversion.convert(current.identity);
+          }
+        }}
+      >
+        {resolvedScope.scope === "selected"
+          ? t(picks ? "m74CnvConvertSelected" : "m74CnvConvertSelectedDirect", { count })
+          : t(picks ? "m74CnvConvertAll" : "m74CnvConvertAllDirect", { count })}
+      </Button>
+      {/* An explicit re-ask of the same question, and nothing automatic. A
+          plan can fail for a reason the reader cannot act on, and a machine
+          whose only exit were a new question would pin `Convert` as refused
+          for the session over one lost reply. */}
+      {plan.retryOffered ? (
+        <Button variant="secondary" size="sm" icon={<Icon name="refresh" />} onClick={plan.retry}>{t("m74CnvDescribeAgain")}</Button>
+      ) : null}
+    </div>
+  );
+}
+
+function PlanSummary(props: PlanProps & {
+  readonly onScopeChange: (scope: ConversionScope) => void;
+  readonly buildRelease: string | null;
+}): ReactElement {
+  const { plan, resolvedScope, onScopeChange, configuration, buildRelease } = props;
+  const t = useUiMessages();
+  const { summary, count, noBackend, pendingSaid } = planFacts(props);
+  // What differs from the settings MSCanvas ships, read off the plan rather
+  // than off the controls (C11): the rail never repeats the left column.
+  const held = configuration.configuration;
+  const changed = summary === null || held === null || held.configuration !== "ready" ? []
+    : changedAxes(held.catalog, held.shipped, summary.intent);
+  return (
+    <div className="conversion-plan-summary">
+      {/* Native radios drawn as a segmented pair, so the group keeps the
+          platform's own arrow-key behaviour and form semantics. */}
+      <fieldset className="conversion-scope conversion-segments">
+        <legend>{t("m74CnvScope")}</legend>
+        <div className="conversion-segments-track">
+          {SCOPES.map((scope) => (
+            <label className="conversion-segment" key={scope}>
+              <input className="visually-hidden" type="radio" name="conversion-scope" value={scope}
+                checked={resolvedScope.scope === scope} onChange={() => onScopeChange(scope)} />
+              {t(scope === "selected" ? "m74CnvSelected" : "m74CnvAll")}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <p className="conversion-scope-counts" id="conversion-scope-summary" aria-live="polite">
+        {/* The excluded note joins the counts rather than travelling as a
+            parameter of its own: a resource parameter may not be empty, and it
+            is empty whenever nothing is excluded. */}
+        {t("m74CnvScopeCounts", { requested: formatCount(resolvedScope.requestedCount), eligible: formatCount(count), excluded: formatCount(resolvedScope.excludedCount) }) +
+          (resolvedScope.excludedCount > 0 ? t("m74CnvNotConvertible") : "")}
+      </p>
+      {/* Which rows the count excludes, outside the live summary so a scope
+          change does not read them all out (PM9.4 O2). Read only: membership,
+          eligibility and order are the roster's and the plan's. */}
+      {resolvedScope.excluded.length === 0 ? null : (
+        <div className="conversion-excluded-group">
+          <Disclosure label={t("m74CnvExcludedNames", { count: resolvedScope.excludedCount })}
+            regionProps={{ className: "conversion-excluded" }}>
+            <ul>
+              {resolvedScope.excluded.slice(0, EXCLUDED_LISTED).map((row) => (
+                <li key={row.handle}>{row.fileName}</li>
+              ))}
+            </ul>
+            {resolvedScope.excluded.length > EXCLUDED_LISTED ? (
+              <p className="quiet-text">{t("moreNotListed", { count: resolvedScope.excluded.length - EXCLUDED_LISTED })}</p>
+            ) : null}
+          </Disclosure>
+        </div>
+      )}
+      {plan.capacityRefusal === null ? null : <p className="notice notice-warning" data-testid="conversion-capacity" id={CAPACITY_REFUSAL_ID}>
+        {t("m74CnvCapacityExceeded", { count: plan.capacityRefusal.requestedCount, capacity: plan.capacityRefusal.capacity })}
+      </p>}
 
       {summary === null ? (
         <>
           {pendingSaid ? <PlanPending plan={plan} noBackend={noBackend} /> : null}
-          {count === 0 ? null : <ol aria-label={t("m74CnvRequestedOrder")} className="conversion-requested-list">
-            {resolvedScope.members.map((row, index) => <li key={row.handle}>
-              <span className="conversion-queue-order">{index + 1}</span>
-              <span className="conversion-queue-name" title={row.fileName}>{row.fileName}</span>
-            </li>)}
-          </ol>}
+          {count === 0 ? null : <RequestedList members={resolvedScope.members} />}
         </>
       ) : (
         <>
-          <p id="conversion-plan-summary">
-            {describeQueueFamilies(summary.items, t)}
-          </p>
+          <PlanList items={summary.items} />
 
-          <ol aria-label={t("m74CnvReviewedOrder")} className="conversion-queue-list">
-            {summary.items.map((item, index) => (
-              <li key={item.datasetHandle}>
-                <span className="conversion-queue-order">{index + 1}</span>
-                <span className="conversion-queue-name" title={item.fileName}>
-                  {item.fileName}
-                </span>
-                {/* Which family this row is, said on the row. In a mixed queue
-                    the summary's counts cannot say which item is which, and
-                    colour is not a channel this information may live in. */}
-                <span className="conversion-queue-kind">{SOURCE_KIND_LABEL[item.sourceKind]}</span>
-                <span aria-hidden="true">→</span>
-                <span className="visually-hidden">{t("m74CnvConvertsTo")}</span>
-                {item.output.kind === "knownSingle" ? (
-                  <span className="conversion-queue-output" title={item.output.fileName}>
-                    {item.output.fileName}
-                  </span>
-                ) : (
-                  <span
-                    className="conversion-queue-output conversion-queue-output-set"
-                    data-output-topology="backendNamedSet"
-                  >
-                    {outputSetSummary(item.output.maxMembers, t)}
-                    <span className="visually-hidden">. </span>
-                    <span className="conversion-queue-output-naming">
-                      {t("m74CnvSetNaming")}
-                    </span>
-                  </span>
-                )}
-              </li>
+          {/* Short (C11): only the settings that differ from the shipped ones,
+              then the build, the destination and the conflict policy. Every
+              value is read off the plan, never off the controls beside it: the
+              plan answers a question that named a combination and a policy;
+              the controls are what the reader might be moving to *next*. */}
+          <dl className="metadata-list conversion-summary-dl" id="conversion-plan-summary">
+            {changed.map(axis => (
+              <div key={axis} data-plan-changed={axis}>
+                <dt>{t(PLAN_AXIS_LABEL[axis])}</dt>
+                <dd>{axisValueLabel(axis, summary.intent[axis], t)}</dd>
+              </div>
             ))}
-          </ol>
-
-          {/* Every one of these is read off the plan, never off the controls
-              above. The plan is the answer to a question that named a
-              combination and a policy; the controls are what the reader might
-              be moving to *next*, and a summary that read from them would
-              describe a conversion this one is not. */}
-          <dl className="metadata-list">
+            {buildRelease === null ? null : (
+              <div>
+                <dt>{t("m74CnvBuild")}</dt>
+                <dd>{buildRelease}</dd>
+              </div>
+            )}
             <div>
-              <dt>{t("m74CnvOutput")}</dt>
-              <dd>{summary.outputFormat}</dd>
-            </div>
-            <div>
-              <dt>{t("m74CnvPeaks")}</dt>
-              <dd>{t(CONVERSION_VALUE_LABEL.processing[summary.intent.processing])}</dd>
-            </div>
-            <div>
-              <dt>{t("m74CnvSpectra")}</dt>
-              <dd>{t(CONVERSION_VALUE_LABEL.population[summary.intent.population])}</dd>
-            </div>
-            <div>
-              <dt>{t("m74CnvPrecision")}</dt>
-              <dd>{t(CONVERSION_VALUE_LABEL.precision[summary.intent.precision])}</dd>
-            </div>
-            <div>
-              <dt>{t("m74CnvCompression")}</dt>
-              {/* In words, from the plan's own combination, like the axes
-                  above; the backend's token is not the reader's (R4). */}
-              <dd>{t(CONVERSION_VALUE_LABEL.compression[summary.intent.compression])}</dd>
+              <dt>{t("m74CnvRequestedDestination")}</dt>
+              <dd>{describeDestination(summary.destinationPolicy, t)}</dd>
             </div>
             <div>
               <dt>{t("m74CnvConflict")}</dt>
               <dd>{t(CONFLICT_POLICY_LABEL[summary.conflictPolicy])}</dd>
             </div>
-            <div>
-              <dt>{t("m74CnvRequestedDestination")}</dt>
-              <dd>{describeDestination(summary.destinationPolicy, t)}</dd>
-            </div>
           </dl>
-
-          {/* Said only when the mode Rust projects for this plan is output-only
-              (PM9.4 O7). The judgement resources for other modes report a
-              finished check, which a plan has not run. Stop and Skip are
-              explained where they are offered, while the queue runs (O6). */}
-          {summary.validationMode === "output_only" ? (
-            <p className="quiet-text" id={VALIDATION_DISCLOSURE_ID} role="note">
-              {t("m74CnvOutputOnly")}
-            </p>
-          ) : null}
-
-          {/* What this combination reduces, and only that. A combination that
-              reduces nothing produces no list and therefore no reassuring
-              sentence: silence is the honest answer where there is nothing to
-              disclose. */}
-          {conversionIntentDisclosures(summary.intent, t).map((disclosure) => (
-            <p className="quiet-text" key={disclosure} role="note">
-              {disclosure}
-            </p>
-          ))}
         </>
       )}
-
-      <div className="conversion-actions">
-        <button
-          ref={convertButton}
-          aria-describedby={describedBy(
-            summary !== null
-              ? summary.validationMode === "output_only" ? `conversion-plan-summary ${VALIDATION_DISCLOSURE_ID}` : "conversion-plan-summary"
-              : pendingSaid ? PLAN_PENDING_ID
-              : plan.capacityRefusal !== null ? CAPACITY_REFUSAL_ID : "",
-            startAvailability,
-          )}
-          // One filled primary per state (R7): under a finished queue whose
-          // outputs are on offer, adding them is the primary and starting the
-          // next conversion is not.
-          className={`${repeating && conversion.eligibleOutputCount > 0 && conversion.canAdopt ? "secondary-button" : "primary-button"} conversion-start`}
-          // The one rule, and the whole of it. The empty-row case and the plan
-          // are inside it rather than beside it: a second clause here is
-          // exactly how this control came to answer a different question from
-          // the operation it starts. Refused through `aria-disabled` so the
-          // control stays a Tab stop whose reason can be reached (PM9 UI-24,
-          // PM9.4 R6); the press checks the same rule.
-          aria-disabled={refused || undefined}
-          onClick={() => {
-            if (refused) return;
-            // The question the summary above answered, whole, and taken from
-            // the very value that summary was rendered from. Passing the rows
-            // alone would let a start mean something the reader never read;
-            // reaching for the question separately would be a second answer to
-            // which conversion this is.
-            if (current !== null) {
-              if (current.identity.destinationPolicy.kind === "customFolder") onCustomStart();
-              conversion.convert(current.identity);
-            }
-          }}
-          type="button"
-        >
-          {resolvedScope.scope === "selected"
-            ? t(picks ? "m74CnvConvertSelected" : "m74CnvConvertSelectedDirect", { count })
-            : t(picks ? "m74CnvConvertAll" : "m74CnvConvertAllDirect", { count })}
-        </button>
-        {/* An explicit re-ask of the same question, and nothing automatic. A
-            plan can fail for a reason the reader cannot act on, and a machine
-            whose only exit were a new question would pin `Convert` as refused
-            for the session over one lost reply. */}
-        {plan.retryOffered ? (
-          <button className="link-button" onClick={plan.retry} type="button">{t("m74CnvDescribeAgain")}</button>
-        ) : null}
-      </div>
     </div>
+  );
+}
+
+/**
+ * The rows a plan is being worked out for, in the order they would run.
+ * Windowed past `LIST_WINDOW_THRESHOLD` rows, like every conversion list.
+ */
+function RequestedList({ members }: { readonly members: ResolvedConversionScope["members"] }): ReactElement {
+  const t = useUiMessages();
+  const keys = useMemo(() => members.map((row) => row.handle), [members]);
+  const { listProps, rows, spacer } = useListWindow(keys, 24);
+  return (
+    <ol aria-label={t("m74CnvRequestedOrder")} className="conversion-requested-list" {...listProps}>
+      {rows.map(({ key, index, style, ref }) => {
+        const row = members[index];
+        return row === undefined ? null : (
+          <li key={key} ref={ref} style={style} data-window-key={key} aria-setsize={members.length} aria-posinset={index + 1}>
+            <span className="conversion-queue-order">{index + 1}</span>
+            <span className="conversion-queue-name" title={row.fileName}>{row.fileName}</span>
+          </li>
+        );
+      })}
+      {spacer}
+    </ol>
+  );
+}
+
+/** The reviewed plan, file by file, read off Rust's answer. Windowed like the rest. */
+function PlanList({ items }: { readonly items: readonly ConversionQueuePlanItem[] }): ReactElement {
+  const t = useUiMessages();
+  const keys = useMemo(() => items.map((item) => item.datasetHandle), [items]);
+  const { listProps, rows, spacer } = useListWindow(keys, 44);
+  return (
+    <ol aria-label={t("m74CnvReviewedOrder")} className="conversion-queue-list conversion-plan-list" {...listProps}>
+      {rows.map(({ key, index, style, ref }) => {
+        const item = items[index];
+        return item === undefined ? null : (
+          <li key={key} ref={ref} style={style} data-window-key={key} aria-setsize={items.length} aria-posinset={index + 1}>
+            <span className="conversion-queue-order">{index + 1}</span>
+            {/* Names lose their middle, never their extension (C11). */}
+            <MiddleEllipsis className="conversion-queue-name" text={item.fileName} />
+            {/* Which family this row is, said on the row. In a mixed queue
+                the summary's counts cannot say which item is which, and
+                colour is not a channel this information may live in. */}
+            <span className="conversion-queue-kind">{SOURCE_KIND_LABEL[item.sourceKind]}</span>
+            <span aria-hidden="true">→</span>
+            <span className="visually-hidden">{t("m74CnvConvertsTo")}</span>
+            {item.output.kind === "knownSingle" ? (
+              <MiddleEllipsis className="conversion-queue-output" text={item.output.fileName} />
+            ) : (
+              <span
+                className="conversion-queue-output conversion-queue-output-set"
+                data-output-topology="backendNamedSet"
+              >
+                {outputSetSummary(item.output.maxMembers, t)}
+                <span className="visually-hidden">. </span>
+                <span className="conversion-queue-output-naming">
+                  {t("m74CnvSetNaming")}
+                </span>
+              </span>
+            )}
+          </li>
+        );
+      })}
+      {spacer}
+    </ol>
   );
 }
 
@@ -1219,8 +1191,6 @@ const PLAN_PENDING_ID = "conversion-plan-pending";
 /** Where an over-capacity scope's counts are named, for Convert to point at. */
 const CAPACITY_REFUSAL_ID = "conversion-capacity-refusal";
 
-/** Where an output-only plan says what its validation does not compare. */
-const VALIDATION_DISCLOSURE_ID = "conversion-validation-disclosure";
 
 /**
  * How many excluded rows are named before the rest are only counted. The
@@ -1242,25 +1212,32 @@ const QUEUE_STATUS_ID = "conversion-queue-status";
 function PlanPending({ plan, noBackend }: { readonly plan: ConversionPlanView; readonly noBackend: boolean }): ReactElement {
   const t = useUiMessages();
   return (
-    <div className="empty-state" id={PLAN_PENDING_ID}>
+    <div className="conversion-plan-pending" id={PLAN_PENDING_ID}>
       {plan.startPlan === "absent" ? <span>{t("m74CnvNoEligible")}</span>
       : plan.startPlan === "failed" && plan.error !== null ? (
         <span>{conversionErrorMessage(plan.error, t)}</span>
       ) : plan.startPlan === "selectionUnavailable" ? (
-        <span>{t("m74CnvPlanUnavailable")}</span>
+        <span>{t("m74CnvNoticePlanSelectionUnavailable")}</span>
       ) : plan.startPlan === "selectionNotEvidenced" ? (
-        <span>{t("m74CnvPlanUnevidenced")}</span>
+        <span>{t("m74CnvNoticePlanSelectionNotEvidenced")}</span>
       ) : plan.startPlan === "settingsUnknown" ? (
-        <span>{noBackend ? t("m74CnvPlanNoBackend") : t("m74CnvPlanUnknown")}</span>
+        <span>{noBackend ? t("m74CnvPlanNoBackend") : t("m74CnvNoticePlanSettingsUnknown")}</span>
       ) : (
-        <span>{t("m74CnvPlanReading")}</span>
+        <span>{t("m74CnvNoticePlanReading")}</span>
       )}
     </div>
   );
 }
 
 /**
- * A queue under way, or the one that just finished.
+ * A queue under way, or the one that just finished, in two parts.
+ *
+ * `rows` is the list: one row per acquisition, with its state, what it
+ * produced and the actions that are about that row alone (Skip, Open, the
+ * staging cleanup, its Details). `summary` is what the rows add up to: the
+ * status sentence, the queue-level actions (Stop, Add, Diagnostics, Retry) and
+ * the facts the queue was bound to. Both read the same state here, so the two
+ * columns cannot describe different queues.
  *
  * Item-count progress and nothing else: nothing measures a fraction of a
  * `msconvert` run, so a percentage here would be invented.
@@ -1270,13 +1247,21 @@ function PlanPending({ plan, noBackend }: { readonly plan: ConversionPlanView; r
  * the copy beside it says what survives the stop before it is pressed.
  */
 function QueueState({
+  part,
   onReviewNewPlan,
   conversion,
   retryAvailability,
   retryOffered,
   refusedBy,
+  addPrimary = true,
+  startAnother = null,
 }: {
-  readonly onReviewNewPlan: () => void;
+  readonly part: "rows" | "summary";
+  readonly onReviewNewPlan?: () => void;
+  /** Whether Add is the one primary: not once the next conversion is open. */
+  readonly addPrimary?: boolean;
+  /** The control that opens the next conversion, under Add (rebuild review 6). */
+  readonly startAnother?: ReactElement | null;
   readonly conversion: ConversionOperation;
   /** Whether this queue's failures may be rerun, and what to say when not. */
   readonly retryAvailability: ConversionAvailability;
@@ -1287,19 +1272,25 @@ function QueueState({
 }): ReactElement | null {
   const t = useUiMessages();
   const state = conversion.state;
+  const live = !conversion.converting && (state.status === "running" || state.status === "stopping");
+  const current = live ? state.queue.items.find((item) => item.state === "running") ?? null : null;
+  // Measured here, from when this side first saw the queue and the item run
+  // (C13): no percentage, no estimate.
+  const queueElapsed = useSince(live ? state.operationId : null);
+  const itemElapsed = useSince(current === null ? null : `${current.datasetHandle}:${String(current.attempts)}`);
   // A conversion this document dispatched, for a slot that has not been seen to
   // move yet. Rust has no queue to report until it has reserved one, so without
   // this the press goes unacknowledged for a round trip -- and from a finished
   // queue the panel would answer it with the *previous* run's items.
   //
-  // It replaces the block rather than sitting above it, which is exactly what a
-  // dispatched retry already does: an ordered list of what just happened, read
-  // under a sentence saying something is starting, is the panel describing two
-  // queues in one shape.
+  // It replaces the block rather than sitting beside it, which is exactly what
+  // a dispatched retry already does: an ordered list of what just happened,
+  // read under a sentence saying something is starting, is the panel
+  // describing two queues in one shape.
   if (conversion.converting) {
-    return (
-      <div className="conversion-running">
-        <p id={QUEUE_STATUS_ID} tabIndex={-1}>{t("m74CnvStarting")}</p>
+    return part === "rows" ? null : (
+      <div className="conversion-running conversion-run-summary">
+        <p className="conversion-run-status" id={QUEUE_STATUS_ID} tabIndex={-1}>{t("m74CnvStarting")}</p>
       </div>
     );
   }
@@ -1330,8 +1321,242 @@ function QueueState({
     !conversion.busy &&
     queue.cancelledCount + queue.notRunCount + queue.skippedByRequestCount > 0;
   const stopping = state.status === "stopping" || (state.status === "running" && conversion.stopping);
-  // Whether any row offers Skip, which is when Skip is explained (PM9.4 O6).
-  const skipOffered = queue.items.some((_, index) => conversion.canSkipItem(index) || conversion.skippingItem(index));
+
+  if (part === "rows") {
+    return (
+      <div className="conversion-running conversion-run-rows">
+        {/* The column names its state (direction A 2.3, 2.4) and how many
+            items it holds; the rail says how far along they are. */}
+        <div className="conversion-column-head">
+          <h3>{t(state.status === "terminal" ? "m74CnvResultsTitle" : "m74CnvQueueTitle")}</h3>
+          <span className="conversion-count-tag">{formatCount(queue.itemCount)}</span>
+        </div>
+        {state.status === "terminal" && state.reason === "stopFailed" ? (
+          <p className="notice notice-danger" role="alert">
+            <span aria-hidden="true">⚠ </span>
+            {t("m74CnvBackendStopUnconfirmed")}
+            {conversion.backendQuarantined
+              ? t("m74CnvRestartBackend")
+              : ""}
+          </p>
+        ) : null}
+
+        {queue.error === null ? null : (
+          <p className="notice notice-danger" role="status">
+            {conversionErrorMessage(queue.error, t)}
+          </p>
+        )}
+
+        <RunList items={queue.items} follow={current?.datasetHandle ?? null} renderRow={(item, index, row) => {
+            // Read once per item. Which of the two an item has is the whole of
+            // what tells these branches apart, and asking the same question at
+            // every use would invite one of them to be answered differently.
+            const single = singleReportOf(item);
+            const set = setReportOf(item);
+            const skipping = conversion.skippingItem(index);
+            // While the queue runs, a converted or skipped row is one line (its
+            // state and name); its outputs and Open actions wait for the
+            // results. A failure keeps its reason and its recovery in view.
+            const compact = live && (item.state === "finalized" || item.state === "skipped" || item.state === "skippedByRequest");
+            return (
+              <li key={row.key} ref={row.ref} style={row.style} data-window-key={row.key}
+                aria-setsize={queue.items.length} aria-posinset={index + 1} data-item-state={item.state}
+                data-compact={compact || undefined}>
+                {/* The state as a glyph as well as a word: the word beside it
+                    is what carries it, so colour is never the only channel. */}
+                <span className="conversion-run-symbol" aria-hidden="true">{ITEM_STATE_SYMBOL[item.state]}</span>
+                <span className="conversion-run-title">
+                  <MiddleEllipsis className="conversion-queue-name" text={item.fileName} />
+                  <span aria-hidden="true">→</span>
+                  <span className="visually-hidden">{t("m74CnvConvertsTo")}</span>
+                  {item.output.kind === "knownSingle" ? (
+                    <MiddleEllipsis className="conversion-queue-output" text={item.output.fileName} />
+                  ) : (
+                    <span
+                      className="conversion-queue-output conversion-queue-output-set"
+                      data-output-topology="backendNamedSet"
+                    >
+                      {itemOutputSummary(item, set, t)}
+                    </span>
+                  )}
+                </span>
+                <span className="conversion-run-aside">
+                  <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
+                  <span className="conversion-queue-status">{itemStateLabel(item, t)}</span>
+                  {item === current && itemElapsed !== null ? <span className="conversion-queue-elapsed">{formatClock(itemElapsed)}</span> : null}
+                  {/* Only on a row that is actually waiting. Skipping is about
+                      an item that has not started; the file being converted
+                      now is ended by Stop this file, which says so. The same
+                      authoritative state decides this and the dispatch, so the
+                      interface never offers what Rust would refuse.
+
+                      Left mounted and refused while the skip is unanswered, for
+                      the reason the queue stop and the adoption are: removing
+                      the control a keyboard user just activated drops focus to
+                      the document and announces nothing. Its own visible text
+                      says why it is refused. */}
+                  {conversion.canSkipItem(index) || skipping ? (
+                    <Button
+                      variant="quiet"
+                      size="sm"
+                      className="conversion-queue-skip"
+                      aria-label={skipping
+                        ? t("m74CnvSkipping", { name: item.fileName })
+                        : t("m74CnvSkip", { name: item.fileName })}
+                      refused={skipping}
+                      onClick={() => conversion.skipItem(index)}
+                    >
+                      {skipping ? t("m74CnvSkippingShort") : t("m74CnvSkipShort")}
+                    </Button>
+                  ) : null}
+                </span>
+                {compact ? null : <div className="conversion-run-detail">
+                  {/* Why there is no Skip here, at the row that does not have
+                      one. Two rows both read "Waiting" during a rerun and only
+                      one is skippable: the other failed in the earlier pass and
+                      keeps that failure, which is a decision a reader cannot
+                      make sense of from an absent control. The per-item stop
+                      states its own unavailability for the same reason. */}
+                  {item.state === "pending" &&
+                  item.attempts > 0 &&
+                  state.status === "running" &&
+                  !conversion.canSkipItem(index) ? (
+                    <>
+                      <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
+                      <span className="conversion-queue-reason">{t("m74CnvRetryKeepsFailure")}</span>
+                    </>
+                  ) : null}
+                  {item.attempts > 1 ? (
+                    <>
+                      <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
+                      <span className="conversion-queue-attempts">
+                        {t("m74CnvAttempt", { count: item.attempts })}
+                      </span>
+                    </>
+                  ) : null}
+                  {item.state === "failed" ? (
+                    <>
+                      <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
+                      <span className="conversion-queue-reason">{itemFailureSentence(item, t)}</span>
+                    </>
+                  ) : null}
+                  {/* Which failures Retry reruns, said on each one (R8). Rust
+                      marks every failure retryable or not, and "Retry 1
+                      failed" beside "2 failed" left the reader to guess which. */}
+                  {item.state === "failed" && retryJudged ? (
+                    <>
+                      <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
+                      <span className="conversion-queue-retry">
+                        {item.retryable ? t("m74CnvWillRetry") : t("m74CnvWillNotRetry")}
+                      </span>
+                    </>
+                  ) : null}
+                  {/* What was actually produced, per item. A queue that said
+                      only `Converted` would have taken away the one thing that
+                      lets a user tell a real conversion from an empty one. */}
+                  {single?.output == null ? null : (
+                    <>
+                      <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
+                      <span className="conversion-queue-facts">
+                        {t("m74CnvOutputMetrics", { bytes: formatByteLength(single.output.byteLength, t), spectra: formatCount(single.output.spectrumCount), chromatograms: formatCount(single.output.chromatogramCount) })}
+                        {single.backend === null
+                          ? ""
+                          : `, ${formatDuration(single.backend.elapsedMilliseconds)}`}
+                      </span>
+                    </>
+                  )}
+                  {/* What a set actually produced, and the exact limits of the
+                      claim. Three separate sentences on purpose: the count is a
+                      fact, the completeness is narrower than it sounds, and the
+                      validation is narrower again. Collapsing them would read
+                      as one broad guarantee that none of them makes. */}
+                  {set === null ? null : (
+                    <>
+                      <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
+                      <span className="conversion-queue-set-result">{setResultSentence(set, t)}</span>
+                      {set.completeness.kind === "established" ? (
+                        <span className="conversion-queue-set-completeness">
+                          {t("m74CnvSampleCompleteness")}
+                        </span>
+                      ) : null}
+                      {set.partial === null ? null : (
+                        <span className="conversion-queue-set-partial notice notice-warning" role="note">
+                          {t("m74CnvPartialExplanation")}
+                        </span>
+                      )}
+                      {/* Which files, not only how many, bounded at twenty-four
+                          by the lifecycle that produced them. Named once:
+                          beside its own Open actions where Rust paired the
+                          members with what they can open, and here only where
+                          it could not (PM9.4 O1). The pairing is all or
+                          nothing. */}
+                      {finalizedMemberNames(set).length === 0 || item.finalizedOutputs.length > 0 ? null : (
+                        <ul className="conversion-queue-set-members">
+                          {finalizedMemberNames(set).map((name) => (
+                            <li key={name} title={name}>
+                              {name}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
+                  )}
+                  {/* Cleanup failing is the user's problem, not only MSCanvas',
+                      because what is left behind is in the folder they chose.
+                      Read from both places it can be recorded: a cancelled item
+                      has no report by construction, so a residue it left would
+                      otherwise be knowable to MSCanvas and invisible to the
+                      person whose folder it is in. */}
+                  {(single?.stagingResidue ??
+                    set?.stagingResidue ??
+                    item.cancellation?.stagingResidue) == null ? null : (
+                    <>
+                      <span className="visually-hidden">{t("m74CnvListSeparator")}</span>
+                      <span className="conversion-queue-residue">{t("m74CnvResidue")}</span>
+                    </>
+                  )}
+                  {item.stagingRecovery !== null && (item.stagingRecovery.status !== "cleaned" || (single?.stagingResidue ?? set?.stagingResidue ?? item.cancellation?.stagingResidue) != null) ? (
+                    <StagingRecoveryActions key={item.stagingRecovery.recoveryId} recovery={item.stagingRecovery} enabled={state.status === "terminal" && !conversion.busy && !conversion.backendQuarantined} refusedBy={refusedBy.cleanup} reclaim={conversion.reclaimStaging} onReview={onReviewNewPlan ?? (() => {})} />
+                  ) : null}
+                  {item.finalizedOutputs.map(output => <OutputOpenActions key={output.outputId} output={output} />)}
+                  {/* Where the row's one word stops being the whole answer. The
+                      label is a projection and is lossy on purpose; the five
+                      judgements it projects from stay inspectable here rather
+                      than being spelled out five times per row on screen.
+
+                      Not offered for a row that has not been attempted: a
+                      waiting item has one honest answer to every one of the
+                      five, and a disclosure that only ever says "nothing yet"
+                      teaches its own uselessness.
+
+                      Attempts, not state. A retry returns every retryable
+                      failure to `pending` and *keeps* its report and its
+                      attempt facts until that item is actually rerun, so hiding
+                      on the state alone took the retained judgements away from
+                      every later item while an earlier one was still running. */}
+                  {(item.state === "pending" && item.attempts === 0) ||
+                  item.state === "running" ? null : (
+                    <ConversionItemJudgements index={index} item={item} />
+                  )}
+                </div>}
+              </li>
+            );
+          }} />
+        {/* What to do about the rows that did not convert, directly above the
+            next conversion it points to. Not a rerun: a stop or a skip was the
+            reader's decision, and converting those rows again is a new queue
+            from the checked rows (R9). */}
+        {leftUnconverted ? (
+          <p className="conversion-side-note conversion-convert-again">{t("m74CnvConvertAgain")}</p>
+        ) : null}
+      </div>
+    );
+  }
+
+  // Whether Stop this file has a file to describe: one it would end, or one it
+  // is ending. Between items there is nothing to say.
+  const cancelItemDescribed = conversion.cancellingItem || conversion.cancellableItem !== null;
+  const runningItem = queue.items.some((item) => item.state === "running");
   // The queue's one status sentence. Always the block's first element, in
   // every state and in the starting window above, so it is one DOM node from
   // the press that starts a queue to the result: the focus R11 puts on it, and
@@ -1355,7 +1580,7 @@ function QueueState({
             //
             // A rerun says it is one (R10): the same queue, run again over its
             // earlier failures, is not a first run.
-            queue.items.some((item) => item.state === "running")
+            runningItem
             ? t(queue.retryRound > 0 ? "m74CnvRerunningItem" : "m74CnvRunningItem", { position: runningPosition(queue), total: queue.itemCount })
             : t(queue.retryRound > 0 ? "m74CnvRerunBetweenItems" : "m74CnvBetweenItems", { count: queue.finalizedCount, total: queue.itemCount })
           : state.reason === "stopFailed"
@@ -1363,316 +1588,87 @@ function QueueState({
               // may still be running, and a heading someone skims is exactly
               // where the claim must not be made and then walked back by the
               // warning below it.
-              t("m74CnvStopUnconfirmed")
+              t("m74CnvStateUnconfirmed")
             : state.reason === "stopped"
               ? t("m74CnvStopped")
               : completedSummary(queue, t);
   return (
-    <div className="conversion-running">
-      <p id={QUEUE_STATUS_ID} tabIndex={-1}>{status}</p>
-      <p className="quiet-text" data-testid="conversion-bound-membership">{t("m74CnvBoundMembership")}</p>
-      {retrying ? (
-        // True for as long as this branch is on screen, which is until the
-        // state read dispatched beside the retry reports the rerun running.
-        // The sentence it replaced said this workflow could not cancel a
-        // running queue, which stopped being true in this release.
-        <p className="quiet-text" role="note">{t("m74CnvRetryStopAvailability")}</p>
-      ) : stopping ? (
+    <div className="conversion-running conversion-run-summary">
+      <p className="conversion-run-status" id={QUEUE_STATUS_ID} tabIndex={-1}>{status}</p>
+      {/* Filled by the items already settled, never by the one running:
+          nothing measures a fraction of a run (C13). The item in progress is
+          its own indeterminate segment at the fill's edge, so a queue with
+          nothing done yet reads as a bar at work, never as a rule (review
+          issue 11). Hidden from assistive technology: the sentence above
+          says the same numbers. */}
+      {state.status === "running" && !stopping ? (
+        <div className="conversion-progress-bar" aria-hidden="true">
+          <span style={{ width: `${String(settledShare(queue))}%` }} />
+          {runningItem ? (
+            <span className="conversion-progress-current"
+              style={{ left: `${String(settledShare(queue))}%`, width: `${String(queue.itemCount === 0 ? 0 : 100 / queue.itemCount)}%` }} />
+          ) : null}
+        </div>
+      ) : null}
+      {queueElapsed === null ? null : <p className="conversion-elapsed">{t("m74CnvElapsed", { time: formatClock(queueElapsed) })}</p>}
+      {/* No stop controls until the state read dispatched beside a retry
+          reports the rerun running. */}
+      {retrying ? null : stopping ? (
         // Deliberately says nothing about how the current item will end.
         // Whether it is cancelled or finishes on its own is decided by which
         // the process boundary observes first, and predicting it here would
         // put a claim on screen that the next read could contradict.
-        <p className="quiet-text" role="note">
+        <p className="conversion-side-note" role="note">
           {t("m74CnvStopInFlight")}
         </p>
       ) : state.status === "running" ? (
         <>
           <div className="conversion-actions">
-            {/* `aria-disabled` and a guard, not `disabled`: a control that
-                becomes natively disabled under the keyboard loses its focus in
-                Chromium, and these three are pressed while work is in flight
-                (R11). */}
-            <button
-              type="button"
-              className="secondary-button"
+            {/* Refused and guarded, not `disabled`: a control that becomes
+                natively disabled under the keyboard loses its focus in
+                Chromium, and these are pressed while work is in flight (R11).
+                Side by side because they are the same kind of decision at two
+                scales, about the run rather than about one row. */}
+            <Button
+              variant="secondary"
+              size="sm"
               aria-describedby="conversion-stop-scope"
-              aria-disabled={!conversion.canStop || undefined}
-              onClick={() => {
-                if (conversion.canStop) conversion.stop();
-              }}
-            >{t("m74CnvStopQueue")}</button>
-            {/* Beside Stop queue rather than in the row it is about. The two
-                are the same kind of decision at two scales, and a control that
-                ended one acquisition from inside the list would read as an
-                attribute of that row instead of an action on the run. */}
-            <button
-              type="button"
-              className="secondary-button"
-              aria-describedby="conversion-cancel-item-scope"
-              aria-disabled={conversion.cancellableItem === null || undefined}
-              onClick={() => {
-                if (conversion.cancellableItem !== null) conversion.cancelCurrentItem();
-              }}
+              refused={!conversion.canStop}
+              reasonId={QUEUE_STATUS_ID}
+              onClick={() => conversion.stop()}
+            >{t("m74CnvStopQueue")}</Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-describedby={cancelItemDescribed ? "conversion-cancel-item-scope" : undefined}
+              refused={conversion.cancellableItem === null}
+              // Between items the status sentence ("…starting the next") is
+              // why there is no file to stop.
+              reasonId={QUEUE_STATUS_ID}
+              onClick={() => conversion.cancelCurrentItem()}
             >
               {conversion.cancellingItem ? t("m74CnvStoppingFile") : t("m74CnvStopFile")}
-            </button>
+            </Button>
           </div>
-          <p className="quiet-text" id="conversion-stop-scope" role="note">
+          <p className="conversion-side-note" id="conversion-stop-scope" role="note">
             {t("m74CnvStopExplanation")}
           </p>
-          <p className="quiet-text" id="conversion-cancel-item-scope" role="note">
-            {conversion.cancellingItem
-              ? t("m74CnvCancelItemInFlight")
-              : conversion.cancellableItem === null
-                ? t("m74CnvCancelItemUnavailable")
-                : `${t("m74CnvCancelNamed", { name: conversion.cancellableItem.fileName })} ${t("m74CnvCancelItemExplanation")}`}
-          </p>
+          {/* Only while there is a file this control would end, or one it is
+              ending: the quarantine branch is the part a reader cannot undo.
+              Its button's description, not a paragraph on screen (direction A
+              2.3 keeps one line under the stops). */}
+          {cancelItemDescribed ? (
+            <p className="visually-hidden" id="conversion-cancel-item-scope">
+              {conversion.cancellingItem || conversion.cancellableItem === null
+                ? t("m74CnvCancelItemExplanation")
+                : t("m74CnvCancelNamed", { name: conversion.cancellableItem.fileName })}
+            </p>
+          ) : null}
         </>
       ) : null}
-      {skipOffered ? (
-        <p className="quiet-text" id="conversion-skip-scope" role="note">{t("m74CnvSkipExplanation")}</p>
-      ) : null}
-
-      <details className="conversion-bound-details">
-        <summary>{t("m74CnvBoundDetails")}</summary>
-        <dl className="metadata-list" aria-label={t("m74CnvQueueDestinationAria")}>
-        <div>
-          <dt>{t("m74CnvQueueDestination")}</dt>
-          <dd>{queue.destinationPolicy.kind === "customFolder" && queue.destinationStatus === "bound"
-            ? t("m74CnvChosenLocal")
-            : describeDestination(queue.destinationPolicy, t)}</dd>
-        </div>
-        <div>
-          <dt>{t("m74CnvDestinationBinding")}</dt>
-          <dd>{queue.destinationStatus === "bound"
-            ? t("m74CnvDestinationBound")
-            : t("m74CnvDestinationUnbound")}</dd>
-        </div>
-        <div>
-          <dt>{t("m74CnvQueueConflict")}</dt>
-          <dd>{t(CONFLICT_POLICY_LABEL[queue.conflictPolicy])}</dd>
-        </div>
-        </dl>
-      </details>
-
-      {state.status === "terminal" && state.reason === "stopFailed" ? (
-        <p className="notice notice-danger" role="alert">
-          <span aria-hidden="true">⚠ </span>
-          {t("m74CnvBackendStopUnconfirmed")}
-          {conversion.backendQuarantined
-            ? t("m74CnvRestartBackend")
-            : ""}
-        </p>
-      ) : null}
-
-      {queue.error === null ? null : (
-        <p className="notice notice-danger" role="status">
-          {conversionErrorMessage(queue.error, t)}
-        </p>
-      )}
-
-      <ol className="conversion-queue-list">
-        {queue.items.map((item, index) => {
-          // Read once per item. Which of the two an item has is the whole of
-          // what tells these branches apart, and asking the same question at
-          // every use would invite one of them to be answered differently.
-          const single = singleReportOf(item);
-          const set = setReportOf(item);
-          return (
-            <li key={item.datasetHandle} data-item-state={item.state}>
-              <span className="conversion-queue-order">{index + 1}</span>
-              <span className="conversion-queue-name" title={item.fileName}>
-                {item.fileName}
-              </span>
-              <span aria-hidden="true">→</span>
-              <span className="visually-hidden">{t("m74CnvConvertsTo")}</span>
-              {item.output.kind === "knownSingle" ? (
-                <span className="conversion-queue-output" title={item.output.fileName}>
-                  {item.output.fileName}
-                </span>
-              ) : (
-                <span
-                  className="conversion-queue-output conversion-queue-output-set"
-                  data-output-topology="backendNamedSet"
-                >
-                  {itemOutputSummary(item, set, t)}
-                </span>
-              )}
-              <span className="visually-hidden">, </span>
-              <span className="conversion-queue-status">{itemStateLabel(item, t)}</span>
-              {/* Only on a row that is actually waiting. Skipping is about an
-                  item that has not started; the file being converted now is
-                  ended by Stop this file, which says so. The same authoritative
-                  state decides this and the dispatch, so the interface never
-                  offers what Rust would refuse. */}
-              {/* Left mounted and disabled while the skip is unanswered, for
-                  the reason the queue stop and the adoption are: removing the
-                  control a keyboard user just activated drops focus to the
-                  document and announces nothing. */}
-              {conversion.canSkipItem(index) || conversion.skippingItem(index) ? (
-                <button
-                  type="button"
-                  className="link-button conversion-queue-skip"
-                  aria-describedby="conversion-skip-scope"
-                  aria-disabled={conversion.skippingItem(index) || undefined}
-                  onClick={() => {
-                    if (!conversion.skippingItem(index)) conversion.skipItem(index);
-                  }}
-                >
-                  {conversion.skippingItem(index)
-                    ? t("m74CnvSkipping", { name: item.fileName })
-                    : t("m74CnvSkip", { name: item.fileName })}
-                </button>
-              ) : null}
-              {/* Why there is no Skip here, at the row that does not have one.
-                  Two rows both read "Waiting" during a rerun and only one is
-                  skippable: the other failed in the earlier pass and keeps that
-                  failure, which is a decision a reader cannot make sense of
-                  from an absent control. The per-item stop states its own
-                  unavailability for the same reason. */}
-              {item.state === "pending" &&
-              item.attempts > 0 &&
-              state.status === "running" &&
-              !conversion.canSkipItem(index) ? (
-                <>
-                  <span className="visually-hidden">, </span>
-                  <span className="conversion-queue-reason">{t("m74CnvRetryKeepsFailure")}</span>
-                </>
-              ) : null}
-              {item.attempts > 1 ? (
-                <>
-                  <span className="visually-hidden">, </span>
-                  <span className="conversion-queue-attempts">
-                    {t("m74CnvAttempt", { count: item.attempts })}
-                  </span>
-                </>
-              ) : null}
-              {item.state === "failed" ? (
-                <>
-                  <span className="visually-hidden">, </span>
-                  <span className="conversion-queue-reason">{itemFailureSentence(item, t)}</span>
-                </>
-              ) : null}
-              {/* Which failures Retry reruns, said on each one (R8). Rust marks
-                  every failure retryable or not, and "Retry 1 failed" beside
-                  "2 failed" left the reader to guess which. */}
-              {item.state === "failed" && retryJudged ? (
-                <>
-                  <span className="visually-hidden">, </span>
-                  <span className="conversion-queue-retry">
-                    {item.retryable ? t("m74CnvWillRetry") : t("m74CnvWillNotRetry")}
-                  </span>
-                </>
-              ) : null}
-              {/* What was actually produced, per item. A queue that said only
-                  `Converted` would have taken away the one thing that lets a user
-                  tell a real conversion from an empty one. */}
-              {single?.output == null ? null : (
-                <>
-                  <span className="visually-hidden">, </span>
-                  <span className="conversion-queue-facts">
-                    {t("m74CnvOutputMetrics", { bytes: formatByteLength(single.output.byteLength, t), spectra: formatCount(single.output.spectrumCount), chromatograms: formatCount(single.output.chromatogramCount) })}
-                    {single.backend === null
-                      ? ""
-                      : `, ${formatDuration(single.backend.elapsedMilliseconds)}`}
-                  </span>
-                </>
-              )}
-              {/* What a set actually produced, and the exact limits of the claim.
-                  Three separate sentences on purpose: the count is a fact, the
-                  completeness is narrower than it sounds, and the validation is
-                  narrower again. Collapsing them would read as one broad
-                  guarantee that none of them makes. */}
-              {set === null ? null : (
-                <>
-                  <span className="visually-hidden">, </span>
-                  <span className="conversion-queue-set-result">{setResultSentence(set, t)}</span>
-                  {set.completeness.kind === "established" ? (
-                    <span className="conversion-queue-set-completeness">
-                      {t("m74CnvSampleCompleteness")}
-                    </span>
-                  ) : null}
-                  {set.partial === null ? null : (
-                    <span className="conversion-queue-set-partial notice notice-warning" role="note">
-                      {t("m74CnvPartialExplanation")}
-                    </span>
-                  )}
-                  {/* Which files, not only how many. A result that says "ten
-                      outputs finalized" and cannot say which ten has given the
-                      user a number rather than an answer -- and after a partial
-                      publication the copy above tells them to add the finalized
-                      files individually, which is not something anyone can act
-                      on without their names. Bounded at twenty-four by the
-                      lifecycle that produced them. */}
-                  {/* Named once: beside its own Open actions where Rust paired
-                      the members with what they can open, and here only where
-                      it could not, which leaves this the one place they are
-                      named (PM9.4 O1). The pairing is all or nothing. */}
-                  {finalizedMemberNames(set).length === 0 || item.finalizedOutputs.length > 0 ? null : (
-                    <ul className="conversion-queue-set-members">
-                      {finalizedMemberNames(set).map((name) => (
-                        <li key={name} title={name}>
-                          {name}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              )}
-              {/* Cleanup failing is the user's problem, not only MSCanvas', because
-                  what is left behind is in the folder they chose. Read from both
-                  places it can be recorded: a cancelled item has no report by
-                  construction, so a residue it left would otherwise be knowable
-                  to MSCanvas and invisible to the person whose folder it is in. */}
-              {(single?.stagingResidue ??
-                set?.stagingResidue ??
-                item.cancellation?.stagingResidue) == null ? null : (
-                <>
-                  <span className="visually-hidden">, </span>
-                  <span className="conversion-queue-residue">{t("m74CnvResidue")}</span>
-                </>
-              )}
-              {item.stagingRecovery !== null && (item.stagingRecovery.status !== "cleaned" || (single?.stagingResidue ?? set?.stagingResidue ?? item.cancellation?.stagingResidue) != null) ? (
-                <StagingRecoveryActions key={item.stagingRecovery.recoveryId} recovery={item.stagingRecovery} enabled={state.status === "terminal" && !conversion.busy && !conversion.backendQuarantined} refusedBy={refusedBy.cleanup} reclaim={conversion.reclaimStaging} onReview={onReviewNewPlan} />
-              ) : null}
-              {item.finalizedOutputs.map(output => <OutputOpenActions key={output.outputId} output={output} />)}
-              {/* Where the row's one word stops being the whole answer. The
-                  label above is a projection and is lossy on purpose; the five
-                  judgements it projects from stay inspectable here rather than
-                  being spelled out five times per row on screen.
-
-                  Not offered for a row that has not been attempted: a waiting
-                  item has one honest answer to every one of the five, and a
-                  disclosure that only ever says "nothing yet" teaches its own
-                  uselessness.
-
-                  Attempts, not state. A retry returns every retryable failure
-                  to `pending` and *keeps* its report and its attempt facts
-                  until that item is actually rerun -- the row says so in its
-                  own label -- so hiding on the state alone took the retained
-                  judgements away from every later item for as long as an
-                  earlier conversion was still running. */}
-              {(item.state === "pending" && item.attempts === 0) ||
-              item.state === "running" ? null : (
-                <ConversionItemJudgements index={index} item={item} />
-              )}
-            </li>
-          );
-        })}
-      </ol>
 
       {state.status === "terminal" && !retrying ? (
         <>
-          {/* Only where something was actually judged, and judged output-only
-              by its own report's mode (PM9.4 O7). A queue whose items were all
-              skipped or all failed validated nothing -- and a skipped item's
-              existing file was explicitly not inspected, so claiming
-              output-only validation over it would claim a check nobody ran. */}
-          {queue.items.some(conversionJudgedOutputOnly) ? (
-            <p className="quiet-text" role="note">
-              {t("m74CnvOutputOnly")}
-            </p>
-          ) : null}
           {/* The counts a stopped queue is judged by, said in full and kept
               apart. A cancelled item is not a failure and a not-run item is
               not an attempt, so folding either into `failed` would report work
@@ -1680,73 +1676,200 @@ function QueueState({
           {state.reason === "completed" ? null : (
             <>
               <p className="conversion-stopped-summary">{stoppedSummary(queue, t)}</p>
-              <p className="quiet-text">{t("m74CnvStoppedFilesRemain")}</p>
+              <p className="conversion-side-note">{t("m74CnvStoppedFilesRemain")}</p>
             </>
           )}
-          {/* What to do about the rows that did not convert. Not a rerun: a
-              stop or a skip was the reader's decision, and converting those
-              rows again is a new queue from the checked rows below (R9). */}
-          {leftUnconverted ? (
-            <p className="quiet-text conversion-convert-again">{t("m74CnvConvertAgain")}</p>
-          ) : null}
-          <AdoptOutputs conversion={conversion} refusedBy={refusedBy.adopt} />
+          <AdoptOutputs conversion={conversion} refusedBy={refusedBy.adopt} primary={addPrimary} />
+          {startAnother === null ? null : <div className="conversion-actions conversion-start-another">{startAnother}</div>}
           <ExportDiagnostics conversion={conversion} refusedBy={refusedBy.diagnostics} />
           {/* A stopped queue is terminal and is not rerun in place. Converting
               those rows again is a new queue, made from the roster, which is
-              the ordinary path the selection workflow already offers. */}
-          {/* Not while an adoption is under way. A retry replaces the very
+              the ordinary path the selection workflow already offers.
+
+              Not while an adoption is under way. A retry replaces the very
               results the adoption is reading, so the two are never both live.
-              Removed rather than disabled: an action that is coming back is a
+              Removed rather than refused: an action that is coming back is a
               different thing from one that is refused. */}
           {!retryOffered ? (
             state.reason === "completed" &&
             queue.retryableFailedCount === 0 &&
             queue.nonRetryableFailedCount !== 0 &&
             !conversion.adopting &&
-            !conversion.exportingDiagnostics ? (
-              <p className="quiet-text" role="note">
-                {/* Two different reasons there is no retry, and the sentence
-                    names the one that applies. The refusal this milestone adds
-                    always lands here -- a process nothing can account for is a
-                    non-retryable failure -- and saying the acquisitions, folder
-                    and settings would not change anything is true of them and
-                    beside the point: what forbids another attempt is that the
-                    session has stopped starting backend work at all. */}
-                {conversion.backendQuarantined
-                  ? t("m74CnvQuarantineRetry")
-                  : t("m74CnvNonRetryable")}
-              </p>
+            !conversion.exportingDiagnostics &&
+            conversion.backendQuarantined ? (
+              // Only for a quarantined session, where the rows' own retry
+              // marks are withheld. Otherwise each failed row already says it
+              // is not rerun.
+              <p className="conversion-side-note" role="note">{t("m74CnvQuarantineRetry")}</p>
             ) : null
           ) : (
-            <div className="conversion-actions">
-              <button
-                aria-describedby={describedBy("conversion-retry-scope", retryAvailability)}
-                className="secondary-button"
-                // Retry availability, and deliberately not the start control's.
-                // A retry is a conversion, so an unavailable ProteoWizard, a
-                // recheck in flight or a preview still holding the lane refuse
-                // it for the same reasons -- but what it would act on is this
-                // queue's failures rather than the roster's selection, and this
-                // control answered to the other target for as long as it
-                // existed.
-                disabled={retryAvailability.status !== "available"}
-                onClick={conversion.retry}
-                type="button"
-              >
-                {t("m74CnvRetry", { count: queue.retryableFailedCount })}
-              </button>
-            </div>
+            <>
+              <div className="conversion-actions">
+                {/* Retry availability, and deliberately not the start
+                    control's. A retry is a conversion, so an unavailable
+                    ProteoWizard, a recheck in flight or a preview still holding
+                    the lane refuse it for the same reasons -- but what it would
+                    act on is this queue's failures rather than the roster's
+                    selection. Refused rather than disabled, so its reason in
+                    the availability notice can be reached. */}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Icon name="refresh" />}
+                  aria-describedby={describedBy("conversion-retry-scope", retryAvailability)}
+                  refused={retryAvailability.status !== "available"}
+                  onClick={conversion.retry}
+                >
+                  {t("m74CnvRetry", { count: queue.retryableFailedCount })}
+                </Button>
+              </div>
+              {/* What Retry reruns and keeps, said where it is pressed and to
+                  every reader, as the stop and adoption controls say theirs
+                  (R8). */}
+              <p className="conversion-side-note" id="conversion-retry-scope" role="note">{t("m74CnvRetryScope")}</p>
+            </>
           )}
-          {/* What Retry reruns and keeps, said where it is pressed and to every
-              reader, as the stop and adoption controls say theirs (R8). */}
-          {!retryOffered ? null : (
-            <p className="quiet-text" id="conversion-retry-scope" role="note">{t("m74CnvRetryScope")}</p>
-          )}
+          {/* Only where something was actually judged, and judged output-only
+              by its own report's mode (PM9.4 O7). A queue whose items were all
+              skipped or all failed validated nothing -- and a skipped item's
+              existing file was explicitly not inspected, so claiming
+              output-only validation over it would claim a check nobody ran. */}
+          {queue.items.some(conversionJudgedOutputOnly) ? (
+            <p className="conversion-side-note" role="note">
+              {t("m74CnvOutputOnly")}
+            </p>
+          ) : null}
         </>
       ) : null}
+
+      {/* What the queue was bound to when it started, always on screen: three
+          facts, read off the queue rather than off the form for the next one. */}
+      <dl className="metadata-list conversion-summary-dl conversion-bound-details" aria-label={t("m74CnvQueueDestination")}>
+        <div>
+          <dt>{t("m74CnvQueueDestination")}</dt>
+          <dd>{queue.destinationPolicy.kind === "customFolder" && queue.destinationStatus === "bound"
+            ? t("m74CnvChosenLocal")
+            : describeDestination(queue.destinationPolicy, t)}</dd>
+        </div>
+        <div>
+          <dt>{t("m74CnvQueueConflict")}</dt>
+          <dd>{t(CONFLICT_POLICY_LABEL[queue.conflictPolicy])}</dd>
+        </div>
+      </dl>
     </div>
   );
 }
+
+/**
+ * The queue's rows, running or finished, windowed past
+ * `LIST_WINDOW_THRESHOLD` items. Each row's content is the caller's; the
+ * window decides only which rows are mounted and where.
+ */
+/**
+ * Wall time since this side first saw `key`, ticking once a second; `null`
+ * while there is no key. A new key starts again from zero.
+ */
+function useSince(key: string | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  const started = useRef<{ readonly key: string; readonly at: number } | null>(null);
+  if (key === null) started.current = null;
+  else if (started.current?.key !== key) started.current = { key, at: Date.now() };
+  useEffect(() => {
+    if (key === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [key]);
+  return started.current === null ? null : Math.max(0, now - started.current.at);
+}
+
+/** Elapsed time as m:ss (h:mm:ss past an hour). */
+export function formatClock(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1000);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours > 0 ? `${String(hours)}:${pad(minutes)}:${pad(seconds % 60)}` : `${String(minutes)}:${pad(seconds % 60)}`;
+}
+
+function RunList({ items, renderRow, follow = null }: {
+  readonly items: readonly ConversionQueueItem[];
+  readonly renderRow: (item: ConversionQueueItem, index: number, row: ListWindowRow) => ReactElement;
+  /** The running item's key: the list keeps it in view until the reader scrolls. */
+  readonly follow?: string | null;
+}): ReactElement {
+  const keys = useMemo(() => items.map((item) => item.datasetHandle), [items]);
+  const { listProps, rows, spacer, windowed, root, offsetOf } = useListWindow(keys, 64);
+  // A reader who scrolls the list takes it over; the running item no longer
+  // pulls it back (direction A 2.3).
+  const readerScrolled = useRef(false);
+  useEffect(() => {
+    const element = root.current;
+    if (element === null) return;
+    const took = () => { readerScrolled.current = true; };
+    element.addEventListener("wheel", took, { passive: true });
+    element.addEventListener("pointerdown", took, { passive: true });
+    element.addEventListener("touchstart", took, { passive: true });
+    return () => {
+      element.removeEventListener("wheel", took); element.removeEventListener("pointerdown", took); element.removeEventListener("touchstart", took);
+    };
+  }, [root]);
+  const placeOf = useRef(offsetOf);
+  placeOf.current = offsetOf;
+  // Where the running item sits by the window's measurements: rows measured
+  // after a reveal move it, and the list follows it there.
+  const followTop = follow === null ? null : offsetOf(follow);
+  // When the running item changes, and when the list is shown: a queue that
+  // started while Conversion was another tab's is followed the moment the tab
+  // shows it. A windowed list is its own scroll box, so it follows again
+  // whenever its box changes (shown, or the window resized), until the reader
+  // scrolls it.
+  useLayoutEffect(() => {
+    if (follow === null) return;
+    const element = root.current;
+    if (element === null) return;
+    const reveal = () => {
+      if (readerScrolled.current || element.clientHeight === 0) return;
+      if (windowed) {
+        const top = placeOf.current(follow);
+        if (top !== null && (top < element.scrollTop || top > element.scrollTop + element.clientHeight - 64)) element.scrollTop = Math.max(0, top - 64);
+      } else {
+        [...element.querySelectorAll<HTMLElement>("[data-window-key]")].find(row => row.dataset.windowKey === follow)
+          ?.scrollIntoView?.({ block: "nearest" });
+      }
+    };
+    reveal();
+    if (typeof ResizeObserver === "undefined" || (!windowed && element.clientHeight > 0)) return;
+    const resized = new ResizeObserver(() => {
+      reveal();
+      // A short list's box grows with its rows, so it is followed once, when shown.
+      if (!windowed && element.clientHeight > 0) resized.disconnect();
+    });
+    resized.observe(element);
+    return () => resized.disconnect();
+  }, [follow, followTop, windowed, root]);
+  return (
+    <ol className="conversion-queue-list conversion-run-list" {...listProps}>
+      {rows.map((row) => {
+        const item = items[row.index];
+        return item === undefined ? null : renderRow(item, row.index, row);
+      })}
+      {spacer}
+    </ol>
+  );
+}
+
+/** What each item state shows in its circle (rebuild spec 5.2). */
+const ITEM_STATE_SYMBOL: Record<ConversionQueueItem["state"], string> = {
+  finalized: "✓",
+  running: "●",
+  pending: "○",
+  failed: "✕",
+  cancellationFailed: "!",
+  skipped: "–",
+  skippedByRequest: "–",
+  cancelled: "–",
+  notRun: "–",
+};
 
 /**
  * Which item is running, counting from one.
@@ -1802,6 +1925,12 @@ function stoppedSummary(queue: ConversionQueue, t: UiMessage): string {
   return t("m74CnvQueueCounts", { parts: conversionCountParts(queue, true, t).join(t("m74CnvListSeparator")), total: queue.itemCount });
 }
 
+/** The share of items no longer waiting or running, as a percentage. */
+function settledShare(queue: ConversionQueue): number {
+  const settled = queue.items.filter((item) => item.state !== "pending" && item.state !== "running").length;
+  return queue.itemCount === 0 ? 0 : (settled / queue.itemCount) * 100;
+}
+
 function runningPosition(queue: ConversionQueue): number {
   const running = queue.items.findIndex((item) => item.state === "running");
   if (running !== -1) {
@@ -1829,16 +1958,6 @@ function itemStateLabel(item: ConversionQueueItem, t: UiMessage): string {
   }
   return t(ITEM_STATE_LABEL[item.state]);
 }
-
-/**
- * What a skipped output set says.
- *
- * Every one of them, not one of them: the multi-output lifecycle steps aside
- * only when it finds a file at every destination name it discovered, so a
- * sentence about "a file of that name" would describe a name this item never
- * had.
- */
-
 
 /** What each item state says, in words rather than in colour. */
 const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], StaticMessageKey> = {
@@ -2034,7 +2153,7 @@ function failureSentence(report: ConversionReport, t: UiMessage): string {
     case "destination_exists":
       return t("m74CnvNameOccupied");
     case "source_family_not_evidenced":
-      return t("m74CnvSingleUnevidenced");
+      return t("m74CnvSetUnevidenced");
     default:
       return t("m74CnvNoWrittenFile");
   }

@@ -18,6 +18,10 @@ import {
 import { pressConvert } from "../../test/conversionPanelInteractions";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type { ConversionPlanOutcome, SelectedFile, WorkspaceConversionState } from "./contracts";
+import { UI_RESOURCES } from "../preferences/i18n";
+import { chooseRosterAction, rosterActionRefused } from "../../test/rosterActions";
+
+const en = UI_RESOURCES.en;
 
 function acquisition(index: number): SelectedFile {
   return {
@@ -40,7 +44,7 @@ function renderApp(api: FakePreviewApi) {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
   return view;
 }
 
@@ -54,6 +58,15 @@ function queueResult(): HTMLElement {
   const result = document.querySelector(".conversion-running");
   if (result === null) {
     throw new Error("expected a queue result on screen");
+  }
+  return result as HTMLElement;
+}
+
+/** The finished or running queue's summary column: its status, actions and bound facts. */
+function queueSummary(): HTMLElement {
+  const result = document.querySelector(".conversion-run-summary");
+  if (result === null) {
+    throw new Error("expected a queue summary on screen");
   }
   return result as HTMLElement;
 }
@@ -154,7 +167,7 @@ describe("destination request and queue truth", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await pressConvert(panel, "Convert 1 eligible…");
-    const settings = screen.getByRole("button", { name: "Settings" });
+    const settings = screen.getByRole("button", { name: "Settings…" });
     settings.focus();
     settings.blur();
     await act(async () => picker.resolve({ status: "idle" }));
@@ -169,12 +182,12 @@ describe("destination request and queue truth", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     await pressConvert(panel, "Convert 1 eligible…");
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings…" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     await act(async () => picker.resolve({ status: "idle" }));
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Settings" })).toHaveFocus());
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close Settings" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Settings…" })).toHaveFocus());
     expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveAttribute("aria-disabled");
   });
 
@@ -217,7 +230,7 @@ describe("destination request and queue truth", () => {
       fireEvent.focus(window);
       expect(within(panel).getByRole("button", { name: "Convert 1 eligible…" })).not.toHaveFocus();
       vi.mocked(document.hasFocus).mockReturnValue(true);
-      const settings = screen.getByRole("button", { name: "Settings" });
+      const settings = screen.getByRole("button", { name: "Settings…" });
       if (laterIntent === "newer focus") { settings.focus(); settings.blur(); }
       if (laterIntent === "settings") fireEvent.click(settings);
       act(() => { for (const frame of frames.splice(0)) frame(16); });
@@ -265,12 +278,12 @@ describe("destination request and queue truth", () => {
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
+    fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
     await waitFor(() => expect(within(panel).getByText("Requested destination")).toBeVisible());
-    const actual = queueResult();
+    const actual = queueSummary();
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
-    expect(within(actual).getByText("Destination binding").nextElementSibling?.textContent).toBe(
-      destinationStatus === "bound" ? "Bound when this queue started; revalidated before each attempt" : "No destination bound",
-    );
+    // No "binding" row: the destination says where, and that is the fact (C11).
+    expect(within(actual).queryByText("Destination binding")).toBeNull();
     expect(within(panel).getByRole("radio", { name: "Custom local folder" })).toBeChecked();
     fireEvent.click(within(panel).getByRole("radio", { name: "Beside each source" }));
     expect(within(actual).getByText("Queue destination").nextElementSibling?.textContent).toContain("Original");
@@ -304,13 +317,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     fireEvent.click(within(await screen.findByRole("row", { name: /sample-7\.lcd/ })).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(
-          /One Shimadzu LabSolutions LCD acquisition will be converted to mzML\./,
-        ),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(1));
     // The plan row itself says the family and the output name.
     expect(within(panel).getByText("sample-7.mzML")).toBeVisible();
     expect(within(panel).getAllByText("Shimadzu LabSolutions LCD").length).toBeGreaterThan(0);
@@ -321,7 +328,7 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     });
   });
 
-  it("describes a mixed queue by count and by exact per-family counts", async () => {
+  it("names each row's family in a mixed queue, in plan order", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [first, lcdRow, second],
       availability: availableBackend,
@@ -331,14 +338,9 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     selectAllRows();
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(
-          /3 supported vendor acquisitions will be converted to mzML, one after another, in the order below\. 2 Thermo RAW · 1 Shimadzu LabSolutions LCD\./,
-        ),
-      ).toBeVisible();
-    });
-    // Each plan row still names its own family, in the visible order.
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list .conversion-queue-kind")).toHaveLength(3));
+    // Each plan row names its own family, in the visible order; the rail adds
+    // no sentence that counts them again (C11).
     const orderedKinds = [...panel.querySelectorAll(".conversion-queue-kind")].map(
       (node) => node.textContent,
     );
@@ -363,15 +365,26 @@ describe("the Shimadzu LabSolutions LCD family in the visible workflow", () => {
     const panel = screen.getByRole("region", { name: "Convert" });
     const convert = within(panel).getByRole("button", { name: "Convert 0 eligible…" });
     expect(convert).toHaveAttribute("aria-disabled", "true");
-    const route =
-      "To convert, this scope needs supported vendor acquisitions: add them with Add files… in Acquisitions " +
-      "(if that list is hidden, press Acquisitions at the top of the window first) and, under Checked rows, they must be checked.";
+    const route = en.m74CnvNoticeNoConvertibleTarget
+      .replace(/\{\{toggle\}\}/g, en.rosterToggle)
+      .replace(/\{\{add\}\}/g, en.addFiles);
     // The notice follows the scope's plan answer, so it is awaited rather than
     // read synchronously; under a loaded full suite it can land a tick later.
     expect(await within(panel).findByText(route)).toBeVisible();
     await waitFor(() => expect(convert).toHaveAccessibleDescription(route));
-    expect(within(panel).queryByText("No eligible acquisitions in this scope.")).toBeNull();
+    expect(within(panel).queryByText(en.m74CnvNoEligible)).toBeNull();
     expect(document.body.textContent).not.toMatch(/Thermo RAW row/);
+  });
+
+  it("says a plan is being described once, in the notice Convert points at", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend });
+    renderApp({ ...api, describeConversion: () => new Promise(() => {}) });
+    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
+    await waitFor(() => expect(convert).toHaveAccessibleDescription(en.m74CnvNoticePlanReading));
+    expect(within(panel).getAllByText(en.m74CnvNoticePlanReading)).toHaveLength(1);
+    expect(panel.querySelector("#conversion-plan-pending")).toBeNull();
   });
 
   it("renders a chromatogram-only result as a success with those exact facts", async () => {
@@ -444,11 +457,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(/One Thermo RAW acquisition will be converted/),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(1));
 
     await pressConvert(panel, "Convert 1 eligible…");
     await waitFor(() => {
@@ -497,11 +506,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     selectAllRows();
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(/2 Thermo RAW acquisitions will be converted to mzML/),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(2));
     // Counted out loud rather than silently dropped.
     expect(
       within(panel).getByText(/3 requested · 2 eligible · 1 excluded/),
@@ -523,11 +528,11 @@ describe("queueing selected Thermo RAW conversions", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /run-2\.raw/ });
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), {
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.change(within(panel).getByRole("combobox", { name: "Execution order" }), {
       target: { value: "name-desc" },
     });
     selectAllRows();
-    const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
       expect(within(panel).getByRole("button", { name: "Convert 2 eligible…" })).not.toHaveAttribute("aria-disabled");
     });
@@ -576,14 +581,8 @@ describe("queueing selected Thermo RAW conversions", () => {
     // already written.
     const stop = within(panel).getByRole("button", { name: "Stop queue" });
     expect(stop).not.toHaveAttribute("aria-disabled");
-    expect(
-      within(panel).getByText(
-        "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
-      ),
-    ).toBeVisible();
-    expect(stop).toHaveAccessibleDescription(
-      "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.",
-    );
+    expect(within(panel).getByText(en.m74CnvStopExplanation)).toBeVisible();
+    expect(stop).toHaveAccessibleDescription(en.m74CnvStopExplanation);
     expect(within(panel).queryByRole("button", { name: /cancel/i })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /resume/i })).toBeNull();
     // No fractional progress anywhere: nothing measures one.
@@ -643,9 +642,10 @@ describe("queueing selected Thermo RAW conversions", () => {
         "The converted file did not pass MSCanvas' integrity checks, so it was discarded.",
       ),
     ).toBeVisible();
-    // Nothing retryable, so nothing is offered, and the panel says why.
+    // Nothing retryable, so nothing is offered, and the failed row says why.
     expect(within(panel).queryByRole("button", { name: /Retry/ })).toBeNull();
-    expect(within(panel).getByText(/would not change on another attempt/)).toBeVisible();
+    expect(items[0]).toHaveTextContent(en.m74CnvWillNotRetry);
+    expect(within(panel).queryByText(en.m74CnvQuarantineRetry)).toBeNull();
   });
 
   it("offers retry only for failures another attempt could change, and states its scope", async () => {
@@ -689,9 +689,7 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
-    expect(retry).toHaveAccessibleDescription(
-      /Reruns only the failures another attempt could change, using the same folder/,
-    );
+    expect(retry).toHaveAccessibleDescription(en.m74CnvRetryScope);
 
     fireEvent.click(retry);
     await waitFor(() => {
@@ -771,11 +769,9 @@ describe("queueing selected Thermo RAW conversions", () => {
     expect(item).toHaveTextContent("3 chromatograms");
     // 28,655 bytes, as this app renders sizes everywhere else.
     expect(item).toHaveTextContent("28.0 KiB");
-    expect(item).toHaveTextContent(
-      "MSCanvas could not remove its own temporary folder afterwards.",
-    );
+    expect(item).toHaveTextContent(en.m74CnvResidue);
     // And a run that produced something did have its output judged.
-    expect(within(queueResult()).getByText(/Output-only validation\./, VISIBLE)).toBeVisible();
+    expect(within(queueSummary()).getByText(en.m74CnvOutputOnly, VISIBLE)).toBeVisible();
   });
 
   it("does not claim output-only validation over files it never inspected", async () => {
@@ -821,13 +817,13 @@ describe("queueing selected Thermo RAW conversions", () => {
     // Scoped to the result. The plan below it says the same sentence about the
     // conversion the user could start next, which is a different claim and a
     // true one.
-    expect(within(queueResult()).queryByText(/Output-only validation\./, VISIBLE)).toBeNull();
+    expect(within(queueSummary()).queryByText(en.m74CnvOutputOnly, VISIBLE)).toBeNull();
     // And the live region is a second path to the same claim, so it answers to
     // the same rule rather than announcing what the screen does not say.
     await waitFor(() => {
       expect(liveRegion()).toContain("0 converted, 2 skipped, 0 failed.");
     });
-    expect(liveRegion()).not.toContain("Output-only validation");
+    expect(liveRegion()).not.toContain(en.m74CnvAnnounceOutputOnly);
   });
 
   it("stops offering actions for the whole of a retry, not only for its first moment", async () => {
@@ -865,23 +861,23 @@ describe("queueing selected Thermo RAW conversions", () => {
     renderApp(api);
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toBeEnabled());
+    await waitFor(() => expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).not.toHaveAttribute("aria-disabled"));
     fireEvent.click(within(panel).getByRole("button", { name: "Retry 1 failed" }));
 
     // The retry has not answered, and the interface has stopped offering work.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     });
     expect(within(panel).queryByRole("button", { name: "Retry 1 failed" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    expect(await rosterActionRefused("clearList")).toBe(false);
+    await chooseRosterAction("clearList");
     expect(await screen.findByRole("dialog")).toBeVisible();
     expect(api.calls()).not.toContain("clearWorkspace");
     fireEvent.click(screen.getByRole("button", { name: "Return" }));
     // Including the row being rerun. Rust would refuse to let it go, so
     // offering the action would only produce an error nobody needed to see.
     fireEvent.click(rows()[0]);
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(true);
     // And a screen reader is told now, rather than at the next poll.
     expect(liveRegion()).toContain("Retrying 1 failed.");
 
@@ -892,7 +888,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     await waitFor(() => {
       expect(within(panel).getByText(/1 converted, 0 skipped, 0 failed of 1\./)).toBeVisible();
     });
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("does not offer a retry the backend cannot serve", async () => {
@@ -915,12 +911,12 @@ describe("queueing selected Thermo RAW conversions", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toBeDisabled();
+      expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAttribute("aria-disabled", "true");
     });
     // And it still says what it would do, so the reason it is unavailable is
     // the backend rather than the control having quietly changed meaning.
     expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAccessibleDescription(
-      /Reruns only the failures another attempt could change/,
+      expect.stringContaining(en.m74CnvRetryScope),
     );
   });
 
@@ -967,21 +963,20 @@ describe("queueing selected Thermo RAW conversions", () => {
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     });
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
+    expect(await rosterActionRefused("clearList")).toBe(false);
     // Reading the list is not a mutation.
     expect(screen.getByRole("searchbox", { name: "Search files" })).toBeEnabled();
     expect(rows()).toHaveLength(3);
 
     // Selecting a queued row makes removal unavailable; an unrelated row does not.
     fireEvent.click(rows()[0]);
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeDisabled();
+    expect(await rosterActionRefused("removeHighlighted")).toBe(true);
     fireEvent.click(rows()[2]);
-    expect(screen.getByRole("button", { name: "Remove highlighted" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    expect(await rosterActionRefused("removeHighlighted")).toBe(false);
+    await chooseRosterAction("clearList");
     expect(await screen.findByRole("dialog")).toBeVisible();
     expect(api.calls()).not.toContain("clearWorkspace");
     fireEvent.click(screen.getByRole("button", { name: "Return" }));
@@ -1052,10 +1047,7 @@ describe("queueing selected Thermo RAW conversions", () => {
       // this build's whole sentence for it rather than the one line the
       // boundary happened to send.
       expect(
-        within(panel).getByText(
-          /MSCanvas saves converted files to this computer.s own drives\./u,
-          VISIBLE,
-        ),
+        within(panel).getByText(en.errDestinationIsRemote, VISIBLE),
       ).toBeVisible();
     });
     // Every item is still waiting: nothing ran.
@@ -1097,7 +1089,7 @@ describe("queueing selected Thermo RAW conversions", () => {
     };
     noPaths(rendered);
     // A skipped item is never described as validated.
-    expect(within(panel).getAllByText(/a file of that name was already there/i).length).toBeGreaterThan(
+    expect(within(panel).getAllByText(en.m74CnvStateSkipped).length).toBeGreaterThan(
       0,
     );
   });
@@ -1119,32 +1111,27 @@ describe("queueing selected Thermo RAW conversions", () => {
     // Finishing a conversion adds nothing. The roster is still the one row the
     // user curated, and the output is an offer rather than an arrival.
     expect(rows()).toHaveLength(1);
-    expect(
-      within(panel).getByText("1 converted mzML output is ready to add to this workspace."),
-    ).toBeVisible();
+    expect(within(panel).getByText(en.m74CnvOneReady)).toBeVisible();
     const adopt = within(panel).getByRole("button", {
       name: "Add converted output to workspace",
     });
     expect(adopt).not.toHaveAttribute("aria-disabled");
-    expect(adopt).toHaveAccessibleDescription(
-      "MSCanvas verifies that each output is still the exact finalized file before adding it. Outputs are not previewed automatically.",
-    );
+    // Nothing refuses it, so nothing describes it: the label says what it does.
+    expect(adopt).not.toHaveAccessibleDescription();
     expect(api.adoptionRequests).toEqual([]);
   });
 
-  it("refuses to preview a vendor row and says what to do instead", async () => {
+  it("refuses to preview a vendor row", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [first],
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
+    const row = await screen.findByRole("row", { name: /run-1\.raw/ });
+    fireEvent.click(within(row).getByRole("checkbox"));
+    fireEvent.click(row);
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
-    const preview = screen.getByRole("button", { name: "Preview focused" });
-    expect(preview).toBeDisabled();
-    expect(preview).toHaveAccessibleDescription(
-      "Convert to mzML before previewing this acquisition.",
-    );
     expect(api.openedHandles).toEqual([]);
   });
 
@@ -1168,7 +1155,6 @@ describe("queueing selected Thermo RAW conversions", () => {
       await Promise.resolve();
     });
 
-    const spoken = /MSCanvas is converting an acquisition, so those files were not added/;
-    expect(screen.getByText(spoken, VISIBLE)).toBeVisible();
+    expect(screen.getByText(en.dropConversionBusy, VISIBLE)).toBeVisible();
   });
 });

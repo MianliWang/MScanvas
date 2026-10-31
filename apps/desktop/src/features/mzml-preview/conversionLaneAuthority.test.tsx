@@ -110,7 +110,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 /** The hook itself, for the half of an equivalence claim a disabled control cannot make. */
@@ -133,6 +133,11 @@ async function convertControl(): Promise<HTMLElement> {
   fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
   const panel = await conversionPanel();
   return within(panel).findByRole("button", { name: /^Convert/u });
+}
+
+/** Opens the next conversion under a finished queue, as its reader does (review 6). */
+async function openNextConversion(panel: HTMLElement): Promise<void> {
+  fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
 }
 
 /** Every sentence the panel is currently giving as a reason. */
@@ -328,6 +333,7 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     const panel = await conversionPanel();
     await within(panel).findByRole("button", { name: "Retry 1 failed" });
+    await openNextConversion(panel);
     const convert = await convertControl();
     await waitFor(() => {
       expect(convert).not.toHaveAttribute("aria-disabled");
@@ -364,9 +370,10 @@ describe("the conversion lane's one authority, as it ships", () => {
     const panel = await conversionPanel();
     const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
     await waitFor(() => {
-      expect(retry).toBeEnabled();
+      expect(retry).not.toHaveAttribute("aria-disabled");
     });
     // The explicit empty scope refuses a new start while the bound retry is usable.
+    await openNextConversion(panel);
     expect(within(panel).getByRole("button", { name: /^Convert/u })).toHaveAttribute("aria-disabled", "true");
 
     fireEvent.click(retry);
@@ -407,7 +414,7 @@ describe("the conversion lane's one authority, as it ships", () => {
     const panel = await conversionPanel();
     const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
     await waitFor(() => {
-      expect(retry).toBeEnabled();
+      expect(retry).not.toHaveAttribute("aria-disabled");
     });
     fireEvent.click(retry);
     // The window this is about: the command has not answered, so the claim is
@@ -439,14 +446,14 @@ describe("the conversion lane's one authority, as it ships", () => {
     renderApp(api);
 
     const panel = await conversionPanel();
+    await openNextConversion(panel);
     const convert = await convertControl();
     await waitFor(() => {
       expect(convert).not.toHaveAttribute("aria-disabled");
     });
     expect(within(panel).queryByRole("button", { name: /^Retry/u })).toBeNull();
-    expect(
-      within(panel).getByText(/would not change on another attempt/u),
-    ).toBeVisible();
+    // Each failed row says it is not retryable, which is why nothing reruns.
+    expect(within(panel).getAllByText("Not retryable: the same settings would fail again.").length).toBeGreaterThan(0);
   });
 
   it("stops calling a settled queue one that is starting", async () => {
@@ -615,11 +622,12 @@ describe("the conversion lane's one authority, as it ships", () => {
 
     const panel = await conversionPanel();
     const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
+    await openNextConversion(panel);
     const convert = await convertControl();
     await waitFor(() => {
       expect(convert).toHaveAttribute("aria-disabled", "true");
     });
-    expect(retry).toBeDisabled();
+    expect(retry).toHaveAttribute("aria-disabled", "true");
     expect(reasonsOnScreen()).toEqual([BACKEND_REASON]);
     expect(convert).toHaveAccessibleDescription(new RegExp(BACKEND_REASON, "u"));
     expect(retry).toHaveAccessibleDescription(new RegExp(BACKEND_REASON, "u"));
@@ -650,6 +658,7 @@ describe("the conversion lane's one authority, as it ships", () => {
         Array.from(screen.getByRole("treegrid", { name: "Acquisitions" }).querySelectorAll<HTMLElement>("[data-handle]")),
       ).toHaveLength(1);
     });
-    expect(screen.getByRole("combobox", { name: "Execution order" })).toBeEnabled();
+    // The execution order lives with the conversion it orders.
+    expect(within(await conversionPanel()).getByRole("combobox", { name: "Execution order" })).toBeEnabled();
   });
 });

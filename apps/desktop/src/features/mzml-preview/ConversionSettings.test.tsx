@@ -7,6 +7,9 @@ import type { ConversionCatalogRow, ConversionConfiguration } from "./contracts"
 import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import { admittedIntents, shippedIntent } from "../../test/previewFixtures";
 import { SessionPreferencesProvider, useSessionPreferences } from "../preferences/SessionPreferencesProvider";
+import { UI_RESOURCES } from "../preferences/i18n";
+
+const en = UI_RESOURCES.en;
 
 function render(element: ReactElement) {
   return renderTree(<SessionPreferencesProvider>{element}</SessionPreferencesProvider>);
@@ -160,7 +163,7 @@ describe("a read that answered unusably", () => {
     );
   });
 
-  it("disables the control where a read would be refused, and states nothing itself", () => {
+  it("refuses the control where a read would be refused, and states nothing itself", () => {
     // **The refusing fact has one owner, and it is not this component.** A
     // conversion holding the backend lane refuses this read and a conversion
     // alike; the panel states that fact once and both controls point at it.
@@ -174,7 +177,9 @@ describe("a read that answered unusably", () => {
       />,
     );
     const control = screen.getByRole("button", { name: "Read the settings again" });
-    expect(control).toBeDisabled();
+    // Refused, not disabled: it stays a Tab stop whose reason can be reached.
+    expect(control).toHaveAttribute("aria-disabled", "true");
+    expect(control).not.toBeDisabled();
     // Named, not restated. Nothing in this subtree carries the id, and nothing
     // in it describes the lane.
     const descriptions = (control.getAttribute("aria-describedby") ?? "").split(" ");
@@ -184,7 +189,7 @@ describe("a read that answered unusably", () => {
     expect(
       document.querySelectorAll("#conversion-availability-conversion-running"),
     ).toHaveLength(0);
-    expect(document.body.textContent).not.toContain("while a conversion is running");
+    expect(document.body.textContent).not.toContain(en.m74CnvNoticeConversionRunning);
   });
 
   it("offers no control where a read could not improve the answer", () => {
@@ -223,19 +228,60 @@ describe("the four control groups", () => {
     expect(onChoose).toHaveBeenCalledWith(FLAT_32);
   });
 
-  it("keep an unqualified value on screen, disabled, with its reason", () => {
+  it("keep an unqualified value on screen, refused, with its reason", () => {
     // Removing it would hide the shape of the evidence. That these dimensions
     // do not compose freely is a fact about what has been measured, and a
     // reader choosing conversion settings is entitled to see it.
+    const onChoose = vi.fn();
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={onChoose}
+        refusalNoticeId={null}
+      />);
+    const control = within(groupFor("population")).getByLabelText("MS1 spectra only");
+    // Refused, never natively disabled (B4): it takes the keyboard, says why,
+    // and choosing it changes nothing.
+    expect(control).toHaveAttribute("aria-disabled", "true");
+    expect(control).not.toBeDisabled();
+    control.focus();
+    expect(control).toHaveFocus();
+    const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
+    expect(note?.textContent).toBe(en.cnvNotQualified);
+    fireEvent.click(control);
+    expect(onChoose).not.toHaveBeenCalled();
+    expect(within(groupFor("population")).getByLabelText("All spectra")).toBeChecked();
+    expect(control).not.toBeChecked();
+  });
+
+  it("says a refusal once for the form, however many groups it dims (review 9)", () => {
     render(<ConversionSettings
         configuration={view(ready())}
         onChoose={vi.fn()}
         refusalNoticeId={null}
       />);
-    const control = within(groupFor("population")).getByLabelText("MS1 spectra only");
-    expect(control).toBeDisabled();
-    const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
-    expect(note?.textContent).toContain("MSCanvas has not qualified that combination");
+    const refused = [...panel().querySelectorAll<HTMLInputElement>('input[type=radio][aria-disabled="true"]')];
+    const groups = new Set(refused.map((radio) => radio.closest("[data-axis]")));
+    expect(groups.size).toBeGreaterThan(1);
+    expect(screen.getAllByText(en.cnvNotQualified)).toHaveLength(1);
+    for (const radio of refused) {
+      const ids = (radio.getAttribute("aria-describedby") ?? "").split(" ");
+      expect(ids.map((each) => document.getElementById(each)?.textContent)).toContain(en.cnvNotQualified);
+    }
+  });
+
+  it("say nothing under a precision that rounds nothing", () => {
+    // 64-bit for both arrays has no loss to disclose, so no note is rendered
+    // and no radio points at one.
+    render(<ConversionSettings
+        configuration={view(ready(), { selectedIntentId: id("no_additional_centroiding", "all", "mz64_intensity64", "zlib") })}
+        onChoose={vi.fn()}
+        refusalNoticeId={null}
+      />);
+    const precision = groupFor("precision");
+    expect(precision.querySelectorAll(".conversion-setting-note")).toHaveLength(0);
+    for (const radio of within(precision).getAllByRole("radio")) {
+      expect(radio).not.toHaveAttribute("aria-describedby");
+    }
   });
 
   it("names the source-evidence refusal for a retained selection, not the installation", () => {
@@ -259,7 +305,7 @@ describe("the four control groups", () => {
         refusalNoticeId={null}
       />);
     const note = document.querySelector('[data-selection-refusal="notEvidencedForSources"]');
-    expect(note?.textContent).toContain("has not measured");
+    expect(note?.textContent).toBe(en.cnvSelectionNotEvidenced);
     expect(note?.textContent).not.toContain("ProteoWizard installation");
   });
 
@@ -275,11 +321,14 @@ describe("the four control groups", () => {
         refusalNoticeId={null}
       />);
     const control = within(groupFor("processing")).getByLabelText("Centroid all MS levels");
-    const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
-    expect(note?.textContent).toContain("Lossy.");
-    expect(note?.textContent).toContain("replaces the recorded profile points");
-    expect(note?.textContent).not.toContain("local-maximum");
-    expect(note?.textContent).not.toContain("vendor");
+    // Every note the control names: the group's refusal, when it is refused,
+    // and its own lossy note, which stays beside it either way.
+    const note = (control.getAttribute("aria-describedby") ?? "").split(" ")
+      .map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+    expect(note).toContain("Lossy.");
+    expect(note).toContain("replaces the recorded profile points");
+    expect(note).not.toContain("local-maximum");
+    expect(note).not.toContain("vendor");
   });
 
   it("never call the chooser for a value that cannot be chosen", () => {
@@ -310,9 +359,7 @@ describe("a build that lacks only the peak-picking grammar", () => {
   it("says the chosen combination cannot run, once", () => {
     renderCentroided();
     expect(
-      screen.getAllByText(
-        "The conversion settings you chose cannot run with this ProteoWizard installation.",
-      ),
+      screen.getAllByText(en.cnvSelectionUnavailable),
     ).toHaveLength(1);
   });
 
@@ -327,11 +374,13 @@ describe("a build that lacks only the peak-picking grammar", () => {
       const checked = within(groupFor(axis))
         .getAllByRole("radio")
         .find((radio) => (radio as HTMLInputElement).checked);
-      expect(checked).toBeEnabled();
+      expect(checked).not.toHaveAttribute("aria-disabled");
       const note = document.getElementById(checked?.getAttribute("aria-describedby") ?? "");
       // Basic view can omit a secondary explanation; it must never attach a
       // combination refusal to an available selected value.
-      expect(note?.textContent ?? "").not.toContain("Not available");
+      for (const refusal of [en.cnvNotQualified, en.cnvUnavailableHere, en.cnvNotEvidenced]) {
+        expect(note?.textContent ?? "").not.toContain(refusal);
+      }
     }
   });
 
@@ -339,7 +388,7 @@ describe("a build that lacks only the peak-picking grammar", () => {
     renderCentroided();
     expect(
       within(groupFor("processing")).getByLabelText("No additional centroiding"),
-    ).toBeEnabled();
+    ).not.toHaveAttribute("aria-disabled");
   });
 
   it("offers no explicit reset while an ordinary control is the way out", () => {
@@ -362,11 +411,8 @@ describe("a genuine dead end", () => {
     );
     const control = screen.getByRole("button", { name: "Use the settings MSCanvas ships" });
     expect(control).toBeVisible();
-    expect(
-      screen.getByText(
-        "No single change to one of these settings reaches a combination this build can run.",
-      ),
-    ).toBeVisible();
+    // Why is the selection's own refusal, said once above the controls.
+    expect(control).toHaveAccessibleDescription(en.cnvSelectionUnavailable);
   });
 
   it("selects only the combination Rust names as shipped", () => {
@@ -416,13 +462,16 @@ describe("compact settings over a retained intent", () => {
     expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("64-bit")).toBeChecked();
     // This pair has no admitted single-width transition. The advanced paired
     // precision axis still exposes the catalog's legitimate diagonal change.
-    expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("32-bit")).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("32-bit")).toHaveAttribute("aria-disabled", "true");
+    // Advanced is a disclosure under Basic, which stays on screen (direction A 2.2).
+    fireEvent.click(screen.getByRole("button", { name: /^Advanced settings/ }));
+    expect(within(screen.getByRole("group", { name: "m/z precision" })).getByLabelText("64-bit")).toBeChecked();
     expect(screen.getByLabelText("m/z 64-bit · intensity 64-bit")).toBeChecked();
-    expect(screen.getByLabelText("m/z 32-bit · intensity 32-bit")).toBeEnabled();
+    expect(screen.getByLabelText("m/z 32-bit · intensity 32-bit")).not.toHaveAttribute("aria-disabled");
     fireEvent.click(screen.getByRole("button", { name: "Change language" }));
     expect(screen.getByLabelText("m/z 64 位 · 强度 64 位")).toBeChecked();
-    fireEvent.click(screen.getByRole("button", { name: "基本" }));
+    fireEvent.click(screen.getByRole("button", { name: /^高级设置/ }));
+    expect(screen.getByRole("button", { name: /^高级设置/ })).toHaveAttribute("aria-expanded", "false");
     expect(within(screen.getByRole("group", { name: "强度精度" })).getByLabelText("64 位")).toBeChecked();
     expect(onChoose).not.toHaveBeenCalled();
   });
@@ -430,7 +479,7 @@ describe("compact settings over a retained intent", () => {
   it("preserves a valid coordinated precision transition without changing processing", () => {
     const onChoose = vi.fn();
     render(<ConversionSettings configuration={view(ready(), { selectedIntentId: CENTROIDED_64 })} onChoose={onChoose} refusalNoticeId={null} />);
-    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Advanced settings/ }));
     fireEvent.click(screen.getByLabelText("m/z 32-bit · intensity 32-bit"));
     expect(onChoose).toHaveBeenCalledExactlyOnceWith(CENTROIDED_32);
   });

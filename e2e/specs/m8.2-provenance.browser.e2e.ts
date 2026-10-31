@@ -26,6 +26,7 @@ import {
   ipcCalls,
   setInvokeResult,
 } from "../support/harness";
+import { showProjectSurface } from "../support/shell";
 import { ipcTable } from "../support/fixtures";
 
 let output = "";
@@ -220,8 +221,8 @@ async function capture(label: string) {
   for (const link of measured.links) {
     expect(link.x).toBeGreaterThanOrEqual(0);
     expect(link.x + link.width).toBeLessThanOrEqual(measured.css.width + 1);
-    // The design system's compact control minimum.
-    expect(link.height).toBeGreaterThanOrEqual(31.5);
+    // The compact control minimum (sm, 30 px; rebuild spec 1.4).
+    expect(link.height).toBeGreaterThanOrEqual(29.5);
     // No relationship exists only as colour: each control carries its own name.
     expect(link.name ?? "").not.toEqual("");
   }
@@ -237,13 +238,33 @@ async function openProjectSurface() {
   await installIpcBoundary(table);
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed();
-  await browser.$("button=Project").click();
+  await showProjectSurface();
   await browser.$("[data-project-surface]").waitForDisplayed();
 }
 
-/** The one control that inspects a named reference. */
+/** The one control that inspects a named reference: its row's Details. */
 function inspectInput(label: string) {
-  return browser.$(`button[aria-label="Show what ${label} is related to"]`);
+  return browser.$(`button[aria-label="Details for ${label}"]`);
+}
+
+/**
+ * What the preference store answers a commit with.
+ *
+ * The store answers with the snapshot it published, and the interface applies
+ * *that* rather than what it asked for. The shared table answers every save
+ * with the untouched defaults, so without this a toggle of Details would be
+ * undone by its own reply.
+ */
+async function preferencesAnswer(details: "shown" | "hidden") {
+  await setInvokeResult("save_ui_preferences", {
+    outcome: "saved",
+    revision: 1,
+    preferences: {
+      schemaVersion: 1,
+      appearance: { locale: "en", density: "comfortable" },
+      layout: { roster: "automatic", details },
+    },
+  });
 }
 
 describe("M8.2 provenance, rendered", () => {
@@ -377,38 +398,40 @@ describe("M8.2 provenance, rendered", () => {
   });
 
   it("keeps provenance reachable through the existing Details control when narrow", async () => {
-    // One column. The contextual region folds rather than shrinking, and the
-    // way back to it is the control the header already owns.
+    // One column. The contextual region folds rather than shrinking; a row's
+    // Details opens it through the control the header already owns.
     await metrics(960, 640);
     await openProjectSurface();
+    expect((await capture("m82-07-constrained-nothing-selected")).regions.inspector).toBe(null);
+
+    await preferencesAnswer("shown");
     await inspectInput("QC_pool_01.mzML").click();
-    await browser.$("[data-project-inspect-hint]").waitForDisplayed();
-
-    const folded = await capture("m82-07-constrained-folded");
-    expect(folded.regions.inspector).toBe(null);
-    expect(folded.regions.project).not.toBe(null);
-
-    // The preference store answers a commit with the snapshot it published,
-    // and the interface applies *that* rather than what it asked for. The
-    // shared table answers every save with the untouched defaults, so without
-    // this the toggle would be undone by its own reply.
-    await setInvokeResult("save_ui_preferences", {
-      outcome: "saved",
-      revision: 1,
-      preferences: {
-        schemaVersion: 1,
-        appearance: { locale: "en", density: "comfortable" },
-        layout: { roster: "automatic", details: "shown" },
-      },
-    });
-    await browser.$("[data-project-inspect-hint] button").click();
     await browser.$('[data-provenance="input"]').waitForDisplayed();
 
     const opened = await capture("m82-08-constrained-open");
-    // Opened, it takes the one column and the list yields it -- the existing
-    // folding, not a new layout and not a modal.
+    // Opened, it is a modal drawer over the surface (rebuild spec 3.1): the
+    // list stays on screen behind it, inert, and Details holds the keyboard.
     expect(opened.regions.inspector).not.toBe(null);
-    expect(opened.regions.project).toBe(null);
+    expect(opened.regions.project).not.toBe(null);
+    expect(await browser.$("#workbench-project").getAttribute("inert")).not.toBeNull();
     expect(opened.provenanceHeading).toBe("QC_pool_01.mzML");
+
+    // Folded by its own close while the reference is still inspected: the
+    // keyboard is back on the row's Details, and the surface offers the way
+    // back to the answer.
+    await preferencesAnswer("hidden");
+    await browser.$("[data-provenance-close]").click();
+    await browser.$("[data-project-inspect-hint]").waitForDisplayed();
+    const folded = await capture("m82-09-constrained-folded");
+    expect(folded.regions.inspector).toBe(null);
+    expect(folded.regions.project).not.toBe(null);
+    expect(
+      await browser.execute(() => document.activeElement?.getAttribute("aria-label") ?? null),
+    ).toBe("Details for QC_pool_01.mzML");
+
+    await preferencesAnswer("shown");
+    await browser.$("[data-project-inspect-hint] button").click();
+    await browser.$('[data-provenance="input"]').waitForDisplayed();
+    expect((await capture("m82-10-constrained-reopened")).provenanceHeading).toBe("QC_pool_01.mzML");
   });
 });
