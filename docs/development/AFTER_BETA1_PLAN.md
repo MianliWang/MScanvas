@@ -674,6 +674,17 @@ Stable CLI and schemas, then repository/user skills, then a narrow local MCP
 adapter, reusing the desktop's domain contracts (AUT-001…003). Starts with the
 M10.0 route decision.
 
+*2026-10-30: the route is proposed in
+[ADR 0064](../architecture/adr/0064-m10-automation-route.md): a small CLI
+package, `mscanvas`, over the desktop library, driving the same operations
+(inspect, intents, plan, run an approved plan, validate), then one skill, then
+an MCP adapter in the same binary; the plan and run slices wait for PRs #161 and #175.
+Accepted by the owner on 2026-10-30, all eight questions as recommended
+(decision A0064). Question 3's premise on viewing was wrong (ADR 0064,
+"Changed after acceptance"); on 2026-10-31 the owner confirmed it again with
+the corrected cost: while a command-line run holds the lock, opening a new
+preview is refused too.*
+
 ### 7.4 Future capabilities
 
 - P1: WSP-010 restore workspace; FIG-007 saved FigureSpec; ENV-004 copy
@@ -762,7 +773,10 @@ None can be delivered by engineering alone; each waits for one input.
   dependency, one-click view RAW and Thermo vendor centroiding.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
-- M10.0's route, when drafted.
+- M10.0's route, when drafted. *Drafted 2026-10-30 as
+  [ADR 0064](../architecture/adr/0064-m10-automation-route.md). Answered
+  2026-10-30: the owner accepted it with its eight questions as recommended
+  (decision A0064); question 3 was confirmed again on 2026-10-31.*
 - *2026-10-30:* the decisions the
   [v5.11 and analysis roadmap](ROADMAP_V511_AND_ANALYSIS.md) needs, 53 in
   all, are in [OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md). Its
