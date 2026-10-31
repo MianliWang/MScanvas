@@ -675,6 +675,33 @@ fn an_intermediate_that_cannot_be_held_is_never_called_the_users_source() {
     }
 }
 
+/// Run 1 cannot take the name of run 2's directory: anything beside the
+/// intermediate is refused with it, before that directory is created.
+#[test]
+fn run_one_cannot_take_the_name_of_run_two_directory() {
+    let fixture = Fixture::new(&two_level_source());
+    let first = |spec: &CommandSpec| -> Result<i32, ProcessError> {
+        let destination = staged_destination(spec);
+        fs::write(&destination, intermediate_of(&two_level_source())).expect("write");
+        fs::create_dir(destination.with_file_name("target")).expect("create");
+        Ok(0)
+    };
+    let second = writes(written(NonMzmlFormat::Mgf));
+    let runner = TwoRuns {
+        first: FakeRunner::new(&first),
+        second: FakeRunner::new(&second),
+    };
+    let report = run_conversion(
+        &fixture.plan(OutputEncoding::Mgf, ConflictPolicy::Fail),
+        &capabilities_from(CAPTURED_HELP),
+        &runner,
+    );
+    assert_eq!(report.outcome().detailed_stable_id(), "unexpected_output");
+    assert_eq!(report.step(), Some(ConversionStep::Intermediate));
+    assert_eq!(runner.second.calls(), 0);
+    assert!(fixture.root_entries().is_empty());
+}
+
 #[test]
 fn a_vendor_acquisition_is_written_from_an_intermediate_judged_against_its_object() {
     let directory = TestDirectory::new();
