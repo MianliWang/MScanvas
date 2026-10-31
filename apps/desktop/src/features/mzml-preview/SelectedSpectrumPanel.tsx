@@ -1,21 +1,27 @@
-import { memo, useState } from "react";
-import { QuickFigureActions } from "./QuickFigureActions";
+import { memo } from "react";
+import { Button, Icon, IconButton, Toolbar } from "../../components/ui";
+import { usePlotRangeEditor } from "./PlotRangeActions";
+import { figureRefusal, QuickFigureActions } from "./QuickFigureActions";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { UiMessage } from "../preferences/i18n";
-import type { CopiedFigure, ExportedFigure, ExportedSpectrumRange, FigureTheme, PreviewError, SelectedSpectrum,
-  SpectrumExportFormat, SpectrumRangeAvailability, SpectrumRangeScope } from "./contracts";
-import { FigureSettingsFields } from "./FigureSettingsFields";
+import type { CopiedFigure, ExportedFigure, ExportedSpectrumRange, PreviewError, SelectedSpectrum,
+  SpectrumExportFormat } from "./contracts";
 import type { FigureSettingsValidation } from "./figureSettingsValidation";
-import { formatCount, formatIntensity, formatMz } from "./format";
-import { SpectrumViewport } from "./SpectrumViewport";
-import type { FigureSettingsDraft, FigureSettingsField, SpectrumExportState, SpectrumState } from "./usePreviewWorkspace";
-import type { MzDomain, SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
+import { formatCount } from "./format";
+import { SpectrumViewport, SpectrumZoomControls } from "./SpectrumViewport";
+import type { SpectrumExportState, SpectrumState } from "./usePreviewWorkspace";
+import type { SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
 
 export interface SelectedSpectrumPanelProps {
   readonly onOpenFigure: () => void;
   readonly state: SpectrumState;
   readonly onRetry: () => void;
+  /**
+   * Why a scan cannot be chosen now, said once, in the empty spectrum, in
+   * place of the instruction to choose one (S4).
+   */
+  readonly selectionRefusal?: string | null;
   readonly viewport: SpectrumViewportState;
   readonly dispatchViewport: (event: SpectrumViewportEvent) => SpectrumViewportState;
   readonly readViewport: () => SpectrumViewportState;
@@ -23,103 +29,94 @@ export interface SelectedSpectrumPanelProps {
   readonly onRetryProjection: () => void;
   readonly exportState: SpectrumExportState;
   readonly scientificExportBusy: boolean;
-  readonly rangeScope: SpectrumRangeScope;
-  readonly onRangeScope: (scope: SpectrumRangeScope) => void;
-  readonly rangeAvailability: SpectrumRangeAvailability;
-  readonly committedDomain: MzDomain | null;
   readonly onExport: (format: SpectrumExportFormat) => void;
   readonly onCopyPlot: () => void;
   readonly onDismissExport: () => void;
-  readonly figureSettings: FigureSettingsDraft;
   readonly figureSettingsValidation: FigureSettingsValidation;
-  readonly renderSettingsProblem: string | null;
-  readonly pngDpiProblem: string | null;
-  readonly onFigureSetting: (field: FigureSettingsField, value: string) => void;
-  readonly onFigureTheme: (theme: FigureTheme) => void;
+  /**
+   * Steps to the scan before or after the selected one, in the scan table's
+   * order. In the spectrum's head (direction A), beside the scan they change.
+   */
+  readonly onSelectPrevious?: () => void;
+  readonly onSelectNext?: () => void;
+  readonly canSelectPrevious?: boolean;
+  readonly canSelectNext?: boolean;
+  /** The visible sentence that says why a step is refused, while one is. */
+  readonly stepReasonId?: string;
 }
 
-/** Disclosures affect presentation only. The workspace retains source, scope and raw export drafts. */
+/** The scan line between the steps. */
+const SCAN_ID = "selected-spectrum-scan";
+
+/**
+ * The selected spectrum (direction A): a head with the title, the scan and its
+ * steps, the scan's MS level and size, and one toolbar (m/z range, then the
+ * figure); the plot; and over the plot's corner, what the last export did.
+ * Range, size and theme are the figure dialog's; the spectrum's facts are in
+ * Details.
+ */
 export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: SelectedSpectrumPanelProps) {
   const t = useUiMessages();
   const { state, exportState } = props;
-  const [exportOpen, setExportOpen] = useState(false);
-  return <section aria-labelledby="selected-spectrum-heading" className="panel spectrum-panel">
-    <header className="panel-header compact">
-      <div><h2 id="selected-spectrum-heading">{t("viewerSpectrum")}</h2>
-        {state.status === "loaded" ? <p className="spectrum-summary" id="selected-spectrum-summary">{t("viewerSpectrumSummary", {
-          index: formatCount(state.spectrum.index), level: formatCount(state.spectrum.msLevel), count: state.spectrum.pointCount })}</p> :
-          <p>{describe(state, t)}</p>}
+  const reason = figureRefusal(t, props.scientificExportBusy, props.figureSettingsValidation);
+  const rangeEditor = usePlotRangeEditor();
+  const spectrum = state.status === "loaded" ? state.spectrum : null;
+  // With no spectrum, the line between the steps ("No spectrum selected") is
+  // why neither can move; otherwise the table's own sentence, where it has one.
+  const stepReasonId = props.stepReasonId ?? (spectrum === null ? SCAN_ID : undefined);
+  return <section aria-labelledby="selected-spectrum-heading" className="plot-box spectrum-panel">
+    <div className="plot-head">
+      <h2 id="selected-spectrum-heading">{t("viewerSpectrum")}</h2>
+      <div className="spectrum-stepper" role="group" aria-label={t("scanNavigation")}>
+        <IconButton icon={<Icon name="chevronUp" />} label={t("scanPrevious")} onClick={props.onSelectPrevious}
+          refused={props.canSelectPrevious !== true} reasonId={stepReasonId} size="sm" variant="secondary" />
+        <span className="spectrum-scan" id={SCAN_ID}>{spectrum === null ? describe(state, t) : spectrum.scanNumber === null
+          ? t("viewerSpectrumIndex", { index: formatCount(spectrum.index) }) : `${t("scanColumnScan")} ${formatCount(spectrum.scanNumber)}`}</span>
+        <IconButton icon={<Icon name="chevronDown" />} label={t("scanNext")} onClick={props.onSelectNext}
+          refused={props.canSelectNext !== true} reasonId={stepReasonId} size="sm" variant="secondary" />
       </div>
-      {state.status === "loaded" ? <div className="spectrum-export-header-actions"><QuickFigureActions
-        context={[t("viewerSpectrumIndex", { index: String(state.spectrum.index) }), t(props.rangeScope === "current" && props.rangeAvailability === "available" ? "viewerExportCurrent" : "viewerExportFull"), `${props.figureSettings.widthPx || "—"} × ${props.figureSettings.heightPx || "—"} px`]}
-        busy={props.scientificExportBusy} figureUnavailable={props.renderSettingsProblem !== null}
-        pngUnavailable={props.pngDpiProblem !== null} onPreview={props.onOpenFigure} quickVisible={!exportOpen}
-        onPng={() => props.onExport("png")} onCopy={props.onCopyPlot} />
-        <details className="spectrum-export-disclosure" open={exportOpen}>
-          <summary onClick={event => { event.preventDefault(); setExportOpen(value => !value); }}>{t("viewerSpectrumExport")}</summary>
-          <div hidden={!exportOpen}><SpectrumExportActions {...props} /></div>
-        </details></div> : null}
-    </header>
-    <div className="spectrum-body">{renderBody(state, props.onRetry, props, t)}</div>
-    <p className="spectrum-export-status" role="status">
-      {describeSpectrumExport(exportState, t)}
-      {exportState.status === "failed" && exportState.error.detail !== null ?
-        <span className="notice-detail">{ownedErrorDetail(exportState.error, t)}</span> : null}
-    </p>
-    {["saved", "copied", "cancelled", "failed"].includes(exportState.status) ?
-      <button className="link-button" onClick={props.onDismissExport} type="button">{t("viewerDismissExport")}</button> : null}
+      {spectrum === null ? null : <p className="spectrum-head-facts">
+        <span>{`MS${spectrum.msLevel}`}</span>
+        {/* What the file declares (P5). The contract carries only whether it
+            declared one, and the backend reports none today. */}
+        {spectrum.representationKnown ? null : <span>{t("viewerRepresentationNotReported")}</span>}
+        <span>{t("viewerExportPoints", { count: spectrum.pointCount })}</span>
+      </p>}
+      {/* The plot's accessible name, in one sentence. */}
+      {spectrum === null ? null : <p className="visually-hidden" id="selected-spectrum-summary">{t("viewerSpectrumSummary", {
+        index: formatCount(spectrum.index), level: formatCount(spectrum.msLevel), count: spectrum.pointCount })}</p>}
+      {/* An export's result, on the head's line beside its tools, never over
+          the plot's data. Mounted always, so its status is heard. */}
+      <div className="plot-status">
+        <div className="plot-status-line">
+          <p className="spectrum-export-status" role="status" title={describeSpectrumExport(exportState, t) || undefined}>
+            {describeSpectrumExport(exportState, t)}
+            {exportState.status === "failed" && exportState.error.detail !== null ?
+              <span className="notice-detail">{ownedErrorDetail(exportState.error, t)}</span> : null}
+          </p>
+          {["saved", "copied", "cancelled", "failed"].includes(exportState.status) ?
+            <IconButton icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={props.onDismissExport} size="sm" /> : null}
+        </div>
+      </div>
+      {spectrum === null ? null : <Toolbar className="plot-tools" label={t("plotSpectrumTools")} roving>
+        {spectrum.pointCount === 0 ? null : <>
+          <SpectrumZoomControls dispatch={props.dispatchViewport} readState={props.readViewport} state={props.viewport} />
+          <span aria-hidden="true" className="plot-tools-divider" />
+        </>}
+        <QuickFigureActions busy={props.scientificExportBusy} figureUnavailable={props.figureSettingsValidation.render !== null}
+          pngUnavailable={props.figureSettingsValidation.dpi !== null} reason={reason}
+          leadingItems={spectrum.pointCount === 0 ? [] : [rangeEditor.item]}
+          onPreview={props.onOpenFigure} onPng={() => props.onExport("png")} onCopy={props.onCopyPlot}
+          menuItems={(["csv", "tsv"] as const).map(format => ({ key: format, label: t("viewerExportFormat", { name: format.toUpperCase() }),
+            // Refused while any scientific export runs: Rust holds one lane.
+            refused: props.scientificExportBusy, reason: props.scientificExportBusy ? t("plotExportBusy") : null,
+            onSelect: () => { props.onExport(format); } }))} />
+      </Toolbar>}
+    </div>
+    {/* An absent spectrum has no body: the head's line already says it is not in this run. */}
+    {state.status === "unavailable" ? null : <div className="spectrum-body">{renderBody(state, props.onRetry, props, rangeEditor, t)}</div>}
   </section>;
 });
-
-function SpectrumExportActions(props: SelectedSpectrumPanelProps) {
-  const t = useUiMessages();
-  const { exportState, scientificExportBusy, renderSettingsProblem, pngDpiProblem, rangeAvailability,
-    rangeScope, committedDomain, onRangeScope, onExport, onCopyPlot, figureSettings,
-    figureSettingsValidation, onFigureSetting, onFigureTheme } = props;
-  const running = exportState.status === "running" && exportState.namesVisibleRun;
-  const figureBlocked = scientificExportBusy || renderSettingsProblem !== null;
-  const rasterBlocked = figureBlocked || pngDpiProblem !== null;
-  return <div className="spectrum-export">
-    <fieldset className="spectrum-export-range"><legend>{t("viewerRange")}</legend>
-      {rangeAvailability === "available" ? <>
-        <div aria-labelledby="spectrum-range-label" className="spectrum-figure-themes" role="radiogroup">
-          <span className="visually-hidden" id="spectrum-range-label">{t("viewerExportScope")}</span>
-          {(["full", "current"] as const).map(scope => <label className="spectrum-figure-theme" key={scope}>
-            <input checked={rangeScope === scope} name="spectrum-range-scope" onChange={() => onRangeScope(scope)} type="radio" value={scope} />
-            <span>{t(scope === "full" ? "viewerExportFull" : "viewerExportCurrent")}</span>
-          </label>)}
-        </div>
-        <p className="chromatogram-export-note">{committedDomain === null ? t("viewerExportFullHelp") :
-          t("viewerExportRangeHelp", { low: String(committedDomain.low), high: String(committedDomain.high) })}</p>
-      </> : <p className="chromatogram-export-note">{t(rangeAvailability === "noPeaks" ? "viewerExportNoPeaks" : "viewerExportNoViewport")}</p>}
-    </fieldset>
-    <FigureSettingsFields idPrefix="spectrum" onFigureSetting={onFigureSetting} onFigureTheme={onFigureTheme}
-      validation={figureSettingsValidation} settings={figureSettings} />
-    <fieldset className="spectrum-figure-actions"><legend className="visually-hidden">{t("viewerFigureExports")}</legend>
-      <div className="spectrum-export-actions">
-        {(["svg", "png"] as const).map(format => <button className="secondary-button"
-          disabled={format === "png" ? rasterBlocked : figureBlocked} key={format} onClick={() => onExport(format)} type="button">
-          {t(running && exportState.operation === format ? "viewerExporting" : "viewerExportFormat", { name: format.toUpperCase() })}
-        </button>)}
-        <button className="secondary-button" disabled={figureBlocked} onClick={onCopyPlot} type="button">
-          {t(running && exportState.operation === "copy" ? "viewerCopying" : "viewerCopy")}
-        </button>
-      </div>
-    </fieldset>
-    <fieldset className="spectrum-data-actions"><legend>{t("viewerData")}</legend>
-      <div className="spectrum-export-actions">
-        {(["csv", "tsv"] as const).map(format => <button className="secondary-button"
-          // Keep the current data initiator focusable across its native picker.
-          // The lane still refuses repeat activation, including keyboard clicks.
-          aria-disabled={scientificExportBusy || undefined}
-          disabled={scientificExportBusy && !(running && exportState.operation === format)}
-          key={format} onClick={() => { if (!scientificExportBusy) onExport(format); }} type="button">
-          {t(running && exportState.operation === format ? "viewerExporting" : "viewerExportFormat", { name: format.toUpperCase() })}
-        </button>)}
-      </div>
-    </fieldset>
-  </div>;
-}
 
 function describeFigure(figure: ExportedFigure | CopiedFigure, t: UiMessage): string {
   return t("viewerFigureSize", { width: formatCount(figure.width), height: formatCount(figure.height), theme: t(figure.theme) }) +
@@ -134,7 +131,7 @@ function describeExportedRange(state: ExportedSpectrumRange, t: UiMessage): stri
 export function describeSpectrumExport(state: SpectrumExportState, t: UiMessage): string {
   switch (state.status) {
     case "idle": return "";
-    case "running": return state.operation === "copy" ? t("viewerExportClipboard") : t("viewerExportChoose", { name: state.operation.toUpperCase() });
+    case "running": return state.operation === "copy" ? t("viewerCopying") : t("viewerExportChoose", { name: state.operation.toUpperCase() });
     case "cancelled": return t("viewerExportCancelled");
     case "saved": return t("viewerExportSaved", { name: state.fileName, details: describeExportedRange(state, t) +
       (state.figure === null ? "" : `, ${describeFigure(state.figure, t)}`) });
@@ -151,57 +148,29 @@ function describe(state: SpectrumState, t: UiMessage): string {
     case "failed": return t("viewerSpectrumFailed", { index: formatCount(state.index) });
   }
 }
-function renderBody(state: SpectrumState, onRetry: () => void, binding: SelectedSpectrumPanelProps, t: UiMessage) {
+function renderBody(state: Exclude<SpectrumState, { readonly status: "unavailable" }>, onRetry: () => void, binding: SelectedSpectrumPanelProps,
+  rangeEditor: ReturnType<typeof usePlotRangeEditor>, t: UiMessage) {
   switch (state.status) {
-    case "none": return <div className="empty-state"><strong>{t("viewerChooseSpectrum")}</strong><span>{t("viewerChooseHelp")}</span></div>;
-    case "loading": return <div className="empty-state"><strong>{t("viewerSpectrumLoading", { index: formatCount(state.index) })}</strong>
-      <span>{t("viewerSpectrumReading")}</span></div>;
-    case "unavailable": return <div className="empty-state"><strong>{t("viewerSpectrumUnavailable", { index: formatCount(state.requestedIndex) })}</strong>
-      <span>{t("viewerSpectrumUnavailableHelp")}</span></div>;
+    case "none": return <div className="empty-state"><span>{binding.selectionRefusal ?? t("viewerChooseHelp")}</span></div>;
+    case "loading": return <div className="empty-state"><strong>{t("viewerSpectrumLoading", { index: formatCount(state.index) })}</strong></div>;
     case "failed": return <div className="empty-state"><strong>{ownedErrorMessage(state.error, t)}</strong>
       {ownedErrorDetail(state.error, t) === null ? null : <span>{ownedErrorDetail(state.error, t)}</span>}
-      {state.error.retryable ? <button className="secondary-button" onClick={onRetry} type="button">{t("viewerSpectrumRetry")}</button> : null}</div>;
-    case "loaded": return <SpectrumDetail binding={binding} spectrum={state.spectrum} />;
+      {state.error.retryable ? <Button onClick={onRetry} size="sm">{t("viewerSpectrumRetry")}</Button> : null}</div>;
+    case "loaded": return <SpectrumDetail binding={binding} rangeEditor={rangeEditor} spectrum={state.spectrum} />;
   }
 }
-function SpectrumDetail({ spectrum, binding }: { readonly spectrum: SelectedSpectrum; readonly binding: SelectedSpectrumPanelProps }) {
+function SpectrumDetail({ spectrum, binding, rangeEditor }: { readonly spectrum: SelectedSpectrum; readonly binding: SelectedSpectrumPanelProps;
+  readonly rangeEditor: ReturnType<typeof usePlotRangeEditor> }) {
   const t = useUiMessages();
-  const empty = spectrum.pointCount === 0;
-  const summaryId = "selected-spectrum-summary";
   return <>
-    {empty ? <div className="empty-state"><strong>{t("viewerSpectrumEmpty")}</strong><span>{t("viewerSpectrumEmptyHelp")}</span></div> :
-      <SpectrumViewport dispatch={binding.dispatchViewport} intensity={spectrum.intensity} labelledBy={summaryId} mz={spectrum.mz}
+    {spectrum.pointCount === 0 ? <div className="empty-state"><strong>{t("viewerSpectrumEmpty")}</strong><span>{t("viewerSpectrumEmptyHelp")}</span></div> :
+      <SpectrumViewport dispatch={binding.dispatchViewport} intensity={spectrum.intensity} labelledBy="selected-spectrum-summary" mz={spectrum.mz}
         onRetryProjection={binding.onRetryProjection} projectionError={binding.projectionError} readState={binding.readViewport}
-        reportedMzHigh={spectrum.mzHigh} reportedMzLow={spectrum.mzLow} representationKnown={spectrum.representationKnown}
+        reportedMzHigh={spectrum.mzHigh} reportedMzLow={spectrum.mzLow}
+        rangeEditing={rangeEditor.editing} onRangeEditorClose={rangeEditor.close}
         valueUnitsKnown={spectrum.valueUnitsKnown} state={binding.viewport} />}
     {spectrum.truncated ? <p className="notice notice-warning" role="note">
       {t(binding.viewport.status === "ready" ? "viewerSpectrumPrefixRetained" : "viewerSpectrumPrefix", { count: spectrum.mz.length })}
     </p> : null}
-    <details className="spectrum-source-details"><summary>{t("viewerDetails")}</summary>
-      <dl className="metadata-list spectrum-facts">
-        <div><dt>{t("scanIndex")}</dt><dd>{formatCount(spectrum.index)}</dd></div>
-        <div><dt>{t("scanNumber")}</dt><dd>{spectrum.scanNumber === null ? t("viewerNotReported") : formatCount(spectrum.scanNumber)}</dd></div>
-        <div><dt>{t("scanMsLevel")}</dt><dd>MS{spectrum.msLevel}</dd></div>
-        <div><dt>{t("scanRetentionTime")}</dt><dd>{spectrum.retentionTime.unitKnown ? spectrum.retentionTime.value.toFixed(4) :
-          t("viewerRetentionValue", { value: spectrum.retentionTime.value.toFixed(4) })}</dd></div>
-        <div><dt>{t("viewerPoints")}</dt><dd>{formatCount(spectrum.pointCount)}</dd></div>
-        <div><dt>{t("scanTotalIonCurrent")}</dt><dd>{formatIntensity(spectrum.totalIonCurrent)}</dd></div>
-        {empty ? null : <>
-          <div><dt>{t("rangeMzAxis")}</dt><dd>{formatMz(spectrum.mzLow)} – {formatMz(spectrum.mzHigh)}</dd></div>
-          <div><dt>{t("viewerBasePeak")}</dt><dd>{t("viewerBasePeakValue", { mz: formatMz(spectrum.basePeakMz), value: formatIntensity(spectrum.basePeakIntensity) })}</dd></div>
-        </>}
-        <div><dt>{t("viewerRepresentation")}</dt><dd>{t(spectrum.representationKnown ? "viewerReported" : "viewerNotReported")}</dd></div>
-        <div><dt>{t("viewerValueUnits")}</dt><dd>{t(spectrum.valueUnitsKnown ? "viewerReported" : "viewerNotReported")}</dd></div>
-      </dl>
-      {spectrum.identifiers.length === 0 ? null : <div className="inspector-section"><h3>{t("viewerIdentifiers")}</h3>
-        <ul className="metadata-lines">{spectrum.identifiers.map(identifier => <li key={identifier}>{identifier}</li>)}</ul>
-      </div>}
-      {spectrum.precursors.length === 0 ? null : <div className="inspector-section"><h3>{t("viewerPrecursors")}</h3>
-        {spectrum.precursorsTruncated ? <p className="notice notice-warning" role="note">
-          {t("viewerPrecursorPrefix", { count: spectrum.precursors.length, total: spectrum.totalPrecursorCount })}</p> : null}
-        <dl className="metadata-list">{spectrum.precursors.map(precursor => <div key={precursor.index}>
-          <dt>{formatMz(precursor.mz)}</dt><dd>{formatIntensity(precursor.intensity)}</dd></div>)}</dl>
-      </div>}
-    </details>
   </>;
 }

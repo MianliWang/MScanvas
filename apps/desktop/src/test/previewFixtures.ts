@@ -549,6 +549,10 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     }
   }
 
+  // The same MS level and precursor `buildRows` gives this scan, so the
+  // spectrum head, the scan table and the chromatogram readout agree.
+  const msLevel = index % 4 === 0 ? 1 : 2;
+  const precursors = pointCount === 0 || msLevel === 1 ? [] : [{ index: 0, mz: 500 + (index % 300), intensity: 8_400 }];
   return {
     index,
     // Distinct per spectrum, so a test that exports one and then selects
@@ -566,7 +570,7 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     },
     scanNumber: index + 1,
     identifiers: [`controllerType=0 controllerNumber=1 scan=${index + 1}`],
-    msLevel: 2,
+    msLevel,
     retentionTime: { value: index * 0.0125, unitKnown: false },
     pointCount,
     mz,
@@ -576,8 +580,8 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     basePeakMz: pointCount === 0 ? 0 : (mz[basePeakIndex] ?? 0),
     basePeakIntensity: pointCount === 0 ? 0 : (intensity[basePeakIndex] ?? 0),
     totalIonCurrent: 54_321,
-    precursors: pointCount === 0 ? [] : [{ index: 0, mz: 512.25, intensity: 8_400 }],
-    totalPrecursorCount: pointCount === 0 ? 0 : 1,
+    precursors,
+    totalPrecursorCount: precursors.length,
     precursorsTruncated: false,
     representationKnown: false,
     valueUnitsKnown: false,

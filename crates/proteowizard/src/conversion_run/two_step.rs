@@ -139,29 +139,9 @@ fn run_intermediate(
     // One identity for the attempt, minted as run 1 is handed to the process
     // boundary, and carried into run 2.
     let identity = Some(OperationRunIdentity::mint());
+    // `launch` settles a run whose own tree is not confirmed gone, so nothing
+    // of run 1's output is judged and run 2 never launches after one.
     let output = launch(context, &command, staging, identity)?;
-    // Nothing of run 1's output is judged, and no further backend work done,
-    // while its own tree is not confirmed gone: the one state
-    // `OwnedTreeDisposition::Unconfirmed` forbids both in. A stop already
-    // requested is answered as one that could not be confirmed.
-    if !OwnedTreeDisposition::of(&output).no_owned_process_survives() {
-        return Err(Box::new(
-            if context
-                .cancellation
-                .is_some_and(ConversionCancellation::is_requested)
-            {
-                stopped_before_target(&output, staging, identity)
-            } else {
-                failed_before_target(
-                    ConversionRunFailure::Backend(BackendExecutionFailure::NotTerminated),
-                    &output,
-                    staging,
-                    StagedObservationPhase::ProviderReturned,
-                    identity,
-                )
-            },
-        ));
-    }
     let executable = command.executable.clone();
     let refuse = |failure| {
         Box::new(StagedResult::failed_after_run(

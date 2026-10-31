@@ -293,6 +293,9 @@ pub struct ProjectStateDto {
     /// Whether this project has ever been published anywhere. `false` means
     /// Save has nowhere to go and Save As is the only route.
     pub published: bool,
+    /// Whether the bound document is beta 1's schema 4, so the next Save that
+    /// writes replaces it with schema 5, which beta 1 cannot open (ADR 0055).
+    pub saving_upgrades_schema: bool,
     pub inputs: Vec<InputDto>,
     pub artifacts: Vec<ArtifactDto>,
     pub runs: Vec<RunDto>,
@@ -739,6 +742,10 @@ pub(super) fn describe(
         name: document.name.clone(),
         dirty: project.dirty,
         published: project.binding.is_some(),
+        saving_upgrades_schema: project
+            .binding
+            .as_ref()
+            .is_some_and(|binding| binding.schema == super::record::PUBLISHED_SCHEMA_VERSION),
         inputs,
         artifacts,
         runs,

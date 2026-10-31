@@ -639,6 +639,43 @@ fn run_two_never_launches_while_run_one_leaves_its_tree_unconfirmed() {
     }
 }
 
+/// Run 2 is held to the same rule: a clean exit with its tree unconfirmed
+/// leaves its file unjudged and unpublished.
+#[test]
+fn run_two_leaving_its_tree_unconfirmed_publishes_nothing() {
+    let fixture = Fixture::new(&two_level_source());
+    let cancellation = ConversionCancellation::new();
+    let observer = cancellation.recovery_observer();
+    let first = writes(intermediate_of(&two_level_source()).into_bytes());
+    let second = writes(written(NonMzmlFormat::Mgf));
+    let runner = TwoRuns {
+        first: FakeRunner::new(&first),
+        second: FakeRunner::new(&second).leaving_a_process(),
+    };
+    let attempt = run_conversion_cancellable(
+        &fixture.plan(OutputEncoding::Mgf, ConflictPolicy::Fail),
+        &capabilities_from(CAPTURED_HELP),
+        &runner,
+        cancellation,
+    );
+    let ConversionAttempt::Completed(report) = attempt else {
+        panic!("{attempt:?}");
+    };
+    assert_eq!(
+        report.outcome(),
+        &ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+            BackendExecutionFailure::NotTerminated
+        ))
+    );
+    assert!(report.leaves_an_owned_process_unaccounted());
+    assert_eq!(report.step(), Some(ConversionStep::Target));
+    assert_eq!(
+        observer.retained().map(|recovery| recovery.status()),
+        Some(StagingRecoveryStatus::ProcessUnconfirmed)
+    );
+    assert!(!fixture.root.join("sample.mgf").exists());
+}
+
 /// A stop requested during run 1, which then left its tree unconfirmed, is
 /// never answered as a clean stop.
 #[test]

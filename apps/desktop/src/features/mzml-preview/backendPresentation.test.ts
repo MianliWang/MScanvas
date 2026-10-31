@@ -113,8 +113,52 @@ describe("the states the banner tells apart", () => {
     // The recovery is a restart of MSCanvas, not a repair of ProteoWizard.
     expect(quarantined.body.join(" ")).toContain("Restart MSCanvas");
     expect(quarantined.body.join(" ")).not.toContain("repair ProteoWizard");
-    // And the ways out are still offered, because Rust is what refuses them.
-    expect(quarantined.actions.map(entry => entry.id)).toEqual(["recheck", "choose"]);
+    // And no button pretends to fix it: Check again and Choose folder… could
+    // only be refused until the restart (rendered review, issue 3).
+    expect(quarantined.actions).toEqual([]);
+    expect(quarantined.primary).toBeNull();
+    expect(quarantined.notice).toBe("notice");
+  });
+
+  it("does not call a reading ready once the conversion lane is quarantined", () => {
+    // The last reading said "available"; the lane has since lost track of a
+    // process it started, so nothing starts until a restart.
+    const lane = presentBackend(resolved(availableBackend), false, en, true);
+    expect(lane.kind).toBe("quarantined");
+    expect(lane.status.tone).not.toBe("ready");
+    expect(lane.status.label).toBe(UI_RESOURCES.en.backendStatusQuarantined);
+    expect(lane.actions).toEqual([]);
+    expect(lane.names).toBeNull();
+  });
+});
+
+describe("how the shell shows each state", () => {
+  it.each<[BackendPresentationKind, BackendState, boolean, string, string, string, string | null]>([
+    ["checking", { status: "checking" }, false, "pending", UI_RESOURCES.en.backendStatusChecking, "transient", null],
+    ["staleReading", resolved(availableBackend), true, "pending", UI_RESOURCES.en.backendStatusChecking, "transient", null],
+    ["available", resolved(availableBackend), false, "ready", UI_RESOURCES.en.backendReadyShort, "none", null],
+    ["missing", resolved(unavailableBackend), false, "attention", UI_RESOURCES.en.backendStatusMissing, "notice", "choose"],
+    ["unsupported", resolved(chosenFolderWithoutTools), false, "attention", UI_RESOURCES.en.backendStatusUnavailable, "notice", "choose"],
+    ["quarantined", resolved(quarantinedBackend), false, "attention", UI_RESOURCES.en.backendStatusQuarantined, "notice", null],
+    ["requestFailed", { status: "failed", error: previewError({ kind: "preview_worker_unavailable" }) }, false, "danger", UI_RESOURCES.en.backendStatusFailed, "notice", "recheck"],
+  ])("shows %s with its own tone, label, place and fix", (kind, state, stale, tone, label, notice, primary) => {
+    const shown = presentBackend(state, stale, en);
+    expect(shown.kind).toBe(kind);
+    expect(shown.status).toEqual({ tone, label });
+    expect(shown.notice).toBe(notice);
+    expect(shown.primary).toBe(primary);
+    // The one action a notice offers is one the state actually offers.
+    if (primary !== null) expect(shown.actions.map(entry => entry.id)).toContain(primary);
+  });
+
+  it("keeps green for the one usable state", () => {
+    const tones = [
+      presentBackend({ status: "checking" }, false, en),
+      presentBackend(resolved(unavailableBackend), false, en),
+      presentBackend(resolved(quarantinedBackend), false, en),
+      presentBackend(resolved(availableBackend), true, en),
+    ].map(shown => shown.status.tone);
+    expect(tones).not.toContain("ready");
   });
 
   it("names the build only when the reading is current and positive", () => {

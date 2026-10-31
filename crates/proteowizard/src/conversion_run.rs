@@ -4133,6 +4133,45 @@ fn launch(
             },
         }));
     }
+    // Nothing of the output is judged or finalized, and no further backend
+    // work done, while the owned tree is not confirmed gone, whatever the exit
+    // code: the one state `OwnedTreeDisposition::Unconfirmed` forbids both in.
+    // Checked here, once, for every run handed to the boundary: a direct run
+    // and both of decision 6's runs. An exit code must not hide it from the
+    // quarantine. A stop already requested is answered as one that could not
+    // be confirmed.
+    if !OwnedTreeDisposition::of(&output).no_owned_process_survives() {
+        let staged = StagedOutputEvidence::of(
+            StagedObservationPhase::ProviderReturned,
+            observe_staged_content(staging),
+        );
+        let diagnostics = diagnostic_text(&output, plan, staging, &executable);
+        let process = backend.map_or(
+            ProcessAttemptOutcome::Indeterminate,
+            ProcessAttemptOutcome::of,
+        );
+        return Err(Box::new(if requested {
+            StagedResult::CancellationFailed {
+                cause: BackendExecutionFailure::NotTerminated,
+                backend,
+                staged,
+                diagnostics,
+                identity,
+                process,
+            }
+        } else {
+            StagedResult::Settled {
+                outcome: ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+                    BackendExecutionFailure::NotTerminated,
+                )),
+                backend,
+                diagnostics,
+                staged,
+                identity,
+                process,
+            }
+        }));
+    }
     if !output.success() {
         return Err(Box::new(StagedResult::Settled {
             outcome: ConversionRunOutcome::Failed(ConversionRunFailure::BackendRejected {

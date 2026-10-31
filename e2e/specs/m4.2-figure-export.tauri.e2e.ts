@@ -23,9 +23,12 @@ import {
   SEEDED_TOKEN,
   chooseFigure,
   clipboardIsUsable,
+  dismissExportMessage,
   focusApplicationWindow,
   ipcCalls,
   loadWith,
+  openSpectrumFigureDialog,
+  pressDialogAction,
   selectFirstSpectrum,
   statusText,
   tauriTable,
@@ -48,23 +51,26 @@ async function panelFacts(): Promise<{
   readonly theme: string | null;
 }> {
   return browser.execute(() => {
-    const panel = document.querySelector("section.spectrum-panel");
+    // The figure dialog since the rebuild (spec 3.4).
+    const panel = document.querySelector(".figure-export-dialog");
     const fields: Record<string, string> = {};
     for (const field of panel?.querySelectorAll(".spectrum-figure-settings .spectrum-figure-field") ?? []) {
-      const input = field.querySelector("input.spectrum-figure-input");
-      const label = field.querySelector("label.setting-field-label");
+      const input = field.querySelector("input");
+      const label = field.querySelector("label");
       const name = (label?.textContent ?? "").trim().split(" ")[0] ?? "";
       if (input instanceof HTMLInputElement && name !== "") {
         fields[name] = input.value;
       }
     }
-    const checked = panel?.querySelector(".spectrum-figure-settings input[type='radio']:checked");
+    // The theme is a segmented control of radio buttons: Light, then Dark.
+    const checked = panel?.querySelector(".spectrum-figure-field-theme [role='radio'][aria-checked='true']");
     return {
-      actions: [...(panel?.querySelectorAll(".spectrum-export-actions button") ?? [])].map(
+      // Document order: the Data group's CSV and TSV, then the footer's Copy, SVG and PNG.
+      actions: [...(panel?.querySelectorAll(".figure-export-data-actions button, .figure-export-actions button") ?? [])].map(
         (button) => (button.textContent ?? "").trim(),
       ),
       fields,
-      theme: checked instanceof HTMLInputElement ? checked.value : null,
+      theme: checked === null || checked === undefined ? null : (checked.textContent ?? "").trim().toLowerCase(),
     };
   });
 }
@@ -84,17 +90,18 @@ describe("M4.2 on the real Tauri WebView", () => {
       }),
     );
     await selectFirstSpectrum();
+    await openSpectrumFigureDialog();
   });
 
   it("renders every figure control and the settings it starts at", async () => {
     const facts = await panelFacts();
 
     expect(facts.actions).toEqual([
-      "Export SVG…",
-      "Export PNG…",
-      "Copy plot",
       "Export CSV…",
       "Export TSV…",
+      "Copy plot",
+      "Export SVG…",
+      "Export PNG…",
     ]);
     expect(facts.fields).toEqual({ Width: "1200", Height: "640", PNG: "300" });
     expect(facts.theme).toBe("light");
@@ -107,7 +114,7 @@ describe("M4.2 on the real Tauri WebView", () => {
     // could be drawn at would have been refused instead.
     await chooseFigure({ width: "820", height: "540", dpi: "600", theme: "dark" });
 
-    await browser.$(".spectrum-panel").$("button=Export PNG…").click();
+    await pressDialogAction("Export PNG…");
     await waitForOutcome(60_000);
 
     const begun = (await ipcCalls()).filter(
@@ -129,21 +136,22 @@ describe("M4.2 on the real Tauri WebView", () => {
 
   it("refuses a figure the settings could not describe, without asking Rust", async () => {
     await browser.execute(() => {
-      const input = document.querySelector(".spectrum-panel .spectrum-figure-field input[id='spectrum-widthPx']");
+      const input = document.querySelector(".figure-export-dialog input[id$='-widthPx']");
       if (!(input instanceof HTMLInputElement)) {
-        throw new Error("The spectrum width field is missing from the current shared controls.");
+        throw new Error("The figure dialog's width field is missing.");
       }
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setter?.call(input, "0");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
+    // Refused, not disabled (spec 1.4): still focusable, with the reason beside them.
     const blocked = await browser.execute(() =>
-      [...document.querySelectorAll(".spectrum-panel .spectrum-export-actions button")]
-        .filter((button) => button instanceof HTMLButtonElement && button.disabled)
+      [...document.querySelectorAll(".figure-export-dialog .figure-export-actions button")]
+        .filter((button) => button.getAttribute("aria-disabled") === "true")
         .map((button) => (button.textContent ?? "").trim()),
     );
-    expect(blocked).toEqual(["Export SVG…", "Export PNG…", "Copy plot"]);
+    expect(blocked).toEqual(["Copy plot", "Export SVG…", "Export PNG…"]);
     expect(
       (await ipcCalls()).filter((call) => call.command === "begin_selected_spectrum_export"),
     ).toEqual([]);
@@ -161,7 +169,7 @@ describe("M4.2 on the real Tauri WebView", () => {
     // never acceptable is a third outcome: a crash, a wrong token, or a success
     // claimed without one.
     focusApplicationWindow();
-    await browser.$(".spectrum-panel").$("button=Copy plot").click();
+    await pressDialogAction("Copy plot");
     const status = await waitForOutcome();
 
     const copied = (await ipcCalls()).filter(
@@ -197,7 +205,7 @@ describe("M4.2 on the real Tauri WebView", () => {
     await chooseFigure({ width: "20000", height: "20000" });
 
     focusApplicationWindow();
-    await browser.$(".spectrum-panel").$("button=Copy plot").click();
+    await pressDialogAction("Copy plot");
     const status = await waitForOutcome();
 
     // Since M7.4 the panel shows its own localized message for the refusal's
@@ -223,11 +231,11 @@ describe("M4.2 on the real Tauri WebView", () => {
     // so the size that stopped the copy must not stop it.
     await chooseFigure({ width: "20000", height: "20000" });
 
-    await browser.$(".spectrum-panel").$("button=Export SVG…").click();
+    await pressDialogAction("Export SVG…");
     expect(await waitForOutcome(60_000)).toContain("cancelled");
-    await browser.$(".spectrum-panel").$("button=Dismiss export message").click();
+    await dismissExportMessage();
 
-    await browser.$(".spectrum-panel").$("button=Export PNG…").click();
+    await pressDialogAction("Export PNG…");
     expect(await waitForOutcome(60_000)).toMatch(RASTER_BUDGET);
 
     const begun = (await ipcCalls()).filter(
@@ -243,18 +251,18 @@ describe("M4.2 on the real Tauri WebView", () => {
     // `Copy plot`, neither of which has a `pHYs` chunk to put it in.
     await chooseFigure({ dpi: "50" });
 
-    await browser.$(".spectrum-panel").$("button=Export SVG…").click();
+    await pressDialogAction("Export SVG…");
     expect(await waitForOutcome(60_000)).toContain("cancelled");
-    await browser.$(".spectrum-panel").$("button=Dismiss export message").click();
+    await dismissExportMessage();
 
-    await browser.$(".spectrum-panel").$("button=Export PNG…").click();
+    await pressDialogAction("Export PNG…");
     const refusal = await waitForOutcome(60_000);
     // The localized M7.4 message for the same 72 to 1200 range.
     expect(refusal).toContain(DPI_RANGE);
-    await browser.$(".spectrum-panel").$("button=Dismiss export message").click();
+    await dismissExportMessage();
 
     focusApplicationWindow();
-    await browser.$(".spectrum-panel").$("button=Copy plot").click();
+    await pressDialogAction("Copy plot");
     const copied = await waitForOutcome();
     expect(copied).not.toContain(DPI_RANGE);
     // And whatever the clipboard did, the confirmation names no resolution:

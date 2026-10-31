@@ -2979,6 +2979,14 @@ re-running anything:
 | `AdoptionRelation` | Which output was adopted, and against which identity check | exists — **M6.9** records the relation |
 | `Run`, `Artifact`, `Lineage`, `Provenance` | **not built.** M6 supplies the facts these would be assembled from | **M8** |
 
+*Amended 2026-10-30 by [ADR 0052](0052-per-output-adoption.md).* The
+`AdoptionRelation` is written by a queue-wide adoption or by a per-output one,
+which adopts one output the queue-wide action would offer and records its
+answer on that output's item, replacing the answer the item held, about its
+other members too. The "Adoption" row of the implementation table
+above and CNV-D9's "a user action, per terminal queue" read "per terminal
+queue, or one offered output of it"; the identity check is unchanged.
+
 Four constraints M6 accepts now so M8 is not forced to redesign, each earned from
 the reference audit:
 

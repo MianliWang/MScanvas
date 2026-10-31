@@ -61,7 +61,7 @@ use super::conversion::run_planned_conversion;
 use super::conversion::{
     BoundIntent, ConvertedItem, WorkspaceConversionReport, conflict_policy, fixed_compression,
     fixed_output_format, plan_conversion, refusal_is_retryable, refuse_unevidenced_build,
-    run_planned_conversion_cancellable, settings_unverified,
+    run_planned_conversion_cancellable, settings_unverified, unverified_build_release,
 };
 use super::destination::admit_destination_root;
 use super::destination_policy::{
@@ -161,8 +161,8 @@ use super::figure::{
 use super::installation::{InstallationIdentity, PreviewProducerFacts};
 use super::operation::{
     AdmittedDestination, AttemptFacts, CancellationFacts, ConversionQueue, ConversionSlot,
-    ItemOutcome, PendingDisposition, QueueItem, QueueItemAttempt, SettledItemAdoption,
-    StopAccepted, TerminalReason, folded_output_name, item_output_topology, item_state_of,
+    ItemOutcome, QueueItem, QueueItemAttempt, SettledItemAdoption, StopAccepted, TerminalReason,
+    folded_output_name, item_output_topology, item_state_of,
 };
 use super::operation::{ItemOutputTopology, SetStopFacts};
 use super::projection::{self, ProjectionRefusal};
@@ -176,6 +176,7 @@ use super::selection::{
 pub(crate) use conversion_intent::read_structured_intent;
 use conversion_intent::resolve_requested_intent;
 use mscanvas_plot_spec::spec::{Domain, FigureTheme};
+use mscanvas_proteowizard::InstalledHelpCapabilities;
 
 /// The name the native save dialog offers for a diagnostics export.
 //
@@ -628,6 +629,13 @@ pub struct PreviewService {
     // is weakened — the hook is handed a position and can only act on the
     /// world, exactly as another process could.
     publication_seam: Mutex<Option<PublicationHook>>,
+    /// Whether the next queue set settlement forgets its completeness proof.
+    //
+    // The SCIEX path proves completeness before publication, so a fully
+    // finalized queue set without it cannot occur; this forges one, so the
+    /// per-output adoption's refusal of it can be tested (ADR 0052).
+    #[cfg(test)]
+    forget_next_set_completeness: AtomicBool,
     /// The session's one diagnostics export.
     //
     // A leaf beside the conversion slot rather than a field inside it. What it
@@ -742,6 +750,8 @@ impl PreviewService {
             adopting_outputs: AtomicBool::new(false),
             session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
             publication_seam: Mutex::new(None),
+            #[cfg(test)]
+            forget_next_set_completeness: AtomicBool::new(false),
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
             spectrum_export: Mutex::new(ScientificExportSlots::default()),
@@ -1569,6 +1579,41 @@ impl PreviewService {
             .and_then(|dataset| dataset.not_verified().cloned())
     }
 
+    /// Gives the row a project reference was admitted as the label the
+    /// project recorded for that object, and says it in the add's own answer.
+    ///
+    /// The other half of `not_verified_label_of_object`: the label is a
+    /// property of the object, so a reference carried back into the Workbench
+    /// brings it to the row (ADR 0055; owner decision 2 of 2026-10-29). Called
+    /// only once the project has claimed `handle`, which is what proves the
+    /// row is the object the label was recorded for. Memory only.
+    pub(crate) fn label_admitted_row(
+        &self,
+        result: &mut WorkspaceAddResultDto,
+        handle: &str,
+        label: NotVerifiedByMscanvas,
+    ) {
+        let Some(id) = DatasetId::parse(handle) else {
+            return;
+        };
+        let gate = self.enter_workspace_mutation_after_drop();
+        let mut workspace = self.workspace();
+        let Some(held) = workspace.registry.label(id, label) else {
+            return;
+        };
+        result.roster = roster_of(&workspace);
+        drop(workspace);
+        drop(gate);
+        for outcome in &mut result.outcomes {
+            if let WorkspaceAddOutcomeDto::Added { dataset }
+            | WorkspaceAddOutcomeDto::Duplicate { existing: dataset } = outcome
+                && dataset.handle == handle
+            {
+                dataset.not_verified_by_mscanvas = Some(held.clone());
+            }
+        }
+    }
+
     /// The run summary the preview on screen established for one row, and
     /// what is known about the build that produced it.
     ///
@@ -1744,11 +1789,11 @@ impl PreviewService {
         // that start work, and that position is the whole of it. A discovery
         // happens inside other operations, so a probe that lost a process is
         // learned about halfway through one -- and the reader that has to know
-        // is not only the next launch. `refuse_queue` decides whether a waiting
-        // item is still waiting by asking this: with the latch read only on the
-        // way into new work, a queue refused by that very probe left its rows
-        // `Pending` in a terminal queue, offered no retry, and quarantined the
-        // next operation instead. One place, and it cannot be forgotten.
+        // is not only the next launch. `refuse_queue` reports the quarantine by
+        // asking this: with the latch read only on the way into new work, a
+        // queue refused by that very probe was described as recoverable, and
+        // the quarantine fell on the next operation instead. One place, and it
+        // cannot be forgotten.
         if self.provider.discovery_lost_a_process() {
             self.quarantine_backend();
         }
@@ -2304,7 +2349,8 @@ impl PreviewService {
             }
             families
         };
-        self.prove_begin(request.expected_receipt, &intent, &preflight_families)?;
+        let capabilities =
+            self.prove_begin(request.expected_receipt, &intent, &preflight_families)?;
         // The same gate every workspace mutation takes, so a queue and a batch
         // cannot both be admitted by each reading the other's state before
         // either committed. `_after_drop` because a drop is accepted by a
@@ -2327,7 +2373,16 @@ impl PreviewService {
         // picker would open for a run guaranteed to end superseded. Planning
         // is lock-cheap and launches nothing, so it is simply done again where
         // it counts.
-        let items = self.plan_items(&request.handles, &intent, &policy)?;
+        let mut items = self.plan_items(&request.handles, &intent, &policy)?;
+        // Each row's "not verified by MSCanvas" label, as the plan stated it,
+        // so a waiting or running row says it before its report exists.
+        for item in &mut items {
+            let kind = conversion_source_kind(item.kind());
+            item.set_not_verified(NotVerifiedByMscanvas::of(
+                settings_unverified(&intent, kind, &capabilities),
+                unverified_build_release(&capabilities, kind),
+            ));
+        }
         let mut slot = self.conversion_slot();
         // Under the slot lock, and immediately before the slot is taken. The
         // authority proof is awaited, so a reload can start any time after it
@@ -2457,7 +2512,7 @@ impl PreviewService {
         expected_receipt: BackendBindingReceiptDto,
         intent: &BoundIntent,
         families: &[ConversionSourceKind],
-    ) -> Result<(), PreviewErrorDto> {
+    ) -> Result<InstalledHelpCapabilities, PreviewErrorDto> {
         let Some(running) = self.try_enter_backend() else {
             return Err(conversion_backend_busy());
         };
@@ -2531,7 +2586,8 @@ impl PreviewService {
         for kind in families {
             refuse_unevidenced_build(&backend.capabilities, *kind)?;
         }
-        Ok(())
+        // The grammar just proved, for the label each queued row carries.
+        Ok(backend.capabilities)
     }
 
     /// Consumes one exact reservation before its picker is dispatched.
@@ -2790,6 +2846,43 @@ impl PreviewService {
         operation_id: &str,
         document_epoch: u64,
     ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+        self.adopt_terminal_outputs(operation_id, None, document_epoch)
+    }
+
+    /// Adds one finalized output of a terminal queue to the workspace.
+    //
+    // ADR 0052. The sibling of the queue-wide action, and the same adoption:
+    // the queue-wide candidates are filtered to the one whose ticket carries
+    // `output_id` before anything is claimed. So the authority is the
+    // expanded adoption authority and nothing else -- an id the item carries
+    // only for opening (a partial set's prefix, a set whose sample
+    // completeness was not established), an unfinalized item and an unknown
+    // id all answer `outputs_not_adoptable`, with no flag claimed and no
+    // generation reserved.
+    //
+    // The answer is recorded on the output's item exactly as a queue-wide
+    // answer is, replacing what that item held: it says what the latest
+    // adoption did with the item's outputs.
+    ///
+    /// Errors as the queue-wide action does, and also for an output this
+    /// queue does not offer.
+    pub fn adopt_conversion_output(
+        &self,
+        operation_id: &str,
+        output_id: &str,
+        document_epoch: u64,
+    ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+        self.adopt_terminal_outputs(operation_id, Some(output_id), document_epoch)
+    }
+
+    /// The adoption both visible actions run: every offered output, or the one
+    /// named.
+    fn adopt_terminal_outputs(
+        &self,
+        operation_id: &str,
+        only: Option<&str>,
+        document_epoch: u64,
+    ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
         let operation: u64 = operation_id.parse().map_err(|_| outputs_not_adoptable())?;
 
         let (reserved, tickets, reserved_round) = {
@@ -2810,10 +2903,16 @@ impl PreviewService {
                     true,
                 ));
             }
-            let tickets = self
+            let mut tickets = self
                 .conversion_slot()
                 .terminal_adoption_tickets(operation)
                 .ok_or_else(outputs_not_adoptable)?;
+            // Filtered before the round is read and before the flag is
+            // claimed, and only ever narrowed: a candidate keeps the
+            // `(item, member)` identity the queue-wide action gives it.
+            if let Some(output_id) = only {
+                tickets.retain(|(_, ticket)| ticket.output_id() == output_id);
+            }
             if tickets.is_empty() {
                 return Err(outputs_not_adoptable());
             }
@@ -2970,6 +3069,13 @@ impl PreviewService {
     pub(super) fn mark_retryable_for_test(&self, operation: u64, index: usize) -> bool {
         self.conversion_slot()
             .mark_retryable_for_test(operation, index)
+    }
+
+    /// Makes the next queue set settlement forget its completeness proof.
+    #[cfg(test)]
+    pub(super) fn forget_next_set_completeness(&self) {
+        self.forget_next_set_completeness
+            .store(true, Ordering::Release);
     }
 
     /// What the live queue's runtime name authority currently owns, and the
@@ -5372,6 +5478,13 @@ impl PreviewService {
         // paths with which to redact them. Dropping it would leave every
         // non-cancellation failure exporting two empty excerpts.
         let diagnostics = conversion.take_diagnostics();
+        #[cfg(test)]
+        if self
+            .forget_next_set_completeness
+            .swap(false, Ordering::AcqRel)
+        {
+            conversion = conversion.without_completeness();
+        }
         QueueItemAttempt::Settled(ItemOutcome::ReportedSet(Box::new(
             SciexAttemptSettlement::of(
                 self.session,
@@ -5383,16 +5496,11 @@ impl PreviewService {
     }
 
     fn refuse_queue(&self, operation: u64, error: PreviewErrorDto) -> WorkspaceConversionUpdateDto {
-        // Whether a waiting item is still waiting depends on whether anything
-        // of this session's can still run, and a quarantined backend is the one
-        // state where nothing can.
-        let pending = if self.backend_is_quarantined() {
-            PendingDisposition::Strand
-        } else {
-            PendingDisposition::Keep
-        };
+        // What the refusal kept from starting is settled as not run either
+        // way; whether a retry may reach it again is the retry's question, and
+        // a quarantined session refuses every retry.
         let mut slot = self.conversion_slot();
-        slot.refuse(operation, error, pending);
+        slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
         slot.read(
             self.backend_is_quarantined(),

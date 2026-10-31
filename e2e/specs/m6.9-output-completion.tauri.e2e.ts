@@ -25,8 +25,8 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
-import { waitUntilOffered } from "../support/conversion";
-import { revealTauriRoster } from "../support/tauriPanel";
+import { openNextConversion, waitUntilOffered } from "../support/conversion";
+import { clearRosterList, revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(HERE, "..", "..");
@@ -36,7 +36,7 @@ const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe15
 const PANEL = "section.conversion-panel";
 const RUNNING = `${PANEL} .conversion-running`;
 const LIST = `${RUNNING} .conversion-queue-list`;
-const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
+const CONVERT = `${PANEL} .conversion-start`;
 const ADOPT = `${PANEL} .conversion-adoption button`;
 const ROWS = '.grouped-roster [role="row"][data-handle]';
 const QUEUE_SIZE = 2;
@@ -132,13 +132,8 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
       timeout: 180_000, timeoutMsg: "A previous scenario's queue never settled.",
     });
     await showRoster();
-    const clear = browser.$("button=Clear list");
-    if (await clear.isExisting()) {
-      await reveal("#workbench-roster .dataset-roster-actions");
-      await clear.waitForClickable({ timeout: 30_000 });
-      await clear.click();
-      await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
-    }
+    // Clear list is the roster footer's list-menu item (direction A 2.1).
+    await clearRosterList();
   });
 
   afterEach(async () => {
@@ -182,7 +177,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
   }
 
   async function showConversion(): Promise<void> {
-    await browser.$("button=Conversion & results").click();
+    await browser.$("button=Conversion").click();
     await browser.$("#workbench-conversion").waitForDisplayed();
   }
 
@@ -208,9 +203,10 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     await showRoster();
     const before = await browser.$$(ROWS).length;
     const addButton = browser.$("button=Add files…");
-    await addButton.waitForEnabled({ timeout: 60_000 });
+    // Refused rather than disabled while the roster is busy (spec 1.4).
+    await browser.waitUntil(async () => (await addButton.getAttribute("aria-disabled")) !== "true", { timeout: 60_000, timeoutMsg: "Add files… was never offered" });
     await browser.waitUntil(async () => {
-      await reveal("#workbench-roster .dataset-roster-actions");
+      await reveal("#workbench-roster .roster-head");
       return addButton.isClickable();
     }, { timeout: 60_000, timeoutMsg: "Add files… never became reachable." });
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);
@@ -226,6 +222,8 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     const destination = join(runRoot, `scenario-${String(scenario)}`, `converted-${String(sourceIndex)}`);
     mkdirSync(destination, { recursive: true });
     await checkAllMembers();
+    // After an earlier queue the next conversion opens on request (rebuild review 6).
+    await openNextConversion(PANEL);
     await waitUntilOffered(CONVERT, 60_000);
     await reveal(CONVERT);
     const handler = handleDialog(applicationProcessId, "conversion-folder", "choose", destination);
@@ -332,7 +330,7 @@ runNative("M6.9 real native output completion and adoption (requires authorized 
     // One added, one refused, and the refusal did not stop the other.
     expect(await browser.$(`${PANEL} .conversion-adoption-summary`).getText())
       .toBe("1 added, 0 already in the workspace, 1 not added.");
-    expect(await browser.$(PANEL).getText()).toContain(`${changedName} was not added: changed since it was converted.`);
+    expect(await browser.$(PANEL).getText()).toContain(`${changedName} was not added: it changed since it was converted.`);
     expect(await rosterNames()).toHaveLength(QUEUE_SIZE + 1);
 
     // The rows say what the adoption did with their own outputs. Waited for:

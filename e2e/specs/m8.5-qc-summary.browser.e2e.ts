@@ -34,6 +34,7 @@ import {
   setInvokeResult,
   revealInDetails,
 } from "../support/harness";
+import { showProjectSurface } from "../support/shell";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { FAKE_WORKSPACE_CAPACITY } from "../../apps/desktop/src/test/previewFixtures";
 
@@ -300,8 +301,9 @@ async function capture(label: string) {
                   overflow: inspector.scrollWidth - inspector.clientWidth,
                 },
               },
+        // What each recorded-work row is called: the record it left, as text.
         runs: [...document.querySelectorAll("[data-project-run]")].map((node) =>
-          node.querySelector("[data-project-inspect-run]")?.textContent ?? null,
+          node.querySelector(".project-row-name")?.textContent ?? null,
         ),
         activeElement:
           active === null ? null : attribute(active, "data-project-capture-qc"),
@@ -378,7 +380,8 @@ async function capture(label: string) {
       expect(measured.control.x + measured.control.width).toBeLessThanOrEqual(
         measured.css.width + 1,
       );
-      expect(measured.control.height).toBeGreaterThanOrEqual(31.5);
+      // The compact control minimum (sm, 30 px; rebuild spec 1.4).
+      expect(measured.control.height).toBeGreaterThanOrEqual(29.5);
     }
   }
   if (measured.details !== null) {
@@ -396,15 +399,15 @@ function expectTheRecordedValues(report: Awaited<ReturnType<typeof capture>>["re
   expect(report?.chromatograms).toBe("Not reported");
   expect(report?.buckets).toEqual([
     ["ms2", "MS2", "4,000"],
-    ["other", "Other (not attributed to a level)", "345"],
+    ["other", "Other (no level)", "345"],
     ["ms1", "MS1", "8,000"],
   ]);
   expect(report?.retention).toEqual([
-    ["minimum", "0.1", "Unit not reported"],
-    ["at25", "12.345678901234567", "Unit not reported"],
-    ["at50", "0.30000000000000004", "Unit not reported"],
-    ["at75", "7.7", "Unit not reported"],
-    ["maximum", "123.456", "Unit not reported"],
+    ["minimum", "0.1", "Not reported"],
+    ["at25", "12.345678901234567", "Not reported"],
+    ["at50", "0.30000000000000004", "Not reported"],
+    ["at75", "7.7", "Not reported"],
+    ["maximum", "123.456", "Not reported"],
   ]);
   // A description, not a verdict.
   expect(report?.text.toLowerCase()).not.toMatch(/\b(pass|fail|good|poor|grade)\b/u);
@@ -450,7 +453,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
     await installIpcBoundary(table);
     await browser.url("/");
     await browser.$(".workbench-header").waitForDisplayed();
-    await browser.$("button=Project").click();
+    await showProjectSurface();
     await browser.$(`[data-project-capture-qc="${LAYER}"]`).waitForDisplayed();
 
     // 1. The source is in the Workbench and nothing has been viewed. The
@@ -464,8 +467,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
       disabled: "true",
       hardDisabled: false,
       unavailable: "qcNeedsPreview",
-      reason:
-        "View this layer's source in the Workbench first. The QC summary is copied from the preview on screen.",
+      reason: "View this layer's source in the Workbench first.",
       reasonVisible: true,
     });
     const idle = await ipcCalls();
@@ -479,8 +481,8 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
       await browser.$('[aria-controls="workbench-roster"]').click();
     }
     await browser.$(row).click();
-    await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
-    await browser.$("button=Project").click();
+    await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
+    await showProjectSurface();
     await browser.$(`[data-project-capture-qc="${LAYER}"]:not([aria-disabled])`).waitForDisplayed();
     const offered = await capture("m85-02-offered");
     expect(offered.control).toMatchObject({ disabled: null, unavailable: null, reason: null });
@@ -506,7 +508,8 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
     // The keyboard went to what the press made, and it is on screen.
     expect(recorded.focus).toEqual({ id: "qc-report-title", visible: true });
     expect(recorded.report?.headingVisible).toBe(true);
-    expect(recorded.runs).toEqual(["Capture QC summary"]);
+    // Named by the record it left, never by the layer's "Capture QC summary".
+    expect(recorded.runs).toEqual(["QC summary snapshot"]);
     expectTheRecordedValues(recorded.report);
     expect(recorded.report?.source).toContain(MZML_ROW.fileName);
     // Details answers for the report: its lineage and its build, not its
@@ -598,8 +601,8 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
       await browser.$('[aria-controls="workbench-roster"]').click();
     }
     await browser.$(row).click();
-    await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
-    await browser.$("button=Project").click();
+    await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
+    await showProjectSurface();
     await browser.$(`[data-project-capture-qc="${LAYER}"]:not([aria-disabled])`).waitForExist();
 
     await browser.execute((layer: string) => {
@@ -646,7 +649,7 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
       await metrics(width, height);
       await browser.url("/");
       await browser.$(".workbench-header").waitForDisplayed();
-      await browser.$("button=Project").click();
+      await showProjectSurface();
       await browser.$(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`).waitForDisplayed();
       await browser.$(`[data-project-inspect-artifact="${QC_ARTIFACT}"]`).click();
       await browser.$("[data-qc-report]").waitForDisplayed();

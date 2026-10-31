@@ -1467,10 +1467,10 @@ fn judge_output_alone_with(
         .unverified
         .insert(IntegrityProperty::RequestedSpectrumPopulation);
     // No source, so no inherited processing history to subtract from the
-    // output's. `None` says that, rather than an empty set standing in for it.
+    // output's. `Nothing` says that, rather than an empty set standing in for it.
     if let Some(outcome) = check_requested_processing(
         after,
-        None,
+        Inherited::Nothing,
         intent,
         advanced.and_then(|checks| checks.vendor_levels),
         &mut report,
@@ -1982,10 +1982,22 @@ fn compare_documents_with(
             intent.processing(),
             vocabulary_comparable,
             lengths_comparable && preserves_spectrum_lengths && !changes.spectrum_array_lengths,
+            !changes.spectrum_array_lengths,
             &mut report,
         )
     {
         return outcome;
+    }
+    // A step that removes points may legitimately empty a spectrum, so its
+    // payload is judged against the output's own declared length instead:
+    // a declared point with no payload still fails.
+    if spectra_paired && changes.spectrum_array_lengths {
+        if let Some(outcome) = check_output_payload_presence(after) {
+            return outcome;
+        }
+        report
+            .verified
+            .insert(IntegrityProperty::OutputArrayPayloadPresence);
     }
     if !changes.chromatogram_count
         && let Some(outcome) = compare_chromatograms(
@@ -2053,12 +2065,17 @@ fn compare_documents_with(
     {
         return outcome;
     }
-    // Unpaired spectra have no source history to subtract, so the output's is
-    // judged as an output-only one is: refusals stand, and what they establish
-    // is reported unverified by the requested change.
+    // Unpaired spectra inherited a history this cannot read: the source has
+    // one, but not at a known position. A source method copied into the
+    // output must not read as one this run added, so the attribution is left
+    // unverified rather than judged against an empty history.
     if let Some(outcome) = check_requested_processing(
         after,
-        spectra_paired.then_some(before),
+        if spectra_paired {
+            Inherited::Paired(before)
+        } else {
+            Inherited::Unpaired
+        },
         intent,
         advanced.and_then(|checks| checks.vendor_levels),
         &mut report,
@@ -2224,6 +2241,7 @@ fn compare_spectra(
     processing: ProcessingIntent,
     vocabulary_comparable: bool,
     spectrum_lengths_comparable: bool,
+    payload_presence_comparable: bool,
     report: &mut IntegrityReport,
 ) -> Option<ConversionIntegrityOutcome> {
     let mut identity_comparable = true;
@@ -2252,7 +2270,9 @@ fn compare_spectra(
                 kind: BinaryArrayMismatchKind::Length,
             });
         }
-        if source.empty_binary_payload_count() != output.empty_binary_payload_count() {
+        if payload_presence_comparable
+            && source.empty_binary_payload_count() != output.empty_binary_payload_count()
+        {
             return Some(ConversionIntegrityOutcome::BinaryArrayMismatch {
                 part: DocumentPart::Spectrum,
                 first_divergent_index: index,
@@ -2936,7 +2956,12 @@ impl AdvancedOutputChecks {
             ]);
         }
         if self.changes.spectrum_array_lengths {
-            changed.push(IntegrityProperty::SpectrumArrayLengths);
+            // A step that removes points may remove all of a spectrum's, so
+            // the source's payload presence is no longer the output's.
+            changed.extend([
+                IntegrityProperty::SpectrumArrayLengths,
+                IntegrityProperty::BinaryArrayPayloadPresence,
+            ]);
         }
         if self.changes.array_values || self.encoding.uses_numpress() {
             changed.push(IntegrityProperty::ArrayValues);
@@ -3279,7 +3304,7 @@ fn check_requested_population(
 /// property degrades rather than being claimed.
 fn check_requested_processing(
     after: &MzmlFacts,
-    before: Option<&MzmlFacts>,
+    before: Inherited<'_>,
     intent: ConversionIntent,
     vendor_levels: Option<PickerLevels>,
     report: &mut IntegrityReport,
@@ -3328,17 +3353,11 @@ fn check_requested_processing(
                 // invented: a vendor acquisition's output history is whatever
                 // this run wrote. With a source, the spectrum it was projected
                 // from is the one whose history this output inherited.
-                let inherited = match before {
-                    None => ProcessingHistory::default(),
-                    Some(_) => match source_history_for(before, position) {
-                        Some(history) => history,
-                        // The source spectrum could not say what it was under,
-                        // so nothing about this output is attributable.
-                        None => {
-                            established = false;
-                            continue;
-                        }
-                    },
+                let Some(inherited) = before.history_at(position) else {
+                    // What the source spectrum was under is unknown, so
+                    // nothing about this output is attributable.
+                    established = false;
+                    continue;
                 };
                 let EffectiveProcessing::Resolved(observed) = output.effective_processing() else {
                     // An unresolved reference is not an absence of processing.
@@ -3406,15 +3425,35 @@ fn check_requested_processing(
     }
 }
 
-/// The processing history the source spectrum at this position was under.
-///
-/// `None` where there is no such spectrum, or where its own reference could not
-/// be resolved. The positions line up because every comparison above ran over
-/// the projection in the same order.
-fn source_history_for(before: Option<&MzmlFacts>, position: usize) -> Option<ProcessingHistory> {
-    match before?.spectra().get(position)?.effective_processing() {
-        EffectiveProcessing::Resolved(history) => Some(history),
-        EffectiveProcessing::Unresolved => None,
+/// What an output spectrum inherited its processing history from.
+#[derive(Debug, Clone, Copy)]
+enum Inherited<'a> {
+    /// A vendor source: nothing is inherited, and none may be invented.
+    Nothing,
+    /// A source document whose spectra pair with the output's by position.
+    Paired(&'a MzmlFacts),
+    /// A source document whose spectra cannot be paired, because a requested
+    /// step changed the population: what each output spectrum inherited is
+    /// unknown, never empty.
+    Unpaired,
+}
+
+impl Inherited<'_> {
+    /// The processing history the source spectrum at this position was under.
+    ///
+    /// `None` where it is unknown: no paired spectrum, a reference that could
+    /// not be resolved, or a source that cannot be paired at all. The
+    /// positions line up because every comparison above ran over the
+    /// projection in the same order.
+    fn history_at(self, position: usize) -> Option<ProcessingHistory> {
+        match self {
+            Self::Nothing => Some(ProcessingHistory::default()),
+            Self::Paired(before) => match before.spectra().get(position)?.effective_processing() {
+                EffectiveProcessing::Resolved(history) => Some(history),
+                EffectiveProcessing::Unresolved => None,
+            },
+            Self::Unpaired => None,
+        }
     }
 }
 
@@ -3442,7 +3481,7 @@ fn source_history_for(before: Option<&MzmlFacts>, position: usize) -> Option<Pro
 /// `+ p` (`TV1`, `TE1`).
 fn check_vendor_centroiding(
     after: &MzmlFacts,
-    before: Option<&MzmlFacts>,
+    before: Inherited<'_>,
     requested: ProcessingIntent,
     levels: PickerLevels,
     report: &mut IntegrityReport,
@@ -3452,15 +3491,9 @@ fn check_vendor_centroiding(
         if output.binary_array_count() == 0 {
             continue;
         }
-        let inherited = match before {
-            None => ProcessingHistory::default(),
-            Some(_) => match source_history_for(before, position) {
-                Some(history) => history,
-                None => {
-                    established = false;
-                    continue;
-                }
-            },
+        let Some(inherited) = before.history_at(position) else {
+            established = false;
+            continue;
         };
         let EffectiveProcessing::Resolved(observed) = output.effective_processing() else {
             established = false;
@@ -4738,7 +4771,7 @@ mod tests {
             .expect("scan the output");
         let mut report = IntegrityReport::default();
         assert_eq!(
-            check_requested_processing(&after, None, centroiding, None, &mut report),
+            check_requested_processing(&after, Inherited::Nothing, centroiding, None, &mut report),
             Some(ConversionIntegrityOutcome::ProcessingAlgorithmMismatch {
                 requested: ProcessingIntent::UnscopedDefaultCentroiding,
                 observed: ProcessingAlgorithm::VendorPeakPicking,
@@ -4757,7 +4790,7 @@ mod tests {
                     MzmlScanLimits::default(),
                 )
                 .expect("scan the output"),
-                None,
+                Inherited::Nothing,
                 centroiding,
                 None,
                 &mut IntegrityReport::default(),
@@ -6454,6 +6487,100 @@ mod tests {
             );
         }
 
+        /// A source already carrying a vendor picker, centroided again with a
+        /// step that changes the population: the method the output copied is
+        /// history the unpaired spectra cannot attribute, never a picker this
+        /// run added. The attribution is unverified, not refused.
+        #[cfg(windows)]
+        #[test]
+        fn an_unpaired_source_history_is_unknown_never_empty() {
+            const VENDOR: &str = "Thermo/Xcalibur peak picking";
+            const DEFAULT: &str = "local maximum peak picker";
+            let source = claiming_pickers(&source_document(&TWO_SPECTRA, 1), &[VENDOR]);
+            let subset = claiming_pickers(
+                &intensity_at_64(&output_document(&[SpectrumFixture::centroided_ms1(15)], 1)),
+                &[VENDOR, DEFAULT],
+            );
+            let centroiding = admitted(
+                ProcessingIntent::UnscopedDefaultCentroiding,
+                SpectrumPopulation::All,
+                NumericPrecision::Mz64Intensity64,
+                CompressionIntent::Zlib,
+            );
+            let (_directory, facts, output) = staged(&source, &subset);
+            let outcome = compare_documents_with(
+                &facts,
+                output,
+                centroiding,
+                Some(AdvancedOutputChecks {
+                    encoding: RequestedMzmlEncoding::new(
+                        NumericPrecision::Mz64Intensity64,
+                        CompressionIntent::Zlib,
+                    ),
+                    changes: SPECTRUM_SUBSET,
+                    vendor_levels: None,
+                }),
+            );
+            let valid = outcome
+                .valid()
+                .unwrap_or_else(|| panic!("a copied picker was read as an added one: {outcome:?}"));
+            assert!(
+                valid
+                    .unverified()
+                    .contains(&IntegrityProperty::RequestedProcessing)
+            );
+        }
+
+        /// A step that removes points (an m/z window, a threshold) may keep
+        /// none of a spectrum's: that is its declared length, not a missing
+        /// payload. A declared point with no payload still fails.
+        #[cfg(windows)]
+        #[test]
+        fn a_requested_length_change_may_empty_a_spectrum() {
+            let source = source_document(&TWO_SPECTRA, 1);
+            let lengths = RequestedChanges {
+                spectrum_array_lengths: true,
+                ..RequestedChanges::default()
+            };
+            // The first spectrum's two arrays come first.
+            let emptied = output_document(&[SpectrumFixture::ms1(0), SpectrumFixture::ms2(8)], 1)
+                .replacen("<binary>AA==</binary>", "<binary></binary>", 2);
+            let (_directory, facts, output) = staged(&source, &emptied);
+            let valid = compare_documents_with(
+                &facts,
+                output,
+                ConversionIntent::SHIPPED,
+                Some(shipped_with(lengths)),
+            );
+            let valid = valid.valid().expect("an emptied spectrum passes");
+            assert!(
+                valid
+                    .unverified()
+                    .contains(&IntegrityProperty::BinaryArrayPayloadPresence)
+            );
+            assert!(
+                valid
+                    .verified()
+                    .contains(&IntegrityProperty::OutputArrayPayloadPresence)
+            );
+
+            let hollow = output_document(&[SpectrumFixture::ms1(3), SpectrumFixture::ms2(8)], 1)
+                .replacen("<binary>AA==</binary>", "<binary></binary>", 2);
+            let (_directory, facts, output) = staged(&source, &hollow);
+            assert_eq!(
+                compare_documents_with(
+                    &facts,
+                    output,
+                    ConversionIntent::SHIPPED,
+                    Some(shipped_with(lengths)),
+                ),
+                ConversionIntegrityOutcome::OutputDeclaredArrayWithoutPayload {
+                    part: DocumentPart::Spectrum,
+                    index: 0,
+                }
+            );
+        }
+
         #[cfg(windows)]
         #[test]
         fn requested_length_changes_are_unverified_and_numpress_values_too() {
@@ -6565,8 +6692,13 @@ mod tests {
             let after = mzml::inspect_reader(document.as_bytes(), MzmlScanLimits::default())
                 .expect("scan the output");
             let mut report = IntegrityReport::default();
-            let outcome =
-                check_requested_processing(&after, None, vendor_row(), levels, &mut report);
+            let outcome = check_requested_processing(
+                &after,
+                Inherited::Nothing,
+                vendor_row(),
+                levels,
+                &mut report,
+            );
             (outcome, report)
         }
 

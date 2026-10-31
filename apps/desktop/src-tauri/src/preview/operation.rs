@@ -367,19 +367,21 @@ pub(super) enum ItemState {
     Cancelled,
     /// The queue never began it. Not a failure and not an attempt.
     ///
-    /// A stop is one way that happens and not the only one: a session that
-    /// loses track of a process it started refuses the rest of the queue, and
-    /// that queue is `Completed`.
+    /// A stop is one way that happens and not the only one: any queue-level
+    /// refusal settles the rest of the queue this way, and that queue is
+    /// `Completed`. A retry does not rerun such a row in place; converting it
+    /// is a new queue.
     NotRun,
     /// The user settled this item without running it, while the queue carried
     /// on with the rest.
     ///
     /// Three states now say "no process ran for this item", and they are three
     /// because they answer three different questions. `Skipped` is the conflict
-    /// policy leaving an existing file alone. `NotRun` is a stopped queue never
-    /// reaching it. This one is a decision the user made about this item, and
-    /// the plan still holds it and still says what became of it -- which is the
-    /// whole reason skipping is an outcome rather than a membership change.
+    /// policy leaving an existing file alone. `NotRun` is a stopped or refused
+    /// queue never reaching it. This one is a decision the user made about this
+    /// item, and the plan still holds it and still says what became of it --
+    /// which is the whole reason skipping is an outcome rather than a
+    /// membership change.
     SkippedByRequest,
     /// Stopped while running, and the termination could not be confirmed.
     CancellationFailed,
@@ -547,6 +549,9 @@ pub(super) struct QueueItem {
     // where the latest attempt is worth diagnosing, replaced whole when a later
     /// attempt settles, and dropped with the queue.
     diagnostic: Option<Arc<ConversionFailureDiagnosticTicket>>,
+    /// The "not verified by MSCanvas" label the plan stated for this row
+    /// (ADR 0055), so the row says it before any report exists.
+    not_verified: Option<NotVerifiedByMscanvas>,
 }
 
 /// What a stop established about one attempt, path-free.
@@ -629,7 +634,14 @@ impl QueueItem {
             staging_recovery: None,
             published: Vec::new(),
             diagnostic: None,
+            not_verified: None,
         }
+    }
+
+    /// The "not verified by MSCanvas" label this row runs under, bound at
+    /// `BEGIN` from the plan's own rule.
+    pub(super) fn set_not_verified(&mut self, label: Option<NotVerifiedByMscanvas>) {
+        self.not_verified = label;
     }
 
     pub(super) const fn dataset(&self) -> DatasetId {
@@ -745,6 +757,7 @@ impl QueueItem {
             file_name: self.dataset_dto.file_name.clone(),
             source_kind: self.dataset_dto.source_kind,
             output: self.output.to_dto(),
+            not_verified_by_mscanvas: self.not_verified.clone(),
             state: self.state.to_dto(),
             attempts: self.attempts,
             retryable: self.retryable,
@@ -1479,21 +1492,6 @@ impl fmt::Debug for CurrentAttempt {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("<current-attempt>")
     }
-}
-
-/// What becomes of items still waiting when a refusal ends a queue.
-///
-/// The caller decides, because only the caller knows whether anything of this
-/// session's can still run. A refusal the session can recover from leaves a
-/// waiting item waiting, so a retry that reaches it still does; a refusal that
-/// quarantines the backend cannot be recovered from at all, and a row rendered
-/// as "Waiting" in a queue that is over describes work that will never happen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PendingDisposition {
-    /// Leave them pending: this queue may yet be retried.
-    Keep,
-    /// Settle them as never run: nothing further of this session's will start.
-    Strand,
 }
 
 /// What a stop request produced, for the caller that made it.
@@ -2359,7 +2357,7 @@ impl ConversionSlot {
                     item.diagnostic_identity(operation, index),
                     &mut settlement,
                 )
-                .map(Arc::new);
+                .map(|ticket| Arc::new(ticket.labelled(item.not_verified.as_ref())));
                 item.error = None;
                 item.report = None;
                 item.set_state = Some(settlement.state());
@@ -2389,15 +2387,18 @@ impl ConversionSlot {
                     item.set_state = None;
                     item.set_run = None;
                 }
-                item.diagnostic = Some(Arc::new(ConversionFailureDiagnosticTicket::of_refusal(
-                    item.diagnostic_identity(operation, index),
-                    retryable,
-                    &error,
-                    // The same facts the row just recorded. One origin, so the
-                    // saved document cannot describe an attempt the queue is
-                    // describing differently.
-                    attempt,
-                )));
+                item.diagnostic = Some(Arc::new(
+                    ConversionFailureDiagnosticTicket::of_refusal(
+                        item.diagnostic_identity(operation, index),
+                        retryable,
+                        &error,
+                        // The same facts the row just recorded. One origin, so the
+                        // saved document cannot describe an attempt the queue is
+                        // describing differently.
+                        attempt,
+                    )
+                    .labelled(item.not_verified.as_ref()),
+                ));
                 item.report = None;
                 item.error = Some(error);
             }
@@ -2430,7 +2431,7 @@ impl ConversionSlot {
                     diagnostics,
                     stopped_set,
                 )
-                .map(Arc::new);
+                .map(|ticket| Arc::new(ticket.labelled(item.not_verified.as_ref())));
                 item.report = None;
                 item.error = None;
                 item.published.clear();
@@ -2550,12 +2551,7 @@ impl ConversionSlot {
     // refused for a reason they can fix would have lost the failures they
     // meant to fix. A pass that never started cannot have moved anything, so
     /// on a first pass this restores nothing.
-    pub(super) fn refuse(
-        &mut self,
-        operation: u64,
-        error: PreviewErrorDto,
-        pending: PendingDisposition,
-    ) {
+    pub(super) fn refuse(&mut self, operation: u64, error: PreviewErrorDto) {
         if self.operation != operation {
             return;
         }
@@ -2567,38 +2563,19 @@ impl ConversionSlot {
         };
         let mut queue = queue;
         queue.reclaim_untouched_destinations();
-        // A refusal that lands on a stopped queue is still a stop. What refused
-        // it is recorded, and everything the stop prevented is marked as never
-        // run rather than left pending -- a pending item in a terminal queue is
-        // counted nowhere. `strand_pending` restores what a retry moved back to
-        // pending as part of that, which is why it is not repeated here.
+        // Everything the refusal kept from starting is marked as never run
+        // rather than left pending: a `Pending` row in a terminal queue is
+        // rendered as "Waiting" and counted nowhere, which describes a queue
+        // that is still going. `strand_pending` puts what a retry moved back to
+        // pending back to the result it earned. A retry reruns failures only,
+        // as it says; a row never run is a new queue's, as after a stop. A
+        // refusal that lands on a stopped queue is still a stop.
+        queue.strand_pending();
         let reason = if self.stop_requested {
-            queue.strand_pending();
             TerminalReason::Stopped
-        } else if pending == PendingDisposition::Strand {
-            // The session cannot run anything further, so an item still waiting
-            // its turn is an item that never ran -- not one waiting for a turn
-            // that will not come. A `Pending` row in a terminal queue is
-            // rendered as "Waiting" and counted nowhere, which describes a
-            // queue that is still going.
-            queue.strand_pending();
-            TerminalReason::Completed
         } else {
-            // Not a stop, and the queue could still be retried. What a retry
-            // moved back to pending keeps the result it earned: an item this
-            // pass never reached did run in the one before, and what it carries
-            // says so.
-            for item in &mut queue.items {
-                if !item.state.is_pending() {
-                    continue;
-                }
-                if let Some(earned) = item.earned_state() {
-                    item.state = earned;
-                }
-            }
             TerminalReason::Completed
         };
-        queue.recount();
         queue.error = Some(error);
         self.state = SlotState::Terminal { reason, queue };
         self.current_attempt = None;
