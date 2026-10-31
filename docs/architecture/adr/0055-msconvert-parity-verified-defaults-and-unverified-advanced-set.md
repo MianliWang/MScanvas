@@ -355,6 +355,13 @@ a different algorithm fails. `-g` waits for a dependency decision, because the
 checks would have to read through gzip and the conversion crate has no gzip
 reader.
 
+> **Implemented 2026-10-30 on `be/integrate`.** No check runs, and nothing is
+> finalized, while the run's owned process tree is not confirmed gone, even
+> after exit 0: the attempt settles as `backend_not_terminated`, or
+> `cancellation_failed` where a stop was requested, so the desktop's
+> owned-process quarantine sees it. This holds for the single-output run and
+> for a SCIEX output set, as decision 6's run 1 does on `be/two-step`.
+
 ### 6. Every other format is written from a private mzML intermediate
 
 **Every non-mzML output is written from a private mzML intermediate.** No

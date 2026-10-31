@@ -3936,6 +3936,42 @@ fn run_staged(
             ),
         };
     }
+    // Nothing of the output is judged or finalized while the owned tree is not
+    // confirmed gone: the one state `OwnedTreeDisposition::Unconfirmed` forbids
+    // both in, as it does for decision 6's run 1. A stop already requested is
+    // answered as one that could not be confirmed.
+    if !OwnedTreeDisposition::of(&output).no_owned_process_survives() {
+        let staged = StagedOutputEvidence::of(
+            StagedObservationPhase::ProviderReturned,
+            observe_staged_content(staging),
+        );
+        let diagnostics = diagnostic_text(&output, plan, staging, &executable);
+        let process = backend.map_or(
+            ProcessAttemptOutcome::Indeterminate,
+            ProcessAttemptOutcome::of,
+        );
+        return if requested {
+            StagedResult::CancellationFailed {
+                cause: BackendExecutionFailure::NotTerminated,
+                backend,
+                staged,
+                diagnostics,
+                identity,
+                process,
+            }
+        } else {
+            StagedResult::Settled {
+                outcome: ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+                    BackendExecutionFailure::NotTerminated,
+                )),
+                backend,
+                diagnostics,
+                staged,
+                identity,
+                process,
+            }
+        };
+    }
 
     // Exit status is not evidence of a usable document. The judgement below is
     // the only thing that may unlock the final name, and it hands back the very
