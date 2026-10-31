@@ -1,9 +1,12 @@
 # ADR 0065 — Persistent conversion run history
 
-Status: **Proposed** on 2026-10-30. The owner asked for every backend function
-that can be done now to be built, with open details following the
-recommendations; this record states them. The Rust side is implemented on
-branch `be/run-history`, stacked on `be/integrate`
+Status: **Accepted (2026-10-30)** for open questions 1 to 5, by the owner's
+decision RUN-1 recorded under
+[Owner decision, 2026-10-30](#owner-decision-2026-10-30). Question 6 and the
+edge cases of section 7 stay **open**. Proposed on 2026-10-30. The owner asked
+for every backend function that can be done now to be built, with open details
+following the recommendations; this record states them. The Rust side is
+implemented on branch `be/run-history`
 (`apps/desktop/src-tauri/src/run_history.rs`, fed from
 `preview/service/run_recording.rs`). No interface calls it yet, and the
 application does not attach the store to the queue, so nothing is recorded in
@@ -97,10 +100,11 @@ Never recorded:
 - an error's sentences: a `PreviewErrorDto` contributes only its `kind`;
 - process identifiers, staging paths, receipts and adoption tickets.
 
-*Recommendation:* store the canonical structured intent, so a re-run can
-reproduce advanced settings. The record holds it as data. A re-run reads it
-back only through `read_structured_intent`, the same judge a request and a
-saved preset go through (ADR 0058, decision 5). *Alternative:* store only the
+*Recommendation, accepted (2026-10-30, RUN-1, question 4):* store the
+canonical structured intent, so a re-run can reproduce advanced settings. The
+record holds it as data. A re-run reads it back only through
+`read_structured_intent`, the same judge a request and a saved preset go
+through (ADR 0058, decision 5). *Alternative:* store only the
 row identifier and a flag for advanced settings. That is smaller, but a re-run
 of advanced settings would then mean entering them again.
 
@@ -192,7 +196,7 @@ A refusal that ends a running queue is terminal too, with its code.
 
 ### 4. Retention and pruning
 
-*Recommendation:*
+*Recommendation, accepted (2026-10-30, RUN-1, question 3):*
 
 - **Bounds:** keep the newest 200 runs and at most 64 MiB, whichever bound is
   reached first. One run's document is bounded at 16 MiB.
@@ -288,7 +292,9 @@ and of G16, cross-session staging ownership, unchanged.
   aside. So any change to a record's shape must raise `schemaVersion`: an
   older build would otherwise set aside a newer build's run while that build
   is still writing it. Schema 1 has not been released, so its shape is fixed
-  when this record is accepted; until then it changes without a new version.
+  when this record is accepted in full, question 6 and the open edge cases of
+  section 7 included; until then it changes without a new version. Nothing in
+  the product writes a schema 1 run before the store is attached.
 
 ### 7. Privacy
 
@@ -301,29 +307,32 @@ and of G16, cross-session staging ownership, unchanged.
   is not part of the diagnostics export (RUN-009 is unchanged).
 - **The off switch** is a marker file, so every running instance honours it.
   Off removes every stored run at once, every instance's run in progress
-  included, and no instance records while it is off. An instance whose run
-  was removed stops recording it at its next write, whether or not recording
-  is on again by then. A write already under way when Off removes the files
-  can land just after; the next start or list while it is off removes it, and
-  if recording is on again before either, it stays. A
-  run whose first write never landed has no file to miss, so an Off and an On
-  in another instance before that write lands do not stop it. On records
-  from the next run onwards.
+  included, and no instance records while it is off (accepted 2026-10-30,
+  RUN-1, question 2). An instance whose run was removed stops recording it at
+  its next write, whether or not recording is on again by then. On records
+  from the next run onwards. Two corners are open edge cases (below).
 - **Clear** forgets every ended run and everything kept aside. It keeps runs
-  still in progress, so their end or interruption can still be recorded, and
-  says how many it kept. A run this build cannot judge counts as one of them,
-  since it may be. A retry of a run Clear forgot starts a new run rather
-  than writing the old one back.
+  still in progress (accepted 2026-10-30, RUN-1, question 5), so their end or
+  interruption can still be recorded, and says how many it kept. A run this
+  build cannot judge counts as one of them, since it may be. A retry of a run
+  Clear forgot starts a new run rather than writing the old one back.
 - **Source data:** neither Clear nor Off touches a source acquisition or an
   output.
-- **What they cannot reach:** a write that crashed between creating its
-  private sibling and publishing it can leave that sibling
-  (`.mscanvas-run-history-*`), which holds a whole record, paths included.
-  Neither Clear nor Off removes it, because a sibling another instance is
-  writing looks the same; see the consequences.
+- **Open edge cases.** RUN-1 did not answer these, and they stay **open**:
+  - **A write under way at Off:** a write already under way when Off removes
+    the files can land just after. The next start or list while it is off
+    removes it; if recording is on again before either, it stays.
+  - **A first write that never landed:** such a run has no file to miss, so an
+    Off and an On in another instance before that write lands do not stop it.
+  - **What Clear and Off cannot reach:** a write that crashed between creating
+    its private sibling and publishing it can leave that sibling
+    (`.mscanvas-run-history-*`), which holds a whole record, paths included.
+    Neither Clear nor Off removes it, because a sibling another instance is
+    writing looks the same; see the consequences.
 
-*Recommendation:* history is on by default, as workspace restore is in ADR
-0061. *Alternative:* off until the user turns it on, with a first-run choice.
+*Recommendation, accepted (2026-10-30, RUN-1, question 1):* history is on by
+default, as workspace restore is in ADR 0061. *Alternative:* off until the user
+turns it on, with a first-run choice.
 
 ### 8. What the interface can do with it
 
@@ -404,6 +413,10 @@ in `AHEAD_OF_THEIR_INTERFACE` in the command-surface test:
 
 ## Open questions for the owner
 
+*Questions 1 to 5 were answered by the owner on 2026-10-30, each as
+recommended; see [Owner decision, 2026-10-30](#owner-decision-2026-10-30).
+Question 6 is open.*
+
 1. Is history on by default (recommended), or off until the user turns it on?
 2. Does Off also forget what is stored (recommended, as ADR 0061's Off does),
    or does it only stop recording?
@@ -411,6 +424,27 @@ in `AHEAD_OF_THEIR_INTERFACE` in the command-surface test:
 4. Is the advanced intent stored, so a re-run can reproduce it (recommended),
    or only the verified row's identifier?
 5. Does Clear keep runs in progress (recommended), or forget them too?
-6. Is the store attached to the queue in the same slice that gives the user
-   the list, Clear and Off (recommended), or earlier, recording before the
-   user can see or stop it?
+6. **Open.** Is the store attached to the queue in the same slice that gives
+   the user the list, Clear and Off (recommended), or earlier, recording
+   before the user can see or stop it?
+
+## Owner decision, 2026-10-30
+
+**Decision RUN-1.** Shown the open owner decisions, the owner replied verbatim
+"全部按推荐，继续" ("all as recommended, continue"). That answers this ADR's
+questions 1 to 5 as recommended:
+
+1. **On by default:** history is on by default.
+2. **Off forgets:** Off also forgets what is stored.
+3. **Bounds:** 200 runs and 64 MiB in total, 16 MiB per run.
+4. **The advanced intent is stored,** so a re-run can reproduce it.
+5. **Clear keeps runs in progress.**
+
+RUN-1 also states that history is app-local and per user, never in the
+project, as section 3 already decides. Its note on EXP-25, a run's JSON as one
+run's redacted record, belongs to a later slice that this record does not
+design.
+
+Not answered by RUN-1, and still **open**: question 6, and the edge cases
+listed in section 7. Until question 6 is answered, the application does not
+attach the store to the queue.
