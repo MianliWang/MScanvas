@@ -550,8 +550,8 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     const failed = browser.$('#workbench-evidence[data-evidence="failed"]');
     await failed.waitForDisplayed();
     expect(await failed.getText()).toContain("A newer request for that file arrived before this one finished");
-    // Nothing was wrong with the file, so its row says nothing against it.
-    expect(await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').getText()).not.toContain("Could not be read");
+    // Nothing was wrong with the file: neither its row nor the announcement calls it unreadable.
+    expect(await browser.execute(() => document.body.textContent ?? "")).not.toMatch(/could not be read/iu);
     await capture("superseded-open");
     await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
     await failed.$("button").click();

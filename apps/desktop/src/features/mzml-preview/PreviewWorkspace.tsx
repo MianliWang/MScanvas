@@ -1324,7 +1324,9 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     return t("readingSelected");
   }
   if (preview.status === "failed") {
-    return `${t("readFailed")} ${ownedErrorMessage(preview.error, t)}`;
+    // A superseded open was not a failed read: its own sentence says what happened.
+    return preview.error.kind === "selection_superseded" ? ownedErrorMessage(preview.error, t)
+      : `${t("readFailed")} ${ownedErrorMessage(preview.error, t)}`;
   }
   if (preview.status === "empty") {
     if (rosterLoad.status === "loading") {

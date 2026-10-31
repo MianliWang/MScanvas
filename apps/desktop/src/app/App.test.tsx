@@ -241,6 +241,17 @@ describe("mzML preview workspace", () => {
     expect(api.calls().filter((call) => call === "inspectBackend")).toHaveLength(checks);
   });
 
+  it("says a superseded open was not used, without calling the file unreadable, beside reading it again", async () => {
+    const api = createFakePreviewApi({
+      preview: () => Promise.reject(previewError({ kind: "selection_superseded", retryable: false })),
+    });
+    await openTheFile(api);
+
+    expect(await screen.findByRole("button", { name: UI_RESOURCES.en.retryEvidence })).toBeVisible();
+    expect(screen.getAllByText(UI_RESOURCES.en.errSelectionSuperseded).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/could not be read/iu)).toBeNull();
+  });
+
   it("offers to open the file again when its preview is no longer open", async () => {
     const api = createFakePreviewApi({
       spectrum: () => Promise.reject(previewError({ kind: "preview_not_open", retryable: false })),
