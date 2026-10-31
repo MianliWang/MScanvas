@@ -238,7 +238,9 @@ The crate forbids `unsafe` code. No input panics it.
 | PCA scores, loadings | 1e-10 · max(1, \|x\|), no sign alignment | 2.8e-14, 9.7e-16 |
 | PCA explained variance, ratio | 1e-10 · max(1, \|x\|) | 2.4e-15, 4.4e-16 |
 
-The fixture's Welch df are at most about 22. Against scipy 1.18.1, `statrs`'
+The worst deviations were measured at commit `30b08db3`, before the
+deviation's residuals were rescaled; the reference tests pass at these
+tolerances after that change too. The fixture's Welch df are at most about 22. Against scipy 1.18.1, `statrs`'
 `sf` is within 3.3e-12 relative up to df 2e4, but 7.9e-11 at df 1e5 and
 3.8e-10 at df 1e6 (t = 2), so the p tolerance holds up to df 2e4, far above a
 cohort's.

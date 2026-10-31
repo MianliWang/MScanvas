@@ -254,6 +254,12 @@ fn qc_rsd_is_unavailable_with_fewer_than_two_values_a_non_positive_mean_or_overf
     assert_eq!(metrics[1].qc_rsd_percent, Err(Unavailable::NonPositiveMean));
     assert_eq!(metrics[2].qc_rsd_percent, Err(Unavailable::Overflow));
     assert_eq!(metrics[3].qc_rsd_percent, Ok(0.0));
+    // The true mean is positive; the summed one overflows to −inf.
+    let m = table(&[&all(&[-1.7e308, 1.7e308, 1.7e308])]);
+    assert_eq!(
+        qc_metrics(&m, &[0, 1, 2], &[0]).unwrap()[0].qc_rsd_percent,
+        Err(Unavailable::Overflow)
+    );
 }
 
 /// Two latent directions plus a little structure, all features complete.
