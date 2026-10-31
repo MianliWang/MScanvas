@@ -5,8 +5,9 @@ decision D7, 2026-10-30 (decision 2). The definitions that change numbers are
 open questions for the owner, decision D9 ([at the end](#open-questions-for-the-owner)).
 The library implements the recommended answer to each and changes if the owner
 chooses another. The library is `crates/stats` (`mscanvas-stats`). Nothing calls
-it: no Tauri command and no interface, because the governance amendment that
-un-defers analysis in `AGENTS.md` is still the owner's decision.
+it: no Tauri command and no interface. The governance amendment that
+un-defers analysis in `AGENTS.md` was decided by the owner on 2026-10-30 (G1);
+the command waits for the feature-table import and its own slice.
 Related: [0028](0028-figure-renderer-and-semantic-specification.md),
 [0047](0047-first-windows-beta-scope-and-implementation-route.md),
 [0056](0056-project-owned-mzml-reader-for-viewing.md) (the dependency-approval
@@ -44,7 +45,8 @@ add a process round trip to every change of scaling or threshold.
 from `mscanvas-core`, whose `AGENTS.md` says it "must not depend on … a concrete
 scientific backend", so `nalgebra` reaches only this crate. `mscanvas-desktop`
 does not depend on it yet. The command that does is a later slice, after the
-governance amendment and the feature-table import.
+feature-table import; the governance amendment it waited for was decided on
+2026-10-30 (G1).
 
 ### 2. Dependencies (owner decision D7)
 
@@ -352,8 +354,9 @@ does today; another answer changes the named function.
   workspace's tests. The shipped binary and its notices do not change until a
   desktop command depends on the crate.
 - The statistics commands, the Statistics/QC page and the QC filters build on
-  this library. Each still needs the governance amendment, the feature-table
-  import and its own slice.
+  this library. Each still needs the promotion gate in
+  [`ANALYSIS_CAPABILITY_MAP.md`](../../product/ANALYSIS_CAPABILITY_MAP.md),
+  which G1 kept (2026-10-30), the feature-table import and its own slice.
 
 ## Evidence
 
@@ -368,5 +371,8 @@ does today; another answer changes the named function.
 
 ## What this amends
 
-Nothing while Proposed. `AGENTS.md`'s "Analysis is deferred" is amended by the
-owner's governance decision, not by this record.
+Nothing while Proposed. `AGENTS.md`'s "Analysis is deferred" (line 19) was
+amended by the owner's governance decision G1 of 2026-10-30, applied by #194,
+not by this record. The definitions of decision D9 (S-2 in
+[`OWNER_DECISIONS_V511.md`](../../development/OWNER_DECISIONS_V511.md)) stay
+open.
