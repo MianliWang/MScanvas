@@ -23,6 +23,7 @@ import {
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type { ConversionPlanOutcome, SelectedFile, WorkspaceConversionState } from "./contracts";
 import { LIST_WINDOW_THRESHOLD } from "./conversionListWindow";
+import { en } from "../preferences/locales/en";
 
 const FULL = 1_024;
 
@@ -147,6 +148,11 @@ describe("conversion lists at the queue's full size", () => {
     renderApp(createFakePreviewApi({ initialDatasets: ROWS, availability: availableBackend, initialConversion: refused }));
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => { expectWindowed(within(panel).getByRole("list", { name: "Names more than one acquisition would write" })); }, { timeout: 15_000 });
+    // Scrolling the window must not re-announce the sentence and every mounted
+    // name: the list sits beside the live sentence, not inside it.
+    const list = within(panel).getByRole("list", { name: "Names more than one acquisition would write" });
+    expect(list.closest("[role='status'],[aria-live]")).toBeNull();
+    expect(list.parentElement?.querySelector("[role='status']")?.textContent).toBe(en.m74ErrorNameCollision);
   }, 60_000);
 
   it("windows 1,024 excluded rows", async () => {

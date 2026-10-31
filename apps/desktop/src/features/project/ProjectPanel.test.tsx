@@ -1028,9 +1028,33 @@ describe("the project surface", () => {
       await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
       api.refuseOnce("closeProject", "unsavedChanges");
       await press(screen.getByRole("button", { name: en.projectClose }));
-      await press(await screen.findByRole("button", { name: en.projectUnsavedSaveFirst }));
+      const saveFirst = await screen.findByRole("button", { name: en.projectUnsavedSaveFirst });
+      await press(saveFirst);
       expect(api.saveProject).not.toHaveBeenCalled();
       expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
+      // Cancel goes back to the question that asked, not to the head.
+      await press(screen.getByRole("button", { name: en.projectUpgradeCancel }));
+      expect(document.activeElement).toBe(saveFirst);
+      expect(api.saveProject).not.toHaveBeenCalled();
+    });
+
+    it("drops an unanswered question when its project closes, even if the same file reopens", async () => {
+      const api = mount(beta1(true));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      api.refuseOnce("closeProject", "unsavedChanges");
+      await press(screen.getByRole("button", { name: en.projectClose }));
+      await press(await screen.findByRole("button", { name: en.projectUnsavedSaveFirst }));
+      expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
+
+      api.set(NO_PROJECT);
+      await press(screen.getByRole("button", { name: en.projectUnsavedDiscard }));
+      await waitFor(() => expect(screen.getByText(en.projectNone)).toBeTruthy());
+      // The same durable project id, changed again: nothing was asked here.
+      api.set(beta1(true));
+      await press(screen.getByRole("button", { name: en.projectOpen }));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(api.saveProject).not.toHaveBeenCalled();
     });
 
     it("asks before Save As even with nothing unsaved, which can write over beta 1's file", async () => {

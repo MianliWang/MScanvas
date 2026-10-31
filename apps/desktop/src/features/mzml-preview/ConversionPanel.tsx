@@ -402,19 +402,22 @@ export function ConversionPanel({
     >
       <div className="conversion-main">
         {conversion.failure === null ? null : (
-          <div className="notice notice-danger conversion-notice" role="status">
+          <div className="notice notice-danger conversion-notice">
             {/* Both halves. The summary says what happened; the detail is where a
                 refusal puts the part the user has to act on -- above all that a
                 failed export left a temporary file in their folder. Rendering
                 only the summary hid the one thing they could do about it.
                 Led by the name of the control whose request failed, because this
-                sits above all of them (PM9.4 O4). */}
+                sits above all of them (PM9.4 O4). Only the sentences are live:
+                a windowed name list changes as it scrolls. */}
             <div className="conversion-notice-text">
-              <strong>{t("m74CnvRequestFailed", { action: requestLabel(conversion.failure, t) })}</strong>
-              {conversionErrorMessage(conversion.failure.error, t)}
-              {conversion.failure.error.detail === null || collidingNames(conversion.failure.error) !== null ? null : (
-                <span className="notice-detail">{ownedErrorDetail(conversion.failure.error, t)}</span>
-              )}
+              <div role="status">
+                <strong>{t("m74CnvRequestFailed", { action: requestLabel(conversion.failure, t) })}</strong>
+                {conversionErrorMessage(conversion.failure.error, t)}
+                {conversion.failure.error.detail === null || collidingNames(conversion.failure.error) !== null ? null : (
+                  <span className="notice-detail">{ownedErrorDetail(conversion.failure.error, t)}</span>
+                )}
+              </div>
               <CollisionNames error={conversion.failure.error} />
             </div>
             <IconButton size="sm" icon={<Icon name="close" />} label={t("m74CnvDismiss")} onClick={conversion.dismissError} />
@@ -1257,14 +1260,13 @@ const QUEUE_STATUS_ID = "conversion-queue-status";
  */
 function PlanPending({ plan, noBackend }: { readonly plan: ConversionPlanView; readonly noBackend: boolean }): ReactElement {
   const t = useUiMessages();
-  return (
+  // The names follow the sentence rather than sit in it: Convert is described
+  // by the sentence alone, not by whichever names the window has mounted.
+  return (<>
     <div className="conversion-plan-pending" id={PLAN_PENDING_ID}>
       {plan.startPlan === "absent" ? <span>{t("m74CnvNoEligible")}</span>
       : plan.startPlan === "failed" && plan.error !== null ? (
-        <>
-          <span>{conversionErrorMessage(plan.error, t)}</span>
-          <CollisionNames error={plan.error} />
-        </>
+        <span>{conversionErrorMessage(plan.error, t)}</span>
       ) : plan.startPlan === "selectionUnavailable" ? (
         <span>{t("m74CnvNoticePlanSelectionUnavailable")}</span>
       ) : plan.startPlan === "selectionNotEvidenced" ? (
@@ -1275,7 +1277,8 @@ function PlanPending({ plan, noBackend }: { readonly plan: ConversionPlanView; r
         <span>{t("m74CnvNoticePlanReading")}</span>
       )}
     </div>
-  );
+    {plan.startPlan === "failed" && plan.error !== null ? <CollisionNames error={plan.error} /> : null}
+  </>);
 }
 
 /**
@@ -1391,8 +1394,9 @@ function QueueState({
         ) : null}
 
         {queue.error === null ? null : (
-          <div className="notice notice-danger" role="status">
-            <p>{conversionErrorMessage(queue.error, t)}</p>
+          <div className="notice notice-danger">
+            {/* The sentence is live; the windowed names beside it are not. */}
+            <p role="status">{conversionErrorMessage(queue.error, t)}</p>
             <CollisionNames error={queue.error} />
           </div>
         )}

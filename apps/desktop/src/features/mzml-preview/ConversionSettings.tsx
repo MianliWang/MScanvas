@@ -26,8 +26,8 @@ const NOTE: { readonly [A in ConversionAxis]: Partial<Record<ConversionAxisValue
   precision: { mz64_intensity32: "cnvMz64I32Note", mz32_intensity32: "cnvMz32I32Note", mz32_intensity64: "cnvMz32I64Note" },
   compression: {},
 };
-// Every centroiding replaces profile points. Thermo's two rows keep their
-// whole note on screen in either view: it names the one family they accept.
+// Every centroiding replaces profile points: its tile says "Lossy" and its note
+// is the spoken description (ADR 0055, one label).
 const LOSSY_PROCESSING: ReadonlySet<string> = new Set(["unscoped_default_centroiding", "vendor_centroiding_from_ms1", "vendor_centroiding_from_ms2"]);
 const REFUSAL = { notQualified: "cnvNotQualified", unavailableHere: "cnvUnavailableHere", notEvidencedForSources: "cnvNotEvidenced" } as const;
 const SELECTION_REFUSAL = { notQualified: "cnvSelectionUnqualified", unavailableHere: "cnvSelectionUnavailable", notEvidencedForSources: "cnvSelectionNotEvidenced" } as const;
@@ -209,7 +209,7 @@ function AxisFieldset({ axis, catalog, current, onChoose, refusalPrefix, advance
               name; its description says the loss in full. */}
           <label>{input}{text}</label>
           {tagged ? <span className="conversion-lossy" aria-hidden="true">{t("cnvLossy")}</span> : null}
-          {disclosure === null ? null : <p className={value === "unscoped_default_centroiding" && !advanced ? "conversion-setting-note visually-hidden" : "conversion-setting-note"} id={noteId}>{disclosure}</p>}
+          {disclosure === null ? null : <p className={tagged && !advanced ? "conversion-setting-note visually-hidden" : "conversion-setting-note"} id={noteId}>{disclosure}</p>}
         </div>;
       })}
     </div> : <>

@@ -352,6 +352,8 @@ describe("the four control groups", () => {
     expect(note?.textContent).toContain("Lossy.");
     expect(note?.textContent).toContain("Thermo RAW only.");
     expect(note?.textContent).toContain(scope);
+    // Spoken, not shown: the tile says "Lossy" (ADR 0055, one label).
+    expect(note).toHaveClass("visually-hidden");
     fireEvent.click(control);
     expect(onChoose).toHaveBeenCalledExactlyOnceWith(rowId);
     // And the reviewed settings name that one change from the shipped row.

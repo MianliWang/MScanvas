@@ -23,7 +23,7 @@
  * is running rather than leaving silence to stand for it.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 
 import { useListWindow, type ListWindowRow } from "../mzml-preview/conversionListWindow";
 import { NotVerifiedTag } from "../mzml-preview/NotVerifiedTag";
@@ -373,6 +373,12 @@ const SAVE_LOCATION_ID = "project-save-location";
 const NO_REFERENCES_ID = "project-no-references";
 /** The question before the Save that upgrades a beta-1 project. */
 const UPGRADE_ID = "project-upgrade-question";
+/** Which write asked, in which project, and the control the keyboard goes back to. */
+interface UpgradeQuestion {
+  readonly kind: "save" | "saveAs";
+  readonly projectId: string | null;
+  readonly from: RefObject<HTMLButtonElement | null>;
+}
 
 export function ProjectPanel({
   session,
@@ -721,34 +727,41 @@ export function ProjectPanel({
    * it even with nothing unsaved. Every Save and Save As goes through here,
    * so neither the head's nor the unsaved question's can skip it.
    */
-  const [upgradeAsked, setUpgradeAsked] = useState<"save" | "saveAs" | null>(null);
-  const upgrades = state.savingUpgradesSchema === true;
-  const upgradeShown = upgradeAsked !== null && upgrades && (upgradeAsked === "saveAs" || state.dirty);
-  const save = () => {
-    if (upgrades && state.dirty) setUpgradeAsked("save");
-    else void session.saveProject();
-  };
-  const saveAs = () => {
-    if (upgrades) setUpgradeAsked("saveAs");
-    else void session.saveProjectAs();
-  };
   const saveRef = useRef<HTMLButtonElement | null>(null);
   const saveAsRef = useRef<HTMLButtonElement | null>(null);
+  const saveFirstRef = useRef<HTMLButtonElement | null>(null);
   const upgradeRef = useRef<HTMLButtonElement | null>(null);
+  const [upgradeAsked, setUpgradeAsked] = useState<UpgradeQuestion | null>(null);
+  const upgrades = state.savingUpgradesSchema === true;
+  // A question belongs to the open project it was asked in.
+  const asked = upgradeAsked !== null && state.open && upgradeAsked.projectId === state.projectId ? upgradeAsked : null;
+  const upgradeShown = asked !== null && upgrades && (asked.kind === "saveAs" || state.dirty);
+  // One that stops being shown is gone: a closed, replaced or saved project
+  // never brings it back on its own.
+  useEffect(() => {
+    if (upgradeAsked !== null && !upgradeShown) setUpgradeAsked(null);
+  }, [upgradeAsked, upgradeShown]);
+  const save = (from: RefObject<HTMLButtonElement | null> = saveRef) => {
+    if (upgrades && state.dirty) setUpgradeAsked({ kind: "save", projectId: state.projectId, from });
+    else void session.saveProject();
+  };
+  const saveAs = (from: RefObject<HTMLButtonElement | null> = saveAsRef) => {
+    if (upgrades) setUpgradeAsked({ kind: "saveAs", projectId: state.projectId, from });
+    else void session.saveProjectAs();
+  };
   // The question takes the keyboard when it appears; Cancel hands it back to
-  // the control that asked.
+  // the control that asked, or to the head's own where that one has gone.
   useLayoutEffect(() => {
     if (upgradeShown) upgradeRef.current?.focus();
   }, [upgradeShown]);
   const cancelUpgrade = () => {
-    const from = upgradeAsked === "saveAs" ? saveAsRef : saveRef;
+    const from = asked?.from.current;
     setUpgradeAsked(null);
-    from.current?.focus();
+    (from?.isConnected === true ? from : (asked?.kind === "saveAs" ? saveAsRef : saveRef).current)?.focus();
   };
   const confirmUpgrade = () => {
-    const asked = upgradeAsked;
     setUpgradeAsked(null);
-    void (asked === "saveAs" ? session.saveProjectAs() : session.saveProject());
+    void (asked?.kind === "saveAs" ? session.saveProjectAs() : session.saveProject());
   };
 
   return (
@@ -806,7 +819,7 @@ export function ProjectPanel({
                 size="sm"
                 refused={working || !state.published}
                 reasonId={working ? BUSY_ID : SAVE_LOCATION_ID}
-                onClick={save}
+                onClick={() => save()}
               >
                 {t("projectSave")}
               </Button>
@@ -816,7 +829,7 @@ export function ProjectPanel({
                 size="sm"
                 refused={working}
                 reasonId={BUSY_ID}
-                onClick={saveAs}
+                onClick={() => saveAs()}
               >
                 {t("projectSaveAs")}
               </Button>
@@ -901,11 +914,12 @@ export function ProjectPanel({
           {/* Answered only while nothing else is out: a save or a discard
               started under a running operation would settle over it. */}
           <Button
+            ref={saveFirstRef}
             variant="secondary"
             size="sm"
             refused={working}
             reasonId={BUSY_ID}
-            onClick={() => (state.published ? save() : saveAs())}
+            onClick={() => (state.published ? save(saveFirstRef) : saveAs(saveFirstRef))}
           >
             {t("projectUnsavedSaveFirst")}
           </Button>

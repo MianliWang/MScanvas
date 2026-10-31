@@ -37,6 +37,14 @@ describe("the Details inspector", () => {
     // own facts are the Metadata tab's.
     expect(screen.queryByText("Timing")).toBeNull();
     expect(screen.queryByText(en.summarySpectra)).toBeNull();
+    expect(document.querySelector("[data-not-verified]")).toBeNull();
+  });
+
+  it("labels an output MSCanvas did not verify beside its name, not in it", () => {
+    renderDetails({ file: { ...preview.file, notVerifiedByMscanvas: { unverifiedSettings: true, unverifiedBuildRelease: null } } });
+
+    expect(screen.getByRole("heading", { level: 2 }).textContent).not.toContain(en.m74CnvNotVerified);
+    expect(document.querySelector("[data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
   });
 
   it("says no spectrum is selected, then shows the selected spectrum's facts", () => {
