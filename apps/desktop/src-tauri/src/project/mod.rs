@@ -1794,6 +1794,7 @@ impl ProjectStore {
             generation,
             path,
             identities: proved.identities().to_vec(),
+            not_verified: input.not_verified_by_mscanvas,
         })
     }
 
@@ -3424,6 +3425,8 @@ pub struct AdmissibleInput {
     /// companion was replaced after the proof is not the acquisition that was
     /// proved, and a proof covering the primary alone would say it was.
     identities: Vec<ObjectIdentity>,
+    /// The "not verified by MSCanvas" label the record carries (ADR 0055).
+    not_verified: Option<record::NotVerifiedByMscanvas>,
 }
 
 impl AdmissibleInput {
@@ -3431,6 +3434,13 @@ impl AdmissibleInput {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The label the proved record carries, which the row it is admitted as
+    /// gains once the project has claimed that row.
+    #[must_use]
+    pub const fn not_verified(&self) -> Option<&record::NotVerifiedByMscanvas> {
+        self.not_verified.as_ref()
     }
 
     /// The objects this proof is bound to.

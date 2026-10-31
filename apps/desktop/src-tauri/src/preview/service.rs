@@ -1570,6 +1570,41 @@ impl PreviewService {
             .and_then(|dataset| dataset.not_verified().cloned())
     }
 
+    /// Gives the row a project reference was admitted as the label the
+    /// project recorded for that object, and says it in the add's own answer.
+    ///
+    /// The other half of `not_verified_label_of_object`: the label is a
+    /// property of the object, so a reference carried back into the Workbench
+    /// brings it to the row (ADR 0055; owner decision 2 of 2026-10-29). Called
+    /// only once the project has claimed `handle`, which is what proves the
+    /// row is the object the label was recorded for. Memory only.
+    pub(crate) fn label_admitted_row(
+        &self,
+        result: &mut WorkspaceAddResultDto,
+        handle: &str,
+        label: NotVerifiedByMscanvas,
+    ) {
+        let Some(id) = DatasetId::parse(handle) else {
+            return;
+        };
+        let gate = self.enter_workspace_mutation_after_drop();
+        let mut workspace = self.workspace();
+        let Some(held) = workspace.registry.label(id, label) else {
+            return;
+        };
+        result.roster = roster_of(&workspace);
+        drop(workspace);
+        drop(gate);
+        for outcome in &mut result.outcomes {
+            if let WorkspaceAddOutcomeDto::Added { dataset }
+            | WorkspaceAddOutcomeDto::Duplicate { existing: dataset } = outcome
+                && dataset.handle == handle
+            {
+                dataset.not_verified_by_mscanvas = Some(held.clone());
+            }
+        }
+    }
+
     /// The run summary the preview on screen established for one row, and
     /// what is known about the build that produced it.
     ///

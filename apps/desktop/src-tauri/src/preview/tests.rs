@@ -7504,7 +7504,7 @@ fn evidenced_capabilities() -> InstalledHelpCapabilities {
 }
 
 /// What a substituted backend process does when it is launched.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BackendAct {
     /// Writes the document the plan asked for, where it asked for it.
     Convert,
@@ -7531,6 +7531,11 @@ enum BackendAct {
     /// that the process it owned is gone. Labelled as injected, because no
     /// vendor run was observed doing this.
     StrandAnOwnedProcess,
+    /// Writes the document and exits 0 while its owned Job still counts a
+    /// process, so the tree is not confirmed gone. Injected, like the above.
+    ConvertLeavingAProcess,
+    /// Exits 1 while its owned Job still counts a process. Injected.
+    FailLeavingAProcess,
 }
 
 /// A hook a test can run inside a provider's backend resolution, shared so it
@@ -7715,7 +7720,7 @@ impl FakeConversionRunner {
             .expect("a conversion plan carries an output destination")
             .to_path_buf();
         let exit_code = match self.act {
-            BackendAct::Convert => {
+            BackendAct::Convert | BackendAct::ConvertLeavingAProcess => {
                 fs::write(destination, mzml_document(2, true)).expect("write staged output");
                 0
             }
@@ -7729,7 +7734,7 @@ impl FakeConversionRunner {
                 0
             }
             BackendAct::WriteNothing => 0,
-            BackendAct::Fail => 1,
+            BackendAct::Fail | BackendAct::FailLeavingAProcess => 1,
             BackendAct::FailAfterStaging => {
                 fs::write(destination, b"<indexedmzML partial")
                     .expect("write a partial staged output");
@@ -7754,7 +7759,10 @@ impl FakeConversionRunner {
             elapsed: Duration::from_millis(3),
             termination: Termination::Exited,
             max_active_processes: Some(1),
-            final_active_processes: Some(0),
+            final_active_processes: Some(u32::from(matches!(
+                self.act,
+                BackendAct::ConvertLeavingAProcess | BackendAct::FailLeavingAProcess
+            ))),
             peak_job_memory_bytes: Some(2_048),
             total_owned_processes: Some(1),
             tree_ownership: mscanvas_proteowizard::TreeOwnership::EstablishedBeforeExecution,
@@ -30115,6 +30123,90 @@ fn an_owned_process_this_run_cannot_account_for_stops_the_queue_without_a_stop()
         "an item nothing will ever start is not waiting its turn"
     );
     assert_eq!(queue.not_run_count, 1);
+}
+
+/// A run that exits, cleanly or not, while its owned tree is unconfirmed is
+/// neither judged nor finalized, and it quarantines the backend with no stop
+/// asked for.
+///
+/// The crate's guard says the report leaves a process unaccounted for; this is
+/// the desktop half: the session stops trusting the backend, the next BEGIN is
+/// refused, the queue launches nothing more and the target name stays free.
+/// Injected, like the test above.
+#[cfg(windows)]
+#[test]
+fn an_exit_with_an_unconfirmed_tree_quarantines_the_backend_without_a_stop() {
+    for act in [
+        BackendAct::ConvertLeavingAProcess,
+        BackendAct::FailLeavingAProcess,
+    ] {
+        let fixture = TestFile::new("unconfirmed-tree-exit");
+        let runner = FakeConversionRunner::new(act);
+        let launches = runner.launches();
+        let service = PreviewService::new(Box::new(ConvertingProvider::new(
+            evidenced_capabilities(),
+            runner,
+        )));
+        let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+        let second = add_one_acquisition(&service, &fixture.thermo_raw("second.raw"));
+        let document = current_document(&service);
+        let reservation = service
+            .begin_conversion_under_now(
+                &[first.clone(), second],
+                ConversionConflictPolicyDto::Fail,
+                document,
+                DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").unwrap()),
+            )
+            .expect("two acquisitions are a queue");
+        let operation = service
+            .claim_conversion(&reservation.reservation_id, document)
+            .expect("claim the reservation");
+        assert!(service.start_resolved_for_test(operation, None));
+
+        let update = service.drain_queue_for_test(operation);
+
+        assert_eq!(launches.load(Ordering::SeqCst), 1, "{act:?}");
+        assert!(service.backend_is_quarantined(), "{act:?}");
+        assert!(update.backend_quarantined, "{act:?}");
+        let queue = terminal_queue(&update);
+        assert_eq!(
+            queue.items[0].state,
+            ConversionQueueItemStateDto::Failed,
+            "{act:?}"
+        );
+        let report = item_report(&queue.items[0]).expect("the attempt reports");
+        assert_eq!(
+            report.detailed_outcome.as_deref(),
+            Some("backend_not_terminated"),
+            "{act:?}: {report:?}"
+        );
+        assert_eq!(queue.finalized_count, 0, "{act:?}");
+        assert_eq!(
+            queue.items[1].state,
+            ConversionQueueItemStateDto::NotRun,
+            "{act:?}"
+        );
+        assert!(
+            !fixture
+                .directory
+                .join("converted")
+                .join("first.mzML")
+                .exists(),
+            "{act:?}: nothing was published under the target name"
+        );
+        assert_eq!(
+            service
+                .begin_conversion_now(
+                    std::slice::from_ref(&first),
+                    ConversionConflictPolicyDto::Fail,
+                    current_document(&service),
+                )
+                .unwrap_err()
+                .kind,
+            "backend_quarantined",
+            "{act:?}"
+        );
+    }
 }
 
 /// The admitted per-item stop, end to end through the command the interface
