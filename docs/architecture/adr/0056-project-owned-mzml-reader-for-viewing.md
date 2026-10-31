@@ -13,6 +13,9 @@ slice-2 note under decision 9).
 Amended 2026-10-30 by the owner (P175): decision 9's profile line is delivered
 in slice 2, in export and, in its webview commit, on screen (the slice-2
 note under decision 9).
+Amended 2026-10-30 by the owner (R-1): decision 1 is widened for the library
+only, with PR #182's five choices (the library-extension note under decision
+3).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -379,7 +382,7 @@ Both need a follow-up decision. It must:
 > (MS:1000041), beyond "It reads"; the metadata sections with their
 > userParams, instrument configurations among them (decision 3); the run
 > summary; and the chromatogram count, elements counted and never decoded. The
-> filter string stays unread. It is put to the owner with the pull request.
+> filter string stays unread. The owner accepted it on 2026-10-30 (R-1, below).
 >
 > - **Per spectrum.** `MzmlSpectrumRow` carries polarity (MS:1000130,
 >   MS:1000129) from the spectrum's own terms and its param groups; a polarity
@@ -420,6 +423,30 @@ Both need a follow-up decision. It must:
 >   spectra; which levels `msaccess` puts in `MS(others)` is not recorded, so
 >   the generated pair, levels 1 and 2 only, does not test that. A real-file
 >   comparison, which needs a ProteoWizard hold release, checks it.
+> - **Owner decision R-1 (2026-10-30).** Shown the decisions that block work
+>   now, the owner replied "全部按推荐，继续" ("all as recommended,
+>   continue"), accepting R-1's recommendation
+>   ([PR #182](https://github.com/MianliWang/MScanvas/pull/182)):
+>   1. **The amendment is accepted.** The reader takes polarity (MS:1000130,
+>      MS:1000129), the charge (MS:1000041), the run-level metadata and the run
+>      summary from the table pass, as above.
+>   2. **The three retention times at a share of cumulative base-peak
+>      intensity** (PRJ-006) stay `msaccess`'s for now, as above. Next, a short
+>      per-algorithm record (U7) computes them from the declared base-peak
+>      values the table pass already reads, and a fixture test shows they equal
+>      `msaccess`'s before `msaccess` leaves the open. That fixture needs one
+>      recorded `msaccess` run summary of a public mzML, under a ProteoWizard
+>      hold release (HR-1, still open). If they cannot be matched, they stay
+>      `msaccess`'s.
+>   3. **#154's scan-context terms.** Polarity and charge now. The analyzer and
+>      the filter string are read only if #154's columns stay in the rebuilt
+>      scan table. Scan event and ion injection time are not answered and stay
+>      open.
+>   4. **The pull request's five choices are accepted as stated:** decision 1
+>      widened for the library only; MS-level buckets lowest level first;
+>      polarity read at spectrum level only; charge kept off the shared
+>      `SpectrumTableRow` until routing; conflicting or unreadable polarity and
+>      charge not reported, never refused.
 
 ### 4. Offsets are kept with the open preview
 
