@@ -1204,8 +1204,8 @@ it says so; the decisions stand otherwise.
    bar, which also covers the time between that judgement and the publish.
    Decision 7 meant the post-run read to be Checking output's own. A
    reporting, cancellable form of the crate's post-run revalidation would
-   remove one read; it waits until PR #161 has reshaped the crate's run. Until
-   then this is a known ceiling: up to 1.5 GiB read twice with no bar.
+   remove one read. PR #161 has merged; that form is still to do, and until
+   it is built this is a known ceiling: up to 1.5 GiB read twice with no bar.
 5. **The key's intent line** is `ConversionIntent::SHIPPED.stable_id()`. PR
    #161 has merged; moving it to the structured intent's canonical
    serialization, with the key's version line (decision 7), is still to do.
@@ -1215,11 +1215,21 @@ it says so; the decisions stand otherwise.
      build, before the RAW is read, instead of refusing the press.
      `get_raw_view_state` takes no handle and answers no
      `RawViewAvailabilityDto` yet; slice 3 adds both.
-   - `begin_raw_view_with` and `rawViewIntents` wait for PR #161's structured
-     intents.
+   - `begin_raw_view_with` and `rawViewIntents` are still to do; PR #161's
+     structured intents, which they need, have merged.
    - `PreviewDto.viewSource` and the typed `viewed_through_cache` refusal come
      with slice 3. Until then a cached view retains no run-summary token, so a
      QC capture from it fails closed.
+   - **Export provenance (decision 11) is not built, and gates slice 3.** A
+     viewed open installs its chromatogram's export token and a spectrum load
+     of the viewed row installs a spectrum's, so both can be exported. The
+     data documents name no file and no cache path, and a saved figure refuses
+     a source under the cache (`saved_figure_source_in_view_cache`), so no
+     export names the cache; but none names the RAW or states the conversion
+     either. No webview calls `open_raw_view` yet, so no such export is
+     reachable. Before slice 3 makes a cached view openable, either slice 4's
+     provenance lands or a viewed open installs no export token, as it
+     retains no run-summary token.
    - The same-session digest memo is not built: every View hashes the RAW in
      full, which is the safer side of decision 7.
    - A native drop while a view runs is refused through the busy mirror with
@@ -1301,12 +1311,26 @@ it says so; the decisions stand otherwise.
      preset commands stay allowed, as composing conversion settings is
      (decision 5): they take no slot, no gate and no row. Per-output adoption
      (ADR 0052) shares the queue-wide action's body and takes no new guard.
+   - **Adoption while a view runs (pending).** A terminal queue does not hold
+     the slot, so View begins beside one, and both the per-output and the
+     queue-wide adoption of its outputs then add rows while the view runs,
+     although adding files answers `raw_view_busy`. Neither ends the view.
+     `a_terminal_queue_adopts_one_output_and_then_the_rest_while_a_view_runs`
+     pins this; a guard the owner chooses changes that test.
    - **The next open of any row ends a cached view and its pin when that open
      is accepted,** not when it commits, so an open that then fails does not
      leave a preview off screen holding an entry. Since the merge with PR #175
      this is ADR 0056 decision 4's ticket, taken with the other rows' previews
      dropped under one hold, and only the latest open commits, so a viewed
      open that was still reading when the other began installs nothing.
+     One exception: the hold drops every row's preview but the target's,
+     which the open drops only after its backend and conversion checks. A
+     reopen of the viewed row itself (a later View of it, then its open) that
+     one of those checks refuses (`conversion_busy`, or a backend no longer
+     trusted) leaves that row's earlier preview and its pin in place until the
+     next open or the row's removal, so Clear view cache and eviction skip
+     that entry meanwhile. PR #175's mzML rows keep their preview the same
+     way.
    - **Dated notes** are written in ADR 0005, ADR 0006, ADR 0012, ADR 0056
      decision 3 and ADR 0057 decision 2. ADR 0043 (CNV-D8) and ADR 0055 take
      theirs with slice 3, whose interface shows the progress and the reuse.

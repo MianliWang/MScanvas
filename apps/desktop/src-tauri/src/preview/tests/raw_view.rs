@@ -554,10 +554,19 @@ fn a_cancel_while_msconvert_runs_ends_cancelled_and_every_slot_route_answers_raw
         document,
     );
     assert_eq!(begin_refusal(&refused).kind, "raw_view_busy");
-    // Composing settings stays allowed (decision 5): planning an advanced
-    // intent is read-only, and the presets (ADR 0055) take no slot, no gate
-    // and no row, so none of their four commands is refused. The plan is
-    // judged on its merits: this fixture's build lacks the filter's grammar.
+    // Composing settings stays allowed (decision 5): planning is read-only.
+    // A row intent plans the very row being viewed; an advanced intent is
+    // judged on its merits, and this fixture's build lacks its filter's
+    // grammar.
+    assert!(matches!(
+        service.conversion_queue_plan(&plan_request(
+            std::slice::from_ref(&session.handle),
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            receipt,
+        )),
+        Ok(ConversionPlanOutcomeDto::Planned { .. })
+    ));
     let planned = service.conversion_queue_plan(&ConversionPlanRequestDto {
         handles: vec![mzml_handle.clone()],
         intent_id: None,
@@ -570,6 +579,9 @@ fn a_cancel_while_msconvert_runs_ends_cancelled_and_every_slot_route_answers_raw
         planned.expect_err("the build's grammar answers").kind,
         "conversion_intent_unsupported"
     );
+    // Structural, not a slot test: the four preset handlers (lib.rs) check
+    // the document epoch and call the store, which holds no slot, no gate and
+    // no row, so the store answering while the view runs is the whole claim.
     let presets = crate::presets::PresetStore::over(Ok(session.app_data.directory.clone()));
     let committed = |answer| assert!(matches!(answer, PresetWriteDto::Committed { .. }));
     committed(presets.save(&PresetSaveRequest {
@@ -586,18 +598,8 @@ fn a_cancel_while_msconvert_runs_ends_cancelled_and_every_slot_route_answers_raw
     committed(presets.delete(&PresetDeleteRequest {
         name: "MS1 only".to_owned(),
     }));
-    // ADR 0052's per-output adoption shares the queue-wide action's body, so
-    // a view changes neither answer: no new guard (decision 5).
-    assert_eq!(
-        service
-            .adopt_conversion_output("1", "1", document)
-            .expect_err("no terminal queue")
-            .kind,
-        service
-            .adopt_conversion_outputs("1", document)
-            .expect_err("no terminal queue")
-            .kind,
-    );
+    // Adoption during a view is
+    // `a_terminal_queue_adopts_one_output_and_then_the_rest_while_a_view_runs`.
     assert!(matches!(
         service.raw_view_state(),
         RawViewStateDto::Running {
@@ -619,6 +621,87 @@ fn a_cancel_while_msconvert_runs_ends_cancelled_and_every_slot_route_answers_raw
     assert!(
         service.open_preview(&mzml_handle).is_ok(),
         "the slot is free"
+    );
+}
+
+#[test]
+fn a_terminal_queue_adopts_one_output_and_then_the_rest_while_a_view_runs() {
+    let session = viewing("raw-view-adopt");
+    let service = &session.service;
+    // A terminal queue does not hold the slot, so View begins beside one.
+    let handles: Vec<String> = ["one.raw", "two.raw"]
+        .iter()
+        .map(|name| add_one_acquisition(service, &session.raws.thermo_raw(name)))
+        .collect();
+    let document = current_document(service);
+    let reservation = service
+        .begin_conversion_now(&handles, ConversionConflictPolicyDto::Fail, document)
+        .expect("the queue is admitted");
+    let queue = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim the reservation");
+    let destination = destination_root(&session.raws, "out");
+    assert_eq!(
+        terminal_reason(&service.run_claimed_conversion(queue, &destination)),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    let second = terminal_queue(&service.conversion_state()).items[1].finalized_outputs[0]
+        .output_id
+        .clone();
+
+    // The view parks as Converting begins.
+    let (entered, observe) = std::sync::mpsc::channel();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let held = Mutex::new(held);
+    service.set_raw_view_phase_hook(move |_, phase| {
+        if phase == RawViewPhaseDto::Converting {
+            entered.send(()).expect("announce Converting");
+            held.lock()
+                .expect("held")
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the view is released");
+        }
+    });
+    let operation = session.begin().expect("View begins");
+    let worker = Arc::clone(&session.service);
+    let thread = std::thread::spawn(move || worker.run_raw_view(operation));
+    observe
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the view converts");
+
+    // Adding a file waits for the view; adopting a queue's outputs does not
+    // (ADR 0060 slice 2 note 8, pending the owner). Both actions add rows.
+    let more = session.raws.thermo_raw("three.raw");
+    assert_eq!(
+        service
+            .add_files(std::slice::from_ref(&more))
+            .expect_err("adding waits")
+            .kind,
+        "raw_view_busy"
+    );
+    let one = service
+        .adopt_conversion_output(&queue.to_string(), &second, current_document(service))
+        .expect("one output is adopted while the view runs");
+    assert_eq!(adoption_kinds(&one), vec!["added"]);
+    let rest = service
+        .adopt_conversion_outputs(&queue.to_string(), current_document(service))
+        .expect("the queue is adopted while the view runs");
+    assert_eq!(adoption_kinds(&rest), vec!["added", "already"]);
+    assert_eq!(rest.roster.datasets.len(), one.roster.datasets.len() + 1);
+    assert_eq!(service.roster(), rest.roster);
+    assert!(matches!(
+        service.raw_view_state(),
+        RawViewStateDto::Running {
+            phase: RawViewPhaseDto::Converting,
+            ..
+        }
+    ));
+
+    release.send(()).expect("release the view");
+    thread.join().expect("the worker ends");
+    assert!(
+        openable(&service.raw_view_state()),
+        "the adoption ended no view"
     );
 }
 
