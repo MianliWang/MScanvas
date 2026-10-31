@@ -630,6 +630,13 @@ pub struct PreviewService {
     // is weakened — the hook is handed a position and can only act on the
     /// world, exactly as another process could.
     publication_seam: Mutex<Option<PublicationHook>>,
+    /// Whether the next queue set settlement forgets its completeness proof.
+    //
+    // The SCIEX path proves completeness before publication, so a fully
+    // finalized queue set without it cannot occur; this forges one, so the
+    /// per-output adoption's refusal of it can be tested (ADR 0052).
+    #[cfg(test)]
+    forget_next_set_completeness: AtomicBool,
     /// The session's one diagnostics export.
     //
     // A leaf beside the conversion slot rather than a field inside it. What it
@@ -744,6 +751,8 @@ impl PreviewService {
             adopting_outputs: AtomicBool::new(false),
             session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
             publication_seam: Mutex::new(None),
+            #[cfg(test)]
+            forget_next_set_completeness: AtomicBool::new(false),
             diagnostics_export: Mutex::new(DiagnosticsExportSlot::default()),
             diagnostics_exporting: AtomicBool::new(false),
             spectrum_export: Mutex::new(ScientificExportSlots::default()),
@@ -2838,6 +2847,43 @@ impl PreviewService {
         operation_id: &str,
         document_epoch: u64,
     ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+        self.adopt_terminal_outputs(operation_id, None, document_epoch)
+    }
+
+    /// Adds one finalized output of a terminal queue to the workspace.
+    //
+    // ADR 0052. The sibling of the queue-wide action, and the same adoption:
+    // the queue-wide candidates are filtered to the one whose ticket carries
+    // `output_id` before anything is claimed. So the authority is the
+    // expanded adoption authority and nothing else -- an id the item carries
+    // only for opening (a partial set's prefix, a set whose sample
+    // completeness was not established), an unfinalized item and an unknown
+    // id all answer `outputs_not_adoptable`, with no flag claimed and no
+    // generation reserved.
+    //
+    // The answer is recorded on the output's item exactly as a queue-wide
+    // answer is, replacing what that item held: it says what the latest
+    // adoption did with the item's outputs.
+    ///
+    /// Errors as the queue-wide action does, and also for an output this
+    /// queue does not offer.
+    pub fn adopt_conversion_output(
+        &self,
+        operation_id: &str,
+        output_id: &str,
+        document_epoch: u64,
+    ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+        self.adopt_terminal_outputs(operation_id, Some(output_id), document_epoch)
+    }
+
+    /// The adoption both visible actions run: every offered output, or the one
+    /// named.
+    fn adopt_terminal_outputs(
+        &self,
+        operation_id: &str,
+        only: Option<&str>,
+        document_epoch: u64,
+    ) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
         let operation: u64 = operation_id.parse().map_err(|_| outputs_not_adoptable())?;
 
         let (reserved, tickets, reserved_round) = {
@@ -2858,10 +2904,16 @@ impl PreviewService {
                     true,
                 ));
             }
-            let tickets = self
+            let mut tickets = self
                 .conversion_slot()
                 .terminal_adoption_tickets(operation)
                 .ok_or_else(outputs_not_adoptable)?;
+            // Filtered before the round is read and before the flag is
+            // claimed, and only ever narrowed: a candidate keeps the
+            // `(item, member)` identity the queue-wide action gives it.
+            if let Some(output_id) = only {
+                tickets.retain(|(_, ticket)| ticket.output_id() == output_id);
+            }
             if tickets.is_empty() {
                 return Err(outputs_not_adoptable());
             }
@@ -3018,6 +3070,13 @@ impl PreviewService {
     pub(super) fn mark_retryable_for_test(&self, operation: u64, index: usize) -> bool {
         self.conversion_slot()
             .mark_retryable_for_test(operation, index)
+    }
+
+    /// Makes the next queue set settlement forget its completeness proof.
+    #[cfg(test)]
+    pub(super) fn forget_next_set_completeness(&self) {
+        self.forget_next_set_completeness
+            .store(true, Ordering::Release);
     }
 
     /// What the live queue's runtime name authority currently owns, and the
@@ -5420,6 +5479,13 @@ impl PreviewService {
         // paths with which to redact them. Dropping it would leave every
         // non-cancellation failure exporting two empty excerpts.
         let diagnostics = conversion.take_diagnostics();
+        #[cfg(test)]
+        if self
+            .forget_next_set_completeness
+            .swap(false, Ordering::AcqRel)
+        {
+            conversion = conversion.without_completeness();
+        }
         QueueItemAttempt::Settled(ItemOutcome::ReportedSet(Box::new(
             SciexAttemptSettlement::of(
                 self.session,

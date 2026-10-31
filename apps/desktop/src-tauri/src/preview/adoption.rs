@@ -4,7 +4,8 @@
 //! makes it part of the session: the workspace is a list the user curates, and
 //! adding rows to it because a background process finished is the application
 //! deciding what the user is working on. So adoption is an action, it is asked
-//! for, and it happens all at once for the queue that is on screen.
+//! for, and it happens for the queue that is on screen: all of its offered
+//! outputs at once, or one offered output by its id (ADR 0052).
 //!
 //! What makes it more than "add these files" is that MSCanvas knows something
 //! about these particular files that `Add files…` cannot know: it made them, it

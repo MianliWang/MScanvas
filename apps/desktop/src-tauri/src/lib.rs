@@ -1795,6 +1795,29 @@ async fn adopt_workspace_conversion_outputs(
         .await?
 }
 
+/// Adds one finalized mzML output of a terminal queue to the workspace.
+///
+/// The sibling of the queue-wide command above, through the same adoption
+/// (ADR 0052). The output is named by the opaque id its queue item already
+/// carries, and only an output the queue-wide command would offer is accepted:
+/// an output of a partial or incomplete set, of an item that did not finalize,
+/// or an unknown id is refused, and nothing is claimed.
+#[tauri::command]
+async fn adopt_workspace_conversion_output(
+    operation_id: String,
+    output_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.adopt_conversion_output(&operation_id, &output_id, document_epoch)
+    })
+    .await?
+}
+
 /// Binds one diagnostics export and reserves the right to choose a file.
 ///
 /// Deliberately synchronous and deliberately separate from saving, for the
@@ -2846,6 +2869,7 @@ pub fn run() {
             cancel_current_workspace_conversion_item,
             skip_pending_workspace_conversion_item,
             adopt_workspace_conversion_outputs,
+            adopt_workspace_conversion_output,
             begin_workspace_conversion_diagnostics_export,
             save_workspace_conversion_diagnostics,
             begin_selected_spectrum_export,

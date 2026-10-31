@@ -4281,6 +4281,9 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "cancel_current_workspace_conversion_item",
             "skip_pending_workspace_conversion_item",
             "adopt_workspace_conversion_outputs",
+            // ADR 0052: one output of the same terminal queue, by the opaque
+            // id its item carries, through the same adoption.
+            "adopt_workspace_conversion_output",
             // Two, and the same two-phase shape the destination picker uses:
             // the reservation is issued synchronously and the dialog is a
             // separate command, so a document that never received the
@@ -4335,8 +4338,12 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         ]
     );
     // Commands whose Rust side has landed before the webview calls them. Each
-    // entry leaves this list in the slice that gives it a caller.
-    const AHEAD_OF_THEIR_INTERFACE: [&str; 4] = [
+    // entry leaves this list in the slice that gives it a caller. ADR 0052's
+    // per-output adoption lands before its contract and hook slice (the
+    // webview is rebuilt on its own branch); ADR 0061's restore store before
+    // its interface.
+    const AHEAD_OF_THEIR_INTERFACE: [&str; 5] = [
+        "adopt_workspace_conversion_output",
         "read_workspace_restore",
         "save_workspace_restore",
         "clear_workspace_restore",
@@ -4361,18 +4368,24 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // Every command the product uses is a command the host registers, spelled
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
     // caller here and is deliberately not in this list.
-    for name in registered[1..]
-        .iter()
-        .filter(|name| !AHEAD_OF_THEIR_INTERFACE.contains(name))
-    {
-        assert!(
-            api.contains(&format!("\"{name}\""))
-                || drop_transport.contains(&format!("\"{name}\""))
-                || preferences.contains(&format!("\"{name}\""))
-                || projects.contains(&format!("\"{name}\""))
-                || presets.contains(&format!("\"{name}\"")),
-            "the frontend never calls {name}"
-        );
+    //
+    // A command ahead of its interface is declared rather than skipped, and
+    // the declaration retires itself: once the frontend calls one, the list
+    // must lose it.
+    for name in &registered[1..] {
+        let called = api.contains(&format!("\"{name}\""))
+            || drop_transport.contains(&format!("\"{name}\""))
+            || preferences.contains(&format!("\"{name}\""))
+            || projects.contains(&format!("\"{name}\""))
+            || presets.contains(&format!("\"{name}\""));
+        if AHEAD_OF_THEIR_INTERFACE.contains(name) {
+            assert!(
+                !called,
+                "the frontend calls {name} now; remove it from AHEAD_OF_THEIR_INTERFACE"
+            );
+            continue;
+        }
+        assert!(called, "the frontend never calls {name}");
     }
     assert!(
         !api.contains("\"choose_mzml_file\""),
@@ -31598,4 +31611,5 @@ mod conversion_intent_wire;
 #[cfg(windows)]
 mod figure_preview;
 mod output_opening;
+mod per_output_adoption;
 mod staging_recovery;
