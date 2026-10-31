@@ -799,6 +799,15 @@ None can be delivered by engineering alone; each waits for one input.
 - *Answered 2026-10-30* (section 2): the vendor format strategy (ADR 0059),
   the mzML version rule, the remembered ProteoWizard folder, the `tiff`
   dependency, one-click view RAW and Thermo vendor centroiding.
+- Releasing the analysis runtime (CPython and pyOpenMS), which every pyOpenMS
+  function waits on: [ADR 0066](../architecture/adr/0066-analysis-runtime-release.md),
+  proposed 2026-10-30, recommends a separate per-machine runtime package, a
+  slimmed runtime (measured on today's cp313 runtime: 1,790 files, 150 MB;
+  ANA-004 within 1e-6 relative of the full runtime on one synthetic fixture
+  and two targets), CPython 3.14 in place of the pinned 3.13.15 (its
+  OpenSSL 3.0 is unsupported) and an AppContainer measurement. Owner decision
+  B-1 (2026-10-30) answered its questions 1, 2, 6, 8 and 9; questions 3, 4, 5,
+  7 and 10 stay open.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted. *Drafted 2026-10-30 as
