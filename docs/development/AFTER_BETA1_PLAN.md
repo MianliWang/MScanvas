@@ -339,7 +339,9 @@ promotion gate in the
   (built-in templates), the explanation texts removed on 2026-10-28 (RO-26,
   SET-10, C12 and C19) and EXP-21 (parsing pasted Python or R code). The
   analysis rows reopen, each behind the promotion gate. The node view (C59)
-  and a method text in Python or R (EXP-20) stay outside this roadmap.
+  and a method text in Python or R (EXP-20) stay outside this roadmap. The
+  rows decided separately stay open under their own decisions: VW-14 (V-4),
+  VW-33 (V-1), VW-47 (V-5), C15 (HR-1) and VW-02's exports and panel (X-3).
 - **Navigation (G4).** Each analysis page enters the navigation when its first
   working function ships, with no placeholder pages. The new look (FE-2)
   leaves room for five page tabs at 960 px.
