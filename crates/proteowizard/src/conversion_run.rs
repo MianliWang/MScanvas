@@ -695,6 +695,33 @@ impl ConversionSource {
         )
     }
 
+    /// [`Self::open_thermo_raw_file`], with the digest read in chunks and
+    /// `keep_going(bytes_read, bytes_total)` asked before each one.
+    ///
+    /// For the view cache's Checking file phase (ADR 0060 decisions 3 and 7):
+    /// its digest is the cache key's and, on a miss, the run's baseline, so
+    /// the RAW is not hashed again to bind the conversion. A `false` answer
+    /// stops the read, and the admission then answers `NotHashed`; the caller
+    /// that stopped it tells the two apart.
+    pub fn open_thermo_raw_file_reporting(
+        path: &Path,
+        limits: MzmlScanLimits,
+        keep_going: &mut dyn FnMut(u64, u64) -> bool,
+    ) -> Result<Self, ConversionSourceRejection> {
+        let object = Self::admit_signed_object_reporting(
+            path,
+            ConversionSourceKind::ThermoRawFile,
+            THERMO_RAW_EXTENSION,
+            &THERMO_RAW_SIGNATURE,
+            keep_going,
+        )?;
+        Ok(Self {
+            kind: ConversionSourceKind::ThermoRawFile,
+            limits,
+            baseline: SourceBaseline::ObjectOnly(object),
+        })
+    }
+
     /// Opens a regular-file Shimadzu LabSolutions acquisition as a conversion
     /// source.
     ///
@@ -806,6 +833,18 @@ impl ConversionSource {
         extension: &str,
         signature: &[u8],
     ) -> Result<SourceObjectFacts, ConversionSourceRejection> {
+        Self::admit_signed_object_reporting(path, kind, extension, signature, &mut |_, _| true)
+    }
+
+    /// The admission itself, asking `keep_going` before each chunk of the
+    /// digest.
+    fn admit_signed_object_reporting(
+        path: &Path,
+        kind: ConversionSourceKind,
+        extension: &str,
+        signature: &[u8],
+        keep_going: &mut dyn FnMut(u64, u64) -> bool,
+    ) -> Result<SourceObjectFacts, ConversionSourceRejection> {
         if !has_extension(path, extension) {
             return Err(ConversionSourceRejection::UnsupportedExtension);
         }
@@ -864,8 +903,13 @@ impl ConversionSource {
 
         file.rewind()
             .map_err(|error| ConversionSourceRejection::NotInspectable { kind: error.kind() })?;
-        let sha256 = Sha256Digest::calculate_reader(&mut file)
-            .map_err(|_| ConversionSourceRejection::NotHashed)?;
+        let sha256 = Sha256Digest::calculate_reader(crate::sha256::Reported {
+            inner: &mut file,
+            read: 0,
+            total: byte_length,
+            keep_going,
+        })
+        .map_err(|_| ConversionSourceRejection::NotHashed)?;
         drop(file);
 
         Ok(SourceObjectFacts::from_parts(identity, byte_length, sha256))

@@ -3995,6 +3995,16 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "open_finalized_output",
             "open_mzml_preview",
             "load_selected_spectrum",
+            // ADR 0060 slice 2: the one-click view of a Thermo RAW row. Begin
+            // names the row and no intent; the state is polled, not pushed;
+            // Cancel and Open name the exact operation; the cache's summary
+            // and Clear name nothing. None takes a path.
+            "begin_raw_view",
+            "get_raw_view_state",
+            "cancel_raw_view",
+            "open_raw_view",
+            "describe_view_cache",
+            "clear_view_cache",
             "describe_workspace_conversion_queue",
             "get_workspace_conversion_state",
             "begin_workspace_conversion_queue",
@@ -4073,12 +4083,22 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
     // caller here and is deliberately not in this list.
     //
-    // ADR 0052's per-output adoption lands in Rust before its contract and
-    // hook slice (the webview is rebuilt on its own branch), so it is the one
-    // registered command no caller names yet. Declared rather than skipped,
-    // and the declaration retires itself: once the frontend calls it, this
-    // list must lose it.
-    let awaiting_a_caller = ["adopt_workspace_conversion_output"];
+    // The registered commands no caller names yet: ADR 0052's per-output
+    // adoption, which lands in Rust before its contract and hook slice (the
+    // webview is rebuilt on its own branch), and ADR 0060 slice 2's view
+    // commands, which its slice 3, the interface, will call once the owner
+    // chooses its direction. Declared rather than skipped, so the list cannot
+    // grow silently, and the declaration retires itself: once the frontend
+    // calls one, this list must lose it.
+    let awaiting_a_caller = [
+        "adopt_workspace_conversion_output",
+        "begin_raw_view",
+        "get_raw_view_state",
+        "cancel_raw_view",
+        "open_raw_view",
+        "describe_view_cache",
+        "clear_view_cache",
+    ];
     for name in &registered[1..] {
         if awaiting_a_caller.contains(name) {
             assert!(
@@ -7063,6 +7083,38 @@ fn mzml_document(spectra: u32, indexed: bool) -> String {
     }
 }
 
+/// Two spectra as the shipped default writes them -- indexed, every array
+/// zlib, m/z at 64 bits and intensity at 32 -- in a document the native reader
+/// opens: the faithful output `mzml_document` stands for, readable natively.
+fn viewable_document() -> String {
+    let spectra = [
+        ("scan=1", 0.1, [(100.5_f64, 10.0_f32), (200.25, 40.0)]),
+        ("scan=2", 0.2, [(300.0, 5.0), (400.5, 20.0)]),
+    ]
+    .map(|(id, retention_time, points)| {
+        let (base_peak_mz, base_peak_intensity) = points[1];
+        let mut spectrum = FixtureSpectrum::new(
+            id,
+            1,
+            retention_time,
+            (base_peak_mz, f64::from(base_peak_intensity)),
+            points.iter().map(|(_, value)| f64::from(*value)).sum(),
+            &[],
+        );
+        spectrum.mz = FixtureArray::f64s(&points.map(|(mz, _)| mz)).zlib();
+        spectrum.intensity = FixtureArray::f32s(&points.map(|(_, value)| value)).zlib();
+        spectrum.declared_length = points.len();
+        spectrum
+    });
+    document(&spectra)
+        .replacen(
+            "<mzML ",
+            r#"<indexedmzML xmlns="http://psi.hupo.org/ms/mzml"><mzML "#,
+            1,
+        )
+        .replacen("</mzML>", "</mzML></indexedmzML>", 1)
+}
+
 /// An mzML document with chromatograms and no spectra at all.
 ///
 /// A real shape, not a contrived one: the second lawful LabSolutions fixture
@@ -7248,6 +7300,9 @@ fn evidenced_capabilities() -> InstalledHelpCapabilities {
 enum BackendAct {
     /// Writes the document the plan asked for, where it asked for it.
     Convert,
+    /// As `Convert`, with a document the native reader opens too (ADR 0056):
+    /// what a view's cached copy has to be for the view to open.
+    ConvertViewable,
     /// Exits cleanly having written nothing.
     WriteNothing,
     /// Writes a document with no spectra in it.
@@ -7462,6 +7517,10 @@ impl FakeConversionRunner {
         let exit_code = match self.act {
             BackendAct::Convert | BackendAct::ConvertLeavingAProcess => {
                 fs::write(destination, mzml_document(2, true)).expect("write staged output");
+                0
+            }
+            BackendAct::ConvertViewable => {
+                fs::write(destination, viewable_document()).expect("write staged output");
                 0
             }
             BackendAct::ConvertEmpty => {
@@ -31266,4 +31325,5 @@ mod figure_preview;
 mod native_reader;
 mod output_opening;
 mod per_output_adoption;
+mod raw_view;
 mod staging_recovery;

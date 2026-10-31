@@ -163,8 +163,25 @@ impl FinalizedOutput {
     ///
     /// Returns the first way `current` differs, in the order above.
     pub fn still_matches(&self, current: &File) -> Result<(), OutputDrift> {
+        self.still_matches_reporting(current, &mut |_, _| true)
+    }
+
+    /// [`Self::still_matches`], with the digest read in chunks and
+    /// `keep_going(bytes_read, bytes_total)` asked before each one (ADR 0060
+    /// decision 3, Checking output). A `false` answer stops the read, which is
+    /// then answered `Unreadable`; the caller that stopped it tells the two
+    /// apart.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::still_matches`].
+    pub fn still_matches_reporting(
+        &self,
+        current: &File,
+        keep_going: &mut dyn FnMut(u64, u64) -> bool,
+    ) -> Result<(), OutputDrift> {
         self.recognises(current)?;
-        self.holds_validated_bytes(current)
+        self.holds_validated_bytes(current, keep_going)
     }
 
     /// Whether `current` is the same object this finalized.
@@ -200,7 +217,11 @@ impl FinalizedOutput {
     /// object: a digest taken from an arbitrary offset would answer a different
     /// question and would answer it wrongly. The caller's read position is
     /// therefore moved, which is why this takes an object it does not own.
-    fn holds_validated_bytes(&self, current: &File) -> Result<(), OutputDrift> {
+    fn holds_validated_bytes(
+        &self,
+        current: &File,
+        keep_going: &mut dyn FnMut(u64, u64) -> bool,
+    ) -> Result<(), OutputDrift> {
         use std::io::Seek;
 
         let observed = current
@@ -212,7 +233,13 @@ impl FinalizedOutput {
         }
         let mut reader = current;
         reader.rewind().map_err(|_| OutputDrift::Unreadable)?;
-        let digest = Sha256Digest::calculate_reader(reader).map_err(|_| OutputDrift::Unreadable)?;
+        let digest = Sha256Digest::calculate_reader(crate::sha256::Reported {
+            inner: reader,
+            read: 0,
+            total: observed,
+            keep_going,
+        })
+        .map_err(|_| OutputDrift::Unreadable)?;
         if digest != self.sha256() {
             return Err(OutputDrift::ContentChanged);
         }

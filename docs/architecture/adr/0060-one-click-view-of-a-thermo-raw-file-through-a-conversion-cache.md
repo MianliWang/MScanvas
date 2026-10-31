@@ -7,7 +7,8 @@ decision 2, "One-click view RAW";
 decision 5 of 2026-10-30) and asked that its details follow the
 recommendations. This record states those recommendations. Slice 1, the cache
 library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/172),
-2026-10-30); nothing else here is. The questions still open for the owner are listed
+2026-10-30). Slice 2, the operation and its commands, is implemented on `be/viewraw-op`
+([slice 2 notes](#slice-2-notes-2026-10-30)); nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
 Amended 2026-10-30 by ADR 0056 slice 2: the data documents' version numbers
@@ -1146,6 +1147,193 @@ Shots at 1366x768 and 960x640, in `en` and `zh-CN`, of:
    and schema versions, with golden tests.
 
 Native QA follows slice 3 under its own hold release.
+
+## Slice 2 notes (2026-10-30)
+
+Dated notes of 2026-10-30, written with slice 2 (the operation and its
+commands, branch `be/viewraw-op`). Where a note departs from a decision above,
+it says so; the decisions stand otherwise.
+
+1. **What is implemented.** `begin_raw_view`, `get_raw_view_state`,
+   `cancel_raw_view`, `open_raw_view`, `describe_view_cache` and
+   `clear_view_cache` (decision 12); the phases of decision 3; the refusals of
+   decision 4 that need no process; the view as a holder of the conversion
+   slot (decision 5); the failures of decision 10; and Cancel in every phase.
+   Progress is read by polling `get_raw_view_state`, as decision 12 says; there
+   is no event channel. The commands are registered, and no webview calls them
+   until slice 3.
+2. **Two cases slice 1 left open. Accepted by the owner, 2026-10-30 (A0060).**
+   - A check that could not be made (`Lookup::Unreadable`), and a damaged
+     entry that could not be removed (`Lookup::Damaged { removed: false }`),
+     end the operation `failed` with `view_cache_entry_unavailable`, retryable,
+     before anything is converted. Neither is treated as a miss and neither as
+     damage: converting would publish into a place that is still held, and
+     removing what could not be checked could remove a sound entry another
+     process is reading. The same code answers when a place found occupied at
+     publishing is in either state.
+   - An attempt that a sharing refusal keeps from being removed after
+     `view_cache_not_stored`, for example while a scanner still reads the new
+     file, stays in `staging` until a later session's sweep removes it,
+     because decision 6's sweep leaves this process's attempts alone. Nothing
+     is published from it and nothing reads it.
+3. **The output's name inside the attempt departs from decision 6 while the
+   run lasts.** The view conversion uses the existing plan
+   (`ConversionPlan::to_mzml`), which names its output after the RAW, so
+   `msconvert` writes `<RAW stem>.mzML`, and its staging area, inside the
+   attempt directory. Checking output renames that file to `entry\view.mzML`
+   through the handle it was checked with, so no published name comes from the
+   user's file. A RAW whose name the plan cannot stage fails with
+   `conversion_not_plannable`. Follow-up: a plan with a fixed output name, once
+   `be/integrate` (PR #161) has reshaped `ConversionPlan`. That PR also makes
+   `plan_conversion` take a bound intent; since the merge of 2026-10-31 the
+   view's call passes `BoundIntent::Row(SHIPPED)` and never an advanced
+   intent. Accepted by the owner, 2026-10-30 (A0060).
+4. **Hashing. A miss reads the RAW in full four times.** Checking file is the
+   conversion crate's own admission
+   (`ConversionSource::open_thermo_raw_file_reporting`), read in chunks with
+   Cancel asked before each, so its digest is the key's and the run's baseline
+   and the bind does not hash the RAW again (decision 7). That one read is
+   also the row's re-acceptance (`revalidate_thermo_raw_reporting`), so
+   nothing reads the RAW before the bar, and Checking output re-accepts the
+   row the same way. Inside Converting,
+   the run reads it twice more, each in one read with no progress and with
+   Cancel answered only after it: its pin rehashes it before `msconvert`
+   starts, and its post-run judgement (`revalidate_source`) rehashes it after.
+   Checking output then reads the output
+   (`FinalizedOutput::still_matches_reporting`) and the RAW again under one
+   bar, which also covers the time between that judgement and the publish.
+   Decision 7 meant the post-run read to be Checking output's own. A
+   reporting, cancellable form of the crate's post-run revalidation would
+   remove one read. PR #161 has merged; that form is still to do, and until
+   it is built this is a known ceiling: up to 1.5 GiB read twice with no bar.
+5. **The key's intent line** is `ConversionIntent::SHIPPED.stable_id()`. PR
+   #161 has merged; moving it to the structured intent's canonical
+   serialization, with the key's version line (decision 7), is still to do.
+6. **Deferred, each with its reason.**
+   - `backend_not_found` and `provider_build_not_evidenced` need the help
+     probe, so they end the operation `failed` once its worker has bound the
+     build, before the RAW is read, instead of refusing the press.
+     `get_raw_view_state` takes no handle and answers no
+     `RawViewAvailabilityDto` yet; slice 3 adds both.
+   - `begin_raw_view_with` and `rawViewIntents` are still to do; PR #161's
+     structured intents, which they need, have merged.
+   - `PreviewDto.viewSource` and the typed `viewed_through_cache` refusal come
+     with slice 3. Until then a cached view retains no run-summary token, so a
+     QC capture from it fails closed.
+   - **Export provenance (decision 11) is not built, and gates slice 3.** A
+     viewed open installs its chromatogram's export token and a spectrum load
+     of the viewed row installs a spectrum's, so both can be exported. The
+     data documents name no file and no cache path, and a saved figure refuses
+     a source under the cache (`saved_figure_source_in_view_cache`), so no
+     export names the cache; but none names the RAW or states the conversion
+     either. No webview calls `open_raw_view` yet, so no such export is
+     reachable. Before slice 3 makes a cached view openable, either slice 4's
+     provenance lands or a viewed open installs no export token, as it
+     retains no run-summary token.
+   - The same-session digest memo is not built: every View hashes the RAW in
+     full, which is the safer side of decision 7.
+   - A native drop while a view runs is refused through the busy mirror with
+     the queue's `conversion_busy` drop state, because that state is a
+     webview-visible transfer object. Every other route of decision 5 answers
+     `raw_view_busy`.
+7. **ADR 0056 decision 3 for a Thermo RAW row, as implemented.**
+   `open_mzml_preview` and `load_selected_spectrum` still refuse a vendor row
+   with `dataset_not_previewable`. Only `open_raw_view` opens one, and every
+   read of that preview goes to the pinned entry: `msaccess`'s metadata and
+   run summary, and, since the merge with PR #175 on 2026-10-31, the native
+   reader's table and selected spectrum (ADR 0056), so no spectrum of a
+   cached view is read by `msaccess`. Neither that open nor a spectrum load
+   re-admits or hashes the RAW: View re-accepted the row, and the pin and the
+   entry's generation stand in (decision 12). The next open of any row ends
+   that preview and its pin through ADR 0056 decision 4's open ticket: an
+   open's start drops every other row's retained preview, and a viewed open
+   that a newer open has passed installs nothing and answers
+   `selection_superseded`. A viewed open passes the same ticket check as any
+   open and installs its chromatogram, but retains no run summary (decision
+   11). The ticket replaced the workspace's own record of the latest open.
+   `a_miss_converts_the_verified_default_publishes_once_and_opens_the_entry_not_the_raw`
+   fails if a native read of a viewed row takes the RAW's path, or if a
+   viewed open retains a token or a producer.
+8. **After review (2026-10-30).** The items marked as pending await the
+   owner's confirmation; the rest follow decisions above.
+   - **The wire, beyond decision 12.** `running` also carries
+     `cachedCopyDamaged` (decision 8's notice). `failed` carries
+     `neededBytes` and `freeBytes` for `view_cache_no_space`, and null for
+     every other code. `ready` carries `openable`, true only while the row
+     holds the operation's pin: an open, a superseded or failed open, the
+     row's removal, Clear workspace and the next View each make it false.
+     `open_raw_view` answers `raw_view_not_ready` (not retryable) for an
+     operation that is not `ready` and `openable`. The row's pin carries its
+     operation, so a late open of an older operation never takes a newer
+     View's entry.
+   - **`view_cache_unreadable`, retryable (pending).** The cache's folders
+     could not be listed (the summary's `unreadable`), or the free space on
+     its volume could not be read. It never claims the disk is full. That
+     answers View, its eviction and Clear view cache alike.
+     `view_cache_entry_unavailable` stays for one entry that could not be
+     checked or removed, including the entry this operation just published,
+     which then stays for the next View to check.
+   - **Cancel and the end of the work (pending).** Once the work has reached
+     a pinned entry, the operation settles under the slot lock. A Cancel
+     accepted before that ends it `cancelled`, with its `stored`, and
+     releases the pin. A Cancel after it is a late press, and the operation
+     ends `ready`. Storing, too, is entered under the slot lock Cancel takes,
+     so a Cancel accepted before it, also one after Checking output's last
+     chunk, ends `cancelled` with `stored: false` and publishes and evicts
+     nothing, as decision 10 says.
+   - **An unconfirmed end of `msconvert`,** a cancellation that could not be
+     confirmed or a run that leaves its process unaccounted for, quarantines
+     the backend and keeps the attempt, marker and all, for a later
+     session's sweep, as targeted MS1 keeps its work area. A run's residue
+     alone does not keep it: the sweep would remove it the same way.
+   - **Failures the run itself finds.** A RAW that the run's pin or its
+     post-run judgement finds changed answers `raw_view_source_changed`
+     (retryable), and an output over the document limit answers
+     `view_cache_entry_too_large` (not retryable), as decision 10's table
+     says. Every other run failure answers the crate's failure identifier
+     (`stable_id`), which is what a queue item's `outcome` carries and what
+     the webview reads. The detailed identifier stays with Convert this
+     file…'s diagnostics.
+   - **The 1.5 GiB limit is also asked of the length Checking file finds,**
+     before its first chunk, so a RAW that grew after it was added is refused
+     without being read.
+   - **Retry of a terminal queue answers `raw_view_busy` while a view runs.**
+     With Begin's refusal, no queue runs beside a view, so Cancel and clear
+     has one holder to stop.
+   - **Clear view cache holds the workspace mutation gate (pending)** that
+     `begin_raw_view` takes the slot under, so no View begins between Clear's
+     check and its removal. A workspace mutation waits for a Clear meanwhile.
+   - **View begins after an accepted native drop,** as a queue does, so the
+     slot never turns that drop's commit into a refusal.
+   - **The entry points PRs #161 and #179 added (2026-10-31 merge).** Begin
+     with a structured intent (ADR 0055) is the same Begin and answers
+     `raw_view_busy` before the intent is read. Planning one and the four
+     preset commands stay allowed, as composing conversion settings is
+     (decision 5): they take no slot, no gate and no row. Per-output adoption
+     (ADR 0052) shares the queue-wide action's body and takes no new guard.
+   - **Adoption while a view runs (pending).** A terminal queue does not hold
+     the slot, so View begins beside one, and both the per-output and the
+     queue-wide adoption of its outputs then add rows while the view runs,
+     although adding files answers `raw_view_busy`. Neither ends the view.
+     `a_terminal_queue_adopts_one_output_and_then_the_rest_while_a_view_runs`
+     pins this; a guard the owner chooses changes that test.
+   - **The next open of any row ends a cached view and its pin when that open
+     is accepted,** not when it commits, so an open that then fails does not
+     leave a preview off screen holding an entry. Since the merge with PR #175
+     this is ADR 0056 decision 4's ticket, taken with the other rows' previews
+     dropped under one hold, and only the latest open commits, so a viewed
+     open that was still reading when the other began installs nothing.
+     One exception: the hold drops every row's preview but the target's,
+     which the open drops only after its backend and conversion checks. A
+     reopen of the viewed row itself (a later View of it, then its open) that
+     one of those checks refuses (`conversion_busy`, or a backend no longer
+     trusted) leaves that row's earlier preview and its pin in place until the
+     next open or the row's removal, so Clear view cache and eviction skip
+     that entry meanwhile. PR #175's mzML rows keep their preview the same
+     way.
+   - **Dated notes** are written in ADR 0005, ADR 0006, ADR 0012, ADR 0056
+     decision 3 and ADR 0057 decision 2. ADR 0043 (CNV-D8) and ADR 0055 take
+     theirs with slice 3, whose interface shows the progress and the reuse.
 
 ## Alternatives rejected
 

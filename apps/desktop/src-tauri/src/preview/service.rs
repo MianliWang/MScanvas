@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 mod conversion_intent;
 mod figure_preview;
 mod output_opening;
+/// The one-click view's work (ADR 0060, slice 2).
+mod raw_view_run;
 mod staging_recovery;
 mod workspace_clear;
 
@@ -302,7 +304,8 @@ impl Workspace {
     // decision 4): the screen shows one preview, and a table at the reader's
     // limit is a million rows and offsets. Called by an open's start, under
     // the same hold as its ticket, so it cannot fall between another open's
-    /// commit check and its write.
+    // commit check and its write. A cached view's preview goes with the rest,
+    /// and its pin with it, also when that open fails (ADR 0060 decision 8).
     fn drop_other_previews(&mut self, keep: DatasetId) {
         for (id, state) in &mut self.runtime {
             if *id != keep {
@@ -514,6 +517,10 @@ struct DatasetRuntimeState {
     /// on one never cancels work on another.
     request_epoch: u64,
     preview: Option<DatasetPreviewState>,
+    /// A ready view operation's number and pinned cache entry, until it is
+    /// opened, the next view begins, or the row goes (ADR 0060 decision 8).
+    /// Only that operation's open takes it.
+    ready_view: Option<(u64, crate::view_cache::VerifiedEntry)>,
 }
 
 /// What one open action established about one dataset.
@@ -542,6 +549,9 @@ struct DatasetPreviewState {
     // and an export holding a handle across a preview replacement keeps the
     /// facts it was started with.
     table_rows: Arc<Vec<TableRowFacts>>,
+    /// For a Thermo RAW row viewed through the view cache, the pinned entry
+    /// every read of this preview goes to; never the RAW (ADR 0060 decision 12).
+    view: Option<Arc<crate::view_cache::VerifiedEntry>>,
 }
 
 /// The narrow set of operations the desktop application exposes.
@@ -697,6 +707,9 @@ pub struct PreviewService {
     // taken under the backend gate, so the commands write it after this
     /// service has answered and then tell this what happened.
     remembered: Mutex<RememberedFolder>,
+    /// Where the view cache lives and how its volume is measured (ADR 0060).
+    /// A leaf, held only to read or replace a setting.
+    raw_views: Mutex<raw_view_run::RawViewSettings>,
 }
 
 /// The session's side of the remembered ProteoWizard folder.
@@ -781,6 +794,7 @@ impl PreviewService {
             spectrum_export: Mutex::new(ScientificExportSlots::default()),
             resolved: Mutex::new(ObservedBackend::default()),
             remembered: Mutex::new(RememberedFolder::default()),
+            raw_views: Mutex::new(raw_view_run::RawViewSettings::default()),
         }
     }
 
@@ -1691,7 +1705,7 @@ impl PreviewService {
         // is what the request epoch would otherwise have to refuse later, at a
         // point where a process is already running.
         if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
-            return Err(conversion_busy());
+            return Err(self.conversion_slot().busy_refusal());
         }
         // Held for the whole batch so two of these cannot interleave their
         // rows. It is not the workspace lock and never becomes it: acceptance
@@ -2353,6 +2367,11 @@ impl PreviewService {
         if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
+        // A one-click view holds the slot, and may hold the backend gate the
+        // preflight below would report as busy instead (ADR 0060 decision 5).
+        if self.conversion_slot().view_is_running() {
+            return Err(super::raw_view::raw_view_busy());
+        }
         // The identity, from the admitted table and from nothing else. A
         // caller-supplied string that names no row never becomes an intent, so
         // there is no partially-valid semantic for anything downstream to run.
@@ -2781,6 +2800,12 @@ impl PreviewService {
         if self.terminal_queue_action_in_flight() {
             return Err(conversion_busy());
         }
+        // A terminal queue leaves the slot to a one-click view, and a rerun
+        // would then hold the backend beside it (ADR 0060 decision 5). Asked
+        // again under the slot lock below.
+        if self.conversion_slot().view_is_running() {
+            return Err(super::raw_view::raw_view_busy());
+        }
         // **Every object this pass will use, not one.** A source-relative
         // policy resolved per item, so "against the same folder" became
         // "against the same object for every identity the pass will use". The
@@ -2820,6 +2845,9 @@ impl PreviewService {
         // proved.
         if slot.terminal_bindings().as_ref() != Some(&stored) {
             return Err(queue_destination_changed());
+        }
+        if slot.view_is_running() {
+            return Err(slot.busy_refusal());
         }
         let Some(operation) = slot.begin_retry() else {
             return Err(invalid_conversion_reservation());
@@ -5508,7 +5536,7 @@ impl PreviewService {
     /// slot, so abandoned replies cannot grow an unbounded registry.
     pub fn begin_folder_import(&self) -> Result<FolderImportReservationDto, PreviewErrorDto> {
         if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
-            return Err(conversion_busy());
+            return Err(self.conversion_slot().busy_refusal());
         }
         let mut gate = self.enter_workspace_mutation_after_drop();
         let generation = gate.generation;
@@ -5548,7 +5576,7 @@ impl PreviewService {
         // Asked again here, not only at begin: a conversion can start while the
         // reservation is in flight, and the claim is what dispatches a picker.
         if self.conversion_is_busy() || self.terminal_queue_action_in_flight() {
-            return Err(conversion_busy());
+            return Err(self.conversion_slot().busy_refusal());
         }
         let requested = FolderImportReservationId::parse(reservation_id)
             .ok_or_else(invalid_folder_import_reservation)?;
@@ -6266,7 +6294,7 @@ impl PreviewService {
             .filter_map(|handle| DatasetId::parse(handle))
             .any(|id| self.conversion_slot().busy_holds(id))
         {
-            return Err(conversion_busy());
+            return Err(self.conversion_slot().busy_refusal());
         }
         // Advances the generation even when every handle names nothing. The
         // user said "this is the workspace now", and a folder scan that
@@ -6286,7 +6314,7 @@ impl PreviewService {
             .filter_map(|handle| DatasetId::parse(handle))
             .any(|id| self.conversion_slot().busy_holds(id))
         {
-            return Err(conversion_busy());
+            return Err(self.conversion_slot().busy_refusal());
         }
         let mut removed = Vec::new();
         // The same rows, as identities. The export slot answers a question the
@@ -6358,7 +6386,7 @@ impl PreviewService {
                 pending_busy,
                 WorkspaceDropStateDto::Idle,
             );
-            return Err(conversion_busy());
+            return Err(self.conversion_slot().busy_refusal());
         }
         let mut workspace = self.workspace();
         workspace.clear(RevocationReason::Cleared);
@@ -7175,6 +7203,18 @@ impl PreviewService {
     }
 
     pub fn open_preview(&self, handle: &str) -> Result<PreviewDto, PreviewErrorDto> {
+        self.open_preview_of(handle, None)
+    }
+
+    /// The open itself. `view` is a Thermo RAW row's pinned cache entry, from
+    /// `open_raw_view` alone: every read then goes to the entry, the pin stands
+    /// in for the RAW's replacement lock, and the generation is the entry's
+    /// (ADR 0060 decision 12). Without one, a vendor row stays refused.
+    fn open_preview_of(
+        &self,
+        handle: &str,
+        view: Option<Arc<crate::view_cache::VerifiedEntry>>,
+    ) -> Result<PreviewDto, PreviewErrorDto> {
         // First, and whatever happens next. Opening a preview takes the current
         // one off the screen before this call can succeed or fail -- the panel
         // has no loaded spectrum from here on either way -- so the retained
@@ -7204,7 +7244,7 @@ impl PreviewService {
             let dataset = workspace.registry.get(id).ok_or_else(unknown_dataset)?;
             dataset.file().source_kind().is_previewable()
         };
-        if !previewable {
+        if !previewable && view.is_none() {
             return Err(dataset_not_previewable());
         }
         // The intent exists, so the preview on screen is already being replaced.
@@ -7258,7 +7298,7 @@ impl PreviewService {
         // would turn ordinary navigation into an error for no reason of the
         // user's, which is the opposite of what the adoption guard is for.
         if self.conversion_is_busy() {
-            return Err(conversion_busy());
+            return Err(self.conversion_slot().busy_refusal());
         }
         // Claimed before the wait, so a request that arrives after this one
         // supersedes it -- and claimed by the same per-dataset counter a
@@ -7290,19 +7330,33 @@ impl PreviewService {
         // converter. Asking only on the way in would let exactly the caller
         // that waited longest be the one to start another process.
         self.require_usable_backend()?;
-        let file = revalidate(&remembered)?;
-        let redactor = reporting_redactor(file.path());
+        // A viewed RAW row's open reads nothing of the RAW, not even to hash
+        // it: the pinned entry is what is read and checked (ADR 0060 decision
+        // 12), and View re-accepted the row.
+        let file = match view {
+            Some(_) => remembered,
+            None => revalidate(&remembered)?,
+        };
+        // What is read: the row's file, or a viewed RAW row's pinned entry.
+        let read = view
+            .as_ref()
+            .map_or_else(|| file.path().to_path_buf(), |entry| entry.output());
+        let redactor = reporting_redactor(&read);
         let operations = open_operations();
         // The two operations and the native table pass read the file
         // separately. If it is rewritten between them, their results describe
         // different generations of the run, and combining those into one
         // preview would present an acquisition that never existed.
-        let before = SourceGeneration::of(&file);
+        let before = if view.is_some() {
+            SourceGeneration::capture(&read)
+        } else {
+            SourceGeneration::of(&file)
+        };
         // Held for the whole batch, so the file cannot be swapped away and
         // swapped back between the two comparisons around it. Required: losing
         // the hold means losing the guarantee.
-        let guard = lock_against_replacement(file.path())?;
-        let attempts = self.provider.run_batch(file.path(), &operations)?;
+        let guard = lock_against_replacement(&read)?;
+        let attempts = self.provider.run_batch(&read, &operations)?;
         // Before anything is decided about what to show. A preview is a
         // process like a conversion is, and one that ended without accounting
         // for a process it started leaves the same uncertainty on the same
@@ -7353,10 +7407,10 @@ impl PreviewService {
         let native_table = attempts
             .iter()
             .all(|attempt| attempt.outcome.is_ok())
-            .then(|| read_spectrum_table(file.path(), MzmlScanLimits::default()));
+            .then(|| read_spectrum_table(&read, MzmlScanLimits::default()));
         drop(guard);
         drop(running);
-        if SourceGeneration::capture(file.path()) != before {
+        if SourceGeneration::capture(&read) != before {
             return Err(PreviewErrorDto::new(
                 "source_changed_during_preview",
                 "The file changed while it was being read, so the preview was discarded rather \
@@ -7451,10 +7505,14 @@ impl PreviewService {
         let table_rows = Arc::new(table_rows);
         let chromatogram =
             ChromatogramSource::from_rows(&table_rows, spectrum_table.truncated).ok();
-        let qc_producer_identified = producer_installation
-            .as_ref()
-            .and_then(InstallationIdentity::producer_facts)
-            .is_some();
+        // A cached view retains no summary a QC capture could copy: it would be
+        // the converted copy's, recorded as the RAW's (ADR 0060 decision 11).
+        let viewed = view.is_some();
+        let qc_producer_identified = !viewed
+            && producer_installation
+                .as_ref()
+                .and_then(InstallationIdentity::producer_facts)
+                .is_some();
 
         // One commit, under one lock, of facts that are only true together: the
         // generation this was read at, the table with its offsets, the rows a
@@ -7479,26 +7537,40 @@ impl PreviewService {
         // either. Every production ticket is taken under the workspace lock
         // too, so no newer open can begin between this and the write -- without
         // it an older open of another dataset could commit after a newer one
-        // began, and two datasets would retain native tables.
+        // began, and two datasets would retain native tables. The same rule is
+        // what keeps a cached view's pin to one preview at a time (ADR 0060
+        // decision 8): a viewed open a newer one has passed installs nothing.
         let mut slots = self.spectrum_export_slot();
-        let Some(qc_snapshot_token) = slots.reconcile_preview_run_summary(
-            preview_open,
-            id,
-            run_summary_facts,
-            producer_installation,
-        ) else {
-            return Err(superseded());
+        let (qc_snapshot_token, installed) = if viewed {
+            let Some(installed) = slots.reconcile_viewed_preview(preview_open, id, chromatogram)
+            else {
+                return Err(superseded());
+            };
+            (None, installed)
+        } else {
+            let Some(token) = slots.reconcile_preview_run_summary(
+                preview_open,
+                id,
+                run_summary_facts,
+                producer_installation,
+            ) else {
+                return Err(superseded());
+            };
+            // Install *or* revoke, never neither: this open is the one the
+            // session is on, so a run with no chromatogram leaves the session
+            // with none.
+            (
+                Some(token),
+                slots.reconcile_preview_chromatogram(preview_open, id, chromatogram),
+            )
         };
-        // Install *or* revoke, never neither: this open is the one the session
-        // is on, so a run with no chromatogram leaves the session with none.
-        let chromatogram_export_token = slots
-            .reconcile_preview_chromatogram(preview_open, id, chromatogram)
-            .map(|snapshot| snapshot.token().as_wire());
+        let chromatogram_export_token = installed.map(|snapshot| snapshot.token().as_wire());
         drop(slots);
         workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
             source: before,
             table: Arc::new(table),
             table_rows,
+            view,
         });
         // Described as the roster describes it, so a preview header and the row
         // it belongs to cannot disagree about which of two identically named
@@ -7521,7 +7593,7 @@ impl PreviewService {
             metadata,
             run_summary,
             spectrum_table,
-            qc_snapshot_token: Some(qc_snapshot_token.as_wire()),
+            qc_snapshot_token: qc_snapshot_token.map(|token| token.as_wire()),
             qc_producer_identified,
         })
     }
@@ -7589,7 +7661,7 @@ impl PreviewService {
         // nothing and leaves an open preview exactly as it is, so navigating
         // one while outputs are being checked is ordinary work.
         if self.conversion_is_busy() {
-            return Err(conversion_busy());
+            return Err(self.conversion_slot().busy_refusal());
         }
         let id = DatasetId::parse(handle).ok_or_else(unknown_dataset)?;
         // Claimed before the wait, so a request that arrives after this one
@@ -7635,13 +7707,21 @@ impl PreviewService {
                             .ok()
                             .and_then(|position| preview.table_rows.get(position))
                             .cloned(),
+                        preview.view.clone(),
                     )
                 });
             (remembered, preview)
         };
+        // A vendor row is read only through its viewed cache entry, never
+        // directly (ADR 0060 decision 4: no fallback).
+        if !remembered.source_kind().is_previewable()
+            && preview.as_ref().is_none_or(|(.., view)| view.is_none())
+        {
+            return Err(dataset_not_previewable());
+        }
         // A spectrum is read from the offset its open recorded, so a dataset
         // with no retained preview has nothing to read it from (decision 4).
-        let Some((opened_source, table, expected_row)) = preview else {
+        let Some((opened_source, table, expected_row, view)) = preview else {
             return Err(preview_not_open());
         };
         // An index the open's table does not have is the answer the panel
@@ -7651,31 +7731,42 @@ impl PreviewService {
                 requested_index: index,
             });
         };
-        let file = revalidate(&remembered)?;
+        // A viewed RAW row's spectrum reads nothing of the RAW, not even to hash
+        // it: the pinned entry is what is read and checked (ADR 0060 decision
+        // 12), and View re-accepted the row.
+        let (read, file) = match view.as_ref() {
+            Some(entry) => (entry.output(), None),
+            None => {
+                let file = revalidate(&remembered)?;
+                (file.path().to_path_buf(), Some(file))
+            }
+        };
         // A selected spectrum is shown beside the metadata and the table from
         // the open action. If the file has changed since then, this spectrum
         // would belong to a different run than everything around it -- and
         // the offset it is read from would point into a different file.
-        if SourceGeneration::capture(file.path()) != opened_source {
-            return Err(source_changed_since_preview());
-        }
+        //
         // Also compared against the handle's own accepted identity, so a file
         // replaced between validation and the read is caught.
-        if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
+        let changed = || {
+            SourceGeneration::capture(&read) != opened_source
+                || file.as_ref().is_some_and(|file| {
+                    SourceGeneration::capture(file.path()) != SourceGeneration::of(file)
+                })
+        };
+        if changed() {
             return Err(source_changed_since_preview());
         }
 
-        let redactor = reporting_redactor(file.path());
-        let guard = lock_against_replacement(file.path())?;
-        let read = read_selected_spectrum(file.path(), &table, index);
+        let redactor = reporting_redactor(&read);
+        let guard = lock_against_replacement(&read)?;
+        let spectrum = read_selected_spectrum(&read, &table, index);
         drop(guard);
         drop(running);
-        if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file)
-            || SourceGeneration::capture(file.path()) != opened_source
-        {
+        if changed() {
             return Err(source_changed_since_preview());
         }
-        let spectrum = match read {
+        let spectrum = match spectrum {
             Ok(spectrum) => SelectedSpectrumResult::from_native(spectrum),
             Err(MzmlSpectrumError::NotInTable) => {
                 return Ok(SelectedSpectrumOutcomeDto::Unavailable {

@@ -1157,6 +1157,24 @@ impl ScientificExportSlots {
         }
     }
 
+    /// The commit of a completed open of a cached view (ADR 0060): the same
+    /// ownership test and chromatogram as
+    /// [`Self::reconcile_preview_chromatogram`], and no run summary. A summary
+    /// of the converted copy is not the RAW's, so a QC capture is given none
+    /// to copy (decision 11); `begin_preview_open` already revoked the last.
+    ///
+    /// `None` when stale, with nothing touched; otherwise the chromatogram this
+    /// open installed, if its run has one.
+    pub(super) fn reconcile_viewed_preview(
+        &mut self,
+        ticket: PreviewOpenTicket,
+        owner: DatasetId,
+        source: Option<ChromatogramSource>,
+    ) -> Option<Option<ChromatogramSnapshot>> {
+        (ticket == self.latest_preview_open)
+            .then(|| self.reconcile_preview_chromatogram(ticket, owner, source))
+    }
+
     /// Retains one chromatogram as the one a new export may name.
     ///
     /// Takes the source already decided to be exportable rather than deciding

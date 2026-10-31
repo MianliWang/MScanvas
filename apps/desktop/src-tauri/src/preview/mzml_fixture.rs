@@ -3,13 +3,15 @@
 //!
 //! Since ADR 0056 the spectrum table and the selected spectrum are read by the
 //! project's own reader, so a fixture is a document rather than canned
-//! `msaccess` text. Arrays are little-endian and uncompressed; only the
-//! test-only [`native_spectrum`] reads a document, and nothing here is
-//! reachable from a shipped build.
+//! `msaccess` text. Arrays are little-endian and uncompressed unless a test
+//! stores them as a zlib stream; only the test-only [`native_spectrum`] reads
+//! a document, and nothing here is reachable from a shipped build.
 
-/// One stored array: its binary data type and its little-endian bytes.
+/// One stored array: its binary data type, its compression term and its
+/// little-endian bytes as stored.
 pub(crate) struct FixtureArray {
     data_type: &'static str,
+    compression: &'static str,
     bytes: Vec<u8>,
 }
 
@@ -45,9 +47,33 @@ impl FixtureArray {
         )
     }
 
+    /// The same values as one zlib stream of a single stored block, declared
+    /// `MS:1000574`: what a conversion asked for `--zlib` writes, without a
+    /// compressor in the suite.
+    #[cfg(test)]
+    pub(crate) fn zlib(self) -> Self {
+        let length = u16::try_from(self.bytes.len()).expect("one stored block holds the array");
+        let (mut a, mut b) = (1_u32, 0_u32);
+        for byte in &self.bytes {
+            a = (a + u32::from(*byte)) % 65_521;
+            b = (b + a) % 65_521;
+        }
+        let mut stream = vec![0x78, 0x01, 0x01];
+        stream.extend(length.to_le_bytes());
+        stream.extend((!length).to_le_bytes());
+        stream.extend(&self.bytes);
+        stream.extend(((b << 16) | a).to_be_bytes());
+        Self {
+            data_type: self.data_type,
+            compression: "MS:1000574",
+            bytes: stream,
+        }
+    }
+
     fn of(data_type: &'static str, bytes: impl Iterator<Item = u8>) -> Self {
         Self {
             data_type,
+            compression: "MS:1000576",
             bytes: bytes.collect(),
         }
     }
@@ -58,7 +84,7 @@ impl FixtureArray {
             r#"<binaryDataArray encodedLength="{}">{}{}{}<binary>{payload}</binary></binaryDataArray>"#,
             payload.len(),
             cv(self.data_type, ""),
-            cv("MS:1000576", ""),
+            cv(self.compression, ""),
             cv_unit(role, "", unit),
         )
     }

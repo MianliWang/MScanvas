@@ -290,6 +290,11 @@ impl ViewCache {
         })
     }
 
+    /// The root, for the free-space probe of decision 9. Never crosses IPC.
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
     fn entries(&self) -> PathBuf {
         self.root.join(ENTRIES)
     }
