@@ -315,6 +315,37 @@ Section 1.
 **Phase 3 — week 5 onward, as external inputs arrive.** The evidence-gated
 items of section 7.5 and the P2 capabilities of section 7.4.
 
+**Analysis track — M11, from 2026-10-30, in parallel with M10.** Owner
+decisions G1 to G4 in [OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md),
+answered "全部按推荐，继续" ("all as recommended, continue"). The three core
+jobs keep priority, and M11 and M10 work on disjoint files. The plan is the
+[roadmap](ROADMAP_V511_AND_ANALYSIS.md), and each analysis function passes the
+promotion gate in the
+[analysis capability map](../product/ANALYSIS_CAPABILITY_MAP.md).
+
+- **Two tracks (G2).** Track A needs no Python runtime: sample metadata
+  (PRJ-007), imported feature tables (ANA-005), project-owned statistics in
+  Rust (ANA-006), the XIC and the 2D map (VIEW-010). It ships in releases
+  before the Python analysis runtime is released. Track B (ANA-007) is
+  pyOpenMS feature detection, alignment, gap filling and annotation, and
+  reaches users only through a released, verified runtime; until the
+  runtime-release ADR lands, release builds answer `recipeUnavailable` for
+  every pyOpenMS function.
+- **Imported feature tables (G2).** An imported table is a project artifact
+  with its own digest, import record and lineage. MZmine-2-style CSV comes
+  first, up to the 64 MiB payload cap in v1.
+- **What stays refused (G3).** C17 (CWT centroiding), C28 (a custom output
+  extension), C50 (ETA; live elapsed time, C51, is in progress), C41
+  (built-in templates), the explanation texts removed on 2026-10-28 (RO-26,
+  SET-10, C12 and C19) and EXP-21 (parsing pasted Python or R code). The
+  analysis rows reopen, each behind the promotion gate. The node view (C59)
+  and a method text in Python or R (EXP-20) stay outside this roadmap. The
+  rows decided separately stay open under their own decisions: VW-14 (V-4),
+  VW-33 (V-1), VW-47 (V-5), C15 (HR-1) and VW-02's exports and panel (X-3).
+- **Navigation (G4).** Each analysis page enters the navigation when its first
+  working function ships, with no placeholder pages. The new look (FE-2)
+  leaves room for five page tabs at 960 px.
+
 ## 6. Selected features
 
 Each was designed read-only against the current code and critiqued
