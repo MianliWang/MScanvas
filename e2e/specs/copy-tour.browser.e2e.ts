@@ -450,6 +450,14 @@ function profileProjection(projection: Record<string, unknown>) {
   };
 }
 
+/** The chromatogram's ⋯ menu, then its first item, Set range…. */
+async function openChromatogramRangeEditor() {
+  await browser.$('.chromatogram-panel .figure-quick-actions button[aria-haspopup="menu"]').click();
+  await browser.$('[role="menuitem"]').waitForDisplayed({ timeout: 30_000 });
+  await (await browser.$$('[role="menuitem"]'))[0]!.click();
+  await browser.$(".chromatogram-panel .plot-range-form").waitForDisplayed();
+}
+
 async function openDetails() {
   await browser.$('.workbench-header [aria-controls="workbench-inspector"]').click();
   await frames();
@@ -518,6 +526,23 @@ const STOPS: readonly Stop[] = [
     await openPreview(); await selectTheSpectrum(5); await revealTheSpectrum();
   }, anchor: "svg.spectrum-plot" },
   { name: "viewer-metadata-minutes", table: declaredRun("minute"), drive: () => openViewerTab(3), anchor: ".preview-metadata" },
+  // The range editor's fields in the run's unit, and the figure dialog's run
+  // window once a range is committed.
+  { name: "chromatogram-minutes-range-editor", table: declaredRun("minute"), keepFocus: true, drive: async () => {
+    await openPreview();
+    await openChromatogramRangeEditor();
+  }, anchor: ".chromatogram-panel .plot-range-form" },
+  { name: "export-figure-minutes-range", table: declaredRun("minute"), drive: async () => {
+    await answerFigurePreviews();
+    await openPreview();
+    await openChromatogramRangeEditor();
+    await browser.$("#plot-range-rt-low").setValue("7.5");
+    await browser.$("#plot-range-rt-high").setValue("30");
+    await browser.$(".chromatogram-panel .plot-range-form button[type=submit]").click();
+    await browser.$(".chromatogram-panel .plot-range-form").waitForExist({ reverse: true });
+    await openFigureDialog(".chromatogram-panel");
+    await waitForFigurePreview();
+  }, anchor: ".figure-export-dialog" },
   // The reader refused the spectrum: its reason, the reader's stable id, and
   // where the preview is gone, opening the file again.
   { name: "spectrum-preview-not-open", table: refusedSpectrum("preview_not_open", null), drive: refuseTheSpectrum,

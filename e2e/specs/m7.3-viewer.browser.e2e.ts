@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 import { ipcTable } from "../support/fixtures";
 import { readBackSavedPreferences, revealRosterRow, seedARunOf } from "../support/viewer";
-import { choosePlotMenuItem } from "../support/figure";
+import { choosePlotMenuItem, FIGURE_DIALOG, openFigureDialog } from "../support/figure";
 import { installIpcBoundary, IPC_TABLE_KEY, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult, setInvokeRejection } from "../support/harness";
 
 const RT = "svg.chromatogram-svg";
@@ -47,7 +47,7 @@ async function preferences(language: "en" | "zh-CN", density: "comfortable" | "c
   await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
-function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" = "complete") {
+function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" | "minutes" = "complete") {
   const table: Record<string, unknown> = ipcTable({ emptySpectrum: kind === "empty", refusedViewport: kind === "refused", oneMzViewport: kind === "one" });
   const preview = buildPreview(8);
   preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, {
@@ -71,6 +71,11 @@ function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "la
       retentionTime: { value: index, unit: index % 2 === 0 ? "minute" : "second" } }));
     Object.assign(preview.runSummary, { retentionTimeRange: { state: "mixedUnits" } });
     Object.assign(preview, { chromatogramExportToken: null });
+  }
+  if (kind === "minutes") {
+    // Every scan declares minutes, as most native mzML does (ADR 0056).
+    preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, { retentionTime: { value: index, unit: "minute" } }));
+    Object.assign(preview.runSummary, { retentionTimeRange: { state: "reported", minimum: 0, maximum: 7, unit: "minute" } });
   }
   table.open_mzml_preview = preview;
   table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
@@ -531,6 +536,28 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     expect(await browser.$(row(0)).getText()).toContain("0.0000 min");
     expect(await browser.$(row(1)).getText()).toContain("1.0000 s");
     await capture("mixed-unit-refusal");
+  });
+
+  it("states a run's declared minutes wherever it prints a retention time, and converts nothing", async () => {
+    await open("minutes", { width: 1366, height: 768, dpr: 1 });
+    await browser.$(RT).waitForDisplayed();
+    expect(await browser.$(".chromatogram-panel .plot-axis-title-x").getText()).toBe("Retention time (min)");
+    expect(await browser.$(".chromatogram-range").getText()).toContain("7.0000 min");
+    expect(await browser.$(SCANS + " .scan-sort-unit").getText()).toBe("(min)");
+    // The range editor's fields and the range it commits.
+    await choosePlotMenuItem(".chromatogram-panel", "Set range…");
+    expect(await browser.$("#plot-range-rt-low-label").getText()).toBe("From (min)");
+    expect(await browser.$("#plot-range-rt-high-label").getText()).toBe("To (min)");
+    await browser.$("#plot-range-rt-low").setValue("2"); await browser.$("#plot-range-rt-high").setValue("5");
+    await browser.$(".chromatogram-panel .plot-range-form button[type=submit]").click();
+    await browser.waitUntil(async () => String(await browser.$(".chromatogram-panel .plot-committed-range").getProperty("textContent"))
+      .includes("2.0000 to 5.0000 min"), { timeoutMsg: "the committed range never stated its unit" });
+    await capture("minutes-range");
+    // The figure dialog names the run's window in the same unit.
+    await openFigureDialog(".chromatogram-panel");
+    expect(await browser.$(FIGURE_DIALOG).getText()).toContain("RT 2.0000–5.0000 min");
+    await capture("minutes-figure-dialog");
+    expect(await consoleEntries()).toEqual([]);
   });
 
   it("states a truncated spectrum's prefix and its total", async () => {
