@@ -772,6 +772,10 @@ fn report_boundary(
             print_property_set("advisory", valid.advisory().iter().map(|o| o.stable_id()));
             println!("boundary.fully_verified={}", valid.is_fully_verified());
         }
+        // This evidence route plans mzML rows only.
+        ConversionRunOutcome::FinalizedFile(_) => {
+            println!("boundary.outcome=finalized_file");
+        }
         ConversionRunOutcome::SkippedExistingDestination => {
             println!("boundary.outcome=skipped_existing_destination");
         }

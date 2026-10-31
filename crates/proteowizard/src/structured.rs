@@ -49,6 +49,7 @@ use crate::intent::{
     AdmittedIntent, CompressionIntent, ConversionIntent, NumericPrecision, OutputFormat,
     ProcessingIntent, SpectrumPopulation,
 };
+use crate::output_inspect::NonMzmlFormat;
 
 /// The executable every measured setting is bound to (ADR 0043 contract 3).
 const VERIFIED_MSCONVERT_SHA256: &str =
@@ -283,6 +284,24 @@ pub enum OutputEncoding {
 }
 
 impl OutputEncoding {
+    /// The format run 2 writes from the intermediate, for every format but
+    /// mzML (written directly) and mzXML (refused: its writer drops spectra at
+    /// exit 0, M6.10 case X2).
+    #[must_use]
+    pub const fn written_from_intermediate(&self) -> Option<NonMzmlFormat> {
+        Some(match self {
+            Self::MzMl(_) | Self::MzXml(_) => return None,
+            Self::MzMlb(_) => NonMzmlFormat::MzMlb,
+            Self::Mz5(_) => NonMzmlFormat::Mz5,
+            Self::Mgf => NonMzmlFormat::Mgf,
+            Self::Text => NonMzmlFormat::Text,
+            Self::Ms1 => NonMzmlFormat::Ms1,
+            Self::Cms1 => NonMzmlFormat::Cms1,
+            Self::Ms2 => NonMzmlFormat::Ms2,
+            Self::Cms2 => NonMzmlFormat::Cms2,
+        })
+    }
+
     const fn flag(&self) -> &'static str {
         match self {
             Self::MzMl(_) => "mzML",
@@ -463,6 +482,9 @@ pub struct IntegrityRoute {
     /// the judgement: it is not what ran, and never reported as an intent.
     pub(crate) judged_as: ConversionIntent,
     pub(crate) checks: AdvancedOutputChecks,
+    /// The format run 2 writes, where these checks judge run 1's intermediate
+    /// rather than the output (decision 6). `None` for an mzML output.
+    pub(crate) target: Option<NonMzmlFormat>,
 }
 
 impl StructuredIntent {
@@ -571,8 +593,8 @@ impl StructuredIntent {
     /// refused (`IntentNotCheckable`), never run unchecked.
     ///
     /// `None` today for:
-    /// - every format but mzML: the two-run route (decision 6) is not wired
-    ///   into a run yet;
+    /// - every format but mzML, whose output these checks do not read: see
+    ///   [`Self::intermediate_route`];
     /// - a source that produces an output set (SCIEX): its members are judged
     ///   by the set lifecycle, which has no advanced checks;
     /// - the vendor picker on any source but Thermo RAW: only the Thermo
@@ -589,6 +611,30 @@ impl StructuredIntent {
         let OutputEncoding::MzMl(encoding) = self.output else {
             return None;
         };
+        self.route(source, requested_mzml_encoding(encoding)?, None)
+    }
+
+    /// Decision 6's route for a format written from a private mzML
+    /// intermediate: the checks run 1's intermediate is judged by, at its own
+    /// fixed encoding (64/64, zlib, indexed), and the format run 2 writes.
+    ///
+    /// `None` for mzML (see [`Self::integrity_route`]), for mzXML, which stays
+    /// refused because its writer drops spectra at exit 0 (M6.10 case X2), and
+    /// wherever [`Self::integrity_route`]'s other refusals apply.
+    #[must_use]
+    pub fn intermediate_route(&self, source: ConversionSourceKind) -> Option<IntegrityRoute> {
+        let target = self.output.written_from_intermediate()?;
+        let intermediate =
+            RequestedMzmlEncoding::new(NumericPrecision::Mz64Intensity64, CompressionIntent::Zlib);
+        self.route(source, intermediate, Some(target))
+    }
+
+    fn route(
+        &self,
+        source: ConversionSourceKind,
+        encoding: RequestedMzmlEncoding,
+        target: Option<NonMzmlFormat>,
+    ) -> Option<IntegrityRoute> {
         if source.produces_output_set() {
             return None;
         }
@@ -618,10 +664,11 @@ impl StructuredIntent {
         Some(IntegrityRoute {
             judged_as,
             checks: AdvancedOutputChecks {
-                encoding: requested_mzml_encoding(encoding)?,
+                encoding,
                 changes: self.requested_changes(),
                 vendor_levels,
             },
+            target,
         })
     }
 

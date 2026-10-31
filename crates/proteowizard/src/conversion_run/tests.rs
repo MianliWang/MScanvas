@@ -19,6 +19,7 @@ use crate::intent::CompressionIntent;
 
 mod advanced;
 mod live_recovery;
+mod two_step;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -3205,14 +3206,23 @@ fn capabilities_reporting_for(
     revision: Option<&str>,
     executable_sha256: Sha256Digest,
 ) -> InstalledHelpCapabilities {
+    capabilities_reporting_with(MSCONVERT_HELP, release, revision, executable_sha256)
+}
+
+/// The same, for another captured help.
+fn capabilities_reporting_with(
+    help: &str,
+    release: &str,
+    revision: Option<&str>,
+    executable_sha256: Sha256Digest,
+) -> InstalledHelpCapabilities {
     let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
         .expect("canonical test executable");
     let reported = revision.map_or_else(
         || release.to_owned(),
         |revision| format!("{release} ({revision})"),
     );
-    let help =
-        format!("ProteoWizard release: {reported}\nBuild date: Jan 13 2026\n{MSCONVERT_HELP}");
+    let help = format!("ProteoWizard release: {reported}\nBuild date: Jan 13 2026\n{help}");
     InstalledHelpCapabilities::parse_unbound_capture_for_tests(
         BackendTool::MsConvert,
         executable,

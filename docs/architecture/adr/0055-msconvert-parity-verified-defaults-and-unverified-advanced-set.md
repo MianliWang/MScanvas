@@ -384,7 +384,7 @@ reader.
 > after exit 0: the attempt settles as `backend_not_terminated`, or
 > `cancellation_failed` where a stop was requested, so the desktop's
 > owned-process quarantine sees it. This holds for the single-output run and
-> for a SCIEX output set, as decision 6's run 1 does on `be/two-step`.
+> for a SCIEX output set, and for both of decision 6's runs.
 >
 > Two corrections from the PR #161 review, both of which had refused correct
 > outputs:
@@ -468,6 +468,71 @@ fails, the set fails whole. Progress shows two phases.
 
 Non-mzML outputs are finalized as files. They are **not adoptable and not
 previewable**, because the viewer reads mzML only, and the queue item says so.
+
+> **Implemented on `be/two-step`, stacked on draft PR #161, 2026-10-30.**
+> mgf, text, ms1, ms2, cms1, cms2, mz5 and mzMLb, in the conversion crate,
+> tested against the fake provider. No ProteoWizard program ran.
+>
+> - **Route.** `StructuredIntent::intermediate_route` judges run 1's
+>   intermediate at its own encoding (64/64, zlib, indexed), with the changes
+>   the chains and switches ask for; `integrity_route` stays mzML-only. The
+>   plan names the output with the format's extension, and the intermediate as
+>   a direct mzML conversion of the source would be named.
+> - **One staging area, two private directories.** Run 1 writes into the
+>   staging area's output directory. Once the intermediate passes, a second
+>   directory is created exclusively inside it, and run 2 writes there. One
+>   area keeps one staging creation per cancellation, which the live recovery
+>   record requires. The intermediate is never finalized: the same
+>   object-bound teardown removes it with the area, after the final file was
+>   published or refused.
+> - **Run 1's checks.** Every check of decision 5, judged as above. Then the
+>   intermediate is pinned (read sharing only, rehashed against the judged
+>   bytes) and held to the end of run 2, and it must hold something the
+>   format keeps (`output_contains_no_records` otherwise).
+> - **Run 2's argv**, typed: the intermediate, the format flag, that format's
+>   encoding options and the writer switches, then `--outdir` and `--outfile
+>   target`. No filter. The stem is fixed because the evidenced build appends
+>   the format's extension after stripping a known one, and `.txt` is not one
+>   it strips (`msconvert.cpp:82-117`), so a planned `<stem>.txt` would be
+>   written as `<stem>.txt.txt`. The staged `target.<ext>` takes the planned
+>   name when it is finalized. The extensions are `msconvert.cpp:627-661`'s.
+>   Both were read from the source at `47b13cf`, not measured; a build that
+>   names the file otherwise fails closed (`unexpected_output_name`).
+> - **The final file's checks:** exit 0, exactly the expected file, non-zero
+>   length, the format's signature and first record. They read and hash the
+>   handle that is then renamed, no-clobber, onto the planned name.
+> - **Outcome.** `finalized_file` is its own outcome, so no consumer can take
+>   it for an adoptable mzML output; it carries the intermediate's judgement.
+>   It is always advanced, "not verified by MSCanvas": no verified row writes
+>   another format.
+> - **Steps.** Every report of an attempt that reached run 1 names the step
+>   it settled in (`intermediate`, `target`); one settled before run 1 (a
+>   taken name, a stop before anything ran) names none. A refused decision-6
+>   check is `format_check_refused`, detailed by the check's own identifier,
+>   so an intermediate with no records the format keeps reports
+>   `output_contains_no_records` under `output_rejected` when decision 5
+>   refuses it and under `format_check_refused` when decision 6 does. A stop
+>   is answered during run 1, between the runs and during run 2; between the
+>   runs, what it states about the attempt's processes is what run 1's own
+>   ending established, and the staged reading is run 1's directory at
+>   `provider_returned`. While run 1's owned tree is not confirmed gone,
+>   nothing of its output is judged and run 2 is never launched: the attempt
+>   settles in `intermediate`, `backend_not_terminated` (or
+>   `cancellation_failed` where a stop was requested), and the staging area
+>   is kept. Run 2 leaving its tree unconfirmed settles the same way in
+>   `target`, its file unjudged and unpublished. A stop between the runs
+>   settles in `target` only once the intermediate passed its checks.
+> - **Not built:**
+>   - mzXML stays refused (`intent_not_checkable`). Its comparison exists in
+>     the output inspectors but is not wired into a run;
+>   - a SCIEX output set's 1 + N runs;
+>   - the desktop, which still refuses every format but mzML before planning.
+>     The queue's output name and the not-adoptable label are interface work.
+>     Two-phase progress also needs a step signal the crate does not yet give
+>     while a run is live: the step is reported only once the attempt
+>     settles;
+>   - a measurement on the real build, which needs a bounded release of the
+>     ProteoWizard hold.
 
 #### mzXML
 
