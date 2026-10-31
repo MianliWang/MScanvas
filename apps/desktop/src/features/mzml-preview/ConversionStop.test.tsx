@@ -19,6 +19,7 @@ import type {
   SelectedFile,
   WorkspaceConversionState,
 } from "./contracts";
+import { chooseRosterAction, rosterActionRefused } from "../../test/rosterActions";
 
 /**
  * Stopping a running queue, from the interface a user actually has.
@@ -46,19 +47,19 @@ function acquisition(index: number): SelectedFile {
 const DATASETS = [acquisition(1), acquisition(2), acquisition(3)];
 
 const STOP_EXPLANATION =
-  "Stops the current conversion and prevents remaining items from starting. Outputs already completed stay in place.";
+  "Stop queue keeps completed outputs.";
 
 // The other scope's copy, written out here for the same reason the one above is:
 // asserting the rendered sentence against a constant imported from the panel
 // would pass whatever the panel happened to say.
 const CANCEL_ITEM_EXPLANATION =
-  "Files already converted are kept, and the items after it still run. It may finish on its own first, and then it keeps its result. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
+  "If this stop cannot be confirmed, the whole queue stops and MSCanvas must restart.";
 
-// What the same control says once this document has asked. Its own sentence,
-// because the unavailable one -- "available while a file is being converted" --
-// would be shown exactly while a file is being converted.
-const CANCEL_ITEM_IN_FLIGHT_EXPLANATION =
-  "This file may still finish on its own, and then it keeps its result. The items after it still run. If MSCanvas cannot confirm that its converter ended, the whole queue stops and the session needs a restart.";
+// What the same control says once this document has asked: the same sentence,
+// which stays true while the stop is in flight. Never the unavailable one --
+// "available while a file is being converted" -- which would be shown exactly
+// while a file is being converted.
+const CANCEL_ITEM_IN_FLIGHT_EXPLANATION = CANCEL_ITEM_EXPLANATION;
 
 function renderApp(api: FakePreviewApi): void {
   render(
@@ -68,7 +69,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 function liveRegion(): string {
@@ -209,7 +210,7 @@ describe("stopping a running conversion queue", () => {
     const cancelItem = within(panel).getByRole("button", { name: "Stop this file" });
     expect(cancelItem).not.toHaveAttribute("aria-disabled");
     expect(cancelItem).toHaveAccessibleDescription(
-      `Stop this file ends run-2.raw and carries on with the rest of the queue. ${CANCEL_ITEM_EXPLANATION}`,
+      `Ends run-2.raw; the rest of the queue continues. ${CANCEL_ITEM_EXPLANATION}`,
     );
 
     // Still no pause and no resume: M6.8 adds neither, and a queue that could
@@ -297,7 +298,7 @@ describe("stopping a running conversion queue", () => {
     });
     await waitFor(() => {
       expect(
-        within(panel).getByText("Skipped — you chose not to convert this one"),
+        within(panel).getByText("Skipped by you"),
       ).toBeVisible();
     });
     expect(api.itemSkipRequests).toEqual([{ operationId: "1", itemIndex: 2 }]);
@@ -373,9 +374,7 @@ describe("stopping a running conversion queue", () => {
     // And the row says why, rather than being a "Waiting" row that silently
     // lacks a control its neighbour has.
     expect(
-      within(panel).getAllByText(
-        "Rerunning an earlier failure — it keeps that result if it is not run again.",
-      ),
+      within(panel).getAllByText("Rerun of an earlier failure"),
     ).toHaveLength(2);
   });
 
@@ -562,7 +561,7 @@ describe("stopping a running conversion queue", () => {
       const spoken = liveRegion();
       expect(spoken).toContain("1 converted, 0 skipped, 1 failed, 1 not run.");
       expect(spoken).toContain(
-        "MSCanvas could not confirm that a ProteoWizard process it started has ended.",
+        "MSCanvas could not confirm that a ProteoWizard process ended.",
       );
     });
   });
@@ -593,7 +592,6 @@ describe("stopping a running conversion queue", () => {
     await waitFor(() => {
       expect(liveRegion()).toContain("Skipping run-3.raw.");
     });
-    expect(liveRegion()).toContain("the queue carries on");
 
     settle(runningQueue());
   });
@@ -618,7 +616,7 @@ describe("stopping a running conversion queue", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
-      expect(within(panel).getByText(/Output-only validation\./)).toBeVisible();
+      expect(within(panel).getByText(/Output-only validation: not compared with the vendor source\./)).toBeVisible();
     });
     await waitFor(() => {
       expect(liveRegion()).toContain("Output-only validation.");
@@ -649,7 +647,6 @@ describe("stopping a running conversion queue", () => {
     await waitFor(() => {
       expect(liveRegion()).toContain("Stopping run-2.raw.");
     });
-    expect(liveRegion()).toContain("may still finish on its own");
     settle(runningQueue());
   });
 
@@ -702,9 +699,7 @@ describe("stopping a running conversion queue", () => {
       expect(within(panel).getByText("Stopping queue…")).toBeVisible();
     });
     expect(
-      within(panel).getByText(
-        "No further items will start. The current conversion may still finish on its own.",
-      ),
+      within(panel).getByText("The current file may still finish."),
     ).toBeVisible();
     // The queue and every result it already has stay on screen.
     expect(
@@ -714,7 +709,7 @@ describe("stopping a running conversion queue", () => {
     // Nothing predicts the outcome of the item under way.
     expect(panel.textContent ?? "").not.toContain("Cancelled");
     await waitFor(() => {
-      expect(liveRegion()).toContain("Stopping queue. No further items will start.");
+      expect(liveRegion()).toContain("Stopping queue.");
     });
   });
 
@@ -752,9 +747,7 @@ describe("stopping a running conversion queue", () => {
       ),
     ).toBeVisible();
     expect(
-      within(panel).getByText(
-        "Completed outputs remain in the destination folder. Cancelled and not-run items were not finalized by this queue.",
-      ),
+      within(panel).getByText("Completed outputs remain in the destination folder."),
     ).toBeVisible();
   });
 
@@ -797,7 +790,7 @@ describe("stopping a running conversion queue", () => {
     });
     expect(within(items[1]).getByText("Cancelled")).toBeVisible();
     expect(
-      within(items[1]).getByText("MSCanvas could not remove its own temporary folder afterwards."),
+      within(items[1]).getByText("MSCanvas could not remove its temporary folder."),
     ).toBeVisible();
     // Said about that item and no other.
     expect(items[0].textContent ?? "").not.toContain("temporary folder");
@@ -837,14 +830,15 @@ describe("stopping a running conversion queue", () => {
     expect(await screen.findByText(/ProteoWizard is available/)).toBeVisible();
     fireEvent.click(await within(panel).findByRole("button", { name: "Stop queue" }));
 
-    const banner = (await screen.findByText("MSCanvas cannot use the backend until it restarts"))
+    const banner = (await screen.findByText("Restart MSCanvas to use ProteoWizard again"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
       "MSCanvas could not confirm that a ProteoWizard process it started has ended. Restart MSCanvas before starting another preview or conversion.",
     );
     // And the gates derived from that verdict close with it.
+    fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
   });
 
@@ -986,7 +980,9 @@ describe("stopping a running conversion queue", () => {
     // place: converting those rows again is a new queue from the roster.
     expect(within(panel).queryByRole("button", { name: /^retry/i })).toBeNull();
     expect(within(panel).queryByRole("button", { name: /resume/i })).toBeNull();
-    // The ordinary way to convert again is the one that was always there.
+    // The ordinary way to convert again is the one that was always there,
+    // opened under the finished queue on request (review 6).
+    fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
     //
     // Awaited, unlike the two queries above it. Those assert an absence, which
     // is true from the first render; this one asserts a presence that arrives
@@ -1076,7 +1072,7 @@ describe("stopping a running conversion queue", () => {
     const warning = await within(panel).findByRole("alert");
     // High priority, and not carried by colour alone.
     expect(warning.textContent ?? "").toContain(
-      "MSCanvas could not confirm that the backend process stopped.",
+      "The backend process may still be running.",
     );
     expect(warning.textContent ?? "").toContain(
       "Restart MSCanvas before starting another preview or conversion.",
@@ -1090,10 +1086,10 @@ describe("stopping a running conversion queue", () => {
 
     // Every backend control is refused while quarantined.
     expect(within(panel).queryByRole("button", { name: /^retry/i })).toBeNull();
+    fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
     // And the roster is still readable and searchable.
     expect(screen.getByRole("treegrid", { name: "Acquisitions" })).toBeVisible();
     expect(screen.getByRole("searchbox", { name: /search/i })).toBeEnabled();
@@ -1101,7 +1097,7 @@ describe("stopping a running conversion queue", () => {
     // The backend banner says the same thing, because a user who has scrolled
     // past the queue still needs to know why nothing will start. It is never a
     // stale "available" beside a session that refuses every backend action.
-    const banner = (await screen.findByText("MSCanvas cannot use the backend until it restarts"))
+    const banner = (await screen.findByText("Restart MSCanvas to use ProteoWizard again"))
       .parentElement as HTMLElement;
     expect(banner.textContent ?? "").toContain(
       "MSCanvas could not confirm that a ProteoWizard process it started has ended. Restart MSCanvas before starting another preview or conversion.",
@@ -1121,12 +1117,12 @@ describe("stopping a running conversion queue", () => {
     expect(api.stopRequests).toEqual([]);
     expect(within(panel).queryByRole("button", { name: "Stop queue" })).toBeNull();
     // Every row a stopping queue holds is still protected.
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
+    expect(await rosterActionRefused("clearList")).toBe(false);
+    await chooseRosterAction("clearList");
     expect(await screen.findByRole("dialog")).toBeVisible();
     expect(api.calls()).not.toContain("clearWorkspace");
     fireEvent.click(screen.getByRole("button", { name: "Return" }));
-    expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows no stale Stop for a queue that is already over", async () => {
@@ -1141,9 +1137,9 @@ describe("stopping a running conversion queue", () => {
     expect(api.stopRequests).toEqual([]);
     // A terminal queue holds nothing, so the workspace is the user's again.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
     });
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeEnabled();
+    expect(await rosterActionRefused("clearList")).toBe(false);
   });
 
   it("moves focus to the queue's status line when the pressed stop control leaves (PM9.4 R11)", async () => {

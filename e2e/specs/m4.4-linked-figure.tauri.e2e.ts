@@ -215,8 +215,8 @@ describe("exporting a linked figure on the real Tauri WebView", () => {
       timeoutMsg: "the linked copy never reported an outcome",
     });
     const said = await linkedStatus();
-    expect(said).toContain(`in a run of ${String(SEEDED_SCANS)} scans`);
-    expect(said).toContain("marking spectrum 0");
+    expect(said).toContain(`run of ${String(SEEDED_SCANS)} scans`);
+    expect(said).toContain("spectrum 0 marked");
   });
 
   it("refuses a chromatogram token this session no longer holds", async () => {

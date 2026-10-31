@@ -146,6 +146,38 @@ describe("the project surface", () => {
     }
   });
 
+  it("shows names and record titles as text, with one Details control per row", async () => {
+    const api = mount(capturedProject());
+    await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
+
+    // A name is something to read, not a second way to press the row.
+    const name = screen.getByText("QC_pool_01.mzML");
+    expect(name.closest("button")).toBeNull();
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-project-input], [data-project-run]")];
+    expect(rows.length).toBeGreaterThan(1);
+    for (const each of rows) {
+      const details = within(each).getAllByRole("button", { name: /^Details for / });
+      expect(details).toHaveLength(1);
+      expect(details[0].textContent).toBe(en.projectDetails);
+      expect(details[0].getAttribute("aria-controls")).toBe("workbench-inspector");
+    }
+    expect(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" })).toBeTruthy();
+
+    // The record is named by what it is, never by the action that makes one:
+    // "Capture file facts" is the section's button and nothing else.
+    const run = document.querySelector<HTMLElement>("[data-project-run]")!;
+    expect(within(run).getByText(en.projectArtifactFileFacts).closest("button")).toBeNull();
+    expect(screen.getAllByText(en.projectCapture)).toHaveLength(1);
+    expect(screen.getByText(en.projectCapture).closest("[data-project-capture]")).toBeTruthy();
+
+    // Its Details opens the record the run left, and says so on the control.
+    const details = within(run).getByRole("button", { name: /^Details for / });
+    await press(details);
+    expect(details.getAttribute("aria-current")).toBe("true");
+    expect(details.hasAttribute("data-project-inspect-artifact")).toBe(true);
+    expect(api.calls.filter((call) => call !== "getProjectState")).toEqual([]);
+  });
+
   it("does not relink until the proposal is explicitly confirmed", async () => {
     const input = projectInput({
       verification: "unavailable",
@@ -227,6 +259,17 @@ describe("the project surface", () => {
     expect(document.querySelector("[data-project-proposal]")).toBeNull();
   });
 
+  it("windows a long reference list, its rest one hidden spacer row", async () => {
+    const inputs = Array.from({ length: 120 }, (_, index) =>
+      projectInput({ id: `11111111-2222-4111-8111-${String(index).padStart(12, "0")}`, label: `run-${String(index)}.mzML` }));
+    mount(openProject({ inputs }));
+    await waitFor(() => expect(document.querySelector('.project-list[data-windowed="true"]')).not.toBeNull());
+    const list = document.querySelector<HTMLElement>('.project-list[data-windowed="true"]')!;
+    expect(list.querySelectorAll("[data-project-input]").length).toBeLessThan(inputs.length);
+    expect(list.style.paddingBottom).toBe("");
+    expect(list.querySelector(":scope > li.list-window-spacer:last-child")).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("shows a completed capture as a run linked to the artifact it produced", async () => {
     const input = projectInput({ verification: "matchingRecordedContent" });
     mount(
@@ -268,8 +311,6 @@ describe("the project surface", () => {
     expect(
       run?.querySelector("[data-project-artifact='eeeeeeee-1111-4111-8111-111111111111']"),
     ).toBeTruthy();
-    // And the surface says what a capture is, where it is displayed.
-    expect(screen.getByText(en.projectCaptureMeaning)).toBeTruthy();
     // The instant is formatted for a reader, and the machine-readable form is
     // kept where a machine can still find it.
     const when = run?.querySelector("time");
@@ -661,11 +702,15 @@ describe("the project surface", () => {
     await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
 
     // `aria-disabled` rather than `disabled`, so the sentence explaining it is
-    // reachable from the keyboard rather than only from a pointer.
+    // reachable from the keyboard rather than only from a pointer -- and that
+    // sentence is on screen beside the name, not a tooltip (PM9.7 F1).
     const save = screen.getByRole("button", { name: en.projectSave });
     expect(save.hasAttribute("disabled")).toBe(false);
     expect(save.getAttribute("aria-disabled")).toBe("true");
-    expect(save.getAttribute("title")).toBe(en.projectSaveNeedsLocation);
+    expect(save.getAttribute("title")).toBeNull();
+    const reason = document.getElementById(save.getAttribute("aria-describedby") ?? "");
+    expect(reason?.textContent).toBe(en.projectSaveNeedsLocation);
+    expect(reason?.closest(".project-header")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: en.projectSaveAs }).getAttribute("aria-disabled"),
     ).toBeNull();
@@ -794,10 +839,8 @@ describe("the project surface", () => {
     await waitFor(() => expect(screen.getByText(zh.projectReferences)).toBeTruthy());
     expect(screen.getByRole("button", { name: zh.projectCheckLinks })).toBeTruthy();
     expect(screen.getByText(zh.projectStateIncomplete)).toBeTruthy();
-    expect(screen.getByText(zh.projectPrivacy)).toBeTruthy();
     // The history section too, which is where English was leaking in.
     expect(screen.getByText(zh.projectRunCompleted)).toBeTruthy();
-    expect(screen.getByText(zh.projectCaptureMeaning)).toBeTruthy();
     expect(screen.getByText(zh.projectUnsaved)).toBeTruthy();
     expect(document.body.textContent).not.toContain("File facts: sample.mzML");
     // And a refusal reads in Chinese as well.
@@ -808,10 +851,9 @@ describe("the project surface", () => {
     );
 
     // Translated, not copied.
-    expect(zh.projectPrivacy).not.toEqual(en.projectPrivacy);
+    expect(zh.projectNoneHint).not.toEqual(en.projectNoneHint);
     expect(zh.projectStateIncomplete).not.toEqual(en.projectStateIncomplete);
     expect(zh.projectRefusedUnstable).not.toEqual(en.projectRefusedUnstable);
-    expect(zh.projectCaptureMeaning).not.toEqual(en.projectCaptureMeaning);
   });
 
   it("is usable with nothing open and offers the two ways in", async () => {
@@ -823,9 +865,9 @@ describe("the project surface", () => {
     // offered beside it, live and reachable (PM9.7 F2).
     const create = screen.getByRole("button", { name: en.projectNew });
     const reopen = screen.getByRole("button", { name: en.projectOpen });
-    expect(create.className).toBe("primary-button");
-    expect(reopen.className).toBe("secondary-button");
-    expect(document.querySelectorAll("[data-project-surface] .primary-button")).toHaveLength(1);
+    expect(create.classList.contains("ui-button--primary")).toBe(true);
+    expect(reopen.classList.contains("ui-button--secondary")).toBe(true);
+    expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
     for (const offered of [create, reopen]) {
       expect(offered.getAttribute("aria-disabled")).toBeNull();
       expect((offered as HTMLButtonElement).disabled).toBe(false);
@@ -835,17 +877,14 @@ describe("the project surface", () => {
     // Emphasis only: showing the empty surface creates nothing, opens no
     // picker and starts no work.
     expect(api.calls).toEqual(["getProjectState"]);
-    // Save, Save As and Close are refused but reachable, and each says why:
-    // its description is the no-project sentence, its tooltip the reason
-    // (PM9.7 F1).
+    // Save, Save As and Close act on an open project, so with none they are
+    // not offered at all: the head holds exactly the two ways in.
     for (const name of [en.projectSave, en.projectSaveAs, en.projectClose]) {
-      const refused = screen.getByRole("button", { name });
-      expect(refused.getAttribute("aria-disabled")).toBe("true");
-      expect((refused as HTMLButtonElement).disabled).toBe(false);
-      expect(refused.getAttribute("title")).toBe(en.projectNeedsProject);
-      const described = document.getElementById(refused.getAttribute("aria-describedby") ?? "");
-      expect(described?.textContent).toBe(en.projectNoneHint);
+      expect(screen.queryByRole("button", { name })).toBeNull();
     }
+    expect(
+      [...document.querySelectorAll(".project-header button")].map((button) => button.textContent),
+    ).toEqual([en.projectNew, en.projectOpen]);
     // Nothing claims a project that is not there.
     expect(screen.queryByText(en.projectReferences)).toBeNull();
   });
@@ -855,9 +894,9 @@ describe("the project surface", () => {
 
     await waitFor(() => expect(screen.getByText(zh.projectNone)).toBeTruthy());
     expect(screen.getByText(zh.projectNoneHint)).toBeTruthy();
-    expect(screen.getByRole("button", { name: zh.projectNew }).className).toBe("primary-button");
-    expect(screen.getByRole("button", { name: zh.projectOpen }).className).toBe("secondary-button");
-    expect(document.querySelectorAll("[data-project-surface] .primary-button")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: zh.projectNew }).classList.contains("ui-button--primary")).toBe(true);
+    expect(screen.getByRole("button", { name: zh.projectOpen }).classList.contains("ui-button--secondary")).toBe(true);
+    expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
     expect(api.calls).toEqual(["getProjectState"]);
   });
 
@@ -872,8 +911,10 @@ describe("the project surface", () => {
     // A refused primary keeps its place and its Tab stop; the busy line is
     // its reason, and a press sends nothing.
     const create = screen.getByRole("button", { name: en.projectNew });
-    expect(create.className).toBe("primary-button");
+    expect(create.classList.contains("ui-button--primary")).toBe(true);
     expect(create.getAttribute("aria-disabled")).toBe("true");
+    expect(create.getAttribute("aria-describedby")).toBe("project-busy-line");
+    expect(document.getElementById("project-busy-line")?.textContent).toBe(en.projectBusyOpening);
     await press(create);
     expect(api.createProject).not.toHaveBeenCalled();
     await act(async () => {
@@ -882,12 +923,62 @@ describe("the project surface", () => {
     await waitFor(() => expect(document.querySelector("[data-project-busy]")).toBeNull());
   });
 
-  it("gives New project back its secondary place once a project is open", async () => {
+  it("makes Save As… the one filled primary while the project was never saved", async () => {
     mount(openProject({ inputs: [projectInput()], dirty: true }));
     await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
 
-    expect(screen.getByRole("button", { name: en.projectNew }).className).toBe("secondary-button");
-    expect(screen.getByRole("button", { name: en.projectOpen }).className).toBe("secondary-button");
-    expect(document.querySelector(".project-header .primary-button")).toBeNull();
+    // New project gives up its emphasis once a project is open, and is a
+    // bordered button like the rest of the head.
+    expect(screen.getByRole("button", { name: en.projectNew }).classList.contains("ui-button--secondary")).toBe(true);
+    expect(screen.getByRole("button", { name: en.projectOpen }).classList.contains("ui-button--secondary")).toBe(true);
+    expect(screen.getByRole("button", { name: en.projectClose }).classList.contains("ui-button--secondary")).toBe(true);
+    // Never saved: Save waits and says why in words beside the name; Save
+    // As… is the way through, so it is the one filled primary on the surface.
+    const save = screen.getByRole("button", { name: en.projectSave });
+    expect(save.classList.contains("ui-button--primary")).toBe(false);
+    expect(document.getElementById(save.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
+      en.projectSaveNeedsLocation,
+    );
+    const saveAs = screen.getByRole("button", { name: en.projectSaveAs });
+    const primaries = document.querySelectorAll("[data-project-surface] .ui-button--primary");
+    expect(primaries).toHaveLength(1);
+    expect(primaries[0]).toBe(saveAs);
+    expect(document.querySelector("[data-project-capture]")?.classList.contains("ui-button--primary")).toBe(false);
+  });
+
+  it("leaves the head without a primary once a saved project has nothing to save", async () => {
+    mount(openProject({ inputs: [projectInput()], dirty: false, published: true }));
+    await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+    expect(document.querySelector(".project-header .ui-button--primary")).toBeNull();
+    expect(screen.queryByText(en.projectSaveNeedsLocation)).toBeNull();
+    // The surface's one primary is then the panel's own job.
+    expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
+    expect(document.querySelector("[data-project-capture]")?.classList.contains("ui-button--primary")).toBe(true);
+  });
+
+  it("keeps the keyboard on the head when Close takes Save, Save As… and Close away", async () => {
+    const api = mount(openProject({ inputs: [projectInput()], published: true }));
+    await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+    api.set(NO_PROJECT);
+    const close = screen.getByRole("button", { name: en.projectClose });
+    close.focus();
+    await press(close);
+    await waitFor(() => expect(screen.getByText(en.projectNone)).toBeTruthy());
+
+    expect(screen.queryByRole("button", { name: en.projectClose })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: en.projectNew }));
+  });
+
+  it("makes Save the one filled primary while a saved project has changes", async () => {
+    mount(openProject({ inputs: [projectInput()], dirty: true, published: true }));
+    await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+    const save = screen.getByRole("button", { name: en.projectSave });
+    expect(save.classList.contains("ui-button--primary")).toBe(true);
+    expect(save.getAttribute("aria-disabled")).toBeNull();
+    expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
+    expect(screen.getByText(en.projectUnsaved).hasAttribute("data-project-unsaved")).toBe(true);
   });
 });
