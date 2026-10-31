@@ -2,11 +2,11 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use mscanvas_proteowizard::{PreviewOperation, Redactor, Sha256Digest};
+use mscanvas_proteowizard::{PreviewOperation, Sha256Digest};
 
 use super::{
     Backend, Facts, KnownRoots, RECENT_ERROR_CAPACITY, RecentError, RecentErrors, account_names,
-    recent_errors, render, summary,
+    recent_errors, render, summary, summary_with,
 };
 use crate::preferences::UiPreferenceStore;
 use crate::preview::InstallationIdentity;
@@ -45,10 +45,6 @@ fn roots() -> KnownRoots {
         local_app_data: Some(format!(r"{PROFILE}\AppData\Local")),
         user_profile: Some(PROFILE.to_owned()),
     }
-}
-
-fn redactor() -> Redactor {
-    Redactor::default().with_path(Path::new(PROFILE), "<user-profile>")
 }
 
 /// The account names the production lookup finds when `USERNAME` holds
@@ -96,11 +92,13 @@ fn ordinary() -> Facts {
                 code: "conversion_destination_refused".to_owned(),
                 first: NOW - 600,
                 last: NOW - 600,
+                repeated: false,
             },
             RecentError {
                 code: "preview_worker_unavailable".to_owned(),
                 first: NOW - 300,
                 last: NOW - 210,
+                repeated: true,
             },
         ],
         dropped_errors: 3,
@@ -150,10 +148,7 @@ Held: 2 (at most 32; older dropped: 3)
 - 2026-10-30T07:50:00Z conversion_destination_refused
 - 2026-10-30T07:55:00Z preview_worker_unavailable (repeated until 2026-10-30T07:56:30Z)
 ";
-    assert_eq!(
-        render(&ordinary(), &roots(), &redactor(), &accounts()),
-        expected
-    );
+    assert_eq!(render(&ordinary(), &roots(), &accounts()), expected);
 }
 
 /// The real collection path, over a provider that fails the test if anything
@@ -177,6 +172,30 @@ fn the_session_summary_neither_probes_nor_launches_anything() {
     }
 }
 
+/// The real collection path reads the account name it checks against: an
+/// account named like a value it writes withholds that value.
+#[test]
+fn the_session_summary_checks_the_account_name_it_reads() {
+    let service = PreviewService::new(Box::new(NoProcess));
+    let text = summary_with(&service, &UiPreferenceStore::unavailable(), |name| {
+        (name == "USERNAME").then(|| OsString::from("unavailable"))
+    });
+    assert!(
+        text.contains("UI preferences: <withheld>\n"),
+        "the account name was not checked:\n{text}"
+    );
+}
+
+/// The known roots are read from the variables Windows sets.
+#[cfg(windows)]
+#[test]
+fn the_known_roots_come_from_the_variables_windows_sets() {
+    let roots = KnownRoots::of(std::env::var_os);
+    assert!(roots.program_files.is_some(), "{roots:?}");
+    assert!(roots.local_app_data.is_some(), "{roots:?}");
+    assert!(roots.user_profile.is_some(), "{roots:?}");
+}
+
 #[test]
 fn an_unchecked_backend_says_so_rather_than_guessing() {
     let facts = Facts {
@@ -186,7 +205,7 @@ fn an_unchecked_backend_says_so_rather_than_guessing() {
         },
         ..ordinary()
     };
-    let text = render(&facts, &roots(), &redactor(), &accounts());
+    let text = render(&facts, &roots(), &accounts());
     for line in [
         "Checked this session: no",
         "Quarantined: yes",
@@ -207,7 +226,7 @@ fn a_saved_language_is_none_only_when_nothing_is_saved() {
             ui_preferences: outcome.to_owned(),
             ..ordinary()
         };
-        let text = render(&facts, &roots(), &redactor(), &accounts());
+        let text = render(&facts, &roots(), &accounts());
         assert!(
             text.contains(&format!("Saved UI language: {expected}\n")),
             "{outcome} should read {expected}:\n{text}"
@@ -291,10 +310,11 @@ fn planted_identifiers_never_appear_whatever_field_they_are_planted_in() {
                     code: value.clone(),
                     first: NOW,
                     last: NOW + 1,
+                    repeated: true,
                 }],
                 dropped_errors: 0,
             };
-            let text = render(&facts, &roots(), &redactor(), &accounts()).to_lowercase();
+            let text = render(&facts, &roots(), &accounts()).to_lowercase();
             for sentinel in SENTINELS {
                 assert!(
                     !text.contains(sentinel),
@@ -341,6 +361,7 @@ fn an_account_name_withholds_only_a_value_it_is_a_whole_token_of() {
                     code: "preview_worker_unavailable".to_owned(),
                     first: NOW,
                     last: NOW,
+                    repeated: false,
                 }],
                 ..ordinary()
             },
@@ -401,7 +422,7 @@ fn an_account_name_withholds_only_a_value_it_is_a_whole_token_of() {
         ),
     ];
     for (account, facts, line) in cases {
-        let text = render(&facts, &roots(), &redactor(), &accounts_of(account));
+        let text = render(&facts, &roots(), &accounts_of(account));
         assert!(
             text.contains(&format!("{line}\n")),
             "{account}: {line} is missing:\n{text}"
@@ -463,7 +484,7 @@ fn a_folder_is_named_only_by_the_known_root_it_sits_under() {
             },
             ..ordinary()
         };
-        let text = render(&facts, &roots(), &redactor(), &accounts());
+        let text = render(&facts, &roots(), &accounts());
         assert!(
             text.contains(&format!("Folder: {expected}\n")),
             "{folder} should read {expected}:\n{text}"
@@ -506,11 +527,12 @@ fn the_largest_summary_every_shape_admits_stays_within_its_bound() {
                 code: code(index + 10),
                 first: u64::from(u32::MAX) - 1,
                 last: u64::from(u32::MAX),
+                repeated: true,
             })
             .collect(),
         dropped_errors: u64::MAX,
     };
-    let text = render(&facts, &roots(), &Redactor::default(), &[]);
+    let text = render(&facts, &roots(), &[]);
     assert!(
         !text.contains("<withheld>"),
         "every value here is admitted, so the bound is measured at its largest:\n{text}"
@@ -530,28 +552,40 @@ fn the_ring_keeps_codes_coalesces_repeats_and_counts_what_it_dropped() {
     ring.note("b_code", 30);
     ring.note("a_code", 40);
     ring.note(DATA, 50);
+    // A repeat within the same second still says it repeated.
+    ring.note("c_code", 60);
+    ring.note("c_code", 60);
     let (entries, dropped) = ring.snapshot();
-    let seen: Vec<(&str, u64, u64)> = entries
+    let seen: Vec<(&str, u64, u64, bool)> = entries
         .iter()
-        .map(|entry| (entry.code.as_str(), entry.first, entry.last))
+        .map(|entry| (entry.code.as_str(), entry.first, entry.last, entry.repeated))
         .collect();
     assert_eq!(
         seen,
         [
-            ("a_code", 10, 20),
-            ("b_code", 30, 30),
-            ("a_code", 40, 40),
-            ("unrecognized_code", 50, 50),
+            ("a_code", 10, 20, true),
+            ("b_code", 30, 30, false),
+            ("a_code", 40, 40, false),
+            ("unrecognized_code", 50, 50, false),
+            ("c_code", 60, 60, true),
         ]
     );
     assert_eq!(dropped, 0);
+    let facts = Facts {
+        recent_errors: entries.clone(),
+        ..ordinary()
+    };
+    assert!(
+        render(&facts, &roots(), &accounts())
+            .contains("- 1970-01-01T00:01:00Z c_code (repeated until 1970-01-01T00:01:00Z)\n")
+    );
 
     for index in 0..40_u64 {
         ring.note(&format!("code_{index}"), 100 + index);
     }
     let (entries, dropped) = ring.snapshot();
     assert_eq!(entries.len(), RECENT_ERROR_CAPACITY);
-    assert_eq!(dropped, 4 + 40 - RECENT_ERROR_CAPACITY as u64);
+    assert_eq!(dropped, 5 + 40 - RECENT_ERROR_CAPACITY as u64);
     assert_eq!(
         entries.last().map(|entry| entry.code.as_str()),
         Some("code_39")

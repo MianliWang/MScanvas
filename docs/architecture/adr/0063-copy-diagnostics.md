@@ -83,13 +83,14 @@ build commit are compile-time values); no user name; no ProteoWizard help text
 beyond the release, the build date and the source revision, each admitted only
 in its own shape; and no error summary or detail. Only those environment variables are read that
 locate the profile, the local application data and Program Files, or that name
-the account, and they are used only to recognise and redact.
+the account, and they are used only to name a root and to check for the
+account name.
 
 The recent error codes of decision 5 do say something about the user's work: a
 code can name the input's vendor (`sciex_companion_missing`) or a feature that
 was used (`targeted_evidence_absent`), and its times say when.
 
-### 3. Codes come from owned ids; every value passes its shape and the redactor, or is withheld whole
+### 3. Codes come from owned ids; every value passes its shape, or is withheld whole
 
 There is no free-text field. The first line of defence covers the code fields
 only: a *code* is a stable id the repository defines — a backend failure kind,
@@ -103,9 +104,10 @@ own help text. Those are held by their shapes alone, none of which admits a
 path separator or a colon, so loosening one of those shapes removes the only
 defence that value has.
 
-The second line is shape and redaction. Each value must match its own shape
-from the table and must come back unchanged from a redactor that knows the
-profile path. A value whose shape admits a word — a code, the Windows version
+The second line is shape. Each value must match its own shape from the table.
+No shape admits a path separator or a colon, so a redactor that knows the
+profile path could never change an admitted value, and none runs. A value
+whose shape admits a word — a code, the Windows version
 and edition, the application version — must also not hold the account name
 (`USERNAME` or `USER`) as a whole token: the whole value, or a run with the
 value's edge or `_`, `.`, `-`, `+` or a space on each side, compared without
@@ -149,9 +151,9 @@ the source revision and the `msconvert` SHA-256.
 
 ### 5. A bounded, in-memory ring of boundary error codes
 
-Every boundary error is built through `PreviewErrorDto::new`, so that is where
-its code, and only its code, joins the ring. The one boundary error built
-elsewhere, `figure_preview_too_large`, now goes through it too. The ring holds
+Every `PreviewErrorDto` is built through `PreviewErrorDto::new`, so that is
+where its code, and only its code, joins the ring. The one built elsewhere,
+`figure_preview_too_large`, now goes through it too. The ring holds
 32 entries and counts the ones it drops. Consecutive repeats of one code are one
 entry with a first and a last time, so a retry loop or a failure projected
 again cannot push every other code out. A value that is not shaped like a code
@@ -164,6 +166,19 @@ but not exactly, what the interface showed: an error built and then discarded
 is counted too. A search of the native sources on 2026-10-30 found no
 `ok_or`, `unwrap_or`, `map_or` or `or` that builds one eagerly.
 
+The ring holds `PreviewErrorDto` kinds only. These are not errors at the
+boundary, so they are not in it:
+
+- a conversion that ran and failed, which is a report whose `outcome` and
+  `detailedOutcome` say why;
+- a refusal carried in an `Ok` outcome: opening an output, clearing the
+  workspace, reclaiming staging, a spectrum domain and a conversion
+  configuration;
+- a preference save that failed, whose `problem` is part of its `Ok` result.
+
+So `Held: 0` does not mean that no conversion failed this session. Whether a
+failed conversion's outcome joins the ring is open (question 7).
+
 ### 6. Format
 
 Plain text, so it pastes into an issue as it is. The first line is
@@ -174,7 +189,7 @@ stable, so support can read a summary whatever the interface language was.
 Values are written as they are, never translated. `Format` changes when a
 heading or a key does. A recent error is
 `- <first time> <code>`, followed by `(repeated until <last time>)` when it
-repeated.
+repeated, even within the same second.
 
 ### 7. Bounds
 
@@ -241,6 +256,16 @@ route on 2026-10-30 (question 4, A0063). The release guide's
 - **The account check on codes only.** Narrower still, but a word-shaped value
   that is not a code, such as the Windows edition or the application version,
   would then carry a planted name through.
+- **No account check at all**, relying on owned sources. Every value the check
+  reads is an owned code, a compile-time value or a registry fact, so in
+  production it fires only by chance, and then the withheld line points at the
+  name: an account named `sciex` loses `sciex_companion_missing`, the line
+  support needs most. The cost is the only defence in depth against a later
+  change that routes supplied text into a code field.
+- **Every value through the profile redactor as well**, as an earlier draft did.
+  Every shape already excludes a path separator and a colon, and the
+  redactor only knows absolute paths, so it could never change an admitted
+  value; it cost a canonicalisation and Win32 name lookups per summary.
 - **JSON.** Machine-readable, but a user pasting into an issue reads plain text
   more easily, and nothing reads the summary by program.
 - **A saved file, like ADR 0017.** A file needs a save dialog and a place, and
@@ -289,8 +314,8 @@ questions 1–5, and each is answered as recommended:
    That a recent error code can name a vendor or a feature (decision 5) is
    accepted; no code allowlist or category is added to the ring.
 
-Question 6 was added after A0063 was written and is not answered by it; it
-stays open below.
+Questions 6 and 7 were added after A0063 was written and are not answered by
+it; they stay open below.
 
 ## Open questions for the owner
 
@@ -306,4 +331,14 @@ stays open below.
 5. *Answered on 2026-10-30 (A0063):* **Workspace contents by family.** Left out.
 6. **Where the account name is checked (decision 3).** Open. Recommended: only values
    whose shape admits a word, as a whole token. The alternatives are every
-   value as a whole token, every value as a substring, or codes only.
+   value as a whole token, every value as a substring, codes only, or no
+   account check at all, which keeps `sciex_companion_missing` for an account
+   named `sciex` but loses the defence in depth.
+7. **A failed conversion's outcome in the ring (decision 5).** Open; added after
+   A0063. Recommended: yes, the report's `detailedOutcome` (its `outcome` when
+   it has none) joins the ring when a conversion that ran ends in failure,
+   recorded where the report is projected, after PR #161 merges, because that
+   projection is #161's code. It is an owned id, so it adds no text, but
+   decision 2 would then say that the ring names conversion outcomes too. The
+   alternatives are the `Ok`-carried refusals as well, or the ring as it is,
+   with decision 5 saying what it leaves out.

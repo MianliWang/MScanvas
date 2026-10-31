@@ -13,8 +13,9 @@
 //! ProteoWizard release, build date and source revision from the installed
 //! tool's own help text: those are held by their shapes alone, so loosening
 //! one removes the only defence that value has. Every value must match its own
-//! shape and come back unchanged from the profile redactor, or it is replaced
-//! whole by `<withheld>`. A value whose shape admits a word (a code, the
+//! shape, or it is replaced whole by `<withheld>`. No shape admits a path
+//! separator or a colon, so no profile redactor runs: it could never change an
+//! admitted value. A value whose shape admits a word (a code, the
 //! Windows version and edition, the application version) must also not hold
 //! the account name as a whole token. A shape that admits no free word (the
 //! language, a dotted number, the build date, hex) is not checked: the name
@@ -33,8 +34,6 @@ use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use mscanvas_proteowizard::Redactor;
 
 use crate::preferences::UiPreferenceStore;
 use crate::preferences::dto::UiPreferenceReadDto;
@@ -66,6 +65,8 @@ pub(crate) struct RecentError {
     pub(crate) first: u64,
     /// Unix seconds.
     pub(crate) last: u64,
+    /// Whether it came again after `first`, even within the same second.
+    pub(crate) repeated: bool,
 }
 
 /// This session's recent boundary error codes, in memory only.
@@ -95,6 +96,7 @@ impl RecentErrors {
             && latest.code == code
         {
             latest.last = now;
+            latest.repeated = true;
             return;
         }
         if self.entries.len() == RECENT_ERROR_CAPACITY {
@@ -105,6 +107,7 @@ impl RecentErrors {
             code: code.to_owned(),
             first: now,
             last: now,
+            repeated: false,
         });
     }
 
@@ -116,7 +119,10 @@ impl RecentErrors {
 static RECENT_ERRORS: Mutex<RecentErrors> = Mutex::new(RecentErrors::new());
 
 /// Records one boundary error code. Called by `PreviewErrorDto::new`, which
-/// every boundary error is built through, so "produced" here means built.
+/// every `PreviewErrorDto` is built through, so "produced" here means built. A
+/// conversion that ran and failed is a report, and a refusal carried in an
+/// `Ok` outcome is not a `PreviewErrorDto`: neither is recorded (ADR 0063,
+/// decision 5).
 pub(crate) fn note_error(code: &str) {
     RECENT_ERRORS
         .lock()
@@ -190,9 +196,9 @@ pub(crate) struct KnownRoots {
 }
 
 impl KnownRoots {
-    fn of_process() -> Self {
-        let read =
-            |name: &str| std::env::var_os(name).map(|value| value.to_string_lossy().into_owned());
+    /// `var` is `std::env::var_os` outside tests.
+    fn of(var: impl Fn(&'static str) -> Option<OsString>) -> Self {
+        let read = |name: &'static str| var(name).map(|value| value.to_string_lossy().into_owned());
         Self {
             program_files: read("ProgramFiles"),
             program_files_x86: read("ProgramFiles(x86)"),
@@ -204,6 +210,16 @@ impl KnownRoots {
 
 /// The summary for this session. Reads; writes and sends nothing.
 pub(crate) fn summary(service: &PreviewService, preferences: &UiPreferenceStore) -> String {
+    summary_with(service, preferences, std::env::var_os)
+}
+
+/// [`summary`], with the environment lookup the account names and known roots
+/// come from.
+fn summary_with(
+    service: &PreviewService,
+    preferences: &UiPreferenceStore,
+    var: impl Fn(&'static str) -> Option<OsString> + Copy,
+) -> String {
     let (saved_ui_language, ui_preferences, ui_preferences_problem) = match preferences.load() {
         UiPreferenceReadDto::Absent { .. } => (None, "absent", None),
         UiPreferenceReadDto::Loaded { preferences, .. } => {
@@ -245,12 +261,7 @@ pub(crate) fn summary(service: &PreviewService, preferences: &UiPreferenceStore)
         recent_errors,
         dropped_errors,
     };
-    render(
-        &facts,
-        &KnownRoots::of_process(),
-        &Redactor::new(),
-        &account_names(std::env::var_os),
-    )
+    render(&facts, &KnownRoots::of(var), &account_names(var))
 }
 
 /// The account name, from the variables that hold it. `var` is
@@ -351,18 +362,13 @@ fn windows_facts() -> (Option<String>, Option<String>, Option<String>) {
 }
 
 /// Writes the summary. Pure: the same facts give the same text.
-pub(crate) fn render(
-    facts: &Facts,
-    roots: &KnownRoots,
-    redactor: &Redactor,
-    accounts: &[String],
-) -> String {
+pub(crate) fn render(facts: &Facts, roots: &KnownRoots, accounts: &[String]) -> String {
     // For a shape that admits no free word: the account name could only match
     // it by chance, and withholding it then would point at the name.
     let patterned = |value: Option<&str>, shape: fn(&str) -> bool| -> String {
         match value {
             None => UNKNOWN.to_owned(),
-            Some(value) if shape(value) && redactor.redact(value) == value => value.to_owned(),
+            Some(value) if shape(value) => value.to_owned(),
             Some(_) => WITHHELD.to_owned(),
         }
     };
@@ -493,7 +499,7 @@ pub(crate) fn render(
     ];
     lines.extend(facts.recent_errors.iter().take(held).map(|error| {
         let code = shown(Some(&error.code), is_code);
-        if error.last == error.first {
+        if !error.repeated {
             format!("- {} {code}", rfc3339(error.first))
         } else {
             format!(
