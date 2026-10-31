@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 
 import { cdp, metrics } from "../support/cdp";
 import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
-import { CONVERT, checkMembers, waitUntilOffered } from "../support/conversion";
+import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered } from "../support/conversion";
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
@@ -71,6 +71,8 @@ const FIRST = raw(1, "QC_pool_01.raw");
 const SECOND = raw(2, "Plasma_QC_batch_08_replicate_04_long_acquisition.raw");
 const OPEN: SelectedFile = { handle: "open", fileName: "reference_run.mzML", byteLength: 4_194_304, sourceKind: "mzml", relativeContext: null };
 const ROWS: readonly SelectedFile[] = [FIRST, SECOND, OPEN];
+/** A family Thermo's picker refuses (ADR 0059), for the stop that shows it. */
+const LCD: SelectedFile = { handle: "lcd", fileName: "Shimadzu_run_01.lcd", byteLength: 8_388_608, sourceKind: "shimadzu_lcd", relativeContext: null };
 
 /** The first row converting, the second waiting. */
 const STARTED = {
@@ -114,6 +116,62 @@ const LONG_RUN = {
 /** The workspace at the queue's full size (ADR 0057): 1,024 rows. */
 const MANY: readonly SelectedFile[] = Array.from({ length: 1_024 }, (_, index) => raw(index + 1, `Plasma_S${String(index + 1).padStart(4, "0")}.raw`));
 
+/** A ProteoWizard release with no measured row: everything it converts is labelled (ADR 0055). */
+const UNMEASURED = "3.0.26204";
+const LABEL = { unverifiedSettings: true, unverifiedBuildRelease: UNMEASURED };
+
+/** FINISHED on the unmeasured build: both rows labelled, and Add says how many it adds. */
+const FINISHED_LABELLED = {
+  ...FINISHED,
+  queue: queueOf(FINISHED.queue.items.map((item) => ({ ...item, notVerifiedByMscanvas: LABEL }))),
+};
+
+/** A finished queue at its full size, every row labelled: results and Add, windowed (ADR 0057). */
+const LONG_FINISHED = {
+  status: "terminal",
+  reason: "completed",
+  operationId: OPERATION,
+  queue: queueOf(MANY.map((row, index) => queueItem(row.handle, row.fileName, index % 3 === 2
+    ? { state: "failed", attempts: 1, notVerifiedByMscanvas: LABEL }
+    : { state: "finalized", attempts: 1, finalizedOutputs: [{ outputId: `long-output-${String(index)}`, fileName: row.fileName.replace(/\.raw$/u, ".mzML") }], ...finalizedAttemptFacts(), notVerifiedByMscanvas: LABEL }))),
+};
+
+/** A full queue refused before it ran, every output name colliding: the names, windowed. */
+const COLLIDED = {
+  status: "terminal",
+  reason: "completed",
+  operationId: OPERATION,
+  queue: queueOf(MANY.map((row) => queueItem(row.handle, row.fileName)), {
+    kind: "queue_output_name_collision",
+    summary: "Two or more selected acquisitions would produce the same converted filename, so nothing was queued.",
+    detail: MANY.map((row) => row.fileName.replace(/\.raw$/u, ".mzML")).join(", ").slice(0, 400),
+    retryable: false,
+    context: { kind: "outputNameCollision", names: MANY.map((row) => row.fileName.replace(/\.raw$/u, ".mzML")) },
+  }),
+};
+
+/** The roster after an adoption from the unmeasured build: the adopted row keeps the label. */
+const ADOPTED: SelectedFile = { handle: "adopted", fileName: "QC_pool_01.mzML", byteLength: 2_097_152, sourceKind: "mzml", relativeContext: null, notVerifiedByMscanvas: LABEL };
+
+/** A beta-1 (schema 4) project with a change, and one reference from a labelled conversion. */
+function beta1Project(locale: Locale) {
+  const table = scenario("populated", locale);
+  const project = capturedProject({ name: "Plasma QC batch 08", dirty: true });
+  table.get_project_state = {
+    ...project,
+    published: true,
+    savingUpgradesSchema: true,
+    inputs: project.inputs.map((input, index) => index === 0 ? { ...input, notVerifiedByMscanvas: LABEL } : input),
+  };
+  return table;
+}
+
+/** Chooses one processing value by its radio, never by its words. */
+async function chooseProcessing(value: string) {
+  await browser.execute((css: string) => document.querySelector<HTMLInputElement>(css)?.click(), `.conversion-setting[data-axis="processing"] input[value="${value}"]`);
+  await frames();
+}
+
 function slot(sequence: number, state: unknown) {
   return {
     sequence,
@@ -141,55 +199,8 @@ function conversionWorld(locale: Locale, state: { status: string }, rows: readon
   return table;
 }
 
-/** Answers each plan question for the rows it names, as Rust's describe does (beta1-ux's boundary). */
-async function answerPlans(rows: readonly SelectedFile[] = ROWS) {
-  await browser.execute(
-    (tableKey: string, known: readonly SelectedFile[], intents: readonly { id: string }[]) => {
-      const table = Reflect.get(window, tableKey) as Record<string, unknown>;
-      const internals = Reflect.get(window, "__TAURI_INTERNALS__") as {
-        invoke: (name: string, args: Record<string, unknown>, ...rest: unknown[]) => Promise<unknown>;
-      };
-      const invoke = internals.invoke;
-      internals.invoke = (name, args, ...rest) => {
-        if (name === "describe_workspace_conversion_queue") {
-          const request = args["request"] as {
-            handles: string[];
-            intentId: string;
-            conflictPolicy: string;
-            destinationPolicy: unknown;
-            expectedReceipt: number;
-          };
-          table[name] = {
-            outcome: "planned",
-            plan: {
-              items: request.handles.map((handle) => {
-                const row = known.find((candidate) => candidate.handle === handle)!;
-                return {
-                  datasetHandle: handle,
-                  fileName: row.fileName,
-                  sourceKind: row.sourceKind,
-                  output: { kind: "knownSingle", fileName: row.fileName.replace(/\.raw$/u, ".mzML") },
-                };
-              }),
-              outputFormat: "mzML",
-              compression: "zlib",
-              validationMode: "output_only",
-              capacity: Math.max(16, known.length),
-              intent: intents.find((intent) => intent.id === request.intentId),
-              conflictPolicy: request.conflictPolicy,
-              destinationPolicy: request.destinationPolicy,
-              receipt: request.expectedReceipt,
-            },
-          };
-        }
-        return invoke(name, args, ...rest);
-      };
-    },
-    IPC_TABLE_KEY,
-    rows,
-    admittedIntents,
-  );
-}
+/** Answers each plan question for the rows it names, as Rust's describe does. */
+const answerPlans = (rows: readonly SelectedFile[] = ROWS) => answerPlansFor(rows);
 
 // ---------------------------------------------------------------- driving
 
@@ -578,6 +589,93 @@ const STOPS: readonly Stop[] = [
     anchor: '.conversion-run-list[data-windowed="true"] li[data-item-state="running"]',
   },
   {
+    // Thermo's own picker from MS1 on two Thermo rows: planned, its loss and
+    // family on the tile, and the one change in the rail (ADR 0059).
+    name: "conversion-vendor-thermo",
+    table: (locale) => conversionWorld(locale, { status: "idle" }),
+    drive: async () => {
+      await answerPlans();
+      await checkMembers([FIRST.handle, SECOND.handle]);
+      await go(2);
+      await waitUntilOffered(CONVERT);
+      await chooseProcessing("vendor_centroiding_from_ms1");
+      await waitUntilOffered(CONVERT);
+    },
+    anchor: '[data-plan-changed="processing"]',
+  },
+  {
+    // The same picker from MS2 on a Thermo and a Shimadzu row: refused, with
+    // the reason in place of the plan and Convert refused beside it.
+    name: "conversion-vendor-refused",
+    table: (locale) => conversionWorld(locale, { status: "idle" }, [...ROWS, LCD]),
+    drive: async () => {
+      await answerPlans([...ROWS, LCD]);
+      await checkMembers([FIRST.handle, LCD.handle]);
+      await go(2);
+      await waitUntilOffered(CONVERT);
+      await chooseProcessing("vendor_centroiding_from_ms2");
+    },
+    anchor: ".conversion-plan-pending",
+  },
+  {
+    // The keyboard in the processing choices: two ArrowDowns from the shipped
+    // value land on Thermo's MS1 row, its note read with it.
+    name: "conversion-vendor-keyboard",
+    table: (locale) => conversionWorld(locale, { status: "idle" }),
+    keepFocus: true,
+    drive: async () => {
+      await answerPlans();
+      await checkMembers([FIRST.handle, SECOND.handle]);
+      await go(2);
+      await waitUntilOffered(CONVERT);
+      await browser.execute(() => document.querySelector<HTMLElement>('.conversion-setting[data-axis="processing"] input:checked')?.focus());
+      await browser.keys("ArrowDown");
+      await browser.keys("ArrowDown");
+      await frames();
+    },
+    anchor: '.conversion-setting[data-axis="processing"] input[value="vendor_centroiding_from_ms1"]:focus',
+  },
+  {
+    // Every plan row on an unmeasured build labelled, and counted before Run.
+    name: "conversion-plan-not-verified",
+    table: (locale) => conversionWorld(locale, { status: "idle" }),
+    drive: async () => {
+      await answerPlansFor(ROWS, UNMEASURED);
+      await checkMembers([FIRST.handle, SECOND.handle]);
+      await go(2);
+      await waitUntilOffered(CONVERT);
+    },
+    anchor: "[data-plan-not-verified]",
+  },
+  {
+    // A finished labelled queue: its rows and Add say it.
+    name: "conversion-finished-not-verified",
+    table: (locale) => conversionWorld(locale, FINISHED_LABELLED),
+    drive: () => go(2),
+    anchor: "#conversion-adopt-not-verified",
+  },
+  {
+    // Its results at the queue's full size: windowed, every row labelled.
+    name: "conversion-finished-long",
+    table: (locale) => conversionWorld(locale, LONG_FINISHED, MANY),
+    drive: () => go(2),
+    anchor: '.conversion-run-list[data-windowed="true"] [data-not-verified]',
+  },
+  {
+    // A full queue refused for colliding names: every name, windowed.
+    name: "conversion-collision-long",
+    table: (locale) => conversionWorld(locale, COLLIDED, MANY),
+    drive: () => go(2),
+    anchor: '.conversion-name-list[data-windowed="true"]',
+  },
+  {
+    // An adopted output keeps its label on the roster row.
+    name: "workbench-roster-not-verified",
+    table: (locale) => conversionWorld(locale, { status: "idle" }, [...ROWS, ADOPTED]),
+    drive: () => revealRosterRow(ADOPTED.handle),
+    anchor: `.grouped-roster [data-handle="${ADOPTED.handle}"] [data-not-verified]`,
+  },
+  {
     // The roster's footer at its fullest (direction A 2.1): two rows checked,
     // one highlighted, and a group made so Undo shows beside the list menu
     // and Convert….
@@ -599,6 +697,18 @@ const STOPS: readonly Stop[] = [
   },
   { name: "project-empty", table: emptyTable, drive: () => go(3), anchor: "[data-project-surface]" },
   { name: "project-records", table: populated, drive: () => go(3), anchor: "[data-project-surface]" },
+  {
+    // Save on a beta-1 project with a change: asked first, the keyboard on
+    // the answer, and the labelled reference in the list below.
+    name: "project-upgrade-warning",
+    table: beta1Project,
+    keepFocus: true,
+    drive: async () => {
+      await go(3);
+      await browser.$(".project-actions > button:nth-child(3)").click();
+    },
+    anchor: "[data-project-upgrade-save]:focus",
+  },
   { name: "project-result", table: (locale) => scenario("projectWithResult", locale), drive: () => go(3), anchor: `[data-project-inspect-artifact="${RESULT}"]` },
   {
     name: "project-result-inspected",

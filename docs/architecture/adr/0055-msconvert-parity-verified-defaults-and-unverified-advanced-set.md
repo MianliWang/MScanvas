@@ -208,6 +208,15 @@ There is one label and no explanatory paragraph, in keeping with the owner's
 direction to remove secondary explanations. The disclosure is collapsed by
 default.
 
+> **Rendered 2026-10-30 on `be/integrate` (PR #161).** "Not verified by
+> MSCanvas" (`未经 MSCanvas 验证`), followed by "ProteoWizard *release*" when the
+> build is why. It is on every plan row and counted in the plan summary before
+> Run; on each queue row while it waits, runs and after it settles, from the
+> label `BEGIN` binds to the item; beside Add, which it describes, with how
+> many of the outputs carry it (decision 2); on the roster row an adopted
+> output becomes; and on the project reference. No surface sends an advanced
+> intent yet, so the Advanced disclosure and its steps carry no label.
+
 ### 4. An ordered filter chain replaces the nine fixed rows
 
 `ConversionIntent` becomes:
@@ -652,6 +661,16 @@ Each later in its own slice:
   > keep a copy of a project before saving it in the new version, and the
   > size limitation above (`CHANGELOG.md`, Unreleased). The prompt before the
   > first schema-5 write is still interface work.
+
+  > **The prompt, 2026-10-30 (PR #161).** The project state says when the
+  > bound document is schema 4 (`savingUpgradesSchema`). A Save that would
+  > write it, from the head or from the unsaved-changes question, first asks
+  > "Saving upgrades this beta 1 project, and beta 1 cannot open it
+  > afterwards. Keep a copy first if you still need beta 1.", with the
+  > keyboard on "Save and upgrade"; Cancel writes nothing. A Save with nothing
+  > unsaved writes nothing and is not asked. Save As is not asked: any other
+  > location leaves beta 1's file as it is, and choosing that file again in
+  > the dialog is the explicit choice.
 
   > **Implemented on `be/integrate` (draft PR #161), 2026-10-29.**
   >

@@ -10,6 +10,16 @@ conversion stays serial, and every preview read stays refused with
 export bound is the larger of 2 MiB and 128 KiB per diagnosed item, and the
 retained state is stated on the constant. The windowed lists and their rendered QA are not done, so
 that PR does not merge before them.
+
+*Note, 2026-10-30:* the lists are windowed on `be/integrate`. #164 windowed
+the queue panel, the plan summary (the requested and the reviewed order) and
+the results; PR #161 adds the excluded rows, the refused adoptions and the
+colliding names, which Rust now sends whole as a list in the refusal's
+context rather than only in its 400-character detail. The copy tour shoots
+the plan, the running queue, the results and the collision list at 1,024
+items at 960x640 and 1366x768. The slot read is still read whole (decision
+3's last point).
+
 Related: [0005](0005-mzml-preview-boundary.md),
 [0006](0006-multi-dataset-workspace-boundary.md),
 [0012](0012-first-visible-thermo-conversion.md),
