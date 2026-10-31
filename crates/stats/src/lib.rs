@@ -11,6 +11,7 @@
 
 use nalgebra::{DMatrix, SymmetricEigen};
 use statrs::distribution::{ContinuousCDF, StudentsT};
+use statrs::function::beta;
 
 /// The most samples a PCA accepts. The Gram route costs O(samples² ×
 /// features); ADR 0069 records the time measured at this bound.
@@ -58,8 +59,9 @@ pub enum Unavailable {
     /// Fewer than two observed values (in either group, for a test).
     TooFewObservations,
     /// Every observed value is identical (in both groups, for a test). For
-    /// PCA, also a standard deviation within n·ε·max|x|, which rounding alone
-    /// can produce.
+    /// PCA, also a standard deviation within n·ε·max|x|, the worst-case
+    /// rounding error of a naively summed mean, so PCA can drop a feature that
+    /// Welch and QC still see as varying.
     ZeroVariance,
     /// The feature has a missing value; PCA uses complete features only.
     Missing,
@@ -183,7 +185,9 @@ pub struct Welch {
     pub t: f64,
     /// Welch-Satterthwaite degrees of freedom.
     pub df: f64,
-    /// 2 · sf(|t|), never 1 − cdf, which underflows.
+    /// 2 · sf(|t|), never 1 − cdf, which underflows. Above 1/2 it is
+    /// 1 − I_x(1/2, df/2) with x = t² / (df + t²), which keeps the digits sf
+    /// loses as t nears 0.
     pub p: f64,
     /// Observed values that entered the test from group A.
     pub observed_a: usize,
@@ -247,16 +251,33 @@ fn welch_one(a: &[f64], b: &[f64]) -> Result<Welch, Unavailable> {
     // when squared.
     let (share_a, share_b) = (se_a / se, se_b / se);
     let df = 1.0 / (share_a * share_a / (na - 1.0) + share_b * share_b / (nb - 1.0));
-    // df is at least min(na, nb) − 1 ≥ 1 here, so the distribution exists.
-    let distribution = StudentsT::new(0.0, 1.0, df).map_err(|_| Unavailable::ZeroVariance)?;
     Ok(Welch {
         log2_fold_change,
         t,
         df,
-        p: 2.0 * distribution.sf(t.abs()),
+        p: two_sided_p(t, df)?,
         observed_a: a.len(),
         observed_b: b.len(),
     })
+}
+
+/// 2 · sf(|t|) of Student's t, except where that is above 1/2: `statrs` works
+/// from h = df / (df + t²), which rounds to 1 for |t| below about 3e-8 · √df
+/// and gives p = 1 exactly. There p = 1 − I_x(1/2, df/2) with x = t² / (df +
+/// t²) keeps those digits, and the term subtracted is below 1/2, so the
+/// difference does not cancel.
+fn two_sided_p(t: f64, df: f64) -> Result<f64, Unavailable> {
+    // df is at least min(na, nb) − 1 ≥ 1 and t is finite here, so neither
+    // refusal is reachable; a NaN would come only from an overflowed t².
+    let distribution = StudentsT::new(0.0, 1.0, df).map_err(|_| Unavailable::Overflow)?;
+    let p = 2.0 * distribution.sf(t.abs());
+    if p <= 0.5 {
+        return Ok(p);
+    }
+    let x = t * t / (df + t * t);
+    beta::checked_beta_reg(0.5, df / 2.0, x)
+        .map(|below| 1.0 - below)
+        .map_err(|_| Unavailable::Overflow)
 }
 
 /// Benjamini-Hochberg q-values over exactly the family given, in its order.
@@ -433,10 +454,13 @@ pub fn pca(values: &Matrix, scaling: Scaling, components: usize) -> Result<Pca, 
         if !mean.is_finite() || !sd.is_finite() {
             return Err(StatsError::Overflow);
         }
-        // A deviation within n·ε·max|x|, the order of the rounding error a
-        // summed mean can carry (cf. Chan, Golub and LeVeque 1983), does not
-        // resolve the feature from a constant; scaling it to unit variance
-        // would weigh rounding noise like a real feature.
+        // ponytail: n·ε·max|x| is the worst-case rounding error of a naively
+        // summed mean (cf. Chan, Golub and LeVeque 1983), a conservative
+        // heuristic: scaling a spread that small to unit variance could weigh
+        // rounding noise like a real feature. It also drops a resolvable spread
+        // below about n·ε relative, e.g. [1e15, 1e15, 1e15, 1e15 + 1], whose
+        // corrected two-pass sd of 0.5 is exact; Welch and QC count only
+        // identical values as zero variance (ADR 0069, open question 4).
         let peak = x.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
         if sd <= n as f64 * f64::EPSILON * peak {
             excluded_features.push((feature, Unavailable::ZeroVariance));
@@ -482,6 +506,8 @@ pub fn pca(values: &Matrix, scaling: Scaling, components: usize) -> Result<Pca, 
 
     // A component's loadings carry a relative error of about ε · λ₁ / λ through
     // the Gram route, so one with λ ≤ √ε · λ₁ is not resolved and not reported.
+    // λ₁ ≤ trace, so with a finite trace it cannot overflow; it can still be
+    // zero or subnormal while the trace is normal, and its digits are then lost.
     let largest = eigen.eigenvalues[order[0]];
     if !largest.is_normal() {
         return Err(StatsError::Overflow);

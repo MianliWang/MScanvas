@@ -6,8 +6,9 @@
 //! unless noted:
 //! - log2 fold change, t, df: 1e-12;
 //! - p: 1e-10 relative to p itself, down to the smallest p in the fixture
-//!   (about 7e-32), for df up to 2e4 (the fixture's are at most about 22;
-//!   statrs drifts to 3.8e-10 at df 1e6, see ADR 0069);
+//!   (about 7e-32), for df up to 2e4 and any |t|, t near 0 included (the
+//!   fixture's df are at most about 22; statrs drifts to 3.8e-10 at df 1e6,
+//!   see ADR 0069);
 //! - q from BH on the same p: 1e-14 relative; q in the volcano, whose p carry
 //!   the p tolerance: 1e-10 relative;
 //! - QC detection rate and missing fraction: exact; QC RSD: 1e-12;

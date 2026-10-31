@@ -119,14 +119,14 @@ a missing value. A non-finite value refuses the matrix.
 | Quantity | Definition, as implemented |
 | --- | --- |
 | log2 fold change | mean(log2 A) − mean(log2 B), over the observed values of each group |
-| Welch's test | t = (mean A − mean B) / √(s²A/nA + s²B/nB) on log2 values; Welch-Satterthwaite df; two-sided p = 2·sf(\|t\|) from `statrs`' Student's t, never 1 − cdf |
+| Welch's test | t = (mean A − mean B) / √(s²A/nA + s²B/nB) on log2 values; Welch-Satterthwaite df; two-sided p = 2·sf(\|t\|) from `statrs`' Student's t, never 1 − cdf; where that p is above 1/2, p = 1 − I_x(1/2, df/2) with x = t²/(df + t²), `statrs`' regularized incomplete beta, because sf works from 1 − x and returns exactly 1 for \|t\| below about 3e-8·√df; the term subtracted is below 1/2, so nothing cancels |
 | Benjamini-Hochberg | the step-up q = min over ranks ≥ i of p·m/rank, capped at 1, over exactly the family passed |
 | Volcano rows | (fold change, p, q) for each tested feature; the BH family is exactly the tested features of the slice passed |
 | Variance | n − 1; the corrected two-pass algorithm, with the residuals divided by the largest before squaring, so no square overflows or underflows; identical values give exactly 0 |
 | QC detection rate | QC injections with a value / QC injections |
 | QC RSD | 100 · sd / mean of the observed QC values, raw scale; needs 2 values and a positive mean |
 | Missing fraction | study samples with no value / study samples |
-| PCA | complete, varying features, where varying is sd > n·ε·max\|x\| (a smaller sd is within the rounding error of the mean, cf. Chan, Golub and LeVeque 1983, and is `ZeroVariance`); mean-centred; scaled by none, auto (sd) or Pareto (√sd); eigen decomposition of the samples × samples Gram matrix; scores = U·√λ; loadings = Xᵀ·u/√λ, of unit length; explained variance = λ/(n − 1); ratio = λ/trace |
+| PCA | complete, varying features, where varying is sd > n·ε·max\|x\|; a smaller sd is `ZeroVariance`. The bound is the worst-case rounding error of a naively summed mean (cf. Chan, Golub and LeVeque 1983), a conservative heuristic: it also drops a resolvable spread below about n·ε relative, such as [1e15, 1e15, 1e15, 1e15 + 1] (sd 0.5, exact), which QC and Welch treat as varying; mean-centred; scaled by none, auto (sd) or Pareto (√sd); eigen decomposition of the samples × samples Gram matrix; scores = U·√λ; loadings = Xᵀ·u/√λ, of unit length; explained variance = λ/(n − 1); ratio = λ/trace |
 
 A value that cannot be computed for one feature is a typed `Unavailable` reason:
 `TooFewObservations`, `ZeroVariance`, `Missing`, `NonPositiveMean` or `Overflow`.
@@ -201,9 +201,11 @@ The crate forbids `unsafe` code. No input panics it.
   view filter never changes a q-value. The family is stored with the result in
   the artifact slice.
 - **No silent NaN.** Non-finite input is refused. Overflow is the `Overflow`
-  error or reason. In PCA, so is a non-finite mean, standard deviation, trace
-  or largest eigenvalue, and a Gram matrix whose trace underflowed below the
-  smallest normal double (an unscaled matrix of values near 1e-170).
+  error or reason. In PCA, so is a non-finite mean, standard deviation or
+  trace, a Gram matrix whose trace underflowed below the smallest normal double
+  (an unscaled matrix of values near 1e-170), and a zero or subnormal largest
+  eigenvalue. That last one occurs only under a normal trace: λ₁ ≤ trace, so
+  with a finite trace the eigenvalue cannot overflow.
 - **No imputation, no normalisation, no drift or batch correction** (classes D,
   E and F below).
 - **No floor for log2,** and no p-value for an untestable feature.
@@ -230,7 +232,7 @@ The crate forbids `unsafe` code. No input panics it.
 | Quantity | Tolerance | Worst measured |
 | --- | --- | --- |
 | log2 fold change, t, df | 1e-12 · max(1, \|x\|) | 3.6e-15, 8.8e-15, 2.5e-16 |
-| p (smallest 7.3e-32), for df up to 2e4 | 1e-10 relative | 1.0e-13 |
+| p (smallest 7.3e-32), for df up to 2e4 and any \|t\| | 1e-10 relative | 1.0e-13 |
 | q from BH on the same p (ties, p = 0 and p = 1) | 1e-14 relative | 1.3e-16 |
 | q in the volcano (carries the p error) | 1e-10 relative | 1.0e-13 |
 | QC detection rate, missing fraction | exact | exact |
@@ -240,22 +242,31 @@ The crate forbids `unsafe` code. No input panics it.
 
 The worst deviations were measured at commit `30b08db3`, before the
 deviation's residuals were rescaled; the reference tests pass at these
-tolerances after that change too.
+tolerances after that change too. The worst p and volcano q deviations,
+measured again after p above 1/2 moved to the complement, are still 1.0e-13.
 
-The fixture's Welch df are at most about 22. Against scipy 1.18.1, `statrs`'
-`sf` is within 3.3e-12 relative at df 1e3 and 2e4 (t = 2, 5 and 10), but
-7.9e-11 at df 1e5 and 3.8e-10 at df 1e6 (t = 2). So the p tolerance holds up
-to df 2e4, far above a cohort's.
+The fixture's Welch df are at most about 22 and its \|t\| at least 0.10.
+Against scipy 1.18.1, `statrs`' `sf` is within 3.3e-12 relative at df 1e3 and
+2e4 (t = 2, 5 and 10), but 7.9e-11 at df 1e5 and 3.8e-10 at df 1e6 (t = 2).
+Near t = 0, `sf` alone is 7.98e-7 off at df 1e3 and t = 1e-6, where it returns
+exactly 1; the crate's p, with the complement above 1/2, is within 4.5e-12 at
+df 2, 10, 1e3 and 2e4 for t from 1e-8 to 2. So the p tolerance holds up to
+df 2e4, far above a cohort's.
 
 **Unit tests** cover:
 
-- every `StatsError` and `Unavailable` path;
+- every `StatsError` and `Unavailable` path, except `NotConverged`, which no
+  input is known to produce, and `TooLarge` at the cell bound, which needs a
+  matrix of 20 million cells (the sample bound is tested);
 - BH's step-up by hand, ties, p = 1, and monotonicity on a 200-value family
   with repeats;
-- a p-value below 1e-30 where 1 − cdf would be 0, and p = 1 at t = 0;
-- the PCA sign rule and identical reruns;
+- a p-value below 1e-30 where 1 − cdf would be 0, p = 1 at t = 0, and p within
+  1e-12 of its closed form or series for t from 7e-10 to 0.3 at df 1, 2 and
+  1e3;
+- the PCA sign rule, its tie going to the first feature, and identical reruns;
 - values whose squares overflow (1e200) or underflow (1e-170), an overflowing
-  trace or eigenvalue, and a spread within rounding, which is `ZeroVariance`;
+  trace, a subnormal largest eigenvalue under a normal trace, and a spread
+  within rounding, which is `ZeroVariance`;
 - NIST StRD NumAcc1 (sd exactly 1) and NumAcc4 (mean exact, sd within 1e-8
   relative, the precision of its decimal data as doubles).
 
@@ -301,6 +312,9 @@ does today; another answer changes the named function.
      with Pareto and none offered. Log2 is applied by the caller before PCA, in
      the prepared-matrix slice. **Recommended and implemented.**
    - Alternatives: median centring, range or vast scaling (not implemented).
+   - PCA counts sd ≤ n·ε·max\|x\| as zero variance, a conservative heuristic
+     (decision 3); Welch and QC count only identical values. **Implemented;
+     the owner confirms or replaces the bound.**
 5. **The variance denominator.**
    - n − 1 everywhere, as scipy's `ddof=1` and R's `sd`. **Recommended and
      implemented.**

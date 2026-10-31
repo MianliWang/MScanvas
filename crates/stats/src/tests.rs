@@ -1,5 +1,7 @@
-//! Every typed refusal and unavailable reason, BH monotonicity and ties, the
-//! PCA sign and bounds, and NIST StRD for the two-pass variance. The reference
+//! Every typed refusal and unavailable reason that an input can reach except
+//! `NotConverged`, which no input is known to produce, and the PCA cell bound,
+//! which needs 20 million cells; BH monotonicity and ties, the PCA sign and
+//! bounds, p near t = 0, and NIST StRD for the two-pass variance. The reference
 //! values from scipy and numpy are in `tests/reference.rs`.
 
 use super::*;
@@ -138,6 +140,30 @@ fn equal_means_give_p_one_and_a_huge_t_gives_a_tiny_positive_p() {
     // 1 − cdf would round to 0 long before this p.
     let tiny = tests[1].unwrap().p;
     assert!(tiny > 0.0 && tiny < 1e-30, "{tiny:e}");
+}
+
+/// sf alone gives p = 1 exactly at df 1000, t 1e-6 (and 4e-9 off at df 10,
+/// t 1e-7). Below, df 1 and 2 have closed forms; df 1000 has p = 1 − 2·f(0)·t
+/// to O(t³).
+#[test]
+fn p_keeps_its_digits_as_t_nears_zero() {
+    use statrs::distribution::Continuous;
+    let pdf0 = StudentsT::new(0.0, 1.0, 1000.0).unwrap().pdf(0.0);
+    for (t, df, exact) in [
+        (
+            1e-7,
+            1.0,
+            1.0 - std::f64::consts::FRAC_2_PI * 1e-7_f64.atan(),
+        ),
+        (7e-10, 2.0, 1.0 - 7e-10 / (2.0 + 7e-10 * 7e-10_f64).sqrt()),
+        (0.3, 2.0, 1.0 - 0.3 / (2.0 + 0.3 * 0.3_f64).sqrt()),
+        (1e-6, 1000.0, 1.0 - 2.0 * pdf0 * 1e-6),
+        (-1e-6, 1000.0, 1.0 - 2.0 * pdf0 * 1e-6),
+    ] {
+        let p = two_sided_p(t, df).unwrap();
+        assert!((p - exact).abs() <= 1e-12 * exact, "df {df} t {t:e}: {p:e}");
+    }
+    assert_eq!(two_sided_p(0.0, 1000.0), Ok(1.0));
 }
 
 #[test]
@@ -438,8 +464,10 @@ fn pca_scales_a_feature_whose_squares_overflow_instead_of_dropping_it() {
     close(one.explained_variance_ratio[0], 1.0);
 }
 
+/// Both inputs are refused by the trace check; the largest eigenvalue cannot
+/// overflow while the trace is finite.
 #[test]
-fn pca_refuses_an_overflowing_trace_or_eigenvalue() {
+fn pca_refuses_an_overflowing_trace() {
     let s = 7.0e153;
     let orthogonal = table(&[&all(&[s, -s, 0.0, 0.0]), &all(&[0.0, 0.0, s, -s])]);
     assert_eq!(
@@ -452,6 +480,23 @@ fn pca_refuses_an_overflowing_trace_or_eigenvalue() {
         pca(&alternating, Scaling::None, 1),
         Err(StatsError::Overflow)
     );
+}
+
+/// The trace, 4·s², is normal; each of the two eigenvalues, 2·s², is subnormal.
+#[test]
+fn pca_refuses_a_subnormal_largest_eigenvalue_under_a_normal_trace() {
+    let s = 7.7e-155;
+    let m = table(&[&all(&[s, -s, 0.0, 0.0]), &all(&[0.0, 0.0, s, -s])]);
+    assert_eq!(pca(&m, Scaling::None, 1), Err(StatsError::Overflow));
+}
+
+/// Two opposite features tie exactly on |loading|; the first gets the sign.
+#[test]
+fn a_pca_sign_tie_goes_to_the_first_feature() {
+    let m = table(&[&all(&[1.0, 2.0, 4.0, 3.0]), &all(&[-1.0, -2.0, -4.0, -3.0])]);
+    let loading = &pca(&m, Scaling::None, 1).unwrap().loadings[0];
+    assert_eq!(loading[0].abs(), loading[1].abs());
+    assert!(loading[0] > 0.0);
 }
 
 #[test]
