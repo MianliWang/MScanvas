@@ -850,7 +850,11 @@ async function observeViewer(label: string) {
           .filter((node) => node.getClientRects().length > 0)
           .map((node) => node.getBoundingClientRect())
           .some((box) => box.left < text.right - 1 && box.right > text.left + 1 && box.top < text.bottom - 1 && box.bottom > text.top + 1);
-        return { cut: summary.scrollWidth > summary.clientWidth + 1, covered };
+        // A fact that does not fit wraps onto the line the head's fixed
+        // height hides, which `cut` cannot see (FE-2 review).
+        const facts = [...summary.querySelectorAll<HTMLElement>(":scope > span")];
+        const dropped = facts.filter((fact) => fact.offsetTop > facts[0]!.offsetTop).map((fact) => (fact.textContent ?? "").trim());
+        return { cut: summary.scrollWidth > summary.clientWidth + 1, covered, dropped };
       })(),
       // Which acquisition the evidence belongs to, where the shell names it
       // (ADR 0006's Run identity; the Workbench's identity row, spec 3.2).
@@ -1811,6 +1815,17 @@ describe("PM9.3 viewer contracts, rendered", () => {
         expect(
           [...defaults, ...detailsOpen]
             .filter((frame) => frame.spectrumHeading !== null && frame.spectrumHeading.covered)
+            .map((frame) => `${frame.label} ${JSON.stringify(frame.spectrumHeading)}`),
+        ).toEqual([]);
+        // From 1366x768 up, with the panels each width opens by default, the
+        // head says every fact whole: FE-2's card took 26 px from the spectrum
+        // and the scan list gives them back. Narrower, the facts drop from the
+        // end and are recorded above. At 1050 px and below the card's insets
+        // cost the spectrum 34 px that the list, at its 300 px floor, cannot
+        // give back (an open question for the owner).
+        expect(
+          defaults
+            .filter((frame) => frame.css.width >= 1366 && (frame.spectrumHeading?.dropped.length ?? 0) > 0)
             .map((frame) => `${frame.label} ${JSON.stringify(frame.spectrumHeading)}`),
         ).toEqual([]);
         await metrics(960, 640);

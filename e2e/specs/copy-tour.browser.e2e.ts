@@ -758,6 +758,11 @@ async function layoutFacts() {
         // A name hidden by clipping (a rail's title while its status titles it) is not cut text.
         .filter((node) => node.offsetParent !== null && !node.closest(".visually-hidden") && getComputedStyle(node).clipPath === "none" && node.scrollWidth > node.clientWidth + 1)
         .map((node) => `${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0] ?? ""}: ${(node.textContent ?? "").trim().slice(0, 60)}`),
+      // A spectrum fact that wrapped onto the head's hidden line, which a
+      // width check cannot see (FE-2 review).
+      droppedFacts: [...document.querySelectorAll<HTMLElement>(".spectrum-head-facts > span")]
+        .filter((node, _, all) => node.offsetParent !== null && node.offsetTop > all[0]!.offsetTop)
+        .map((node) => (node.textContent ?? "").trim()),
       clippedPlaceholders: [...document.querySelectorAll<HTMLInputElement>("input[placeholder]")]
         .filter((input) => {
           if (input.offsetParent === null || input.value !== "") return false;
