@@ -1,10 +1,12 @@
 # ADR 0062 — Saved figure specification (FIG-007)
 
-Status: **Proposed**, 2026-10-30. The Rust side is implemented, with no
-interface. The owner asked on 2026-10-30 for every backend item that can be
-done now to start in parallel; where this feature needed a decision the owner
-has not made, the recommendation below is what was implemented, and each one is
-listed under [Open questions](#open-questions).
+Status: **Accepted (2026-10-30)**, as implemented, with one change to question
+5, recorded under [Owner decision](#owner-decision-2026-10-30). Proposed
+2026-10-30. The Rust side is implemented, with no interface. The owner asked on
+2026-10-30 for every backend item that can be done now to start in parallel;
+where this feature needed a decision the owner had not made, the recommendation
+below is what was implemented, and each one is listed under
+[Open questions](#open-questions).
 Related: [0028](0028-figure-renderer-and-semantic-specification.md) (the
 renderer and the semantic specification),
 [0030](0030-png-copy-plot-and-figure-settings.md) (PNG and figure settings),
@@ -358,9 +360,36 @@ source file and a real document in its own temporary folder:
   is not saved; the linked export's range and identity rules hold;
 - the pinned document is what this build writes, and it reopens.
 
+## Owner decision, 2026-10-30
+
+**Decision A0062** (`docs/development/OWNER_DECISIONS_V511.md`, PR #186). Shown
+the decisions that block work now, the owner replied: "全部按推荐，继续" ("all as
+recommended, continue"). For this ADR the recommendation was to confirm all
+seven questions as implemented, with one change to question 5.
+
+1. **File and extension:** a standalone `.msfigure` JSON document, written once.
+2. **A changed source:** refused with its reason; no relink and no redraw.
+3. **The data digest:** kept, accepting that a reader change refuses older
+   documents of the same file.
+4. **The document digest:** kept, so a hand-edited document is refused.
+5. **Paths in the document:** relative inside the document's folder and
+   absolute outside it. The save dialog carries no help sentence about this:
+   the 2026-10-28 rule removes secondary explanations from the interface
+   ([AFTER_BETA1_PLAN section 2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)), so the
+   interface shows the recorded locator itself, the relative or absolute path,
+   and no help text.
+6. **Project documents and stored targeted results:** not in this slice.
+7. **RAW viewed through the cache:** `save` refuses a source under the view
+   cache's root until a locator for a cached RAW view is decided.
+
+Still open: what a saved figure of a cached RAW view should name (question 7's
+alternatives). The decision keeps the refusal until that is decided and does
+not choose one.
+
 ## Open questions
 
-Each was implemented as recommended; the owner decides.
+Each was implemented as recommended; the owner's answers are under
+[Owner decision](#owner-decision-2026-10-30).
 
 1. **File and extension.** Recommended: standalone `.msfigure` JSON, written
    once. Alternatives: `.json`, or only inside a project document.
@@ -373,7 +402,7 @@ Each was implemented as recommended; the owner decides.
    document is refused. The alternative is to accept any document whose values
    are in bounds.
 5. **Paths in the document.** Recommended: relative inside the document's
-   folder, absolute outside it, stated in the save dialog's help.
+   folder, absolute outside it.
 6. **Project documents and stored targeted results.** Recommended: not in this
    slice (decisions 8 and 9).
 7. **RAW viewed through the cache.** Recommended, and implemented in Rust:

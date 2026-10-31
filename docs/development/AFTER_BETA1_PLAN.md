@@ -533,7 +533,7 @@ M10.0 route decision.
 - P1: WSP-010 restore workspace; FIG-007 saved FigureSpec; ENV-004 copy
   diagnostics.
   - *2026-10-30: FIG-007's Rust side is implemented with no interface, its
-    decisions Proposed in
+    decisions accepted by the owner on 2026-10-30 (A0062) in
     [ADR 0062](../architecture/adr/0062-saved-figurespec.md): a `.msfigure`
     recipe that names its source by locator and recorded bytes and regenerates
     through the export's builders. The interface waits for PR #164 and the
