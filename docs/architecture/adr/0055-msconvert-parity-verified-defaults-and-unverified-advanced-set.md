@@ -197,7 +197,12 @@ every subsetting filter would look blockable, and parity would mean nothing.
 
 The label is a resource value in `en` and `zh-CN`. It appears:
 
-- on the collapsed **Advanced options** disclosure;
+- on the collapsed **Advanced settings** disclosure;
+
+  > **Amended 2026-10-30 under owner decision FE-1.** This read "Advanced
+  > options". Each settings level now has one name, and the disclosure is
+  > "Advanced settings" (高级设置), the name #164 ships for the conversion
+  > settings' Advanced disclosure.
 - on each advanced step or switch;
 - in the plan summary before Run;
 - on the outcome of every queue item finalized with any advanced setting,
@@ -207,6 +212,25 @@ The label is a resource value in `en` and `zh-CN`. It appears:
 There is one label and no explanatory paragraph, in keeping with the owner's
 direction to remove secondary explanations. The disclosure is collapsed by
 default.
+
+> **Rendered 2026-10-30 on `be/integrate` (PR #161).** "Not verified by
+> MSCanvas" (`未经 MSCanvas 验证`), followed by "ProteoWizard *release*" when the
+> build is why. It is on every plan row and counted in the plan summary before
+> Run; on each queue row while it waits, runs and after it settles, from the
+> label `BEGIN` binds to the item; beside Add, which it describes, with how
+> many of the outputs carry it (decision 2); on the roster row an adopted
+> output becomes; and on the project reference. No surface sends an advanced
+> intent yet, so the Advanced disclosure and its steps carry no label.
+>
+> **Review, 2026-10-31 (PR #161).** A project reference added back to the
+> Workbench brings its label to the row, and the viewer's Details names it
+> beside the file. The project's Details names it beside the reference and
+> on every link to it. The viewer's file title, the Metadata tab's File row
+> and an exported figure's source line do not carry it; whether they should
+> is open for the owner.
+> The diagnostics export of a refused, stopped or set item, which has no
+> single-output report of its own, carries the label `BEGIN` bound to its
+> row, so it names the same release the queue row does.
 
 ### 4. An ordered filter chain replaces the nine fixed rows
 
@@ -355,6 +379,27 @@ a different algorithm fails. `-g` waits for a dependency decision, because the
 checks would have to read through gzip and the conversion crate has no gzip
 reader.
 
+> **Implemented 2026-10-30 on `be/integrate`.** No check runs, and nothing is
+> finalized, while the run's owned process tree is not confirmed gone, even
+> after exit 0: the attempt settles as `backend_not_terminated`, or
+> `cancellation_failed` where a stop was requested, so the desktop's
+> owned-process quarantine sees it. This holds for the single-output run and
+> for a SCIEX output set, and for both of decision 6's runs.
+>
+> Two corrections from the PR #161 review, both of which had refused correct
+> outputs:
+>
+> - **A step that changes point counts may empty a spectrum.** Examples are an
+>   m/z window, a threshold and the other steps that set
+>   `spectrum_array_lengths`. The source's payload presence is then not
+>   compared. The output answers for itself instead: a declared point with no
+>   payload still fails, and payload presence against the source is reported
+>   unverified.
+> - **Unpaired spectra inherit an unknown history, never an empty one.** When
+>   a population step unpairs the spectra, a source picker the output copied
+>   cannot be told from one this run added. The requested processing is then
+>   unverified rather than refused as `processing_algorithm_mismatch`.
+
 ### 6. Every other format is written from a private mzML intermediate
 
 **Every non-mzML output is written from a private mzML intermediate.** No
@@ -423,6 +468,71 @@ fails, the set fails whole. Progress shows two phases.
 
 Non-mzML outputs are finalized as files. They are **not adoptable and not
 previewable**, because the viewer reads mzML only, and the queue item says so.
+
+> **Implemented on `be/two-step`, stacked on draft PR #161, 2026-10-30.**
+> mgf, text, ms1, ms2, cms1, cms2, mz5 and mzMLb, in the conversion crate,
+> tested against the fake provider. No ProteoWizard program ran.
+>
+> - **Route.** `StructuredIntent::intermediate_route` judges run 1's
+>   intermediate at its own encoding (64/64, zlib, indexed), with the changes
+>   the chains and switches ask for; `integrity_route` stays mzML-only. The
+>   plan names the output with the format's extension, and the intermediate as
+>   a direct mzML conversion of the source would be named.
+> - **One staging area, two private directories.** Run 1 writes into the
+>   staging area's output directory. Once the intermediate passes, a second
+>   directory is created exclusively inside it, and run 2 writes there. One
+>   area keeps one staging creation per cancellation, which the live recovery
+>   record requires. The intermediate is never finalized: the same
+>   object-bound teardown removes it with the area, after the final file was
+>   published or refused.
+> - **Run 1's checks.** Every check of decision 5, judged as above. Then the
+>   intermediate is pinned (read sharing only, rehashed against the judged
+>   bytes) and held to the end of run 2, and it must hold something the
+>   format keeps (`output_contains_no_records` otherwise).
+> - **Run 2's argv**, typed: the intermediate, the format flag, that format's
+>   encoding options and the writer switches, then `--outdir` and `--outfile
+>   target`. No filter. The stem is fixed because the evidenced build appends
+>   the format's extension after stripping a known one, and `.txt` is not one
+>   it strips (`msconvert.cpp:82-117`), so a planned `<stem>.txt` would be
+>   written as `<stem>.txt.txt`. The staged `target.<ext>` takes the planned
+>   name when it is finalized. The extensions are `msconvert.cpp:627-661`'s.
+>   Both were read from the source at `47b13cf`, not measured; a build that
+>   names the file otherwise fails closed (`unexpected_output_name`).
+> - **The final file's checks:** exit 0, exactly the expected file, non-zero
+>   length, the format's signature and first record. They read and hash the
+>   handle that is then renamed, no-clobber, onto the planned name.
+> - **Outcome.** `finalized_file` is its own outcome, so no consumer can take
+>   it for an adoptable mzML output; it carries the intermediate's judgement.
+>   It is always advanced, "not verified by MSCanvas": no verified row writes
+>   another format.
+> - **Steps.** Every report of an attempt that reached run 1 names the step
+>   it settled in (`intermediate`, `target`); one settled before run 1 (a
+>   taken name, a stop before anything ran) names none. A refused decision-6
+>   check is `format_check_refused`, detailed by the check's own identifier,
+>   so an intermediate with no records the format keeps reports
+>   `output_contains_no_records` under `output_rejected` when decision 5
+>   refuses it and under `format_check_refused` when decision 6 does. A stop
+>   is answered during run 1, between the runs and during run 2; between the
+>   runs, what it states about the attempt's processes is what run 1's own
+>   ending established, and the staged reading is run 1's directory at
+>   `provider_returned`. While run 1's owned tree is not confirmed gone,
+>   nothing of its output is judged and run 2 is never launched: the attempt
+>   settles in `intermediate`, `backend_not_terminated` (or
+>   `cancellation_failed` where a stop was requested), and the staging area
+>   is kept. Run 2 leaving its tree unconfirmed settles the same way in
+>   `target`, its file unjudged and unpublished. A stop between the runs
+>   settles in `target` only once the intermediate passed its checks.
+> - **Not built:**
+>   - mzXML stays refused (`intent_not_checkable`). Its comparison exists in
+>     the output inspectors but is not wired into a run;
+>   - a SCIEX output set's 1 + N runs;
+>   - the desktop, which still refuses every format but mzML before planning.
+>     The queue's output name and the not-adoptable label are interface work.
+>     Two-phase progress also needs a step signal the crate does not yet give
+>     while a run is live: the step is reported only once the attempt
+>     settles;
+>   - a measurement on the real build, which needs a bounded release of the
+>     ProteoWizard hold.
 
 #### mzXML
 
@@ -624,7 +734,8 @@ Each later in its own slice:
   > reinstalling beta 1 (its Roll back) does not undo that. A beta-1 project
   > that is only opened, saved with nothing unsaved, and closed stays
   > readable by beta 1. Nothing in the interface says so before the first
-  > write yet: a prompt there is later work, and the next release notes'
+  > write yet: a prompt there is later work (since added: "The prompt",
+  > below), and the next release notes'
   > known limitations and roll-back section must state the consequence.
   >
   > **Known limitation: a beta-1 document near the size bound.** Beta 1
@@ -644,7 +755,21 @@ Each later in its own slice:
   > notes state the upgrade on the first Save after a change, the advice to
   > keep a copy of a project before saving it in the new version, and the
   > size limitation above (`CHANGELOG.md`, Unreleased). The prompt before the
-  > first schema-5 write is still interface work.
+  > first schema-5 write is still interface work (since added: "The prompt",
+  > below).
+
+  > **The prompt, 2026-10-30 (PR #161).** The project state says when the
+  > bound document is schema 4 (`savingUpgradesSchema`). A Save that would
+  > write it, from the head or from the unsaved-changes question, first asks
+  > "Saving upgrades this beta 1 project, and beta 1 cannot open it
+  > afterwards. Keep a copy first if you still need beta 1.", with the
+  > keyboard on Cancel, so a held or repeated Enter on Save never lands on
+  > "Save and upgrade" (review, 2026-10-31); Cancel writes nothing. A
+  > question belongs to the project it was asked in and is dropped once that
+  > project closes or is replaced. A Save with nothing
+  > unsaved writes nothing and is not asked. Save As is asked whenever the
+  > bound document is schema 4, with or without a change, because choosing
+  > that file again in the dialog writes schema 5 over it.
 
   > **Implemented on `be/integrate` (draft PR #161), 2026-10-29.**
   >
@@ -652,11 +777,15 @@ Each later in its own slice:
   >   (`unverifiedSettings`, `unverifiedBuildRelease`), and the adopted row
   >   keeps it as `notVerifiedByMscanvas` on the roster row. A row the user
   >   had added another way gains the label when the same object is adopted.
+  >   Until then a row from Add files… or Add mzML folder… carries none, even
+  >   for a finalized output (review, 2026-10-31); whether those routes should
+  >   match the session's finalized outputs is open for the owner.
   >   Advanced outputs are offered for adoption again.
   > - **Project.** Schema 5 adds `notVerifiedByMscanvas` to an input. It is
   >   recorded at registration when the object whose bytes were hashed is a
   >   row this session adopted from a labelled conversion, whatever route
-  >   registered it. `null` means nothing is recorded, never verified. The
+  >   registered it, so a reference registered from a row those routes added
+  >   records `null`. `null` means nothing is recorded, never verified. The
   >   field is required on every input, and `unverifiedBuildRelease` is
   >   explicit `null` on a measured build, like every optional value in the
   >   document: an omitted one is `malformed`. A label with neither half set

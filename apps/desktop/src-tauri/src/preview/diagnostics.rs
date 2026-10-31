@@ -43,7 +43,7 @@ use super::dto::{
     PreviewErrorDto, bounded_text, invalid_diagnostics_reservation, redact_absolute_paths,
 };
 use super::operation::{AttemptFacts, CancellationFacts, ItemOutputTopology, ItemState};
-use super::selection::DatasetSourceKind;
+use super::selection::{DatasetSourceKind, NotVerifiedByMscanvas};
 
 pub(super) mod payload;
 
@@ -170,12 +170,12 @@ pub(super) struct ConversionFailureDiagnosticTicket {
     /// Present only for a set item, which is why an export of an ordinary queue
     /// is byte-identical to what it was before this existed.
     output_set: Option<OutputSetDiagnosticFacts>,
-    /// The release the "unverified build" label names, for a single-output
-    /// attempt that ran on a build with no measured row (ADR 0055).
+    /// The release the "unverified build" label names, for an attempt that
+    /// ran, or was bound to run, on a build with no measured row (ADR 0055).
     unverified_build_release: Option<String>,
-    /// Whether a single-output attempt ran under settings "not verified by
-    /// MSCanvas" (ADR 0055 decision 1). `None` where no conversion report
-    /// exists to say.
+    /// Whether the attempt ran under settings "not verified by MSCanvas"
+    /// (ADR 0055 decision 1): its report's answer, or else the label `BEGIN`
+    /// bound to its row (`labelled`). `None` only on a ticket given neither.
     unverified_settings: Option<bool>,
 }
 
@@ -474,6 +474,18 @@ impl ConversionFailureDiagnosticTicket {
             unverified_build_release: None,
             unverified_settings: None,
         })
+    }
+
+    /// Gives a ticket with no single-output report -- a refusal, a stop, a
+    /// set -- the "not verified by MSCanvas" label `BEGIN` bound to its row
+    /// (ADR 0055 decision 3), so the export says what the queue row says. No
+    /// label is the measured build under verified settings, not "unknown".
+    #[must_use]
+    pub(super) fn labelled(mut self, label: Option<&NotVerifiedByMscanvas>) -> Self {
+        self.unverified_build_release =
+            label.and_then(|label| label.unverified_build_release.clone());
+        self.unverified_settings = Some(label.is_some_and(|label| label.unverified_settings));
+        self
     }
 
     pub(super) const fn operation(&self) -> u64 {

@@ -10,6 +10,7 @@ import {
   availableBackend, createFakePreviewApi, createFakeWorkspaceDropTransport,
   deferred, queueItem, queueOf, type FakePreviewApi,
 } from "../test/previewFixtures";
+import { rosterAction } from "../test/rosterActions";
 
 const en = UI_RESOURCES.en;
 const zh = UI_RESOURCES["zh-CN"];
@@ -19,16 +20,25 @@ function mount(api: FakePreviewApi) {
   render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
     <PreviewApiProvider value={api}><App /></PreviewApiProvider>
   </WorkspaceDropTransportProvider>);
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 async function chinese() {
-  fireEvent.click(screen.getByRole("button", { name: en.settings }));
+  fireEvent.click(screen.getByRole("button", { name: en.settingsEntry }));
   const settings = screen.getByRole("dialog", { name: en.settings });
   fireEvent.click(within(settings).getByRole("radio", { name: en.simplifiedChinese }));
-  fireEvent.click(within(settings).getByRole("button", { name: zh.apply }));
+  fireEvent.click(within(settings).getByRole("button", { name: zh.close }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(document.documentElement.lang).toBe("zh-CN");
+}
+
+/** Starts Clear from the roster's list menu once it is offered; the menu's trigger is its keyboard home. */
+async function startClear(): Promise<HTMLElement> {
+  const clear = await screen.findByRole("button", { name: en.rosterListActions });
+  const item = await rosterAction("clearList");
+  await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled"));
+  await act(async () => { fireEvent.click(item); });
+  return clear;
 }
 
 describe("M7.4 bilingual conversion composition", () => {
@@ -49,11 +59,9 @@ describe("M7.4 bilingual conversion composition", () => {
     });
     mount(api);
     await waitFor(() => expect(document.querySelector(".conversion-running")).toBeInTheDocument());
-    const clear = await screen.findByRole("button", { name: en.clearList });
-    await waitFor(() => expect(clear).toBeEnabled());
-    clear.focus(); fireEvent.click(clear);
+    const clear = await startClear();
     const cancel = await screen.findByRole("button", { name: en.clearCancelAll });
-    await waitFor(() => expect(cancel).toBeEnabled());
+    await waitFor(() => expect(cancel).not.toHaveAttribute("aria-disabled"));
     cancel.focus(); fireEvent.click(cancel);
     const add = screen.getByRole("button", { name: en.addFiles, hidden: true });
     const unlock = () => {
@@ -67,10 +75,10 @@ describe("M7.4 bilingual conversion composition", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(clear).not.toBeInTheDocument();
     if (timing === "after") {
-      expect(add).toBeDisabled();
+      expect(add).toHaveAttribute("aria-disabled", "true");
       await act(async () => unlock());
     }
-    await waitFor(() => expect(add).toBeEnabled());
+    await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
     expect(add).toHaveFocus();
     expect(execute).toHaveBeenCalledExactlyOnceWith("clear-final", "cancelAndClear");
     expect(api.beginRequests()).toEqual([]);
@@ -88,13 +96,14 @@ describe("M7.4 bilingual conversion composition", () => {
     });
     mount(api);
     await waitFor(() => expect(document.querySelector(".conversion-running")).toBeInTheDocument());
-    const clear = screen.getByRole("button", { name: en.clearList });
-    clear.focus(); fireEvent.click(clear);
+    const clear = await startClear();
     const remove = await screen.findByRole("button", { name: en.clearRemoveNonRunning });
-    await waitFor(() => expect(remove).toBeEnabled());
+    await waitFor(() => expect(remove).not.toHaveAttribute("aria-disabled"));
     remove.focus(); fireEvent.click(remove);
     await waitFor(() => expect(clear).toHaveFocus());
-    expect(screen.getByRole("button", { name: en.addFiles })).toBeDisabled();
+    expect(screen.getByRole("button", { name: en.addFiles })).toHaveAttribute("aria-disabled", "true");
+    // The reason beside it is words, never the status bar's "conversion" sentinel.
+    expect(screen.getByRole("button", { name: en.addFiles })).toHaveAccessibleDescription(en.shellConversionRunning);
     expect(execute).toHaveBeenCalledExactlyOnceWith("clear-outsider", "removeNonRunning");
   });
 
@@ -109,10 +118,9 @@ describe("M7.4 bilingual conversion composition", () => {
     });
     mount(api);
     await waitFor(() => expect(document.querySelector(".conversion-running")).toBeInTheDocument());
-    const clear = screen.getByRole("button", { name: en.clearList });
-    clear.focus(); fireEvent.click(clear);
+    await startClear();
     const cancel = await screen.findByRole("button", { name: en.clearCancelAll });
-    await waitFor(() => expect(cancel).toBeEnabled());
+    await waitFor(() => expect(cancel).not.toHaveAttribute("aria-disabled"));
     cancel.focus(); fireEvent.click(cancel);
     await act(async () => result.resolve({ status: "removed", result: { roster: { capacity: 1024, datasets: [] }, removedHandles: [source.handle], unknownHandles: [] } }));
     // Radix schedules its close autofocus in the next task after unmount.
@@ -137,7 +145,7 @@ describe("M7.4 bilingual conversion composition", () => {
       poll();
     });
     const add = screen.getByRole("button", { name: en.addFiles });
-    expect(add).toBeEnabled(); expect(add).not.toHaveFocus();
+    expect(add).not.toHaveAttribute("aria-disabled"); expect(add).not.toHaveFocus();
     expect(document.activeElement).toBe(destination === "retained" ? chosen : document.body);
     chosen.remove();
   });
@@ -150,7 +158,7 @@ describe("M7.4 bilingual conversion composition", () => {
     const api = createFakePreviewApi({ availability: availableBackend, initialDatasets: [source], initialConversion: terminal });
     mount(api); await screen.findByText(en.m74ErrorNameClaimed); await chinese();
     expect(screen.getByText(zh.m74ErrorNameClaimed)).toBeVisible();
-    fireEvent.click(document.querySelector(".conversion-item-detail summary")!);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${zh.cnvDetailsFor.replace("{{name}}", ".*")}$`) }));
     expect(screen.getByText(ownerName)).toBeVisible();
     expect(screen.queryByText("Owned original English summary")).toBeNull(); expect(api.beginRequests()).toEqual([]);
   });
@@ -169,8 +177,9 @@ describe("M7.4 bilingual conversion composition", () => {
     await waitFor(() => expect(api.planRequests().at(-1)?.destinationPolicy).toEqual({ kind: "namedSubfolder", name: raw }));
     const reviewed = structuredClone(api.planRequests().at(-1));
     const planCount = api.planRequests().length;
-    fireEvent.click(within(panel).getByRole("button", { name: en.cnvAdvanced }));
-    fireEvent.click(within(panel).getByRole("button", { name: en.cnvBasic }));
+    // Open and close Advanced: neither asks the plan again.
+    fireEvent.click(within(panel).getByRole("button", { name: new RegExp(`^${en.cnvAdvanced}`) }));
+    fireEvent.click(within(panel).getByRole("button", { name: new RegExp(`^${en.cnvAdvanced}`) }));
     await chinese();
     expect(panel).toHaveAccessibleName(zh.m74CnvTitle);
     expect(within(panel).getByRole("textbox", { name: zh.m74CnvSubfolderName })).toHaveValue(raw);
@@ -194,15 +203,18 @@ describe("M7.4 bilingual conversion composition", () => {
     const api = createFakePreviewApi({ availability: availableBackend, initialDatasets: [source], initialConversion: terminal, retry });
     mount(api);
     const button = await screen.findByRole("button", { name: "Retry 1 failed" });
-    await waitFor(() => expect(button).toBeEnabled());
+    await waitFor(() => expect(button).not.toHaveAttribute("aria-disabled"));
     const snapshot = structuredClone(terminal);
     await chinese();
-    const panel = screen.getByRole("region", { name: zh.m74CnvTitle });
+    // The panel inside the Conversion surface: in Chinese the surface's tab
+    // name and the panel's heading are both "转换".
+    const panel = within(document.getElementById("workbench-conversion")!).getByRole("region", { name: zh.m74CnvTitle });
     expect(panel).toHaveTextContent("共 1 项：已转换 0 项、重名跳过 0 项、失败 1 项。");
     expect(panel).toHaveTextContent(raw);
     expect(document.querySelector('[data-live-region="conversion"]')).toHaveTextContent("失败 1 项");
+    // The queue's bound facts are always on screen, not behind a disclosure.
     const bound = panel.querySelector(".conversion-bound-details")!;
-    fireEvent.click(within(bound as HTMLElement).getByText(zh.m74CnvBoundDetails));
+    expect(bound).toBeVisible();
     expect(bound).toHaveTextContent("original-output");
     expect(bound).toHaveTextContent(zh.m74CnvConflictSkip);
     expect(terminal).toEqual(snapshot);

@@ -24,13 +24,14 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
+import { Button, Disclosure, Icon } from "../../components/ui";
 import {
   toPreviewError,
   type ExportedFigure,
   type FigureSettings,
   type PreviewError,
 } from "../mzml-preview/contracts";
-import { FigureSettingsFields } from "../mzml-preview/FigureSettingsFields";
+import { dpiProblemId, FigureSettingsFields, renderProblemId } from "../mzml-preview/FigureSettingsFields";
 import { validateFigureDraft, wholeCount } from "../mzml-preview/figureSettingsValidation";
 import { formatCount, formatIntensity, formatMz } from "../mzml-preview/format";
 import { ownedErrorDetail } from "../mzml-preview/ownedErrorMessages";
@@ -588,18 +589,16 @@ export function TargetedMs1Setup({
         <h3 ref={heading} id={`${ids}-title`} tabIndex={-1}>
           {t("targetedSetupTitle")}
         </h3>
-        <button
-          type="button"
-          className="link-button"
-          aria-disabled={analysing || undefined}
+        <Button
+          variant="secondary"
+          size="sm"
+          refused={analysing}
           aria-describedby={analysing ? heldBy : undefined}
           data-targeted-close=""
-          onClick={() => {
-            if (!analysing) onClose();
-          }}
+          onClick={onClose}
         >
           {t("targetedSetupClose")}
-        </button>
+        </Button>
       </div>
       <p className="qc-report-of" data-targeted-chosen={members.length}>
         {members.length === 1 && only !== undefined
@@ -612,12 +611,6 @@ export function TargetedMs1Setup({
         {t("targetedExperimental")}
       </p>
       <p className="project-note">{t("targetedDomain")}</p>
-      {/* The scope and caveats above stay read before Run; how the source is
-          read explains a run without deciding one, so it waits to be opened. */}
-      <details className="targeted-modules" data-targeted-read-path="">
-        <summary>{t("targetedReadPathSummary")}</summary>
-        <p className="project-note">{t("targetedReadPath")}</p>
-      </details>
 
       <fieldset className="targeted-members" data-targeted-members="">
         <legend>{t("targetedAcquisitions")}</legend>
@@ -665,7 +658,7 @@ export function TargetedMs1Setup({
         </label>
       </div>
       <label className="targeted-targets">
-        <span>{t("targetedTargetsLabel")}</span>
+        <span>{t("targetedFieldTargets")}</span>
         <textarea
           ref={textarea}
           rows={6}
@@ -683,10 +676,10 @@ export function TargetedMs1Setup({
       </p>
 
       <div className="project-actions">
-        <button
-          type="button"
-          className="secondary-button"
-          aria-disabled={reviewRefused || undefined}
+        <Button
+          variant="secondary"
+          size="sm"
+          refused={reviewRefused}
           aria-describedby={
             working ? heldBy : reviewReason === null ? undefined : `${ids}-review-reason`
           }
@@ -694,7 +687,7 @@ export function TargetedMs1Setup({
           onClick={() => void onReview()}
         >
           {t("targetedReview")}
-        </button>
+        </Button>
       </div>
       {/* Beside the controls it holds: the surface's own busy line may be
           scrolled out of sight. While this setup's run is out, its block
@@ -757,10 +750,11 @@ export function TargetedMs1Setup({
       )}
 
       <div className="project-actions">
-        <button
-          type="button"
-          className={again ? "secondary-button" : "primary-button"}
-          aria-disabled={working || !runnable || undefined}
+        <Button
+          variant={again ? "secondary" : "primary"}
+          size="sm"
+          icon={<Icon name="play" />}
+          refused={working || !runnable}
           aria-describedby={
             working
               ? heldBy
@@ -778,7 +772,7 @@ export function TargetedMs1Setup({
           onClick={onRun}
         >
           {runLabel}
-        </button>
+        </Button>
       </div>
       {/* Said, not only hovered: a refused primary is still a Tab stop, and its
           reason has to reach a reader who arrives there (PM9 UI-24). */}
@@ -851,18 +845,17 @@ export function TargetedMs1Setup({
 
 /**
  * Where Show run's answer went while Details is folded: beside the press, the
- * surface's own sentence and the header's own toggle. Nothing unfolds and the
- * keyboard stays on the press until the reader asks.
+ * header's own toggle. Nothing unfolds and the keyboard stays on the press
+ * until the reader asks.
  */
 function DetailsHint({ onReveal }: { readonly onReveal: () => void }) {
   const t = useUiMessages();
   return (
-    <p className="project-inspect-hint" data-targeted-details-hint="">
-      <span>{t("provenanceInDetails")}</span>
-      <button type="button" className="link-button" onClick={onReveal}>
+    <div className="project-inspect-hint" data-targeted-details-hint="">
+      <Button variant="secondary" size="sm" icon={<Icon name="panelRight" />} onClick={onReveal}>
         {t("provenanceShowDetails")}
-      </button>
-    </p>
+      </Button>
+    </div>
   );
 }
 
@@ -952,17 +945,15 @@ function RunBlock({
           </p>
           {canStop ? (
             <div className="project-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                aria-disabled={stopRequested || undefined}
+              <Button
+                variant="secondary"
+                size="sm"
+                refused={stopRequested}
                 data-targeted-cancel-run=""
-                onClick={() => {
-                  if (!stopRequested) onStop();
-                }}
+                onClick={onStop}
               >
                 {t(stopRequested ? "targetedStopRequested" : "targetedCancelRun")}
-              </button>
+              </Button>
               <span className="project-note">{t("targetedCancelRunHelp")}</span>
             </div>
           ) : null}
@@ -976,27 +967,27 @@ function RunBlock({
                 ? t("targetedLastCancelled")
                 : failure === null
                   ? t("targetedLastFailed")
-                  : `${t("targetedLastFailed")} ${t(FAILURE_KEYS[failure.code])}`}
+                  : t("sentencePair", { first: t("targetedLastFailed"), second: t(FAILURE_KEYS[failure.code]) })}
           </p>
           <div className="project-actions">
             {artifactId !== null ? (
-              <button
-                type="button"
-                className={openPrimary ? "primary-button" : "secondary-button"}
+              <Button
+                variant={openPrimary ? "primary" : "secondary"}
+                size="sm"
                 data-targeted-open-result={artifactId}
                 onClick={() => onOpen(artifactId)}
               >
                 {t("targetedBatchOpenResult")}
-              </button>
+              </Button>
             ) : (
-              <button
-                type="button"
-                className="secondary-button"
+              <Button
+                variant="secondary"
+                size="sm"
                 data-targeted-show-run={end.runId}
                 onClick={() => onShowRun(end.runId)}
               >
                 {t("targetedBatchShowRun")}
-              </button>
+              </Button>
             )}
           </div>
           {artifactId === null && inspectedRun === end.runId && onRevealDetails !== undefined ? (
@@ -1019,11 +1010,16 @@ function EngineFacts({ engine }: { readonly engine: EngineIdentity }) {
         })}
       </p>
       {/* The whole profile the engine runs with, as the build fixes it: no
-          value in it is the user's to change in this recipe. */}
-      <details className="targeted-modules" data-targeted-profile="">
-        <summary>{t("targetedEngineProfile")}</summary>
-        <pre className="targeted-profile">{engine.fixedProfile}</pre>
-      </details>
+          value in it is the user's to change in this recipe. Only the review
+          has it -- a stored plan keeps its digest -- so it stays here. */}
+      <div className="targeted-disclosure">
+        <Disclosure
+          label={t("targetedEngineProfile")}
+          regionProps={{ "data-targeted-profile": "" }}
+        >
+          <pre className="targeted-profile">{engine.fixedProfile}</pre>
+        </Disclosure>
+      </div>
     </>
   );
 }
@@ -1062,15 +1058,15 @@ function ProblemsTable({
                   {line === null ? (
                     t("targetedWhereParameters")
                   ) : (
-                    <button
-                      type="button"
-                      className="link-button"
+                    <Button
+                      variant="quiet"
+                      size="sm"
                       aria-label={t("targetedGoToLine", { line: String(line) })}
                       data-targeted-problem-line={line}
                       onClick={() => onLine(line)}
                     >
                       {t("targetedWhereLine", { line: String(line) })}
-                    </button>
+                    </Button>
                   )}
                 </th>
                 <td>{t(keyed(FIELD_KEYS, problem.field, FIELD_KEYS.targets))}</td>
@@ -1278,34 +1274,38 @@ function BatchReview({
       {members.length === 0 ? null : (
         // Technical provenance, on request: what each member's own plan binds
         // and is named by.
-        <details className="targeted-modules" data-targeted-batch-details="">
-          <summary>{t("targetedBatchPlanDetails")}</summary>
-          <dl className="provenance-facts">
-            {members.map((member) => (
-              <div key={member.layerId} className="targeted-member">
-                <dt>{nameOf(member.layerId)}</dt>
-                <dd>
-                  {member.planSha256 === null ? (
-                    t("targetedBatchNoPlan")
-                  ) : (
-                    <>
-                      {member.expectedContent.map((content) => (
-                        <span key={content.relativeName} className="targeted-batch-fact">
-                          {t("targetedSourceBytes")} {formatCount(content.byteLength)} · SHA-256{" "}
-                          <span className="provenance-digest" title={content.sha256}>{content.sha256}</span>
+        <div className="targeted-disclosure">
+          <Disclosure
+            label={t("targetedBatchPlanDetails")}
+            regionProps={{ "data-targeted-batch-details": "" }}
+          >
+            <dl className="provenance-facts">
+              {members.map((member) => (
+                <div key={member.layerId} className="targeted-member">
+                  <dt>{nameOf(member.layerId)}</dt>
+                  <dd>
+                    {member.planSha256 === null ? (
+                      t("targetedBatchNoPlan")
+                    ) : (
+                      <>
+                        {member.expectedContent.map((content) => (
+                          <span key={content.relativeName} className="targeted-batch-fact">
+                            {t("targetedSourceBytes")} {formatCount(content.byteLength)} · SHA-256{" "}
+                            <span className="provenance-digest" title={content.sha256}>{content.sha256}</span>
+                          </span>
+                        ))}
+                        <span className="targeted-batch-fact">
+                          {t("targetedPlanDigestLabel")}{" "}
+                          <span className="provenance-digest" title={member.planSha256}>{member.planSha256}</span>
                         </span>
-                      ))}
-                      <span className="targeted-batch-fact">
-                        {t("targetedPlanDigestLabel")}{" "}
-                        <span className="provenance-digest" title={member.planSha256}>{member.planSha256}</span>
-                      </span>
-                    </>
-                  )}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </details>
+                      </>
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </Disclosure>
+        </div>
       )}
     </div>
   );
@@ -1482,9 +1482,9 @@ function BatchProgress({
                         member's run yet -- as every control but Stop waits
                         while a run is out. */}
                     {running ? null : member.state === "completed" && member.artifactId !== null ? (
-                      <button
-                        type="button"
-                        className="link-button"
+                      <Button
+                        variant="quiet"
+                        size="sm"
                         aria-label={t("targetedBatchOpenResultNamed", { name })}
                         data-targeted-batch-open={member.artifactId}
                         onClick={() => {
@@ -1492,11 +1492,11 @@ function BatchProgress({
                         }}
                       >
                         {t("targetedBatchOpenResult")}
-                      </button>
+                      </Button>
                     ) : member.runId !== null ? (
-                      <button
-                        type="button"
-                        className="link-button"
+                      <Button
+                        variant="quiet"
+                        size="sm"
                         aria-label={t("targetedBatchShowRunNamed", { name })}
                         data-targeted-batch-run={member.runId}
                         onClick={() => {
@@ -1504,7 +1504,7 @@ function BatchProgress({
                         }}
                       >
                         {t("targetedBatchShowRun")}
-                      </button>
+                      </Button>
                     ) : null}
                   </td>
                 </tr>
@@ -1517,17 +1517,15 @@ function BatchProgress({
       <p className="project-note">{t("targetedBatchOperationalNote")}</p>
       {running && canStop ? (
         <div className="project-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            aria-disabled={stopRequested || undefined}
+          <Button
+            variant="secondary"
+            size="sm"
+            refused={stopRequested}
             data-targeted-batch-stop=""
-            onClick={() => {
-              if (!stopRequested) onStop();
-            }}
+            onClick={onStop}
           >
             {t(stopRequested ? "targetedStopRequested" : "targetedBatchStop")}
-          </button>
+          </Button>
           <span className="project-note">{t("targetedBatchStopHelp")}</span>
         </div>
       ) : null}
@@ -1840,6 +1838,7 @@ export function TargetedMs1Report({
     evidence !== null && evidence.key === evidenceKey ? evidence.value : { status: "loading" };
   const settings = figureSettings(draft);
   const validation = validateFigureDraft(draft);
+  const figurePrefix = `targeted-${ids}`;
   const running = output.state.status === "running";
   /** Whether this control started the output that is running. */
   const initiated = (operation: Operation, target: string | null) =>
@@ -1909,7 +1908,7 @@ export function TargetedMs1Report({
       output.region === region && output.target === target ? output.state : ({ status: "idle" } as const);
     const detail = state.status === "failed" ? ownedErrorDetail(state.error, t) : null;
     return (
-      <p className="spectrum-export-status" role="status" data-targeted-output={state.status}>
+      <p className="targeted-output" role="status" data-targeted-output={state.status} id={`${ids}-${region}-output`}>
         {describeOutput(state, t, outputError)}
         {detail === null ? null : <span className="notice-detail">{detail}</span>}
       </p>
@@ -1924,13 +1923,15 @@ export function TargetedMs1Report({
       data-targeted-report={artifact.id}
       data-availability={availability}
     >
-      <h3 ref={heading} id={`${ids}-title`} tabIndex={-1}>
-        {t("targetedReportTitle")}
-      </h3>
+      <div className="project-section-head">
+        <h3 ref={heading} id={`${ids}-title`} tabIndex={-1}>
+          {t("targetedReportTitle")}
+        </h3>
+      </div>
       <p className="qc-report-of">
-        {sourceName ?? t("provenanceRelatedGone")}
+        <span>{sourceName ?? t("provenanceRelatedGone")}</span>
         {recordedWhen === null ? null : (
-          <span className="qc-report-when"> · {t("qcReportRecorded", { when: recordedWhen })}</span>
+          <span className="qc-report-when">{t("qcReportRecorded", { when: recordedWhen })}</span>
         )}
       </p>
       <p className="targeted-experimental">{t("targetedExperimental")}</p>
@@ -2015,30 +2016,33 @@ export function TargetedMs1Report({
               evidence then follows its row directly. */}
           <p className="project-note targeted-meaning">{t("targetedMeaning")}</p>
 
-          <details className="targeted-export" data-targeted-table-export="">
-            <summary>{t("targetedTableExports")}</summary>
-            <p className="project-note">{t("targetedTableExportHelp")}</p>
-            <div className="spectrum-export-actions">
+          {/* The table's own output, on the rows' head: always offered, never
+              folded away. */}
+          <div className="targeted-table-export" data-targeted-table-export="">
+            <span className="targeted-table-export-label">{t("targetedTableExports")}</span>
+            <div className="targeted-output-actions">
               {(["csv", "tsv"] as const).map((format) => (
-                <button
+                <Button
                   key={format}
-                  type="button"
-                  className="secondary-button"
+                  variant="secondary"
+                  size="sm"
+                  icon={<Icon name="download" />}
                   // The pressed control keeps focus across the native picker;
-                  // `start` refuses a repeat, keyboard or pointer.
-                  aria-disabled={running || undefined}
-                  disabled={running && !initiated(format, null)}
+                  // `start` refuses a repeat, keyboard or pointer. Refused, not
+                  // native-disabled, and the output line says what is running.
+                  refused={running}
+                  reasonId={running ? `${ids}-table-output` : undefined}
                   data-targeted-export={format}
                   onClick={() => exportTable(format)}
                 >
                   {t(initiated(format, null) ? "viewerExporting" : "viewerExportFormat", {
                     name: format.toUpperCase(),
                   })}
-                </button>
+                </Button>
               ))}
             </div>
             {status("table", null)}
-          </details>
+          </div>
 
           <div className="targeted-rows">
             <table className="qc-report-table" data-targeted-rows={page.value.total}>
@@ -2049,6 +2053,9 @@ export function TargetedMs1Report({
                   <th scope="col">{t("targetedColumnOutcome")}</th>
                   <th scope="col">{t("targetedColumnApex")}</th>
                   <th scope="col">{t("targetedColumnRawArea")}</th>
+                  <th scope="col">
+                    <span className="visually-hidden">{t("projectDetails")}</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -2059,23 +2066,9 @@ export function TargetedMs1Report({
                     data-targeted-row={row.targetId}
                     data-outcome={row.outcome}
                   >
-                    <th scope="row">
-                      <button
-                        type="button"
-                        className="link-button"
-                        aria-pressed={row.targetId === chosen}
-                        aria-label={t("targetedShowEvidenceNamed", { name: nameOf(row.targetId) })}
-                        data-targeted-choose={row.targetId}
-                        onClick={() => {
-                          revealing.current = row.targetId;
-                          setChosen(row.targetId);
-                          // Pressed again: its evidence may already be in place.
-                          if (row.targetId === chosen) settle();
-                        }}
-                      >
-                        {nameOf(row.targetId)}
-                      </button>
-                    </th>
+                    {/* The target's name is text; the row's one control,
+                        Details, is the last cell. */}
+                    <th scope="row">{nameOf(row.targetId)}</th>
                     <td>
                       <span aria-hidden="true" className="targeted-symbol">
                         {OUTCOME_SYMBOLS[row.outcome]}
@@ -2087,6 +2080,23 @@ export function TargetedMs1Report({
                     </td>
                     <td>{row.feature === null ? "—" : seconds(row.feature.apexRtS)}</td>
                     <td>{row.feature === null ? "—" : formatIntensity(row.feature.rawArea)}</td>
+                    <td className="targeted-row-action">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        aria-pressed={row.targetId === chosen}
+                        aria-label={t("projectDetailsFor", { name: nameOf(row.targetId) })}
+                        data-targeted-choose={row.targetId}
+                        onClick={() => {
+                          revealing.current = row.targetId;
+                          setChosen(row.targetId);
+                          // Pressed again: its evidence may already be in place.
+                          if (row.targetId === chosen) settle();
+                        }}
+                      >
+                        {t("projectDetails")}
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -2110,7 +2120,7 @@ export function TargetedMs1Report({
               <h4>
                 {nameOf(selectedRow.targetId)}
                 {formulaOf(selectedRow.targetId) === "" ? null : (
-                  <span className="qc-report-when"> · {formulaOf(selectedRow.targetId)}</span>
+                  <span className="qc-report-when">{formulaOf(selectedRow.targetId)}</span>
                 )}
               </h4>
               {selectedRow.ion === null ? (
@@ -2152,45 +2162,56 @@ export function TargetedMs1Report({
                     onDrawn={settle}
                   />
                   {/* Open or closed as the user left it, whichever target is shown. */}
-                  <details
-                    className="targeted-export"
-                    data-targeted-figure-export=""
-                    open={figureExportOpen}
-                    onToggle={(event) => setFigureExportOpen(event.currentTarget.open)}
-                  >
-                    <summary>{t("targetedFigureExports")}</summary>
-                    <p className="project-note">{t("targetedFigureExportHelp")}</p>
-                    <FigureSettingsFields
-                      idPrefix={`targeted-${ids}`}
-                      settings={draft}
-                      validation={validation}
-                      onFigureSetting={(field, value) => editFigure({ ...draft, [field]: value })}
-                      onFigureTheme={(theme) => editFigure({ ...draft, theme })}
-                    />
-                    <div className="spectrum-export-actions">
-                      {(["svg", "png"] as const).map((operation) => (
-                        <button
-                          key={operation}
-                          type="button"
-                          className="secondary-button"
-                          aria-disabled={running || undefined}
-                          disabled={
-                            (running && !initiated(operation, selectedRow.targetId)) ||
-                            validation.render !== null ||
-                            (operation === "png" && validation.dpi !== null)
-                          }
-                          data-targeted-export={operation}
-                          onClick={() => exportFigure(selectedRow.targetId, operation)}
-                        >
-                          {t(
-                            initiated(operation, selectedRow.targetId) ? "viewerExporting" : "viewerExportFormat",
-                            { name: operation.toUpperCase() },
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                    {status("figure", selectedRow.targetId)}
-                  </details>
+                  <div className="targeted-export">
+                    <Disclosure
+                      variant="secondary"
+                      label={t("targetedFigureExports")}
+                      open={figureExportOpen}
+                      onOpenChange={setFigureExportOpen}
+                      regionProps={{ className: "targeted-export-region", "data-targeted-figure-export": "" }}
+                    >
+                      <FigureSettingsFields
+                        idPrefix={figurePrefix}
+                        settings={draft}
+                        validation={validation}
+                        onFigureSetting={(field, value) => editFigure({ ...draft, [field]: value })}
+                        onFigureTheme={(theme) => editFigure({ ...draft, theme })}
+                      />
+                      <div className="targeted-output-actions">
+                        {(["svg", "png"] as const).map((operation) => {
+                          // A size or resolution that is not a whole count
+                          // refuses the output, focusable, and points at the
+                          // field's own problem sentence.
+                          const problemId =
+                            validation.render !== null
+                              ? renderProblemId(figurePrefix)
+                              : operation === "png" && validation.dpi !== null
+                                ? dpiProblemId(figurePrefix)
+                                : null;
+                          return (
+                            <Button
+                              key={operation}
+                              variant="secondary"
+                              size="sm"
+                              icon={<Icon name="download" />}
+                              refused={running || problemId !== null}
+                              // Refused while another output's picker is out,
+                              // pointing at the line that says so.
+                              reasonId={problemId ?? (running ? `${ids}-figure-output` : undefined)}
+                              data-targeted-export={operation}
+                              onClick={() => exportFigure(selectedRow.targetId, operation)}
+                            >
+                              {t(
+                                initiated(operation, selectedRow.targetId) ? "viewerExporting" : "viewerExportFormat",
+                                { name: operation.toUpperCase() },
+                              )}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                      {status("figure", selectedRow.targetId)}
+                    </Disclosure>
+                  </div>
                 </>
               )}
               <RowFacts row={selectedRow} nameOf={nameOf} />
@@ -2324,29 +2345,30 @@ function EvidenceFigure({
           })}
         </figcaption>
       )}
-      <details className="targeted-points">
-        <summary>{t("targetedPointsTable")}</summary>
-        <table className="qc-report-table">
-          <thead>
-            <tr>
-              <th scope="col">{t("targetedColumnTrace")}</th>
-              <th scope="col">{t("targetedAxisRt")}</th>
-              <th scope="col">{t("targetedColumnIntensity")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {traces.flatMap((trace) =>
-              trace.points.map((point) => (
-                <tr key={`${trace.trace}/${point[0]}`}>
-                  <th scope="row">{traceName(trace.trace)}</th>
-                  <td>{seconds(point[1])}</td>
-                  <td>{formatIntensity(point[2])}</td>
-                </tr>
-              )),
-            )}
-          </tbody>
-        </table>
-      </details>
+      <div className="targeted-disclosure">
+        <Disclosure label={t("targetedPointsTable")} regionProps={{ className: "targeted-points", "data-targeted-points": "" }}>
+          <table className="qc-report-table">
+            <thead>
+              <tr>
+                <th scope="col">{t("targetedColumnTrace")}</th>
+                <th scope="col">{t("targetedAxisRt")}</th>
+                <th scope="col">{t("targetedColumnIntensity")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {traces.flatMap((trace) =>
+                trace.points.map((point) => (
+                  <tr key={`${trace.trace}/${point[0]}`}>
+                    <th scope="row">{traceName(trace.trace)}</th>
+                    <td>{seconds(point[1])}</td>
+                    <td>{formatIntensity(point[2])}</td>
+                  </tr>
+                )),
+              )}
+            </tbody>
+          </table>
+        </Disclosure>
+      </div>
     </figure>
   );
 }
@@ -2563,17 +2585,18 @@ export function TargetedFacts({ lineage }: { readonly lineage: TargetedLineage }
             <dd className="provenance-digest" title={attempt.interpreterSha256}>{attempt.interpreterSha256}</dd>
           </dl>
           {attempt.loadedModules.length === 0 ? null : (
-            <details className="targeted-modules">
-              <summary>{t("targetedModules", { count: attempt.loadedModules.length })}</summary>
-              <dl className="provenance-facts">
-                {attempt.loadedModules.map((module) => (
-                  <div key={module.name} className="targeted-member">
-                    <dt>{module.name}</dt>
-                    <dd className="provenance-digest" title={module.sha256}>{module.sha256}</dd>
-                  </div>
-                ))}
-              </dl>
-            </details>
+            <div className="targeted-disclosure">
+              <Disclosure label={t("targetedModules", { count: attempt.loadedModules.length })}>
+                <dl className="provenance-facts">
+                  {attempt.loadedModules.map((module) => (
+                    <div key={module.name} className="targeted-member">
+                      <dt>{module.name}</dt>
+                      <dd className="provenance-digest" title={module.sha256}>{module.sha256}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </Disclosure>
+            </div>
           )}
           <p className="provenance-note">{t("targetedAttemptNote")}</p>
         </>

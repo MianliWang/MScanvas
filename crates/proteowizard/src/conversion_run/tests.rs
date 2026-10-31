@@ -19,6 +19,7 @@ use crate::intent::CompressionIntent;
 
 mod advanced;
 mod live_recovery;
+mod two_step;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -203,6 +204,9 @@ struct FakeRunner<'a> {
     /// wrote files without announcing them would not be standing in for the
     /// measured one -- it would be standing in for an injector.
     declared: Vec<&'a str>,
+    /// What the owned Job counted when the run ended. `Some(0)` by default,
+    /// which with ownership established before execution confirms the tree.
+    final_active_processes: Option<u32>,
 }
 
 impl<'a> FakeRunner<'a> {
@@ -216,7 +220,15 @@ impl<'a> FakeRunner<'a> {
             stderr_truncated: false,
             stderr: "",
             declared: Vec::new(),
+            final_active_processes: Some(0),
         }
+    }
+
+    /// A runner whose owned Job still counted a process when it ended, so its
+    /// tree is not confirmed gone.
+    const fn leaving_a_process(mut self) -> Self {
+        self.final_active_processes = Some(1);
+        self
     }
 
     /// A runner that announces exactly these output basenames, in the line
@@ -285,7 +297,7 @@ impl ProcessRunner for FakeRunner<'_> {
             elapsed: Duration::from_millis(7),
             termination: self.termination,
             max_active_processes: Some(1),
-            final_active_processes: Some(0),
+            final_active_processes: self.final_active_processes,
             peak_job_memory_bytes: Some(1_024),
             total_owned_processes: Some(1),
             tree_ownership: crate::process::TreeOwnership::EstablishedBeforeExecution,
@@ -3194,14 +3206,23 @@ fn capabilities_reporting_for(
     revision: Option<&str>,
     executable_sha256: Sha256Digest,
 ) -> InstalledHelpCapabilities {
+    capabilities_reporting_with(MSCONVERT_HELP, release, revision, executable_sha256)
+}
+
+/// The same, for another captured help.
+fn capabilities_reporting_with(
+    help: &str,
+    release: &str,
+    revision: Option<&str>,
+    executable_sha256: Sha256Digest,
+) -> InstalledHelpCapabilities {
     let executable = fs::canonicalize(std::env::current_exe().expect("test executable"))
         .expect("canonical test executable");
     let reported = revision.map_or_else(
         || release.to_owned(),
         |revision| format!("{release} ({revision})"),
     );
-    let help =
-        format!("ProteoWizard release: {reported}\nBuild date: Jan 13 2026\n{MSCONVERT_HELP}");
+    let help = format!("ProteoWizard release: {reported}\nBuild date: Jan 13 2026\n{help}");
     InstalledHelpCapabilities::parse_unbound_capture_for_tests(
         BackendTool::MsConvert,
         executable,
@@ -6069,6 +6090,50 @@ fn a_cancelled_multi_output_run_publishes_nothing_and_cleans_staging() {
     assert_eq!(entry_names(&fixture.destination_root).len(), before);
 }
 
+/// A set whose backend exited cleanly with its owned tree unconfirmed
+/// publishes no member, and fails as the quarantine's unaccounted process.
+#[test]
+fn a_multi_output_run_with_an_unconfirmed_tree_publishes_nothing() {
+    let fixture = SetFixture::new("unconfirmed");
+    let source = fixture.directory.path().join("acquisition.bin");
+    let act = |spec: &CommandSpec| {
+        let output_directory = set_command_output_directory(spec);
+        for index in 1..=2 {
+            fs::write(
+                output_directory.join(format!("sample_{index:02}.mzML")),
+                output_document(),
+            )
+            .expect("write a backend output");
+        }
+        Ok(0)
+    };
+    let runner = FakeRunner::new(&act)
+        .declaring(&["sample_01.mzML", "sample_02.mzML"])
+        .leaving_a_process();
+    let run = run_multi_output_conversion_evidence(
+        &source,
+        &fixture.destination_root,
+        ConflictPolicy::Fail,
+        &capabilities(),
+        &runner,
+        MzmlScanLimits::default(),
+        None,
+    );
+    let MultiOutputOutcome::RefusedBeforePublication(failure) = run.report.outcome() else {
+        panic!("an unconfirmed tree publishes nothing");
+    };
+    assert!(matches!(
+        failure,
+        MultiOutputFailure::Backend(BackendExecutionFailure::NotTerminated)
+    ));
+    assert!(failure.leaves_an_owned_process_unaccounted());
+    // The staging area is kept while a process may still write to it; no
+    // member took its final name.
+    for name in ["sample_01.mzML", "sample_02.mzML"] {
+        assert!(!fixture.destination_root.join(name).exists());
+    }
+}
+
 /// Nothing in the run's debug output names a path, and the retained set's
 /// debug is a count rather than a handle dump.
 #[test]
@@ -6618,6 +6683,93 @@ fn a_cancellation_with_no_owned_job_accounting_is_a_failure() {
             .exists(),
         "unknown is not confirmed quiescence"
     );
+}
+
+/// A clean exit whose owned tree is not confirmed gone is never judged or
+/// finalized, so the desktop's owned-process quarantine sees it: a faithful
+/// document is staged, and it does not take its name.
+#[test]
+fn a_clean_exit_with_an_unconfirmed_tree_is_neither_judged_nor_finalized() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let recovery = cancellation.recovery_observer();
+    let act = convert_faithfully;
+    let runner = FakeRunner::new(&act).leaving_a_process();
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("an unrequested run settles as a completed attempt: {attempt:?}");
+    };
+    assert_eq!(
+        report.outcome(),
+        &ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+            BackendExecutionFailure::NotTerminated
+        ))
+    );
+    assert!(report.leaves_an_owned_process_unaccounted());
+    // Read where the provider returned, not after a judgement that never ran.
+    assert_eq!(
+        report.staged_content().phase(),
+        Some(StagedObservationPhase::ProviderReturned)
+    );
+    assert!(attempt.finalized().is_none());
+    assert!(!fixture.root.join(&fixture.plan.output_file_name).exists());
+    assert_eq!(
+        recovery.retained().map(|retained| retained.status()),
+        Some(StagingRecoveryStatus::ProcessUnconfirmed)
+    );
+}
+
+/// A non-zero exit does not hide an unconfirmed tree behind `backend_rejected`.
+#[test]
+fn a_rejected_exit_with_an_unconfirmed_tree_is_still_unaccounted() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let act = |spec: &CommandSpec| {
+        convert_faithfully(spec)?;
+        Ok(1)
+    };
+    let runner = FakeRunner::new(&act).leaving_a_process();
+
+    let attempt = run_conversion_cancellable(
+        &fixture.plan,
+        &capabilities(),
+        &runner,
+        ConversionCancellation::new(),
+    );
+
+    let ConversionAttempt::Completed(report) = &attempt else {
+        panic!("an unrequested run settles as a completed attempt: {attempt:?}");
+    };
+    assert_eq!(
+        report.outcome(),
+        &ConversionRunOutcome::Failed(ConversionRunFailure::Backend(
+            BackendExecutionFailure::NotTerminated
+        ))
+    );
+    assert!(report.leaves_an_owned_process_unaccounted());
+    assert!(!fixture.root.join(&fixture.plan.output_file_name).exists());
+}
+
+/// The same run with a stop requested is a failed cancellation, never a
+/// finalized output.
+#[test]
+fn a_stop_under_a_clean_exit_with_an_unconfirmed_tree_is_a_failed_cancellation() {
+    let fixture = fixture("sample.mzML", ConflictPolicy::Fail);
+    let cancellation = ConversionCancellation::new();
+    let act = convert_faithfully;
+    let runner = CancellingRunner::new(&act)
+        .requesting(cancellation.request_handle())
+        .leaving_active_processes(Some(1));
+
+    let attempt = run_conversion_cancellable(&fixture.plan, &capabilities(), &runner, cancellation);
+
+    let ConversionAttempt::CancellationFailed(failure) = &attempt else {
+        panic!("an unconfirmed tree under a stop is a failed cancellation: {attempt:?}");
+    };
+    assert_eq!(failure.cause(), BackendExecutionFailure::NotTerminated);
+    assert!(attempt.finalized().is_none());
+    assert!(!fixture.root.join(&fixture.plan.output_file_name).exists());
 }
 
 /// A refusal inside the runner is not a terminated process, and the report says

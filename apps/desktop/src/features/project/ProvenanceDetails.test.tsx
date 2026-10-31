@@ -26,6 +26,7 @@ import {
   openProject,
   projectArtifact,
   projectInput,
+  projectLayer,
   projectRun,
   type FakeProjectApi,
 } from "../../test/projectFixtures";
@@ -67,11 +68,17 @@ async function currentStateElement(): Promise<Element> {
 }
 
 /** The shell's wiring: one session, the list and the contextual region. */
-function Harness({ detailsPresent = true }: { readonly detailsPresent?: boolean }) {
+function Harness({
+  detailsPresent = true,
+  onReveal = () => {},
+}: {
+  readonly detailsPresent?: boolean;
+  readonly onReveal?: () => void;
+}) {
   const session = useProject();
   return (
     <>
-      <ProjectPanel session={session} detailsPresent={detailsPresent} onRevealDetails={() => {}} />
+      <ProjectPanel session={session} detailsPresent={detailsPresent} onRevealDetails={onReveal} />
       <aside id="workbench-inspector">
         <ProvenanceDetails provenance={session.provenance} onSelect={session.inspect} />
       </aside>
@@ -81,7 +88,11 @@ function Harness({ detailsPresent = true }: { readonly detailsPresent?: boolean 
 
 function mount(
   initial: ProjectState,
-  options: { readonly locale?: "en" | "zh-CN"; readonly detailsPresent?: boolean } = {},
+  options: {
+    readonly locale?: "en" | "zh-CN";
+    readonly detailsPresent?: boolean;
+    readonly onReveal?: () => void;
+  } = {},
 ): FakeProjectApi {
   const api = createFakeProjectApi(initial);
   const preferences = createFakePreferencesApi({
@@ -91,7 +102,7 @@ function mount(
     <PreferencesApiProvider value={preferences}>
       <SessionPreferencesProvider>
         <ProjectApiProvider value={api}>
-          <Harness detailsPresent={options.detailsPresent} />
+          <Harness detailsPresent={options.detailsPresent} onReveal={options.onReveal} />
         </ProjectApiProvider>
       </SessionPreferencesProvider>
     </PreferencesApiProvider>,
@@ -123,7 +134,7 @@ describe("the provenance consumer", () => {
     mount(capturedProject({ input: { verification: "differentContent" } }));
     await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
 
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
 
     expect(describing()).toBe("input");
     const region = within(details());
@@ -141,7 +152,7 @@ describe("the provenance consumer", () => {
   it("keeps current file state and recorded history in separate sections", async () => {
     mount(capturedProject({ input: { verification: "differentContent" } }));
     await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
 
     // "Changed" is a fact about the file now; it carries its own element and
     // its own tone, and it does not appear inside the history list.
@@ -185,7 +196,7 @@ describe("the provenance consumer", () => {
     const before = [...api.calls];
 
     // Reference -> the run that used it.
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
     expect(describing()).toBe("input");
     await press(details().querySelector<HTMLElement>(`[data-provenance-link="${RUN}"]`)!);
     expect(describing()).toBe("run");
@@ -241,7 +252,7 @@ describe("the provenance consumer", () => {
     );
     await waitFor(() => expect(screen.getByText("orphan.mzML")).toBeTruthy());
     // Reached from the reference it observed, since no run lists it.
-    await press(screen.getByRole("button", { name: "Show what orphan.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for orphan.mzML" }));
     expect(within(details()).getByText(en.provenanceUsedByNothing)).toBeTruthy();
   });
 
@@ -252,7 +263,7 @@ describe("the provenance consumer", () => {
       openProject({ inputs: [projectInput({ id: INPUT, label: "QC_pool_01.mzML" })] }),
     );
     await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
     expect(describing()).toBe("input");
 
     // The reference is removed while it is the one being inspected.
@@ -299,7 +310,7 @@ describe("the provenance consumer", () => {
 
     // The name says which object, so a button list is not four identical rows.
     const inspect = screen.getByRole("button", {
-      name: "Show what QC_pool_01.mzML is related to",
+      name: "Details for QC_pool_01.mzML",
     });
     expect(inspect.getAttribute("aria-controls")).toBe("workbench-inspector");
 
@@ -362,7 +373,9 @@ describe("the provenance consumer", () => {
 
   it("says a current file state is current, even inside a recorded list", async () => {
     mount(capturedProject({ input: { verification: "differentContent" } }));
-    await pressWhenReady(`[data-project-inspect-run="${RUN}"]`);
+    // The row opens on the record the run left; the run is one step on.
+    await pressWhenReady(`[data-project-inspect-artifact="${ARTIFACT}"]`);
+    await pressWhenReady(`#workbench-inspector [data-provenance-link="${RUN}"]`);
 
     // Under "Used", beside what the run consumed. The tone and the section
     // heading carry it visually; the text carries it for a reader who has
@@ -373,20 +386,90 @@ describe("the provenance consumer", () => {
     expect(state.textContent).toContain(en.projectStateDifferent);
   });
 
+  it("opens the region a row's Details asks for, and only when it is closed", async () => {
+    let reveals = 0;
+    mount(capturedProject(), { detailsPresent: true, onReveal: () => (reveals += 1) });
+    await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
+
+    // Already on screen: asking the shell again would toggle it shut.
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
+    expect(describing()).toBe("input");
+    expect(reveals).toBe(0);
+
+    cleanup();
+    mount(capturedProject(), { detailsPresent: false, onReveal: () => (reveals += 1) });
+    await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
+    // Closed below the roomy breakpoint: the press that says "Details" opens
+    // it, through the shell's own control, once.
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
+    expect(describing()).toBe("input");
+    expect(reveals).toBe(1);
+  });
+
   it("points at Details when the region is not on screen", async () => {
     mount(capturedProject(), { detailsPresent: false });
     await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
     expect(document.querySelector("[data-project-inspect-hint]")).toBeNull();
 
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
 
-    // Below the roomy breakpoint the region is closed unless asked for, so
-    // inspecting would otherwise appear to do nothing.
+    // When the shell could not open the region -- it is still closed after the
+    // press -- inspecting would otherwise appear to do nothing.
     await waitFor(() =>
       expect(document.querySelector("[data-project-inspect-hint]")).toBeTruthy(),
     );
-    expect(screen.getByText(en.provenanceInDetails)).toBeTruthy();
-    expect(screen.getByRole("button", { name: en.provenanceShowDetails })).toBeTruthy();
+    const hint = document.querySelector<HTMLElement>("[data-project-inspect-hint]")!;
+    expect(within(hint).getByRole("button", { name: en.provenanceShowDetails })).toBeTruthy();
+    // The button says where the answer went; no sentence restates it.
+    expect(hint.textContent).toBe(en.provenanceShowDetails);
+  });
+
+  describe("a reference recorded from a conversion MSCanvas did not verify", () => {
+    // ADR 0055, decision 2: the label is carried into the adopted output's
+    // provenance, and this region is that provenance.
+    const RELEASE = "3.0.26204";
+    const labelled = () => ({
+      ...capturedProject({ input: { notVerifiedByMscanvas: { unverifiedSettings: false, unverifiedBuildRelease: RELEASE } } }),
+      layers: [projectLayer({ sourceInputId: INPUT })],
+    });
+    const tags = () => [...details().querySelectorAll("[data-not-verified]")].map((tag) => tag.textContent);
+
+    it("carries the label on the reference and on every link to it", async () => {
+      mount(labelled());
+      const label = en.m74CnvNotVerifiedBuild.replace("{{release}}", RELEASE);
+      await pressWhenReady(`[data-project-inspect="${INPUT}"]`);
+      expect(describing()).toBe("input");
+      // Beside the heading, so the heading's name is still only the file's.
+      expect(within(details()).getByRole("heading", { name: "QC_pool_01.mzML" })).toBeTruthy();
+      expect(tags()).toEqual([label]);
+
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${RUN}"]`)!);
+      expect(describing()).toBe("run");
+      expect(tags()).toEqual([label]);
+
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${ARTIFACT}"]`)!);
+      expect(describing()).toBe("artifact");
+      expect(tags()).toEqual([label]);
+
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${INPUT}"]`)!);
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${projectLayer().id}"]`)!);
+      expect(describing()).toBe("layer");
+      expect(tags()).toEqual([label]);
+    });
+
+    it("says it in Simplified Chinese", async () => {
+      mount(labelled(), { locale: "zh-CN" });
+      await pressWhenReady(`[data-project-inspect="${INPUT}"]`);
+      expect(tags()).toEqual([zh.m74CnvNotVerifiedBuild.replace("{{release}}", RELEASE)]);
+      expect(zh.m74CnvNotVerifiedBuild).not.toEqual(en.m74CnvNotVerifiedBuild);
+    });
+
+    it("shows nothing for a reference with nothing recorded", async () => {
+      mount({ ...capturedProject(), layers: [projectLayer({ sourceInputId: INPUT })] });
+      await pressWhenReady(`[data-project-inspect="${INPUT}"]`);
+      await press(details().querySelector<HTMLElement>(`[data-provenance-link="${RUN}"]`)!);
+      expect(tags()).toEqual([]);
+    });
   });
 
   it("renders the provenance region in Simplified Chinese", async () => {
@@ -394,7 +477,7 @@ describe("the provenance consumer", () => {
       locale: "zh-CN",
     });
     await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
-    await press(screen.getByRole("button", { name: `查看 QC_pool_01.mzML 的关联` }));
+    await press(screen.getByRole("button", { name: `QC_pool_01.mzML 的详情` }));
 
     const region = within(details());
     expect(region.getByText(zh.provenanceKindInput)).toBeTruthy();
@@ -460,7 +543,7 @@ describe("a project arriving, and being replaced", () => {
   it("forgets what was inspected and ticked when another copy of the project is opened", async () => {
     const api = mount(capturedProject());
     await waitFor(() => expect(screen.getByText("QC_pool_01.mzML")).toBeTruthy());
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
     const tick = () =>
       screen.getByRole<HTMLInputElement>("checkbox", {
         name: "Include QC_pool_01.mzML in the next capture",
