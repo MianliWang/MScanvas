@@ -13,6 +13,9 @@ slice-2 note under decision 9).
 Amended 2026-10-30 by the owner (P175): decision 9's profile line is delivered
 in slice 2, in export and, in its webview commit, on screen (the slice-2
 note under decision 9).
+Amended 2026-10-30 by the owner (R-1): decision 1 is widened for the library
+only, with PR #182's five choices (the library-extension note under decision
+3).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -364,6 +367,86 @@ Both need a follow-up decision. It must:
 > are read natively during a conversion, serialized by a native-read lane
 > instead of the backend gate. Opening a preview during a conversion stays
 > refused, and viewing without ProteoWizard stays open.
+
+> **2026-10-30: library extension toward the viewing-without-ProteoWizard
+> follow-up; routing and admission unchanged.** The reader now produces, from
+> the mzML alone and in the open's one table pass, what that follow-up would
+> move off `msaccess`. Nothing reads it yet:
+>
+> - the open still asks `msaccess` for the metadata and the run summary;
+> - the QC snapshot still records `msaccess`'s run summary;
+> - the shared `SpectrumTableRow` still leaves a native row's charge
+>   unreported (decision 5).
+>
+> It widens decision 1 for the library only: polarity; the precursor charge
+> (MS:1000041), beyond "It reads"; the metadata sections with their
+> userParams, instrument configurations among them (decision 3); the run
+> summary; and the chromatogram count, elements counted and never decoded. The
+> filter string stays unread. The owner accepted it on 2026-10-30 (R-1, below).
+>
+> - **Per spectrum.** `MzmlSpectrumRow` carries polarity (MS:1000130,
+>   MS:1000129) from the spectrum's own terms and its param groups; a polarity
+>   inside the scan is not read. `MzmlPrecursor` carries the charge
+>   (MS:1000041) of its first selected ion, the rule its m/z already follows.
+> - **Run-level metadata** (`MzmlMetadata`). The file content, source files,
+>   contact, samples, software, instrument configurations with their
+>   components, data processing with its methods, and the `run` element. Each
+>   keeps its unprefixed attributes and its parameters, with a referenced param
+>   group's parameters in place of the reference. It is typed rather than
+>   `msaccess`'s text, so a view built on it is a new view (decision 3).
+> - **Run summary** (`MzmlRunSummary`). The spectra and `chromatogram`
+>   elements the pass counted, one bucket per declared MS level with the
+>   lowest first, and the lowest and highest retention time of the rows in
+>   their one unit, or no range for mixed units. That range is already native:
+>   the desktop's `retention_time_range_dto` computes it from the table rows,
+>   so the follow-up keeps one of the two copies. It has no retention time at
+>   a share of cumulative base-peak intensity: that is decision 7's excluded
+>   computation, and stays `msaccess`'s.
+> - **No new refusal.** These facts stay out of decision 1's conflicting-term
+>   rule, which would refuse files that open today. Instead:
+>   - a polarity or charge stated two ways is conflicting, and a charge that is
+>     not an integer is unreadable; neither is reported;
+>   - a metadata attribute that does not normalize is not reported;
+>   - a metadata accession or unit accession that is not `PREFIX:ID`, the
+>     rule an array's unit follows, is not reported;
+>   - metadata parameters are carried as stated, in document order, and never
+>     judged, so conflicting ones are all kept;
+>   - metadata above 4 MiB, counting the param groups, is not reported at all,
+>     never in part.
+>
+>   The table stands in each case.
+> - **Comparison with `msaccess`.** No mzML is committed together with a
+>   recorded `run_summary` of it, because R0 kept output digests only. A
+>   generated pair checks the spectrum count, the MS-level buckets and a
+>   whole-second range against the parser. The native summary buckets every
+>   declared level, has no `MS(others)` bucket and omits a level with no
+>   spectra; which levels `msaccess` puts in `MS(others)` is not recorded, so
+>   the generated pair, levels 1 and 2 only, does not test that. A real-file
+>   comparison, which needs a ProteoWizard hold release, checks it.
+> - **Owner decision R-1 (2026-10-30).** Shown the decisions that block work
+>   now, the owner replied "全部按推荐，继续" ("all as recommended,
+>   continue"), accepting R-1's recommendation
+>   ([PR #182](https://github.com/MianliWang/MScanvas/pull/182)):
+>   1. **The amendment is accepted.** The reader takes polarity (MS:1000130,
+>      MS:1000129), the charge (MS:1000041), the run-level metadata and the run
+>      summary from the table pass, as above.
+>   2. **The three retention times at a share of cumulative base-peak
+>      intensity** (PRJ-006) stay `msaccess`'s for now, as above. Next, a short
+>      per-algorithm record (U7) computes them from the declared base-peak
+>      values the table pass already reads, and a fixture test shows they equal
+>      `msaccess`'s before `msaccess` leaves the open. That fixture needs one
+>      recorded `msaccess` run summary of a public mzML, under a ProteoWizard
+>      hold release (HR-1, still open). If they cannot be matched, they stay
+>      `msaccess`'s.
+>   3. **#154's scan-context terms.** Polarity and charge now. The analyzer and
+>      the filter string are read only if #154's columns stay in the rebuilt
+>      scan table. Scan event and ion injection time are not answered and stay
+>      open.
+>   4. **The pull request's five choices are accepted as stated:** decision 1
+>      widened for the library only; MS-level buckets lowest level first;
+>      polarity read at spectrum level only; charge kept off the shared
+>      `SpectrumTableRow` until routing; conflicting or unreadable polarity and
+>      charge not reported, never refused.
 
 ### 4. Offsets are kept with the open preview
 

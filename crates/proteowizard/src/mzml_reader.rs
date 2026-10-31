@@ -9,7 +9,10 @@
 //! Two reads, and nothing else:
 //!
 //! - [`read_spectrum_table`] reads every spectrum's metadata, decodes no array,
-//!   and records each spectrum's byte offset. No `indexList` is trusted.
+//!   and records each spectrum's byte offset. No `indexList` is trusted. The
+//!   same pass keeps the run-level metadata ([`MzmlMetadata`]) and counts the
+//!   stored chromatograms, so [`MzmlSpectrumTable::run_summary`] needs no
+//!   second read.
 //! - [`read_selected_spectrum`] reads one spectrum from the offset its table
 //!   recorded, checks that it landed on the spectrum the table describes, and
 //!   decodes its two arrays under absolute caps checked before any buffer is
@@ -18,6 +21,12 @@
 //! Names resolve by namespace, never by literal qualified name, so a
 //! namespace-prefixed document reads like its unprefixed form. Every refusal is
 //! typed, and nothing is skipped, guessed or computed from the arrays.
+//!
+//! Polarity, charge and the run-level metadata are read without refusing, and
+//! the open stands as it did before they were read. A polarity or charge
+//! stated two ways, or in a form that cannot be read, is not reported.
+//! Metadata parameters are carried as stated, in document order, and never
+//! judged, so conflicting ones are all kept.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -39,7 +48,7 @@ use crate::mzml::{
     MzmlScanLimits, UnsafeXmlKind, attribute_value, capture_attributes, is_predefined_reference,
     map_xml_error, parse_u64_decimal,
 };
-use crate::preview::SpectrumIdentity;
+use crate::preview::{MsLevelBucket, MsLevelCount, SpectrumIdentity};
 
 /// The most points one decoded array may hold, whatever the file declares.
 pub const MAX_DECODED_ARRAY_POINTS: u64 = 1 << 23;
@@ -47,6 +56,13 @@ pub const MAX_DECODED_ARRAY_POINTS: u64 = 1 << 23;
 pub const MAX_DECODED_ARRAY_BYTES: u64 = 64 * 1024 * 1024;
 /// The most decoded bytes one spectrum may hold, across its two arrays.
 pub const MAX_DECODED_SPECTRUM_BYTES: u64 = 128 * 1024 * 1024;
+/// The most bytes the run-level metadata may keep, counting every param
+/// group's parameters and 64 bytes for each kept item. Above it the metadata
+/// is not reported; the table stands.
+pub const MAX_METADATA_BYTES: usize = 4 * 1024 * 1024;
+/// What each kept metadata element, attribute and parameter costs on top of
+/// its text, so that many small items are bounded as well as a few long ones.
+const METADATA_ITEM_BYTES: usize = 64;
 
 const MZML_NAMESPACE: &[u8] = b"http://psi.hupo.org/ms/mzml";
 const XSI_NAMESPACE: &[u8] = b"http://www.w3.org/2001/XMLSchema-instance";
@@ -322,12 +338,51 @@ impl MzmlRetentionTime {
     }
 }
 
+/// A fact a spectrum may declare, read without refusing. Only `Value` carries
+/// one; every other state is not reported, with its reason, and nothing is
+/// guessed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MzmlDeclared<T> {
+    Value(T),
+    #[default]
+    NotDeclared,
+    /// Stated more than once, counting param groups, with values that differ.
+    Conflicting,
+    /// Stated in a form this reader cannot read, such as a charge that is not
+    /// an integer. It wins over `Conflicting`, so the reason does not depend
+    /// on the order of the statements.
+    Unreadable,
+}
+
+impl<T: PartialEq> MzmlDeclared<T> {
+    /// Both statements of one fact together.
+    fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::NotDeclared, other) | (other, Self::NotDeclared) => other,
+            (Self::Unreadable, _) | (_, Self::Unreadable) => Self::Unreadable,
+            (Self::Conflicting, _) | (_, Self::Conflicting) => Self::Conflicting,
+            (Self::Value(left), Self::Value(right)) if left == right => Self::Value(left),
+            (Self::Value(_), Self::Value(_)) => Self::Conflicting,
+        }
+    }
+}
+
+/// The scan polarity a spectrum declares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MzmlPolarity {
+    /// MS:1000130.
+    Positive,
+    /// MS:1000129.
+    Negative,
+}
+
 /// One precursor's first selected ion. Either value may be unstated, and an
 /// unstated value is never zero.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MzmlPrecursor {
     selected_ion_mz: Option<f64>,
     selected_ion_intensity: Option<f64>,
+    charge: MzmlDeclared<i32>,
 }
 
 impl MzmlPrecursor {
@@ -340,6 +395,12 @@ impl MzmlPrecursor {
     pub const fn selected_ion_intensity(self) -> Option<f64> {
         self.selected_ion_intensity
     }
+
+    /// MS:1000041 on the first selected ion, as the file states it.
+    #[must_use]
+    pub const fn charge(self) -> MzmlDeclared<i32> {
+        self.charge
+    }
 }
 
 /// One spectrum's metadata, as a table row and as a selected spectrum states
@@ -350,6 +411,7 @@ pub struct MzmlSpectrumRow {
     identity: SpectrumIdentity,
     ms_level: u32,
     representation: MzmlRepresentation,
+    polarity: MzmlDeclared<MzmlPolarity>,
     retention_time: MzmlRetentionTime,
     base_peak_mz: f64,
     base_peak_intensity: f64,
@@ -376,6 +438,13 @@ impl MzmlSpectrumRow {
     #[must_use]
     pub const fn representation(&self) -> MzmlRepresentation {
         self.representation
+    }
+
+    /// From the spectrum's own terms and its param groups; a polarity stated
+    /// only inside its scan is not the spectrum's, and reads as `NotDeclared`.
+    #[must_use]
+    pub const fn polarity(&self) -> MzmlDeclared<MzmlPolarity> {
+        self.polarity
     }
 
     #[must_use]
@@ -537,6 +606,226 @@ impl MzmlSelectedSpectrum {
     }
 }
 
+/// The mzML element a metadata element was read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MzmlMetadataKind {
+    /// `fileDescription/fileContent`.
+    FileContent,
+    /// `fileDescription/sourceFileList/sourceFile`.
+    SourceFile,
+    /// `fileDescription/contact`.
+    Contact,
+    /// `sampleList/sample`.
+    Sample,
+    /// `softwareList/software`.
+    Software,
+    /// `instrumentConfigurationList/instrumentConfiguration`.
+    InstrumentConfiguration,
+    /// A `componentList/source` of the instrument configuration before it.
+    Source,
+    /// A `componentList/analyzer` of the instrument configuration before it.
+    Analyzer,
+    /// A `componentList/detector` of the instrument configuration before it.
+    Detector,
+    /// `dataProcessingList/dataProcessing`.
+    DataProcessing,
+    /// A `processingMethod` of the data processing before it.
+    ProcessingMethod,
+    /// The `run` element: its own attributes and parameters.
+    Run,
+}
+
+/// One parameter as a metadata element states it: a `cvParam` or a
+/// `userParam`. The accession and unit accession are kept only as `PREFIX:ID`
+/// (the rule an array's unit follows); any other text, and an empty value, is
+/// not reported. The name and value are the file's, unchecked, and may be
+/// sensitive. `unitName`, `unitCvRef` and `type` are not kept.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MzmlParam {
+    cv: bool,
+    accession: Option<String>,
+    name: Option<String>,
+    value: Option<String>,
+    unit_accession: Option<String>,
+}
+
+impl MzmlParam {
+    /// Whether the document states it as a `cvParam`, whatever its accession.
+    #[must_use]
+    pub const fn is_cv_param(&self) -> bool {
+        self.cv
+    }
+
+    #[must_use]
+    pub fn accession(&self) -> Option<&str> {
+        self.accession.as_deref()
+    }
+
+    #[must_use]
+    pub fn sensitive_name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    #[must_use]
+    pub fn sensitive_value(&self) -> Option<&str> {
+        self.value.as_deref()
+    }
+
+    #[must_use]
+    pub fn unit_accession(&self) -> Option<&str> {
+        self.unit_accession.as_deref()
+    }
+
+    fn byte_len(&self) -> usize {
+        [
+            &self.accession,
+            &self.name,
+            &self.value,
+            &self.unit_accession,
+        ]
+        .into_iter()
+        .flatten()
+        .map(String::len)
+        .sum()
+    }
+}
+
+impl fmt::Debug for MzmlParam {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MzmlParam")
+            .field("cv", &self.cv)
+            .field("value_stated", &self.value.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// One metadata element, in document order: its kind, the unprefixed
+/// attributes it states, and its parameters, each referenced param group's
+/// parameters in place of the reference. An instrument configuration's
+/// `softwareRef` child is kept as its `softwareRef` attribute. Paths, sample
+/// names and other sensitive text can be among the values, so `Debug` shows
+/// only counts.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MzmlMetadataElement {
+    kind: MzmlMetadataKind,
+    attributes: Vec<(String, String)>,
+    params: Vec<MzmlParam>,
+}
+
+impl MzmlMetadataElement {
+    #[must_use]
+    pub const fn kind(&self) -> MzmlMetadataKind {
+        self.kind
+    }
+
+    /// Every unprefixed attribute, by local name, in document order.
+    #[must_use]
+    pub fn sensitive_attributes(&self) -> &[(String, String)] {
+        &self.attributes
+    }
+
+    /// One attribute, or `None` when the element does not state it.
+    #[must_use]
+    pub fn sensitive_attribute(&self, name: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    #[must_use]
+    pub fn params(&self) -> &[MzmlParam] {
+        &self.params
+    }
+}
+
+impl fmt::Debug for MzmlMetadataElement {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MzmlMetadataElement")
+            .field("kind", &self.kind)
+            .field("attribute_count", &self.attributes.len())
+            .field("param_count", &self.params.len())
+            .finish()
+    }
+}
+
+/// The run-level metadata: file description, samples, software, instrument
+/// configurations, data processing and the run element.
+#[derive(Clone, PartialEq, Eq)]
+pub enum MzmlMetadata {
+    /// Every metadata element, in document order. A section the document does
+    /// not state has no element, and is not reported.
+    Read(Vec<MzmlMetadataElement>),
+    /// Above [`MAX_METADATA_BYTES`], so none of it is reported rather than a
+    /// part of it. The table stands.
+    OverBound,
+}
+
+impl fmt::Debug for MzmlMetadata {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read(elements) => formatter
+                .debug_struct("Read")
+                .field("element_count", &elements.len())
+                .finish(),
+            Self::OverBound => formatter.write_str("OverBound"),
+        }
+    }
+}
+
+/// The lowest and highest scan start time of a run's spectra. Selected from
+/// read values, never converted or interpolated.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MzmlRetentionTimeRange {
+    /// Every spectrum states `unit`, or every one leaves it undeclared.
+    Reported {
+        minimum: f64,
+        maximum: f64,
+        unit: RetentionTimeUnit,
+    },
+    NoSpectra,
+    /// Spectra state different units, or only some state one.
+    MixedUnits,
+}
+
+/// What the table pass itself says about the run. It carries no retention
+/// time at a share of cumulative base-peak intensity, which is a computation
+/// (ADR 0056, decision 7).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MzmlRunSummary {
+    spectrum_count: u64,
+    chromatogram_count: u64,
+    counts_by_ms_level: Vec<MsLevelCount>,
+    retention_time_range: MzmlRetentionTimeRange,
+}
+
+impl MzmlRunSummary {
+    /// The spectra the pass read, not `spectrumList/@count`.
+    #[must_use]
+    pub const fn spectrum_count(&self) -> u64 {
+        self.spectrum_count
+    }
+
+    /// The `chromatogram` elements the pass counted, none of them decoded.
+    #[must_use]
+    pub const fn chromatogram_count(&self) -> u64 {
+        self.chromatogram_count
+    }
+
+    /// One bucket per MS level the spectra declare, lowest level first.
+    #[must_use]
+    pub fn counts_by_ms_level(&self) -> &[MsLevelCount] {
+        &self.counts_by_ms_level
+    }
+
+    #[must_use]
+    pub const fn retention_time_range(&self) -> MzmlRetentionTimeRange {
+        self.retention_time_range
+    }
+}
+
 /// Every spectrum's row, with what a later selected read needs: each row's
 /// byte offset, the param groups, and the namespace bindings in scope for the
 /// spectra.
@@ -545,6 +834,8 @@ pub struct MzmlSpectrumTable {
     rows: Vec<MzmlSpectrumRow>,
     offsets: Vec<u64>,
     declared_spectrum_count: Option<u64>,
+    chromatogram_count: u64,
+    metadata: MzmlMetadata,
     groups: ParamGroups,
     bindings: Vec<(Option<Vec<u8>>, Vec<u8>)>,
     limits: MzmlScanLimits,
@@ -561,6 +852,48 @@ impl MzmlSpectrumTable {
     pub const fn declared_spectrum_count(&self) -> Option<u64> {
         self.declared_spectrum_count
     }
+
+    #[must_use]
+    pub const fn metadata(&self) -> &MzmlMetadata {
+        &self.metadata
+    }
+
+    #[must_use]
+    pub fn run_summary(&self) -> MzmlRunSummary {
+        let mut levels = BTreeMap::<u32, u64>::new();
+        for row in &self.rows {
+            *levels.entry(row.ms_level).or_default() += 1;
+        }
+        MzmlRunSummary {
+            spectrum_count: self.rows.len() as u64,
+            chromatogram_count: self.chromatogram_count,
+            counts_by_ms_level: levels
+                .into_iter()
+                .map(|(level, count)| MsLevelCount::new(MsLevelBucket::Level(level), count))
+                .collect(),
+            retention_time_range: retention_time_range(&self.rows),
+        }
+    }
+}
+
+fn retention_time_range(rows: &[MzmlSpectrumRow]) -> MzmlRetentionTimeRange {
+    let Some(first) = rows.first() else {
+        return MzmlRetentionTimeRange::NoSpectra;
+    };
+    let unit = first.retention_time.unit;
+    let (mut minimum, mut maximum) = (f64::INFINITY, f64::NEG_INFINITY);
+    for row in rows {
+        if row.retention_time.unit != unit {
+            return MzmlRetentionTimeRange::MixedUnits;
+        }
+        minimum = minimum.min(row.retention_time.value);
+        maximum = maximum.max(row.retention_time.value);
+    }
+    MzmlRetentionTimeRange::Reported {
+        minimum,
+        maximum,
+        unit,
+    }
 }
 
 impl fmt::Debug for MzmlSpectrumTable {
@@ -569,6 +902,8 @@ impl fmt::Debug for MzmlSpectrumTable {
             .debug_struct("MzmlSpectrumTable")
             .field("rows", &self.rows.len())
             .field("declared_spectrum_count", &self.declared_spectrum_count)
+            .field("chromatogram_count", &self.chromatogram_count)
+            .field("metadata", &self.metadata)
             .field("param_groups", &self.groups.len())
             .finish_non_exhaustive()
     }
@@ -614,6 +949,8 @@ pub fn read_spectrum_table_from<R: BufRead>(
         rows: pass.rows,
         offsets: pass.offsets,
         declared_spectrum_count: pass.declared_spectrum_count,
+        chromatogram_count: pass.chromatograms,
+        metadata: pass.metadata.finish(),
         groups: pass.groups.into_owned(),
         bindings: pass.bindings,
         limits,
@@ -817,6 +1154,29 @@ enum El {
     BinaryDataArrayList,
     BinaryDataArray,
     Binary,
+    UserParam,
+    ChromatogramList,
+    Chromatogram,
+    // Run-level metadata.
+    FileDescription,
+    FileContent,
+    SourceFileList,
+    SourceFile,
+    Contact,
+    SampleList,
+    Sample,
+    SoftwareList,
+    Software,
+    InstrumentConfigurationList,
+    InstrumentConfiguration,
+    ComponentList,
+    Source,
+    Analyzer,
+    Detector,
+    SoftwareRef,
+    DataProcessingList,
+    DataProcessing,
+    ProcessingMethod,
     Other,
 }
 
@@ -825,6 +1185,28 @@ fn element(in_mzml: bool, local: &[u8]) -> El {
         return El::Other;
     }
     match local {
+        b"userParam" => El::UserParam,
+        b"chromatogramList" => El::ChromatogramList,
+        b"chromatogram" => El::Chromatogram,
+        b"fileDescription" => El::FileDescription,
+        b"fileContent" => El::FileContent,
+        b"sourceFileList" => El::SourceFileList,
+        b"sourceFile" => El::SourceFile,
+        b"contact" => El::Contact,
+        b"sampleList" => El::SampleList,
+        b"sample" => El::Sample,
+        b"softwareList" => El::SoftwareList,
+        b"software" => El::Software,
+        b"instrumentConfigurationList" => El::InstrumentConfigurationList,
+        b"instrumentConfiguration" => El::InstrumentConfiguration,
+        b"componentList" => El::ComponentList,
+        b"source" => El::Source,
+        b"analyzer" => El::Analyzer,
+        b"detector" => El::Detector,
+        b"softwareRef" => El::SoftwareRef,
+        b"dataProcessingList" => El::DataProcessingList,
+        b"dataProcessing" => El::DataProcessing,
+        b"processingMethod" => El::ProcessingMethod,
         b"indexedmzML" => El::IndexedMzml,
         b"mzML" => El::Mzml,
         b"referenceableParamGroupList" => El::ParamGroupList,
@@ -928,6 +1310,58 @@ const SPECTRUM_SELECTED_ION: &[El] = &[
     El::SelectedIon,
 ];
 const SPECTRUM_ARRAY: &[El] = &[El::Spectrum, El::BinaryDataArrayList, El::BinaryDataArray];
+const INSTRUMENT_COMPONENT: &[El] = &[
+    El::InstrumentConfigurationList,
+    El::InstrumentConfiguration,
+    El::ComponentList,
+];
+
+/// Which metadata element `el` is, when it sits where the schema puts one.
+fn metadata_kind(stack: &[El], el: El) -> Option<MzmlMetadataKind> {
+    use MzmlMetadataKind as Kind;
+    let under = |path: &[El]| stack.ends_with(path);
+    Some(match el {
+        El::FileContent if under(&[El::Mzml, El::FileDescription]) => Kind::FileContent,
+        El::SourceFile if under(&[El::Mzml, El::FileDescription, El::SourceFileList]) => {
+            Kind::SourceFile
+        }
+        El::Contact if under(&[El::Mzml, El::FileDescription]) => Kind::Contact,
+        El::Sample if under(&[El::Mzml, El::SampleList]) => Kind::Sample,
+        El::Software if under(&[El::Mzml, El::SoftwareList]) => Kind::Software,
+        El::InstrumentConfiguration if under(&[El::Mzml, El::InstrumentConfigurationList]) => {
+            Kind::InstrumentConfiguration
+        }
+        El::Source if under(INSTRUMENT_COMPONENT) => Kind::Source,
+        El::Analyzer if under(INSTRUMENT_COMPONENT) => Kind::Analyzer,
+        El::Detector if under(INSTRUMENT_COMPONENT) => Kind::Detector,
+        El::DataProcessing if under(&[El::Mzml, El::DataProcessingList]) => Kind::DataProcessing,
+        El::ProcessingMethod if under(&[El::DataProcessingList, El::DataProcessing]) => {
+            Kind::ProcessingMethod
+        }
+        El::Run if under(&[El::Mzml]) => Kind::Run,
+        _ => return None,
+    })
+}
+
+/// A metadata element's unprefixed attributes. Read here rather than through
+/// the shared attribute capture, so no attribute that capture skips is newly
+/// normalized for the inspector; one that does not normalize is not reported.
+fn metadata_attributes(start: &BytesStart<'_>) -> Vec<(String, String)> {
+    start
+        .attributes()
+        .filter_map(Result::ok)
+        .filter(|attribute| {
+            attribute.key.prefix().is_none() && attribute.key.as_namespace_binding().is_none()
+        })
+        .filter_map(|attribute| {
+            let key = std::str::from_utf8(attribute.key.local_name().as_ref())
+                .ok()?
+                .to_owned();
+            let value = attribute_value(&attribute).ok()?.into_owned();
+            Some((key, value))
+        })
+        .collect()
+}
 
 /// The controlled-vocabulary terms this reader interprets. Every other term is
 /// not read, so it can neither conflict nor be shown.
@@ -997,29 +1431,78 @@ struct Stated {
     unit: Option<String>,
 }
 
-type ParamGroups = BTreeMap<String, Vec<Stated>>;
+/// The facts read without refusing. They stay out of [`Term`], whose
+/// restatement with a different value refuses the open, and out of a param
+/// group's term count.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Facts {
+    polarity: MzmlDeclared<MzmlPolarity>,
+    charge: MzmlDeclared<i32>,
+}
+
+impl Facts {
+    fn and(self, other: Self) -> Self {
+        Self {
+            polarity: self.polarity.and(other.polarity),
+            charge: self.charge.and(other.charge),
+        }
+    }
+}
+
+/// The fact one term states, if it is one. A polarity term's value is not
+/// read, so restating it never disagrees with itself.
+fn fact(accession: &str, value: &str) -> Option<Facts> {
+    let mut facts = Facts::default();
+    match accession {
+        "MS:1000130" => facts.polarity = MzmlDeclared::Value(MzmlPolarity::Positive),
+        "MS:1000129" => facts.polarity = MzmlDeclared::Value(MzmlPolarity::Negative),
+        "MS:1000041" => {
+            facts.charge = value
+                .trim()
+                .parse()
+                .map_or(MzmlDeclared::Unreadable, MzmlDeclared::Value);
+        }
+        _ => return None,
+    }
+    Some(facts)
+}
+
+#[derive(Debug, Clone, Default)]
+struct Group {
+    stated: Vec<Stated>,
+    facts: Facts,
+}
+
+type ParamGroups = BTreeMap<String, Group>;
 
 /// The terms one element states, its param groups included. A term stated
 /// twice must state the same value and unit.
 #[derive(Debug, Default)]
-struct Terms(Vec<Stated>);
+struct Terms {
+    stated: Vec<Stated>,
+    facts: Facts,
+}
 
 struct Conflict;
 
 impl Terms {
     fn add(&mut self, stated: Stated) -> Result<(), Conflict> {
-        match self.0.iter().find(|existing| existing.term == stated.term) {
+        match self
+            .stated
+            .iter()
+            .find(|existing| existing.term == stated.term)
+        {
             Some(existing) if *existing == stated => Ok(()),
             Some(_) => Err(Conflict),
             None => {
-                self.0.push(stated);
+                self.stated.push(stated);
                 Ok(())
             }
         }
     }
 
     fn get(&self, term: Term) -> Option<&Stated> {
-        self.0.iter().find(|stated| stated.term == term)
+        self.stated.iter().find(|stated| stated.term == term)
     }
 
     fn has(&self, term: Term) -> bool {
@@ -1027,8 +1510,68 @@ impl Terms {
     }
 
     fn count(&self, matches: impl Fn(Term) -> bool) -> usize {
-        self.0.iter().filter(|stated| matches(stated.term)).count()
+        self.stated
+            .iter()
+            .filter(|stated| matches(stated.term))
+            .count()
     }
+}
+
+/// The run-level metadata kept by the table pass, under
+/// [`MAX_METADATA_BYTES`]. Nothing here refuses.
+#[derive(Default)]
+struct MetadataCapture {
+    elements: Vec<MzmlMetadataElement>,
+    /// Each open metadata element's index, with the stack depth of its
+    /// children.
+    open: Vec<(usize, usize)>,
+    /// Every param group's own parameters, which a metadata element may
+    /// reference. Not kept past the pass.
+    groups: BTreeMap<String, Vec<MzmlParam>>,
+    group: Vec<MzmlParam>,
+    bytes: usize,
+    over_bound: bool,
+}
+
+impl MetadataCapture {
+    /// Counts `bytes` and one item against the bound. Once it is crossed,
+    /// everything kept is dropped and nothing more is.
+    fn spend(&mut self, bytes: usize) -> bool {
+        self.bytes = self
+            .bytes
+            .saturating_add(bytes)
+            .saturating_add(METADATA_ITEM_BYTES);
+        if self.bytes > MAX_METADATA_BYTES && !self.over_bound {
+            self.over_bound = true;
+            self.elements = Vec::new();
+            self.groups = BTreeMap::new();
+            self.group = Vec::new();
+        }
+        !self.over_bound
+    }
+
+    /// The element whose children sit at `depth`.
+    fn element_at(&mut self, depth: usize) -> Option<&mut MzmlMetadataElement> {
+        match self.open.last() {
+            Some(&(open, index)) if open == depth => self.elements.get_mut(index),
+            _ => None,
+        }
+    }
+
+    fn finish(self) -> MzmlMetadata {
+        if self.over_bound {
+            MzmlMetadata::OverBound
+        } else {
+            MzmlMetadata::Read(self.elements)
+        }
+    }
+}
+
+/// A param's text, or `None` for an empty one.
+fn param_text(value: Option<&Cow<'_, str>>) -> Option<String> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.as_ref().to_owned())
 }
 
 #[derive(Debug, Default)]
@@ -1086,9 +1629,11 @@ struct Pass<'t> {
     root_seen: bool,
     version_seen: bool,
     groups: Cow<'t, ParamGroups>,
-    group: Option<(Option<String>, Vec<Stated>)>,
+    group: Option<(Option<String>, Group)>,
     bindings: Vec<(Option<Vec<u8>>, Vec<u8>)>,
     declared_spectrum_count: Option<u64>,
+    chromatograms: u64,
+    metadata: MetadataCapture,
     rows: Vec<MzmlSpectrumRow>,
     offsets: Vec<u64>,
     spectrum: Option<SpectrumParse>,
@@ -1109,6 +1654,8 @@ impl<'t> Pass<'t> {
             group: None,
             bindings: Vec::new(),
             declared_spectrum_count: None,
+            chromatograms: 0,
+            metadata: MetadataCapture::default(),
             rows: Vec::new(),
             offsets: Vec::new(),
             spectrum: None,
@@ -1192,6 +1739,11 @@ impl<'t> Pass<'t> {
             self.begin_root(el, start, attributes, offset, resolver)?;
             return Ok(el);
         }
+        if !self.decoding()
+            && let Some(kind) = metadata_kind(&self.stack, el)
+        {
+            self.begin_metadata(kind, start);
+        }
         let parent = self.stack.last().copied();
         match el {
             El::Mzml if self.stack == [El::IndexedMzml] => {
@@ -1202,7 +1754,11 @@ impl<'t> Pass<'t> {
                 if self.groups.len() >= MAX_PARAM_GROUPS {
                     return Err(MzmlOpenError::ReaderLimit(ReaderLimitKind::ParamGroups).into());
                 }
-                self.group = Some((attributes.id.as_deref().map(str::to_owned), Vec::new()));
+                self.group = Some((
+                    attributes.id.as_deref().map(str::to_owned),
+                    Group::default(),
+                ));
+                self.metadata.group.clear();
             }
             El::SpectrumList if parent == Some(El::Run) => {
                 self.declared_spectrum_count = attributes
@@ -1276,13 +1832,91 @@ impl<'t> Pass<'t> {
             El::Binary if self.decoding() && self.stack.ends_with(SPECTRUM_ARRAY) => {
                 self.begin_payload()?;
             }
+            El::Chromatogram if self.stack.ends_with(&[El::Run, El::ChromatogramList]) => {
+                self.chromatograms += 1;
+            }
+            El::SoftwareRef if parent == Some(El::InstrumentConfiguration) => {
+                if let Some(reference) = attributes.reference.as_deref() {
+                    self.metadata_attribute("softwareRef", reference);
+                }
+            }
             // A spectrum anywhere else is not a row, and must not close one.
             El::Spectrum => return Ok(El::Other),
             El::CvParam => self.cv_param(attributes)?,
+            El::UserParam => self.capture_param(attributes, false),
             El::ParamGroupRef => self.group_ref(attributes)?,
             _ => {}
         }
         Ok(el)
+    }
+
+    fn begin_metadata(&mut self, kind: MzmlMetadataKind, start: &BytesStart<'_>) {
+        let depth = self.stack.len() + 1;
+        let index = self.metadata.elements.len();
+        self.metadata.open.push((depth, index));
+        let attributes = metadata_attributes(start);
+        let bytes = attributes
+            .iter()
+            .map(|(key, value)| key.len() + value.len() + METADATA_ITEM_BYTES)
+            .sum();
+        if self.metadata.spend(bytes) {
+            self.metadata.elements.push(MzmlMetadataElement {
+                kind,
+                attributes,
+                params: Vec::new(),
+            });
+        }
+    }
+
+    /// An attribute the open metadata element states through a child.
+    fn metadata_attribute(&mut self, key: &str, value: &str) {
+        let depth = self.stack.len();
+        if self.metadata.element_at(depth).is_none()
+            || !self.metadata.spend(key.len() + value.len())
+        {
+            return;
+        }
+        if let Some(element) = self.metadata.element_at(depth) {
+            element.attributes.push((key.to_owned(), value.to_owned()));
+        }
+    }
+
+    /// Keeps a `cvParam` or `userParam` of a param group or of an open metadata
+    /// element. Only the table pass keeps metadata.
+    fn capture_param(&mut self, attributes: &CapturedAttributes<'_>, cv: bool) {
+        if self.decoding() {
+            return;
+        }
+        let in_group =
+            self.group.is_some() && self.stack.ends_with(&[El::ParamGroupList, El::ParamGroup]);
+        let depth = self.stack.len();
+        if !in_group && self.metadata.element_at(depth).is_none() {
+            return;
+        }
+        let accession = |value: Option<&Cow<'_, str>>| {
+            value
+                .filter(|value| is_accession(value))
+                .map(|value| value.as_ref().to_owned())
+        };
+        let param = MzmlParam {
+            cv,
+            accession: if cv {
+                accession(attributes.accession.as_ref())
+            } else {
+                None
+            },
+            name: param_text(attributes.name.as_ref()),
+            value: param_text(attributes.value.as_ref()),
+            unit_accession: accession(attributes.unit_accession.as_ref()),
+        };
+        if !self.metadata.spend(param.byte_len()) {
+            return;
+        }
+        if in_group {
+            self.metadata.group.push(param);
+        } else if let Some(element) = self.metadata.element_at(depth) {
+            element.params.push(param);
+        }
     }
 
     fn begin_root(
@@ -1358,9 +1992,17 @@ impl<'t> Pass<'t> {
     }
 
     fn cv_param(&mut self, attributes: &CapturedAttributes<'_>) -> Result<(), Fail> {
+        self.capture_param(attributes, true);
         let Some(accession) = attributes.accession.as_deref() else {
             return Ok(());
         };
+        if let Some(facts) = fact(accession, attributes.value.as_deref().unwrap_or_default()) {
+            // An array's terms are judged for its payload; a fact is not one.
+            return match self.target() {
+                Some(Target::Array(_)) | None => Ok(()),
+                Some(target) => target.add(&[], facts),
+            };
+        }
         let Some(term) = term(accession, attributes.name.as_deref()) else {
             return Ok(());
         };
@@ -1374,7 +2016,7 @@ impl<'t> Pass<'t> {
                 .map(str::to_owned),
         };
         match self.target() {
-            Some(target) => target.add(std::slice::from_ref(&stated)),
+            Some(target) => target.add(std::slice::from_ref(&stated), Facts::default()),
             None => Ok(()),
         }
     }
@@ -1388,9 +2030,34 @@ impl<'t> Pass<'t> {
             .ok_or(Fail::Open(MzmlOpenError::UndefinedParamGroup))?;
         match terms_target(&self.stack, &mut self.group, &mut self.spectrum) {
             // A group referring to a group is not mzML.
-            Some(Target::Group(_)) => Err(malformed(MzmlMalformedKind::NotWellFormed)),
-            Some(target) => target.add(group),
-            None => Ok(()),
+            Some(Target::Group(_)) => return Err(malformed(MzmlMalformedKind::NotWellFormed)),
+            Some(target) => target.add(&group.stated, group.facts)?,
+            None => {}
+        }
+        self.resolve_metadata_group(reference);
+        Ok(())
+    }
+
+    /// An open metadata element takes a referenced group's parameters in place
+    /// of the reference.
+    fn resolve_metadata_group(&mut self, reference: &str) {
+        let depth = self.stack.len();
+        if self.decoding() || self.metadata.element_at(depth).is_none() {
+            return;
+        }
+        let params = self
+            .metadata
+            .groups
+            .get(reference)
+            .cloned()
+            .unwrap_or_default();
+        for param in params {
+            if !self.metadata.spend(param.byte_len()) {
+                return;
+            }
+            if let Some(element) = self.metadata.element_at(depth) {
+                element.params.push(param);
+            }
         }
     }
 
@@ -1461,14 +2128,26 @@ impl<'t> Pass<'t> {
             .stack
             .pop()
             .ok_or(malformed(MzmlMalformedKind::NotWellFormed))?;
+        if self
+            .metadata
+            .open
+            .last()
+            .is_some_and(|&(depth, _)| depth == self.stack.len() + 1)
+        {
+            self.metadata.open.pop();
+        }
         match el {
             El::ParamGroup if self.stack.last() == Some(&El::ParamGroupList) => {
-                let Some((id, terms)) = self.group.take() else {
+                let Some((id, group)) = self.group.take() else {
                     return Ok(());
                 };
                 let id = id.ok_or(Fail::Open(MzmlOpenError::AmbiguousParamGroup))?;
-                if self.groups.to_mut().insert(id, terms).is_some() {
+                if self.groups.to_mut().insert(id.clone(), group).is_some() {
                     return Err(MzmlOpenError::AmbiguousParamGroup.into());
+                }
+                let params = std::mem::take(&mut self.metadata.group);
+                if !self.metadata.over_bound {
+                    self.metadata.groups.insert(id, params);
                 }
             }
             El::BinaryDataArray if self.stack.ends_with(&SPECTRUM_ARRAY[..2]) => {
@@ -1561,21 +2240,23 @@ impl<'t> Pass<'t> {
 }
 
 enum Target<'a> {
-    Group(&'a mut Vec<Stated>),
+    Group(&'a mut Group),
     Terms(&'a mut Terms),
     Array(&'a mut ArrayParse),
 }
 
 impl Target<'_> {
-    fn add(self, stated: &[Stated]) -> Result<(), Fail> {
+    /// Adds terms, which may refuse, and facts, which never do.
+    fn add(self, stated: &[Stated], facts: Facts) -> Result<(), Fail> {
         match self {
-            Self::Group(terms) => {
-                if terms.len().saturating_add(stated.len()) > MAX_TERMS_PER_PARAM_GROUP {
+            Self::Group(group) => {
+                if group.stated.len().saturating_add(stated.len()) > MAX_TERMS_PER_PARAM_GROUP {
                     return Err(
                         MzmlOpenError::ReaderLimit(ReaderLimitKind::TermsPerParamGroup).into(),
                     );
                 }
-                terms.extend_from_slice(stated);
+                group.stated.extend_from_slice(stated);
+                group.facts = group.facts.and(facts);
                 Ok(())
             }
             Self::Terms(terms) => {
@@ -1584,6 +2265,7 @@ impl Target<'_> {
                         .add(stated.clone())
                         .map_err(|Conflict| Fail::Open(MzmlOpenError::ConflictingTerm))?;
                 }
+                terms.facts = terms.facts.and(facts);
                 Ok(())
             }
             Self::Array(array) => {
@@ -1602,11 +2284,11 @@ impl Target<'_> {
 /// Where a term inside the open element belongs, if this reader reads it.
 fn terms_target<'a>(
     stack: &[El],
-    group: &'a mut Option<(Option<String>, Vec<Stated>)>,
+    group: &'a mut Option<(Option<String>, Group)>,
     spectrum: &'a mut Option<SpectrumParse>,
 ) -> Option<Target<'a>> {
     if stack.ends_with(&[El::ParamGroupList, El::ParamGroup]) {
-        return group.as_mut().map(|(_, terms)| Target::Group(terms));
+        return group.as_mut().map(|(_, group)| Target::Group(group));
     }
     let spectrum = spectrum.as_mut()?;
     if stack.ends_with(SPECTRUM_ARRAY) {
@@ -1654,7 +2336,7 @@ fn prepare(
     let data_type = match terms.count(|term| matches!(term, Term::DataType(_))) {
         0 => return Err(fail(ArrayProblem::DataTypeMissing)),
         1 => terms
-            .0
+            .stated
             .iter()
             .find_map(|stated| match stated.term {
                 Term::DataType(data_type) => Some(data_type),
@@ -1841,7 +2523,8 @@ fn widen(bytes: &[u8], data_type: BinaryDataType) -> Result<Vec<f64>, ArrayProbl
 /// Whether a declared unit is an accession, `PREFIX:ID` with each part 1 to 32
 /// ASCII letters or digits. A unit reaches export documents and figure labels,
 /// which admit no delimiter, line break or markup, so anything else is refused
-/// rather than carried.
+/// rather than carried. A metadata parameter's accession or unit accession
+/// that fails it is not reported instead.
 fn is_accession(value: &str) -> bool {
     let part = |part: &str| {
         (1..=32).contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_alphanumeric())
@@ -1913,6 +2596,8 @@ fn spectrum_row(spectrum: &mut SpectrumParse) -> Result<MzmlSpectrumRow, Fail> {
         identity: SpectrumIdentity::from_native_identifier(index, id),
         ms_level,
         representation,
+        // The spectrum's own terms and groups; the scan's facts are not read.
+        polarity: terms.facts.polarity,
         retention_time,
         base_peak_mz: required(Term::BasePeakMz, RequiredValue::BasePeakMz)?,
         base_peak_intensity: required(Term::BasePeakIntensity, RequiredValue::BasePeakIntensity)?,
@@ -1929,6 +2614,7 @@ fn precursor_values(precursor: &PrecursorParse) -> Result<MzmlPrecursor, Fail> {
     Ok(MzmlPrecursor {
         selected_ion_mz: optional_finite(&precursor.terms, Term::SelectedIonMz)?,
         selected_ion_intensity: optional_finite(&precursor.terms, Term::PeakIntensity)?,
+        charge: precursor.terms.facts.charge,
     })
 }
 
