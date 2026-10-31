@@ -320,18 +320,20 @@ recipe step. Which step a plan is, is its recipe binding (decision 12).
   of a run whose publication failed (decision 5). Its
   payload always holds `study.json` and the **ledger** (`samples.jsonl`). For
   a cross-sample step, its first line is the step's own invocation or
-  computation: its outcome, and its failure code and stage where it has one.
-  Then comes one line per included sample, in sample order, with the consumed
+  computation: its outcome, its failure code and stage where it has one, and
+  the loaded modules of its worker invocation, if it had one. Then comes one
+  line per included sample, in sample order, with the consumed
   content, the execution view (`hardLinkInWorkArea` or
   `verifiedSnapshotInWorkArea`), the polarity and centroid state the
-  invocation found, the invocation's loaded modules, the outcome
+  invocation found, the invocation's loaded modules (a per-sample step's
+  only; a cross-sample step's sample lines carry none), the outcome
   (`completed`, `failed`, `cancelled`, `notStarted`), a failure code
   and stage or stop facts where there is one, the source of a reused output
   (decision 5), and each output file's length and digest. A ledger failure code
   is a document `FailureCode`, a word of the ledger format's own
   (`reuseSourceUnavailable`, decision 5), or a reason of the recipe's own, a
-  token (decision 12) that the ledger checks for shape only. The payload also holds
-  an output for each sample that completed (per-sample steps), or the step's
+  token (decision 12) that the ledger checks for shape only. The payload also
+  holds an output for each sample that completed (per-sample steps), or the step's
   result (cross-sample steps, only when the invocation completed). The
   artifact's record says
   `complete`, `partial` or `noResult`. Unlike M9's result record, which lists
@@ -470,7 +472,8 @@ a reserved slot. This closes, for study runs, the M9 closure's limit that
   `payloadNotPublished` at stage `publish`, and later samples are still tried,
   as after any sample's failure. Before the start, Rust checks that the
   payload store's volume has room for the ledger and the manifest at their
-  bounds, and refuses the run otherwise. It sets no threshold for the outputs,
+  bounds, and refuses the run otherwise (`insufficientPayloadSpace`, a new
+  command refusal that records nothing). It sets no threshold for the outputs,
   whose sizes are not known in advance, so a disk filled by them can still
   make the final ledger or manifest write fail, and that is a failed
   publication.
@@ -479,9 +482,14 @@ a reserved slot. This closes, for study runs, the M9 closure's limit that
   (`workerLaunchFailed`, `workerTimeout`, `workerExitedAbnormally`,
   `workerInternal`, `workerNotAccountedFor`, `runtimeUnverified`,
   `runtimeModuleMismatch`, `requestRefused`, `engineError`, `resultInvalid`,
-  `payloadNotPublished`) and the new `noSampleCompleted`. A reason of a
-  recipe's own, which no document word names, is written only in the ledger
-  (decision 4), so a new recipe adds no failure code to the document.
+  `payloadNotPublished`), the existing `sourceUnavailable` and
+  `sourceChanged` at stage `source` for an upstream payload file or an
+  import's table found missing or changed when it is bound or read, and two
+  new words: `noSampleCompleted`, and `computationFailed` for a Rust step's
+  own computation that could not complete (an import that meets undeclared
+  text, a statistic that cannot be computed). A reason of a recipe's own,
+  which no document word names, is written only in the ledger (decision 4),
+  so a new recipe adds no failure code to the document.
 - **Outcome.** A study run's outcome and its artifact follow this table:
 
   | How the run ended | Run outcome | Artifact |
@@ -497,7 +505,9 @@ a reserved slot. This closes, for study runs, the M9 closure's limit that
   study run names exactly one artifact whatever its outcome, `complete` only
   with `completed`, with one exception: a run whose publication failed names
   none, and is valid only as `failed` with `payloadNotPublished` at stage
-  `publish`. The ledger and the counts say which samples did what. The
+  `publish`. Its ledger digest is `null`, because no ledger was published; it
+  keeps its sample counts, and the stop facts of a Stop accepted before the
+  end. The ledger and the counts say which samples did what. The
   rule and its test change with the study slice, and every other run keeps
   today's rule. A user-stopped or quarantined run is never recorded as
   `completed`.
@@ -825,8 +835,8 @@ The new document content:
   `targetedMs1` is for a targeted run;
 - the closed vocabularies: roles, polarity (a study plan's, decision 9), the
   reuse choice, artifact
-  completeness (`complete`, `partial`, `noResult`) and the run failure code
-  `noSampleCompleted` (decision 5).
+  completeness (`complete`, `partial`, `noResult`) and the run failure codes
+  `noSampleCompleted` and `computationFailed` (decision 5).
 
 **The recipe is named in the plan, not in the vocabulary.** A study plan's
 recipe binding names its recipe by a token (defined below) that the document
@@ -872,7 +882,7 @@ outcomes.
   field is `malformed`: the `studies` and `studyPlans` fields, a run's
   `studyStep` field, the operation `studyStepV1`, the artifact kind
   `studyStepResultV1`, the `artifact` variant of `RunInput` and the failure
-  code `noSampleCompleted`. #161's
+  codes `noSampleCompleted` and `computationFailed`. #161's
   `schema_four_shares_only_beta_one_words_and_fields` only makes an added word
   or field fail to compile until someone decides it ("The check is the
   compiler's; running it asserts nothing more"); it refuses nothing. The
