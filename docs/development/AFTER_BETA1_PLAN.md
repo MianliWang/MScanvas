@@ -195,6 +195,36 @@ there is capacity, no decompilation, and every other point as recommended):
    ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
    [PR #162](https://github.com/MianliWang/MScanvas/pull/162)).
 
+**Owner direction, 2026-10-30** (later the same day), verbatim:
+"我们需要把这些后端功能都计划好来做，只有msconvert的其实只能算初版，但是也算是能用的MVP了"
+("We need to plan all of these backend functions and build them. A version
+with only msconvert really counts only as a first version, but it does count
+as a usable MVP.") Every function of the owner's v5.11 demo that MSCanvas
+lacks is to be planned and built, the analysis pages and the viewer subtabs
+included; the converter, viewer and figure product is the MVP. The plan is the
+[roadmap for the v5.11 functions and analysis](ROADMAP_V511_AND_ANALYSIS.md),
+and the questions it needs answered are in
+[OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md). Both stay drafts until the
+owner answers. The governance amendment that un-defers analysis in `AGENTS.md`
+and `PROJECT_PROPOSAL.md` is decision G1 there, with its exact wording. The
+same day the owner rejected the frontend options shown so far
+("这几个前端选项我都不满意", none of these frontend options satisfies me);
+FE-1 and FE-2 there ask what #164 still merges for and how the new look is
+chosen.
+
+**Owner decisions, 2026-10-30** (on the roadmap's decisions). Shown the 20
+decisions there that block work now, the owner replied, verbatim:
+"全部按推荐，继续" ("all as recommended, continue"). Earlier the same day the
+owner approved S-1, the statistics crates `nalgebra` and `statrs`, verbatim:
+"批准" ("approved"). These 21 are the whole of section 3 of
+[OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md), and its section 1b gives
+each answer and what it leaves open. They include FE-1 (#164 merges as the
+functional base, with the export palette reverted), FE-2 (the owner's own v5.11
+demo is the frontend's target, one real screen first), G1 (the governance
+wording, applied by N-10), M161 and A0060 (ADR 0060's open questions 1 and 8).
+The other 32 decisions there stay open, each asked before the slice it gates.
+The roadmap and the decisions document are therefore no longer drafts.
+
 ## 3. Parallel execution rules
 
 - **Lanes by disjoint files.** Each lane works in its own git worktree with
@@ -284,6 +314,37 @@ Section 1.
 
 **Phase 3 — week 5 onward, as external inputs arrive.** The evidence-gated
 items of section 7.5 and the P2 capabilities of section 7.4.
+
+**Analysis track — M11, from 2026-10-30, in parallel with M10.** Owner
+decisions G1 to G4 in [OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md),
+answered "全部按推荐，继续" ("all as recommended, continue"). The three core
+jobs keep priority, and M11 and M10 work on disjoint files. The plan is the
+[roadmap](ROADMAP_V511_AND_ANALYSIS.md), and each analysis function passes the
+promotion gate in the
+[analysis capability map](../product/ANALYSIS_CAPABILITY_MAP.md).
+
+- **Two tracks (G2).** Track A needs no Python runtime: sample metadata
+  (PRJ-007), imported feature tables (ANA-005), project-owned statistics in
+  Rust (ANA-006), the XIC and the 2D map (VIEW-010). It ships in releases
+  before the Python analysis runtime is released. Track B (ANA-007) is
+  pyOpenMS feature detection, alignment, gap filling and annotation, and
+  reaches users only through a released, verified runtime; until the
+  runtime-release ADR lands, release builds answer `recipeUnavailable` for
+  every pyOpenMS function.
+- **Imported feature tables (G2).** An imported table is a project artifact
+  with its own digest, import record and lineage. MZmine-2-style CSV comes
+  first, up to the 64 MiB payload cap in v1.
+- **What stays refused (G3).** C17 (CWT centroiding), C28 (a custom output
+  extension), C50 (ETA; live elapsed time, C51, is in progress), C41
+  (built-in templates), the explanation texts removed on 2026-10-28 (RO-26,
+  SET-10, C12 and C19) and EXP-21 (parsing pasted Python or R code). The
+  analysis rows reopen, each behind the promotion gate. The node view (C59)
+  and a method text in Python or R (EXP-20) stay outside this roadmap. The
+  rows decided separately stay open under their own decisions: VW-14 (V-4),
+  VW-33 (V-1), VW-47 (V-5), C15 (HR-1) and VW-02's exports and panel (X-3).
+- **Navigation (G4).** Each analysis page enters the navigation when its first
+  working function ships, with no placeholder pages. The new look (FE-2)
+  leaves room for five page tabs at 960 px.
 
 ## 6. Selected features
 
@@ -552,7 +613,7 @@ None can be delivered by engineering alone; each waits for one input.
 | Item | Input that unblocks it | Size |
 | --- | --- | --- |
 | Folder/drop vendor files | Owner decision (given 2026-10-28 for Thermo and Shimadzu; section 6.1). SCIEX: a measurement that its derived companion cannot pair with a same-stem `.wiff2` | M–L |
-| XIC (VIEW-007) | A new scope record for a bounded project-owned mzML array decoder: a new candidate, not a repair of PX's refused one, rerunning all 77 rows; a written decision on reader work and dependency approval | L–XL |
+| XIC (VIEW-007) | A new scope record for a bounded project-owned mzML array decoder: a new candidate, not a repair of PX's refused one, rerunning all 77 rows; a written decision on reader work and dependency approval. *2026-10-30: the scope record is [ADR 0071](../architecture/adr/0071-xic-re-entry-and-its-first-version.md), accepted with owner decisions X-1 and X-2; it needs no new dependency, and the 77-row rerun and its decision still gate the feature* | L–XL |
 | Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2). Later the same day a public Q Exactive profile-MS2 file (PRIDE `PXD066799`) was measured, so "MS2 and up" meets that condition; its verified row is a follow-up code change ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#consequences))* | M–L |
 | Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
 | Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |
@@ -617,3 +678,14 @@ None can be delivered by engineering alone; each waits for one input.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted.
+- *2026-10-30:* the decisions the
+  [v5.11 and analysis roadmap](ROADMAP_V511_AND_ANALYSIS.md) needs, 53 in
+  all, are in [OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md). Its
+  section 3 lists the 21 that block work now, among them the governance
+  amendment (G1), what #164 still merges for (FE-1), the new look (FE-2,
+  which answers the frontend's target above), #161's merge (M161),
+  M10's route (A0064) and the analysis runtime's distribution (B-1, the
+  questions of ADR 0066).
+- *Answered 2026-10-30* (section 2): those 21, as recommended. This answers
+  the frontend's target and ADR 0060's open question 8 in the first item
+  above (FE-2 and A0060). The other 32 stay open.
