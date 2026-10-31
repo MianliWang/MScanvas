@@ -315,6 +315,37 @@ Section 1.
 **Phase 3 — week 5 onward, as external inputs arrive.** The evidence-gated
 items of section 7.5 and the P2 capabilities of section 7.4.
 
+**Analysis track — M11, from 2026-10-30, in parallel with M10.** Owner
+decisions G1 to G4 in [OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md),
+answered "全部按推荐，继续" ("all as recommended, continue"). The three core
+jobs keep priority, and M11 and M10 work on disjoint files. The plan is the
+[roadmap](ROADMAP_V511_AND_ANALYSIS.md), and each analysis function passes the
+promotion gate in the
+[analysis capability map](../product/ANALYSIS_CAPABILITY_MAP.md).
+
+- **Two tracks (G2).** Track A needs no Python runtime: sample metadata
+  (PRJ-007), imported feature tables (ANA-005), project-owned statistics in
+  Rust (ANA-006), the XIC and the 2D map (VIEW-010). It ships in releases
+  before the Python analysis runtime is released. Track B (ANA-007) is
+  pyOpenMS feature detection, alignment, gap filling and annotation, and
+  reaches users only through a released, verified runtime; until the
+  runtime-release ADR lands, release builds answer `recipeUnavailable` for
+  every pyOpenMS function.
+- **Imported feature tables (G2).** An imported table is a project artifact
+  with its own digest, import record and lineage. MZmine-2-style CSV comes
+  first, up to the 64 MiB payload cap in v1.
+- **What stays refused (G3).** C17 (CWT centroiding), C28 (a custom output
+  extension), C50 (ETA; live elapsed time, C51, is in progress), C41
+  (built-in templates), the explanation texts removed on 2026-10-28 (RO-26,
+  SET-10, C12 and C19) and EXP-21 (parsing pasted Python or R code). The
+  analysis rows reopen, each behind the promotion gate. The node view (C59)
+  and a method text in Python or R (EXP-20) stay outside this roadmap. The
+  rows decided separately stay open under their own decisions: VW-14 (V-4),
+  VW-33 (V-1), VW-47 (V-5), C15 (HR-1) and VW-02's exports and panel (X-3).
+- **Navigation (G4).** Each analysis page enters the navigation when its first
+  working function ships, with no placeholder pages. The new look (FE-2)
+  leaves room for five page tabs at 960 px.
+
 ## 6. Selected features
 
 Each was designed read-only against the current code and critiqued
@@ -534,13 +565,60 @@ writer and Rust's ownership of files.
   data unless Delete the application data is selected, which the bundled
   template says removes both (not yet observed); decide whether the uninstaller
   should remove the key by default, and check the selected path.
+  - *2026-10-30, read (not run) from `Section Uninstall` of the NSIS template
+    embedded in the locked `@tauri-apps/cli-win32-x64-msvc` 2.12.4 binary; no
+    installer hooks are configured; not observed for the checked path:* under
+    `installMode` `currentUser` the registry root is HKCU. Every uninstall
+    deletes by name the executable, the two bundled resources and
+    `uninstall.exe`, then the install folder only if it is then empty
+    (`RMDir` without `/r`), and the uninstall entry; one that is not an update
+    also deletes the Start menu and desktop shortcuts that point at this
+    install and the `Run` value. Only with Delete the application data checked
+    -- a box on the confirm page, which `/S` and `/P` skip and `/UPDATE`
+    ignores -- does it also delete `HKCU\Software\MSCanvas contributors\MSCanvas`
+    (the install location and the installer language), then the parent key if
+    it is empty, and `%APPDATA%\org.mscanvas.desktop` and
+    `%LOCALAPPDATA%\org.mscanvas.desktop` recursively (preferences, presets,
+    WebView2 data, and the view cache once it ships). Whether to change this
+    is OWNER_DECISIONS_V511 DEF-2, open until the view cache ships; its
+    recommendation is to always remove the cache folder (except on
+    `/UPDATE`) and keep the key, presets and preferences opt-in. A
+    release-path change, so the owner's.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
   scratch; batch history session-only; whole target lists stored per plan.
+  - *2026-10-30:* a run whose new plan alone takes the document past the
+    bound is refused `oversized` before its worker starts and records nothing,
+    after its own source and preflight checks (a batch member those refuse
+    still stops only itself; `oversized` stops the batch).
+    The bound and what a run records are unchanged; a run that fits with its
+    plan, or reruns a recorded one, is still measured after its attempt (a
+    run record is about 4.7 kB of a member's 54.8 kB). In the M9 closure's
+    measurement the fifth batch's thirteenth member is now refused before its
+    worker.
 - Defects and gaps: Save As does not reserve the result-store name; the M9.1
   Save As pre-copy refusal has no dedicated test; a recoverable queue-level
   refusal leaves later items showing "Waiting".
+  - *2026-10-30, fixed:* Save As claims the result-store name before it
+    publishes the document, with an empty store when there is no result, so no
+    other writer can take it (accepted 2026-10-30, OWNER_DECISIONS_V511
+    DEF-1). So every new project's
+    first save, and every Save As to a new name, now creates
+    `<name>.mscanvas.payloads`, also for a project that never runs targeted
+    MS1; a document publish that fails after it leaves that empty folder, and
+    a retry to the same name is refused `destinationStoreExists` until the
+    folder is removed or another name is chosen. The store is assembled under
+    a fixed-length pending name, so a document name its store name still fits
+    is not refused for the pending name's length. The next release's
+    `INSTALL_AND_SUPPORT.md` Projects row ("when the project holds stored
+    results") needs updating; the beta-1 text is right for beta-1. The
+    pre-copy refusal has a
+    test that counts copies; a recoverable queue-level refusal settles the rows
+    it kept from starting as Not run, as a stop does, and a retry reruns the
+    failures only, as its label and the panel say; those rows are converted by
+    a new queue (before, a retry converted them; accepted 2026-10-30,
+    OWNER_DECISIONS_V511 DEF-1).
 - PM9 options left to the owner: the request-error banner beside its control
   (PM9.4 O4), Retry bound to an operation id (PM9.4 F1), Rust-projected
   parameter bounds for exact range wording (PM9.5 F1).
@@ -562,6 +640,12 @@ M10.0 route decision.
 
 - P1: WSP-010 restore workspace; FIG-007 saved FigureSpec; ENV-004 copy
   diagnostics (*2026-10-30:* Rust side implemented, no interface yet; [ADR 0063](../architecture/adr/0063-copy-diagnostics.md), Accepted 2026-10-30).
+  - *2026-10-30: FIG-007's Rust side is implemented with no interface, its
+    decisions accepted by the owner on 2026-10-30 (A0062) in
+    [ADR 0062](../architecture/adr/0062-saved-figurespec.md): a `.msfigure`
+    recipe that names its source by locator and recorded bytes and regenerates
+    through the export's builders. The interface waits for PR #164 and the
+    preview's reader for PR #175.*
 - P2: FIG-008 figure composer; VIEW-008 multi-layer comparison (needs an
   admitted normalization first); RUN-007 persistent conversion history;
   ANA-002 QC recipe or a second recipe.
@@ -576,7 +660,7 @@ None can be delivered by engineering alone; each waits for one input.
 | Item | Input that unblocks it | Size |
 | --- | --- | --- |
 | Folder/drop vendor files | Owner decision (given 2026-10-28 for Thermo and Shimadzu; section 6.1). SCIEX: a measurement that its derived companion cannot pair with a same-stem `.wiff2` | M–L |
-| XIC (VIEW-007) | A new scope record for a bounded project-owned mzML array decoder: a new candidate, not a repair of PX's refused one, rerunning all 77 rows; a written decision on reader work and dependency approval | L–XL |
+| XIC (VIEW-007) | A new scope record for a bounded project-owned mzML array decoder: a new candidate, not a repair of PX's refused one, rerunning all 77 rows; a written decision on reader work and dependency approval. *2026-10-30: the scope record is [ADR 0071](../architecture/adr/0071-xic-re-entry-and-its-first-version.md), accepted with owner decisions X-1 and X-2; it needs no new dependency, and the 77-row rerun and its decision still gate the feature* | L–XL |
 | Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2). Later the same day a public Q Exactive profile-MS2 file (PRIDE `PXD066799`) was measured, so "MS2 and up" meets that condition; its verified row is a follow-up code change ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#consequences))* | M–L |
 | Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
 | Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |

@@ -1,22 +1,23 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
+import { Button, Icon, IconButton } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import type { UiMessage } from "../preferences/i18n";
+import { joinSentences, type UiMessage } from "../preferences/i18n";
 
-import { PlotRangeActions } from "./PlotRangeActions";
+import { PlotRangeActions, plotGestureHelpId } from "./PlotRangeActions";
 import { mzInput } from "./viewer/plotInputAdapters";
 import { usePlotInput } from "./viewer/usePlotInput";
 
-import type { PreviewError, SpectrumDomainRefusal } from "./contracts";
+import type { PreviewError, SelectedSpectrum, SpectrumDomainRefusal } from "./contracts";
 import { formatMz } from "./format";
 import type { SpectrumDrawing } from "./StickSpectrum";
 import {
-  SPECTRUM_AXIS_HIGH,
-  SPECTRUM_AXIS_LOW,
+  paintMzAxis,
   SPECTRUM_PLOT_DRAWN_WIDTH,
   SPECTRUM_PLOT_PADDING_LEFT,
   SPECTRUM_PLOT_VIEWBOX_WIDTH,
   SPECTRUM_STICKS_LAYER,
   StickSpectrum,
+  describeSpectrumSource,
 } from "./StickSpectrum";
 import type { MzDomain, SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
 import {
@@ -24,10 +25,7 @@ import {
   renderedMzDomain,
 } from "./viewer/spectrumViewport";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
-import type {
-  SpectrumViewportActionPlan,
-  VisibleSpectrumViewportAction,
-} from "./viewer/spectrumViewportAction";
+import type { VisibleSpectrumViewportAction } from "./viewer/spectrumViewportAction";
 import {
   applySpectrumViewportAction,
   hasProductiveSpectrumViewportAction,
@@ -41,6 +39,38 @@ import {
 const STATUS_ID = "spectrum-viewport-status";
 /** Where the surface says what range is on screen. */
 const RANGE_ID = "spectrum-viewport-range";
+
+/** The head's m/z controls, in direction A's order: −, + and the text button Fit all. */
+const ZOOM_CONTROLS = [
+  { action: "zoom-out", icon: "minus" },
+  { action: "zoom-in", icon: "plus" },
+  { action: "reset", icon: null },
+] as const satisfies readonly { readonly action: VisibleSpectrumViewportAction; readonly icon: string | null }[];
+
+/**
+ * The three m/z viewport controls, for the spectrum box's head toolbar.
+ *
+ * Each is planned from the state this render draws and planned again against
+ * the live state when pressed: the state can move between the render that drew
+ * the button and the press that reaches it. A control that would change nothing
+ * is refused, pointing at the range line and the status that say why.
+ */
+export function SpectrumZoomControls({ state, readState, dispatch }: {
+  readonly state: SpectrumViewportState;
+  readonly readState: () => SpectrumViewportState;
+  readonly dispatch: (event: SpectrumViewportEvent) => SpectrumViewportState;
+}) {
+  const t = useUiMessages();
+  return <>{ZOOM_CONTROLS.map(({ action, icon }) => {
+    const label = t(VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.find(each => each.action === action)?.messageKey ?? "viewerMzReset");
+    const onClick = () => { applySpectrumViewportAction(readState(), dispatch, action); };
+    const refused = !planSpectrumViewportAction(state, action).available;
+    return icon === null
+      ? <Button key={action} aria-label={label} onClick={onClick} reasonId={`${RANGE_ID} ${STATUS_ID}`} refused={refused} size="sm">{t("plotFitAll")}</Button>
+      : <IconButton icon={<Icon name={icon} />} key={action} label={label} onClick={onClick}
+        reasonId={`${RANGE_ID} ${STATUS_ID}`} refused={refused} size="sm" variant="secondary" />;
+  })}</>;
+}
 
 /**
  * Why a spectrum has no viewport, in the words the panel says it.
@@ -78,9 +108,11 @@ export interface SpectrumViewportProps {
   readonly intensity: readonly number[];
   readonly reportedMzLow: number;
   readonly reportedMzHigh: number;
-  readonly representationKnown: boolean;
   readonly valueUnitsKnown?: boolean;
   readonly labelledBy: string;
+  /** Whether the range editor is open; the spectrum's ⋯ menu opens it. */
+  readonly rangeEditing?: boolean;
+  readonly onRangeEditorClose?: () => void;
 }
 
 /**
@@ -109,9 +141,10 @@ export function SpectrumViewport({
   intensity,
   reportedMzLow,
   reportedMzHigh,
-  representationKnown,
   valueUnitsKnown = false,
   labelledBy,
+  rangeEditing = false,
+  onRangeEditorClose = () => {},
 }: SpectrumViewportProps) {
   const t = useUiMessages();
   const plotRef = useRef<SVGSVGElement | null>(null);
@@ -119,9 +152,8 @@ export function SpectrumViewport({
   const paintedRange = useRef<MzDomain | null>(null);
   const paintedNodes = useRef<{
     layer: SVGGElement | null;
-    low: SVGTextElement | null;
-    high: SVGTextElement | null;
-  }>({ layer: null, low: null, high: null });
+    plot: SVGSVGElement | null;
+  }>({ layer: null, plot: null });
   const rangeRef = useRef<HTMLParagraphElement | null>(null);
 
   /**
@@ -130,7 +162,7 @@ export function SpectrumViewport({
    * A pan is a translation of the sticks and a wheel zoom a scale about the
    * pointer, so the whole layer is transformed rather than the reduction being
    * run again: one attribute per frame instead of a pass over the projection and
-   * a re-render of the panel around it. The axis numbers and the range line are
+   * a re-render of the panel around it. The m/z ticks and the range line are
    * written beside it, because a drawing that moves under numbers that do not is
    * worse than one that does not move.
    *
@@ -162,12 +194,7 @@ export function SpectrumViewport({
         );
       }
     }
-    if (nodes.low !== null) {
-      nodes.low.textContent = formatMz(target.low);
-    }
-    if (nodes.high !== null) {
-      nodes.high.textContent = formatMz(target.high);
-    }
+    paintMzAxis(nodes.plot, target.low, target.high);
     if (rangeRef.current !== null) {
       rangeRef.current.textContent = describeRange(current, target, t);
     }
@@ -179,8 +206,7 @@ export function SpectrumViewport({
     const plot = plotRef.current;
     paintedNodes.current = {
       layer: plot?.querySelector<SVGGElement>(`g.${SPECTRUM_STICKS_LAYER}`) ?? null,
-      low: plot?.querySelector<SVGTextElement>(`text.${SPECTRUM_AXIS_LOW}`) ?? null,
-      high: plot?.querySelector<SVGTextElement>(`text.${SPECTRUM_AXIS_HIGH}`) ?? null,
+      plot,
     };
     paintedNodes.current.layer?.removeAttribute("transform");
     paintedRange.current = renderedMzDomain(state);
@@ -209,40 +235,18 @@ export function SpectrumViewport({
     plotRef.current = node; input.attachPlot(node);
   }, [input.attachPlot]);
 
-  const plans: Record<VisibleSpectrumViewportAction, SpectrumViewportActionPlan> = {
-    "zoom-in": planSpectrumViewportAction(state, "zoom-in"),
-    "zoom-out": planSpectrumViewportAction(state, "zoom-out"),
-    reset: planSpectrumViewportAction(state, "reset"),
-  };
-
   const shown = renderedMzDomain(state);
   const failure =
     state.status === "ready" && state.projection.status === "failed" ? state.projection : null;
   const drawn = state.status === "ready" ? drawnPoints(state) : EMPTY_POINTS;
+  /* Not a live region. It changes on every frame of a drag, and a region that
+     announced each of them would be noise rather than feedback. It is half of
+     the plot's accessible description instead. */
+  const readout = <p className="plot-readout spectrum-viewport-range" id={RANGE_ID} ref={rangeRef}>{describeRange(state, shown, t)}</p>;
+  const overlay = <PlotRangeActions port={inputPort} editing={rangeEditing} onClose={onRangeEditorClose} />;
 
   return (
     <div className="spectrum-viewport">
-      <fieldset className="spectrum-viewport-actions">
-        <legend className="visually-hidden">{t("rangeMzAxis")}</legend>
-        {VISIBLE_SPECTRUM_VIEWPORT_ACTIONS.map(({ action }) => (
-          <button
-            className="secondary-button"
-            disabled={!plans[action].available}
-            key={action}
-            onClick={() => {
-              // Planned again against the live state, not against the
-              // `disabled` this render computed. The state can move between the
-              // render that drew the button and the press that reaches it -- a
-              // settling gesture, a drawing arriving, another spectrum chosen.
-              applySpectrumViewportAction(readState(), dispatch, action);
-            }}
-            type="button"
-          >
-            {t(action === "reset" ? "viewerMzReset" : action === "zoom-in" ? "viewerMzZoomIn" : "viewerMzZoomOut")}
-          </button>
-        ))}
-      </fieldset>
-
       {state.status === "ready" ? (
         <div
           className="spectrum-viewport-plot"
@@ -252,12 +256,13 @@ export function SpectrumViewport({
             intensity={drawn.intensity}
             labelledBy={labelledBy}
             mz={drawn.mz}
-            representationKnown={representationKnown}
             valueUnitsKnown={valueUnitsKnown}
+            readout={readout}
+            overlay={overlay}
             surface={{
               kind: "interactive",
               plotRef: attachPlot,
-              describedBy: `${RANGE_ID} ${STATUS_ID}`,
+              describedBy: `${RANGE_ID} ${STATUS_ID} ${plotGestureHelpId("mz")}`,
               // From the planner that governs every other consumer of this
               // question, over the whole action set rather than the three with
               // buttons. A viewport that is admitted and inert is described but
@@ -276,19 +281,12 @@ export function SpectrumViewport({
           intensity={intensity}
           labelledBy={labelledBy}
           mz={mz}
-          representationKnown={representationKnown}
           valueUnitsKnown={valueUnitsKnown}
+          readout={readout}
+          overlay={overlay}
           surface={{ kind: "static" }}
         />
       )}
-
-      {/* Not a live region. It changes on every frame of a drag, and a region
-          that announced each of them would be noise rather than feedback. It is
-          half of the plot's accessible description instead. */}
-      <PlotRangeActions port={inputPort} />
-      <p className="spectrum-viewport-range" id={RANGE_ID} ref={rangeRef}>
-        {describeRange(state, shown, t)}
-      </p>
 
       {/*
         One element doing both jobs: the visible account of what this viewport
@@ -314,12 +312,24 @@ export function SpectrumViewport({
       </p>
 
       {failure?.retryable === true ? (
-        <button className="secondary-button" onClick={onRetryProjection} type="button">
-          {t("viewerMzRetry")}
-        </button>
+        <Button className="spectrum-viewport-retry" onClick={onRetryProjection} size="sm">{t("viewerMzRetry")}</Button>
       ) : null}
     </div>
   );
+}
+
+/**
+ * Details → Spectrum source: what the drawing on screen is made of, from the
+ * same points and drawing this viewport hands the plot.
+ */
+export function spectrumSourceDetails(spectrum: SelectedSpectrum, viewport: SpectrumViewportState, t: UiMessage): string {
+  if (spectrum.pointCount === 0) return "";
+  if (viewport.status === "ready") {
+    const drawn = drawnPoints(viewport);
+    return describeSpectrumSource(drawn.mz, drawn.intensity, drawingFor(viewport), spectrum.representationKnown, t);
+  }
+  return describeSpectrumSource(spectrum.mz, spectrum.intensity,
+    { kind: "transfer", reportedMzLow: spectrum.mzLow, reportedMzHigh: spectrum.mzHigh }, spectrum.representationKnown, t);
 }
 
 /**
@@ -342,7 +352,7 @@ const EMPTY_POINTS: {
  * points came from this spectrum's retained source, never from another
  * spectrum's.
  */
-function drawnPoints(state: SpectrumViewportState & { readonly status: "ready" }): {
+export function drawnPoints(state: SpectrumViewportState & { readonly status: "ready" }): {
   readonly mz: readonly number[];
   readonly intensity: readonly number[];
 } {
@@ -359,7 +369,7 @@ function drawnPoints(state: SpectrumViewportState & { readonly status: "ready" }
  * outstanding request -- for as long as it is on screen, since a non-retryable
  * failure never resolves into anything else.
  */
-function drawingFor(state: SpectrumViewportState & { readonly status: "ready" }): SpectrumDrawing {
+export function drawingFor(state: SpectrumViewportState & { readonly status: "ready" }): SpectrumDrawing {
   const shown = renderedMzDomain(state) ?? state.full;
   if (state.projection.status !== "ready") {
     return {
@@ -419,7 +429,7 @@ function describeViewport(
     return "";
   }
   if (state.status === "refused") {
-    return `${t("viewerMzRefused")} ${t(REFUSED[state.reason.reason])}`;
+    return t("sentencePair", { first: t("viewerMzRefused"), second: t(REFUSED[state.reason.reason]) });
   }
   switch (state.projection.status) {
     case "idle":
@@ -441,7 +451,7 @@ function describeViewport(
       // boundary's own words.
       return projectionError === null
         ? t("viewerMzFailed")
-        : `${ownedErrorMessage(projectionError, t)} ${ownedErrorDetail(projectionError, t) ?? ""}`.trim();
+        : joinSentences(t, [ownedErrorMessage(projectionError, t), ownedErrorDetail(projectionError, t) ?? ""]);
     case "ready":
       return state.projection.projection.sourcePoints === 0
         ? t("viewerMzEmpty", { low: formatMz(state.projection.window.low), high: formatMz(state.projection.window.high) })
