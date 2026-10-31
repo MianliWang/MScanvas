@@ -5,8 +5,8 @@ under [Owner decision, 2026-10-30](#owner-decision-2026-10-30). Proposed
 2026-10-30. Nothing here is implemented. Each decision below was the
 maintainer's recommendation; the owner accepted all eight
 [open questions](#open-questions-for-the-owner) as recommended. Question 3
-awaits re-confirmation; see
-[Changed after acceptance](#changed-after-acceptance-2026-10-30).
+was confirmed again with its corrected cost on 2026-10-31; see
+[Owner decision, 2026-10-31](#owner-decision-2026-10-31).
 Plan: [after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md), section 5
 (phase 1, item 4) and section 7.3; feature catalog AUT-001, AUT-002 and
 AUT-003.
@@ -1016,7 +1016,9 @@ owner's answers and the hold-release window more than by implementation.
 ## Open questions for the owner
 
 *Answered by the owner on 2026-10-30, each as recommended; see
-[Owner decision, 2026-10-30](#owner-decision-2026-10-30).*
+[Owner decision, 2026-10-30](#owner-decision-2026-10-30). Question 3 was
+confirmed again with its corrected cost on 2026-10-31; see
+[Owner decision, 2026-10-31](#owner-decision-2026-10-31).*
 
 1. **The route.** A1, a small CLI package over the desktop library, now, and
    A2 only on a measured need, in decision 9's order? Recommended: yes.
@@ -1048,7 +1050,9 @@ owner's answers and the hold-release window more than by implementation.
    > That is the cost ADR 0057, decision 2, already accepts while the
    > desktop's own queue runs. The recommendation stands, because waiting
    > would leave an open hanging for as long instead, but the owner answered
-   > on the wrong cost and is asked to confirm again.
+   > on the wrong cost and was asked again. *The owner confirmed it again
+   > with this cost on 2026-10-31; see
+   > [Owner decision, 2026-10-31](#owner-decision-2026-10-31).*
 4. **Distribution at M10's closure.** Recommended: the installer carries
    `mscanvas.exe` beside `mscanvas-desktop.exe`, documents where it is, and
    does not change the user's PATH. This is a release change.
@@ -1089,9 +1093,10 @@ this ADR and answers its eight questions as recommended:
 3. **The cross-process run lock:** while a CLI run holds it, the desktop
    refuses operations that would start ProteoWizard and names the holder.
    Viewing an mzML is not refused once #175's reader is the preview's.
-   *Re-confirmation pending: that last sentence was wrong when the owner
-   answered; opening a preview is refused too. See the correction under open
-   question 3.*
+   *Superseded on 2026-10-31: that last sentence was wrong when the owner
+   answered; opening a new preview is refused too (the correction under open
+   question 3). The owner confirmed the answer again with that cost; see
+   [Owner decision, 2026-10-31](#owner-decision-2026-10-31).*
 4. **Distribution:** the installer carries `mscanvas.exe` beside
    `mscanvas-desktop.exe`, documents where it is, and does not change PATH.
    This is a release change.
@@ -1122,7 +1127,8 @@ each is corrected in place above; this list is so the owner can see what
 changed after "全部按推荐".
 
 - **Open question 3's premise was wrong** (correction under the question).
-  The owner is asked to confirm it again.
+  The owner was asked to confirm it again, and did on 2026-10-31; see
+  [Owner decision, 2026-10-31](#owner-decision-2026-10-31).
 - **CLI slice 1 widens no visibility.** The glue moves into
   `preview::automation`, which sees the `pub(super)` items it needs;
   `selection.rs` and `destination.rs` are not touched (decisions 1 and 9).
@@ -1139,3 +1145,25 @@ changed after "全部按推荐".
 - **A panic is the exit-5 document**, with stderr empty (decision 3).
 - Smaller: the containment walk's extracted signature (decision 4), and the
   build gate's no-release case in CLI slice 3.
+
+## Owner decision, 2026-10-31
+
+**Question 3, confirmed again.** Shown open question 3 again with its
+corrected cost and recommendation, among five questions put to the owner
+again, the owner replied verbatim "全部按推荐" ("all as recommended"). The
+answer:
+
+- While a command-line run holds the cross-process run lock, which for 1,024
+  items can be hours, the desktop refuses and shows the holder rather than
+  waiting.
+- Opening a new preview is refused too, because an open still runs `msaccess`
+  for metadata and the run summary (ADR 0056, decision 3). After #175 only a
+  preview already open can still read spectra (ADR 0057, decision 1).
+- The cost ends once the reader's own run summary replaces `msaccess`, the
+  follow-up of owner decision R-1 in
+  [OWNER_DECISIONS_V511.md](../../development/OWNER_DECISIONS_V511.md).
+
+The engineering corrections under
+[Changed after acceptance, 2026-10-30](#changed-after-acceptance-2026-10-30)
+stand. No other question of this ADR was asked again; the other seven answers
+of 2026-10-30 are unchanged.
