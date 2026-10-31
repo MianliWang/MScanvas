@@ -1,6 +1,8 @@
 # ADR 0063 — Copy diagnostics: a redacted environment summary the user shares
 
-Status: **Proposed** on 2026-10-30. The owner asked that day for every backend
+Status: **Accepted (2026-10-30)**; see the
+[owner decision](#owner-decision-2026-10-30-a0063), which answers questions 1–5.
+Proposed on 2026-10-30. The owner asked that day for every backend
 item that can be done now to start; this record states the recommendations that
 lane implemented, and each choice the owner has not made is listed
 [at the end](#open-questions-for-the-owner). The Rust side is implemented on
@@ -193,17 +195,17 @@ error is the existing `preview_worker_unavailable`, so it adds no boundary
 error code for the interface to account for. It runs off the async runtime,
 because the preference record lives on the profile volume.
 
-### 10. The interface is the interface lane's, and is proposed here
+### 10. The interface is the interface lane's, and is recorded here
 
-Recommended: a **Copy diagnostics** button in Settings that shows the text in a
-read-only box, with **Copy** beside it and one sentence saying that nothing
+Recommended, and accepted on 2026-10-30: a **Copy diagnostics** button in
+Settings that shows the text in a read-only box, with **Copy** beside it and one sentence saying that nothing
 was sent and that the user should read it before sharing. Copying uses the
 platform's text clipboard write from that button's click, which needs no Tauri
 capability and reads nothing. This departs from the posture of ADR 0030 and
 ADR 0034, where the clipboard is reached from Rust only. `check_repo.py` checks
 that posture through the capabilities and `package.json`, so a
-`navigator.clipboard.writeText` call still passes it; the owner chooses
-(question 4). The release guide's
+`navigator.clipboard.writeText` call still passes it; the owner accepted this
+route on 2026-10-30 (question 4, A0063). The release guide's
 "For the environment, give" list then points at the button.
 
 ## Alternatives
@@ -250,7 +252,8 @@ that posture through the capabilities and `package.json`, so a
 - **Workspace contents by family** (how many mzML, Thermo RAW, Shimadzu or
   SCIEX rows). Answers the guide's input-format question, but adds counts of
   workspace contents. Part of it already shows through recent error codes
-  (`sciex_*`, `targeted_*`; decision 5). Left for the owner.
+  (`sciex_*`, `targeted_*`; decision 5). Left out by the owner on 2026-10-30
+  (question 5, A0063).
 
 ## Consequences
 
@@ -264,24 +267,43 @@ that posture through the capabilities and `package.json`, so a
   section reports its usage and `Format` stays `1` only if the keys do not
   change.
 
+## Owner decision, 2026-10-30 (A0063)
+
+Shown the decisions that blocked work on 2026-10-30, decision A0063 among them
+(`docs/development/OWNER_DECISIONS_V511.md`, PR #186), the owner replied
+"全部按推荐，继续" ("all as recommended, continue"). A0063 lists this record's
+questions 1–5, and each is answered as recommended:
+
+1. **The folder (decision 4):** the known root only. ADR 0005's 2026-10-30
+   amendment stands as it is; no installer-shaped remainder.
+2. **The error ring's recording point (decision 5):** at `PreviewErrorDto::new`,
+   accepting that an error built and then discarded counts.
+3. **The verified-build line:** add `Verified build: yes/no` once PR #161
+   merges, reading its constant rather than a copy. Not done yet: #161 is open.
+4. **The interface and the copy route (decision 10):** a Settings button, a
+   read-only preview and the platform text clipboard written from that
+   button's click. The departure from ADR 0030 and ADR 0034's "the clipboard is
+   reached from Rust" is accepted for this button only; those records are not
+   amended. The interface lane builds the button after PR #164.
+5. **Workspace contents by family:** left out until a support case needs it.
+   That a recent error code can name a vendor or a feature (decision 5) is
+   accepted; no code allowlist or category is added to the ring.
+
+Question 6 was added after A0063 was written and is not answered by it; it
+stays open below.
+
 ## Open questions for the owner
 
-1. **The folder (decision 4).** Recommended: the known root only, which keeps
-   ADR 0005's amendment as it stands. An installer-shaped remainder would need
-   ADR 0005 amended; no folder line at all is the other alternative.
-2. **The error ring's recording point (decision 5).** Recommended: at
-   `PreviewErrorDto::new`, accepting that a built-and-discarded error counts.
-3. **The verified-build line.** Recommended: add `Verified build: yes/no` once
-   PR #161 merges, reading its constant rather than a copy.
-4. **The interface and the copy route (decision 10).** Recommended: a Settings
-   button, a read-only preview and the platform text clipboard. This departs
-   from ADR 0030 and ADR 0034's "the clipboard is reached from Rust". The
-   alternative keeps that posture: Rust writes the text through the clipboard
-   plugin, at the cost of a second command or a read that also copies.
-5. **Workspace contents by family.** Recommended: leave out until a support case
-   needs it. A recent error code can already name a vendor or a feature
-   (decision 5); a code allowlist or category for the ring is the alternative
-   if that is not acceptable.
-6. **Where the account name is checked (decision 3).** Recommended: only values
+1. *Answered on 2026-10-30 (A0063, [owner decision](#owner-decision-2026-10-30-a0063)):*
+   **The folder (decision 4).** The known root only.
+2. *Answered on 2026-10-30 (A0063):* **The error ring's recording point
+   (decision 5).** At `PreviewErrorDto::new`.
+3. *Answered on 2026-10-30 (A0063):* **The verified-build line.** Added once
+   PR #161 merges.
+4. *Answered on 2026-10-30 (A0063):* **The interface and the copy route
+   (decision 10).** A Settings button, a read-only preview and the platform
+   text clipboard.
+5. *Answered on 2026-10-30 (A0063):* **Workspace contents by family.** Left out.
+6. **Where the account name is checked (decision 3).** Open. Recommended: only values
    whose shape admits a word, as a whole token. The alternatives are every
    value as a whole token, every value as a substring, or codes only.
