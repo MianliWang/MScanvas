@@ -24,7 +24,7 @@ use super::super::raw_view::{
     view_cache_no_space, view_cache_not_stored, view_cache_root_unrecognized,
     view_cache_unavailable, view_cache_unreadable, view_intent_id,
 };
-use super::super::selection::open_thermo_raw_source_reporting;
+use super::super::selection::revalidate_thermo_raw_reporting;
 use super::*;
 use crate::view_cache::{
     CAP_BYTES, CacheKey, Lookup, RootRefusal, StagedFacts, StoreFailure, Stored, VerifiedEntry,
@@ -179,13 +179,22 @@ impl PreviewService {
                 view.map(|view| view.dataset),
             )
         };
-        if let (RawViewStateDto::Ready { openable, .. }, Some(dataset)) = (&mut state, dataset) {
+        if let (
+            RawViewStateDto::Ready {
+                openable,
+                operation,
+                ..
+            },
+            Some(dataset),
+        ) = (&mut state, dataset)
+        {
             *openable = *openable
                 && self
                     .workspace()
                     .runtime
                     .get(&dataset)
-                    .is_some_and(|row| row.ready_view.is_some());
+                    .and_then(|row| row.ready_view.as_ref())
+                    .is_some_and(|(pinned, _)| *pinned == *operation);
         }
         state
     }
@@ -305,7 +314,7 @@ impl PreviewService {
             if let Some(dataset) = dataset
                 && workspace.registry.contains(dataset)
             {
-                workspace.runtime.entry(dataset).or_default().ready_view = Some(entry);
+                workspace.runtime.entry(dataset).or_default().ready_view = Some((operation, entry));
             }
         }
         let mut slot = self.conversion_slot();
@@ -388,9 +397,9 @@ impl PreviewService {
             |build| build.release().to_owned(),
         );
 
-        // Checking file: the row re-accepted, then the RAW admitted and hashed
-        // in chunks through one handle that shares read only. That digest is
-        // the key's and, on a miss, the run's baseline.
+        // Checking file: the row re-accepted, the RAW admitted and hashed in
+        // chunks through one handle that shares read only, in one read. That
+        // digest is the key's and, on a miss, the run's baseline.
         self.view_enter(operation, RawViewPhaseDto::CheckingSource);
         if stopped() {
             return Err(cancelled(false));
@@ -401,19 +410,18 @@ impl PreviewService {
             .get(id)
             .map(|dataset| dataset.file().clone())
             .ok_or_else(unknown_dataset)?;
-        let file = revalidate(&remembered)?;
         // Decision 9's limit, on the length the read finds, before the first
         // chunk: a RAW that grew after it was added is not read whole first.
         let too_large = std::cell::Cell::new(false);
         let mut reading = self.reading(operation, &cancel, 0, None);
-        let admitted = open_thermo_raw_source_reporting(&file, &mut |read, total| {
+        let admitted = revalidate_thermo_raw_reporting(&remembered, &mut |read, total| {
             if total > MAX_RAW_BYTES {
                 too_large.set(true);
                 return false;
             }
             reading(read, total)
         });
-        let source = admitted.map_err(|error| {
+        let (_file, source) = admitted.map_err(|error| {
             if too_large.get() {
                 view_cache_entry_too_large().into()
             } else if stopped() {
@@ -539,9 +547,8 @@ impl PreviewService {
                     view_cache_not_stored().into()
                 }
             })?;
-        let file = revalidate(&remembered)?;
-        let again = open_thermo_raw_source_reporting(
-            &file,
+        let (_file, again) = revalidate_thermo_raw_reporting(
+            &remembered,
             &mut self.reading(operation, &cancel, output_bytes, overall),
         )
         .map_err(|error| {
@@ -707,11 +714,17 @@ impl PreviewService {
                 _ => return Err(raw_view_not_ready()),
             }
         };
-        let entry = self
+        // Only this operation's pin: a newer View of the row can have replaced
+        // the slot and pinned its own entry since the look above.
+        let (_, entry) = self
             .workspace()
             .runtime
             .get_mut(&dataset)
-            .and_then(|state| state.ready_view.take())
+            .and_then(|state| {
+                state
+                    .ready_view
+                    .take_if(|(pinned, _)| *pinned == request.operation)
+            })
             .ok_or_else(raw_view_not_ready)?;
         // Advisory: the eviction order holds no data (decision 9).
         let _ = entry.mark_opened();

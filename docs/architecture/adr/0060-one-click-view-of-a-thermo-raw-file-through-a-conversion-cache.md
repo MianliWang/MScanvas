@@ -1177,7 +1177,10 @@ it says so; the decisions stand otherwise.
    conversion crate's own admission
    (`ConversionSource::open_thermo_raw_file_reporting`), read in chunks with
    Cancel asked before each, so its digest is the key's and the run's baseline
-   and the bind does not hash the RAW again (decision 7). Inside Converting,
+   and the bind does not hash the RAW again (decision 7). That one read is
+   also the row's re-acceptance (`revalidate_thermo_raw_reporting`), so
+   nothing reads the RAW before the bar, and Checking output re-accepts the
+   row the same way. Inside Converting,
    the run reads it twice more, each in one read with no progress and with
    Cancel answered only after it: its pin rehashes it before `msconvert`
    starts, and its post-run judgement (`revalidate_source`) rehashes it after.
@@ -1211,8 +1214,14 @@ it says so; the decisions stand otherwise.
 7. **ADR 0056 decision 3 for a Thermo RAW row, as implemented.**
    `open_mzml_preview` and `load_selected_spectrum` still refuse a vendor row
    with `dataset_not_previewable`. Only `open_raw_view` opens one, and every
-   read of that preview, a spectrum's included, goes to the pinned entry. The
-   next open of any row ends that preview and its pin. Follow-up: when the
+   read of that preview, a spectrum's included, goes to the pinned entry.
+   Neither that open nor a spectrum load re-admits or hashes the RAW: View
+   re-accepted the row, and the pin and the entry's generation stand in
+   (decision 12). The next open of any row ends that preview and its pin, in
+   the order opens start in across every dataset, which the workspace records
+   under its lock: only the latest open ends a cached view at its commit, and
+   a viewed open that a newer open has passed installs nothing and answers
+   `selection_superseded`. Follow-up: when the
    native reader of PR #175 replaces these reads, its table and spectrum reads
    of a viewed row take the entry's path too, never the RAW's. A textual
    merge with PR #175 conflicts in the open and spectrum paths of
@@ -1221,7 +1230,9 @@ it says so; the decisions stand otherwise.
    `read_spectrum_table(file.path(), …)` reads the pinned entry for a viewed
    row, and `qc_producer_identified` and `qc_snapshot_token` are both
    conditioned on `!viewed`. The viewed open must still pass #175's
-   cross-dataset supersession check, withholding only the run-summary token.
+   cross-dataset supersession check, withholding only the run-summary token;
+   that check replaces the workspace's `latest_open` record. The viewed open
+   and spectrum paths keep skipping the RAW's `revalidate`.
    `a_miss_converts_the_verified_default_publishes_once_and_opens_the_entry_not_the_raw`
    fails if any of the three is left: a native read of the RAW fails the
    open, and the test asserts no token and no producer.
@@ -1234,7 +1245,9 @@ it says so; the decisions stand otherwise.
      holds the operation's pin: an open, a superseded or failed open, the
      row's removal, Clear workspace and the next View each make it false.
      `open_raw_view` answers `raw_view_not_ready` (not retryable) for an
-     operation that is not `ready` and `openable`.
+     operation that is not `ready` and `openable`. The row's pin carries its
+     operation, so a late open of an older operation never takes a newer
+     View's entry.
    - **`view_cache_unreadable`, retryable (pending).** The cache's folders
      could not be listed (the summary's `unreadable`), or the free space on
      its volume could not be read. It never claims the disk is full. That

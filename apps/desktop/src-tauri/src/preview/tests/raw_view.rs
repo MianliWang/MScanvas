@@ -1379,6 +1379,89 @@ fn a_place_another_process_filled_first_is_never_overwritten() {
     assert_eq!(session.staging(), Vec::<String>::new());
 }
 
+#[test]
+fn a_viewed_open_that_a_newer_open_passed_installs_nothing_and_ends_its_pin() {
+    // Responses for the RAW's open only, so the newer mzML open fails.
+    let session = viewing("raw-view-passed");
+    let (operation, _) = ready(&session.view());
+    let mzml = session.raws.readable_mzml("other.mzML");
+    let mzml_handle = match session
+        .service
+        .add_files_now(std::slice::from_ref(&mzml))
+        .outcomes
+        .first()
+    {
+        Some(WorkspaceAddOutcomeDto::Added { dataset }) => dataset.handle.clone(),
+        other => panic!("an mzML row; got {other:?}"),
+    };
+
+    // The viewed open's first read parks while it holds the backend gate, and
+    // a newer open of another row begins and waits for the gate.
+    let (started, observe) = std::sync::mpsc::channel();
+    let (release, parked) = std::sync::mpsc::channel();
+    *session.park.lock().expect("the park") = Some((started, parked));
+    let opening = {
+        let service = Arc::clone(&session.service);
+        std::thread::spawn(move || service.open_raw_view(RawViewOperationRequestDto { operation }))
+    };
+    observe
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the open reads");
+    let newer = {
+        let service = Arc::clone(&session.service);
+        let handle = mzml_handle.clone();
+        std::thread::spawn(move || service.open_preview(&handle))
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.service.requests_made(&mzml_handle) < 1 {
+        assert!(Instant::now() < deadline, "the newer open never began");
+        std::thread::yield_now();
+    }
+    release.send(()).expect("release the viewed open");
+
+    let passed = opening
+        .join()
+        .expect("the viewed open ends")
+        .expect_err("a newer open began");
+    assert_eq!(passed.kind, "selection_superseded");
+    newer
+        .join()
+        .expect("the newer open ends")
+        .expect_err("the mzML's open fails");
+    assert_eq!(
+        summary(&session.service),
+        (1, 0),
+        "no preview off screen holds the entry"
+    );
+}
+
+#[test]
+fn a_viewed_preview_reads_nothing_of_the_raw() {
+    // With the RAW moved away after View, the open and a spectrum load still
+    // read only the pinned entry: neither admits nor hashes the RAW again.
+    let session = viewing("raw-view-no-raw-read");
+    let (operation, _) = ready(&session.view());
+    let moved = session.raws.directory.join("moved.raw");
+    fs::rename(&session.raw, &moved).expect("move the RAW away");
+
+    session
+        .open(operation)
+        .expect("the cached view opens without the RAW");
+    let _ = session.service.load_spectrum(&session.handle, 0);
+    let sources = session.sources.lock().expect("sources").clone();
+    assert_eq!(
+        sources.len(),
+        4,
+        "three open reads and one spectrum: {sources:?}"
+    );
+    let output = session.the_entry().join("view.mzML");
+    assert!(
+        sources.iter().all(|source| source == &output),
+        "{sources:?}"
+    );
+    fs::rename(&moved, &session.raw).expect("put the RAW back");
+}
+
 fn operation_of(state: &RawViewStateDto) -> u64 {
     match state {
         RawViewStateDto::Running { operation, .. }

@@ -213,6 +213,9 @@ const fn drop_claim_started(claim: u64) -> bool {
 struct Workspace {
     registry: DatasetRegistry,
     runtime: HashMap<DatasetId, DatasetRuntimeState>,
+    /// The dataset and epoch of the open that started last, across every
+    /// dataset: only it ends cached views at its commit (ADR 0060 decision 8).
+    latest_open: Option<(DatasetId, u64)>,
 }
 
 impl Workspace {
@@ -304,6 +307,7 @@ impl Workspace {
         let state = self.runtime.entry(id).or_default();
         state.request_epoch += 1;
         state.preview = None;
+        self.latest_open = Some((id, state.request_epoch));
         Some((state.request_epoch, file))
     }
 
@@ -497,9 +501,10 @@ struct DatasetRuntimeState {
     /// on one never cancels work on another.
     request_epoch: u64,
     preview: Option<DatasetPreviewState>,
-    /// A ready view operation's pinned cache entry, until it is opened, the
-    /// next view begins, or the row goes (ADR 0060 decision 8).
-    ready_view: Option<crate::view_cache::VerifiedEntry>,
+    /// A ready view operation's number and pinned cache entry, until it is
+    /// opened, the next view begins, or the row goes (ADR 0060 decision 8).
+    /// Only that operation's open takes it.
+    ready_view: Option<(u64, crate::view_cache::VerifiedEntry)>,
 }
 
 /// What one open action established about one dataset.
@@ -7168,7 +7173,13 @@ impl PreviewService {
         // converter. Asking only on the way in would let exactly the caller
         // that waited longest be the one to start another process.
         self.require_usable_backend()?;
-        let file = revalidate(&remembered)?;
+        // A viewed RAW row's open reads nothing of the RAW, not even to hash
+        // it: the pinned entry is what is read and checked (ADR 0060 decision
+        // 12), and View re-accepted the row.
+        let file = match view {
+            Some(_) => remembered,
+            None => revalidate(&remembered)?,
+        };
         // What is read: the row's file, or a viewed RAW row's pinned entry.
         let read = view
             .as_ref()
@@ -7346,10 +7357,17 @@ impl PreviewService {
             return Err(superseded());
         }
         let table_rows = Arc::new(table_rows);
-        // Again at the commit: a viewed open that was still reading when this
-        // one began has committed since.
-        workspace.end_viewed_previews();
+        // One preview at a time holds a cached view (ADR 0060 decision 8), by
+        // the order opens start in across every dataset, recorded under this
+        // lock: only the latest open ends them, here again for a viewed open
+        // that committed while this one read, and a viewed open that a newer
+        // one has passed installs nothing.
         let viewed = view.is_some();
+        if workspace.latest_open == Some((id, epoch)) {
+            workspace.end_viewed_previews();
+        } else if viewed {
+            return Err(superseded());
+        }
         workspace.runtime.entry(id).or_default().preview = Some(DatasetPreviewState {
             opened: OpenedPreview {
                 source: before,
@@ -7533,10 +7551,16 @@ impl PreviewService {
         if !remembered.source_kind().is_previewable() && view.is_none() {
             return Err(dataset_not_previewable());
         }
-        let file = revalidate(&remembered)?;
-        let read = view
-            .as_ref()
-            .map_or_else(|| file.path().to_path_buf(), |entry| entry.output());
+        // A viewed RAW row's spectrum reads nothing of the RAW, not even to hash
+        // it: the pinned entry is what is read and checked (ADR 0060 decision
+        // 12), and View re-accepted the row.
+        let (read, file) = match view.as_ref() {
+            Some(entry) => (entry.output(), None),
+            None => {
+                let file = revalidate(&remembered)?;
+                (file.path().to_path_buf(), Some(file))
+            }
+        };
         // Two refusals, before anything is launched, and neither replaces the
         // other. The table's rows are what this spectrum is reconciled against,
         // and they were read by whichever backend was in use then; reconciling
@@ -7576,7 +7600,12 @@ impl PreviewService {
         // Also compared against the handle's own accepted identity, so a file
         // replaced between validation and spawn is caught even when no preview
         // generation has been recorded yet.
-        if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
+        let row_changed = || {
+            file.as_ref().is_some_and(|file| {
+                SourceGeneration::capture(file.path()) != SourceGeneration::of(file)
+            })
+        };
+        if row_changed() {
             return Err(source_changed_since_preview());
         }
 
@@ -7610,7 +7639,7 @@ impl PreviewService {
         let outcome = attempt.outcome?;
         drop(guard);
         drop(running);
-        if SourceGeneration::capture(file.path()) != SourceGeneration::of(&file) {
+        if row_changed() {
             return Err(source_changed_since_preview());
         }
         if let Some(expected) = opened_generation.as_ref()
