@@ -6860,12 +6860,12 @@ fn every_sample_of_a_marked_trace_is_marked_filled_or_open_by_role() {
     // Four filled marks for M, four open ones for M+1, plus one of each in the
     // legend's swatches.
     assert_eq!(
-        document.matches("r=\"2.500\" fill=\"#172337\"/>").count(),
+        document.matches("r=\"2.500\" fill=\"#1f4e9c\"/>").count(),
         5
     );
     assert_eq!(
         document
-            .matches("r=\"2.500\" fill=\"#ffffff\" stroke=\"#4b5b70\"")
+            .matches("r=\"2.500\" fill=\"#ffffff\" stroke=\"#9a4a00\"")
             .count(),
         5
     );
@@ -6878,7 +6878,7 @@ fn every_sample_of_a_marked_trace_is_marked_filled_or_open_by_role() {
     );
     let document = svg::render(&windowed);
     assert_eq!(
-        document.matches("r=\"2.500\" fill=\"#172337\"/>").count(),
+        document.matches("r=\"2.500\" fill=\"#1f4e9c\"/>").count(),
         3,
         "two samples inside the window, and the legend's"
     );

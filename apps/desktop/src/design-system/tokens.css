@@ -31,8 +31,8 @@
   --color-danger-soft: #fee4e2;
   --color-chart-grid: #e3e8ef;
   /* Data is ink and BPC a dashed secondary ink (GOALS V6, P6); the accent is
-     the selected-scan cursor's alone (P7). The export palette matches
-     (crates/plot-spec svg.rs, F1). */
+     the selected-scan cursor's alone (P7). Exported figures keep their own
+     palette (crates/plot-spec svg.rs, owner decision FE-1). */
   --color-chart-line: #172337;
   --color-chart-secondary: #4b5b70;
 

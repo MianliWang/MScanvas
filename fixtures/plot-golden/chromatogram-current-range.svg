@@ -8,11 +8,11 @@
 <line x1="45.353" y1="161.492" x2="1180.000" y2="161.492" stroke="#333333" stroke-width="1.000" stroke-opacity="0.18"/>
 <line x1="45.353" y1="598.000" x2="1180.000" y2="598.000" stroke="#333333" stroke-width="1.000"/>
 <line x1="45.353" y1="48.000" x2="45.353" y2="598.000" stroke="#333333" stroke-width="1.000"/>
-<path d="M45.353 205.143L423.569 161.492L801.784 117.841L1180.000 74.190" fill="none" stroke="#172337" stroke-width="1.000"/>
-<path d="M45.353 510.698L423.569 467.048L801.784 423.397L1180.000 379.746" fill="none" stroke="#4b5b70" stroke-width="1.000" stroke-dasharray="6 3"/>
-<line x1="1136.281" y1="55.333" x2="1154.281" y2="55.333" stroke="#172337" stroke-width="1.000"/>
+<path d="M45.353 205.143L423.569 161.492L801.784 117.841L1180.000 74.190" fill="none" stroke="#1f4e9c" stroke-width="1.000"/>
+<path d="M45.353 510.698L423.569 467.048L801.784 423.397L1180.000 379.746" fill="none" stroke="#9a4a00" stroke-width="1.000" stroke-dasharray="6 3"/>
+<line x1="1136.281" y1="55.333" x2="1154.281" y2="55.333" stroke="#1f4e9c" stroke-width="1.000"/>
 <text x="1176.000" y="59.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">TIC</text>
-<line x1="1131.382" y1="69.333" x2="1149.382" y2="69.333" stroke="#4b5b70" stroke-width="1.000" stroke-dasharray="6 3"/>
+<line x1="1131.382" y1="69.333" x2="1149.382" y2="69.333" stroke="#9a4a00" stroke-width="1.000" stroke-dasharray="6 3"/>
 <text x="1176.000" y="73.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">BPC</text>
 <line x1="41.353" y1="598.000" x2="45.353" y2="598.000" stroke="#333333" stroke-width="1.000"/>
 <text x="39.353" y="601.960" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">0</text>
