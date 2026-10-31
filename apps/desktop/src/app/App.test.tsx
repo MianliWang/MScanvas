@@ -56,6 +56,23 @@ function renderApp(
 }
 
 /**
+ * Presses `Add files…` once it is offered, which is the only press a user has.
+ *
+ * The first render refuses it: the mount-time installation check holds the
+ * workspace ("Waiting: Checking the installation…"), and a refused button
+ * swallows its press by design. Whether that check's commit or a press sent as
+ * soon as the button exists runs first is event-loop order, so pressing
+ * straight after `findByRole` sometimes added nothing, and the next `findBy*`
+ * waited out its whole timeout for rows nobody had asked for.
+ */
+async function pressAddFiles(): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+}
+
+/**
  * Renders, then adds files through the workspace action, as a user would.
  *
  * Adding into an empty session reads exactly the first row that arrived, which
@@ -64,7 +81,7 @@ function renderApp(
  */
 async function openTheFile(api: PreviewApi): Promise<void> {
   renderApp(api);
-  fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+  await pressAddFiles();
 }
 
 /**
@@ -137,7 +154,7 @@ describe("mzML preview workspace", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(screen.getByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
@@ -672,7 +689,7 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Scans" });
 
     // The user reaches for more files and the dialog will not open.
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     expect(await screen.findByText("The file picker could not be opened")).toBeVisible();
 
     // Failing to choose new files is no reason to take away what is already
@@ -1491,7 +1508,7 @@ describe("the session workspace roster", () => {
 
     // A second picker operation, adding to a session that already has a file
     // open. Nothing about that is a request to read something else.
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     expect(await screen.findByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
 
     expect(api.openedHandles).toEqual(["file-0"]);
@@ -1507,7 +1524,7 @@ describe("the session workspace roster", () => {
     await openTheFile(api);
     await screen.findByRole("grid", { name: "Scans" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     expect(await screen.findByText(/1 file already in the workspace/, VISIBLE)).toBeVisible();
     expect(screen.getByText("QC_pool_01.mzML is already in the workspace.")).toBeVisible();
@@ -1541,7 +1558,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /sample\.mzML.*batch-2/ });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     expect(
       await screen.findByText("sample.mzML, batch-2 is already in the workspace.", VISIBLE),
@@ -1889,7 +1906,7 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     const row = await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     expect(api.openCount()).toBe(0);
@@ -1916,7 +1933,7 @@ describe("the session workspace roster", () => {
     const applicationRegions = regions();
     expect(applicationRegions).toHaveLength(12);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     await waitFor(() => {
       expect(regions().map((region) => region.textContent).join(" ")).toContain(
@@ -1964,7 +1981,7 @@ describe("the session workspace roster", () => {
         pickedFiles: [selectedFile, selectedFile],
       });
       renderApp(api);
-      fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+      await pressAddFiles();
 
       await waitFor(() => {
         expect(
@@ -2099,7 +2116,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
@@ -2134,7 +2151,7 @@ describe("the session workspace roster", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     // All four rows arrive, in picker order, each saying its family.
     await screen.findByRole("row", { name: /sample-29\.lcd/ });
@@ -2169,7 +2186,7 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
     // Deliberately not waiting for the roster: this is the window under test.
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     expect(await screen.findByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
     // Both rows are there, because Rust answered with everything it holds.
@@ -2188,7 +2205,7 @@ describe("the session workspace roster", () => {
       availability: unavailableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     await screen.findByRole("row", { name: /Blank_03\.mzML/ });
     const before = api.calls();
 
@@ -2208,7 +2225,7 @@ describe("the session workspace roster", () => {
   it("keeps the preview, the query and the sort while the view changes", async () => {
     const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile, thirdFile] });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     // The first addition into an empty session reads exactly one file.
     await screen.findByRole("grid", { name: "Scans" });
     const reads = api.openCount();
@@ -2241,7 +2258,7 @@ describe("the session workspace roster", () => {
     chooseExecutionOrder("name-desc");
     expect(rosterRows()).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     // The arrival does not match, and is on screen because it was selected.
     // The footer counts the checked rows; the list menu names the highlight
@@ -2400,7 +2417,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     expect(await screen.findByText("The workspace list could not be read")).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
@@ -3814,6 +3831,10 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const add = await screen.findByRole("button", { name: "Add files…" });
+    // Offered first: a press on the refused button is swallowed (pressAddFiles).
+    await waitFor(() => {
+      expect(add).not.toHaveAttribute("aria-disabled");
+    });
     add.focus();
 
     fireEvent.click(add);
@@ -4009,7 +4030,11 @@ describe("saying what a folder import is doing", () => {
     renderApp(api);
 
     const add = await screen.findByRole("button", { name: "Add files…" });
-    expect(add).not.toHaveAttribute("aria-disabled");
+    // Once the mount-time installation check has committed (pressAddFiles); the
+    // roster read is still held open below.
+    await waitFor(() => {
+      expect(add).not.toHaveAttribute("aria-disabled");
+    });
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     // And the window says it is still reading rather than claiming the session
     // is empty.
