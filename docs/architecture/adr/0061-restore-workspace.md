@@ -15,10 +15,27 @@ restore is on by default, the checked state is restored, and the switch stays
 in the restore document; the roster stays out of the `.mscanvas` project file.
 Questions 2 to 4 match this record. Question 1 was put as "automatic,
 recommended", from an earlier draft; this record now recommends the explicit
-action because of the start-up costs in decision 4, so the answer to question
-1 is to be confirmed with those costs before decision 4 or the interface slice
-changes. Questions 5 to 10 are not answered yet. The status stays Proposed
-until they are.
+action because of the start-up costs in decision 4, so question 1 was put to
+the owner again with those costs (the note below).
+
+*Owner decision, 2026-10-31:* shown question 1 again with the start-up costs
+of decision 4, and question 10, each with its recommendation, the owner
+replied verbatim "全部按推荐" ("all as recommended"):
+
+- Question 1: matching rows are put back by **one explicit Restore workspace
+  action** the user starts, never automatically at start-up. This replaces the
+  "automatically" of the 2026-10-30 record (A0061). Automatic put-back would
+  read and hash every Thermo RAW, Shimadzu LCD and SCIEX WIFF whole at every
+  start, hold the workspace mutation gate, lease every file and repeat in a
+  second window (decision 4). Start-up only reads the document; each read
+  re-checks identity and length, with no byte read and nothing hashed.
+- Question 10: `matching` does **not** mean unchanged content. A restored row
+  is a locator and an arrangement; putting it back admits the bytes there
+  then, as Add files does, and the interface says the row is added again, not
+  verified against the last session.
+
+Questions 5 to 9 are not answered yet. The status stays Proposed until they
+are.
 
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the workspace
 boundary, its *Persistence exclusion* and its collision-only relative context),
@@ -166,7 +183,7 @@ cannot see the groups or the checked state, which only the webview holds, and
 would add a write to every mutation path; writing only at exit loses the
 session on a crash.
 
-### 4. The start-up restore and the cheap re-check
+### 4. The start-up read and the cheap re-check
 
 The document is read once, when the store opens at start. A usable document's
 rows become the session's *restored rows*: they are not Workbench rows, they
@@ -190,7 +207,8 @@ of:
   deleted. Putting the row back admits the bytes there at that moment as a new
   baseline, exactly as adding the file does; nothing compares them with the
   last session's. That is unlike PRJ-004, whose put-back follows a matched
-  check against the SHA-256 the project recorded (open question 10).
+  check against the SHA-256 the project recorded (question 10, decided
+  2026-10-31).
 - `changed`: another object at the path, or the same object at another length.
 - `missing`: nothing at the recorded path, on a drive or share that answers,
   and the nearest folder above it that can be opened is on the recorded volume
@@ -211,10 +229,11 @@ marked row: it is never dropped, never relinked, never aged out (decision 10),
 and its recorded facts are never replaced by what is there now. It leaves only
 when it is put back, dismissed or cleared.
 
-*Recommendation for the interface slice:* one explicit **Restore workspace**
-action puts the matching rows back, through ordinary admission (the same rule,
-duplicate check and capacity as Add files), in their restored groups and
-checked state; nothing is previewed and no conversion starts. Marked rows are
+*Decision for the interface slice (owner, 2026-10-31, question 1):* one
+explicit **Restore workspace** action the user starts puts the matching rows
+back through ordinary admission (the same rule, duplicate check and capacity as
+Add files), in their restored groups and checked state; nothing is put back at
+start-up, nothing is previewed and no conversion starts. Marked rows are
 shown in place with their state and a Remove action. Putting a marked row back
 is the user adding the file again. This is not adoption in the sense of
 [ADR 0016](0016-explicit-converted-output-adoption.md), which takes a
@@ -222,8 +241,8 @@ conversion's outputs into the Workbench and stays explicit: a restored row is
 only ever the file the user had already added, at the path it had.
 
 *Alternative:* put matching rows back automatically at every start. Rejected
-as the recommendation because of what admission costs, which the re-check above
-does not:
+(by the owner on 2026-10-31) because of what admission costs, which the
+re-check above does not:
 
 - every Thermo RAW, Shimadzu LCD and SCIEX WIFF (both members) is read whole
   and SHA-256 hashed through a deny-write handle (`admit_signed_object` and the
@@ -242,7 +261,7 @@ a new baseline, not a check against anything recorded. Its own cost is that
 an offer the user does not take has to end somewhere, or the document grows
 into a history of every session; decision 10 bounds it.
 
-Prerequisites of the interface slice, whichever the owner chooses:
+Prerequisites of the interface slice:
 
 - **Stable per-row slots.** Restored rows are numbered by position and only
   ever forgotten together (clear, off). Putting one back or dismissing one
@@ -361,7 +380,7 @@ commands, none taking or returning a path:
 
 | Command | Does |
 | --- | --- |
-| `read_workspace_restore` | The start-up restore: restored rows in their groups, each re-checked now, with the count of rows no longer offered (`expired`); or `off`, `refused` (restore is off until turned on), `unavailable`. All but `unavailable` carry `leftoverCopies`. A row carries `sourceKind`, the roster's own key. |
+| `read_workspace_restore` | The start-up read, which puts nothing back: restored rows in their groups, each re-checked now, with the count of rows no longer offered (`expired`); or `off`, `refused` (restore is off until turned on), `unavailable`. All but `unavailable` carry `leftoverCopies`. A row carries `sourceKind`, the roster's own key. |
 | `save_workspace_restore(arrangement)` | Records the session as arranged; refused unless every row is placed once, refused `changedElsewhere` over another process's write, and `identityUnknown` while the document cannot be identified. |
 | `clear_workspace_restore` | Forgets every stored row; keeps the switch (`saved`), or writes off and answers `turnedOff` when the document is not what this process last saw. |
 | `set_workspace_restore_enabled(enabled)` | The off switch; on is refused `changedElsewhere` or `identityUnknown` as a save is. |
@@ -462,7 +481,7 @@ answer is a one-line change.
 - A restored row that matches is the same object at the same length, not the
   same content: a rewrite in place at the same length comes back with its
   group and checked state, and put-back admits what is there then (decision 4,
-  open question 10).
+  question 10, decided 2026-10-31).
 - The interface slice cannot start before stable per-row slots and the
   put-back and dismiss commands exist (decision 4).
 
@@ -473,7 +492,8 @@ answer is a one-line change.
    decision 4? The explicit route hashes at put-back as PRJ-004 does, but only
    when asked, and needs the offer lifetime of question 8. (Answered
    "automatically" on 2026-10-30 against an earlier draft's recommendation;
-   to be confirmed, see the note under the status.)
+   decided again on 2026-10-31 as recommended: the explicit action. See the
+   notes under the status.)
 2. Restore on by default (recommended), or off until the user turns it on? On
    by default records the paths of every acquisition the user adds, and with it
    the roster, membership and group names, which the M7.5 preference record
@@ -517,4 +537,5 @@ answer is a one-line change.
     so a rewrite in place reads `changed`; admission does not record that time
     today, so it is taken at admission or by one attribute open per member at
     save. A bundle's member digests, which admission already holds, could be
-    recorded and compared at put-back as well.
+    recorded and compared at put-back as well. (Decided on 2026-10-31 as
+    recommended: no. See the notes under the status.)

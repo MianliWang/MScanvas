@@ -2365,7 +2365,7 @@ async fn clear_workspace(
 /// The session's workspace restore store.
 type SharedRestore = Arc<workspace_restore::WorkspaceRestoreStore>;
 
-/// The start-up restore: the rows still waiting to be put back, each
+/// The start-up read: the rows still waiting to be put back, each
 /// re-checked now by identity and length. Admits nothing and reads no byte of
 /// any acquisition.
 #[tauri::command]

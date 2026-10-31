@@ -1,4 +1,4 @@
-//! Restoring the workspace at start (WSP-010, ADR 0061).
+//! Restoring the workspace (WSP-010, ADR 0061).
 //!
 //! ## What is kept
 //!
@@ -23,7 +23,9 @@
 //!
 //! A usable document becomes the session's *restored rows*. They are not
 //! Workbench rows: they carry `restored-N` handles, and putting one back in the
-//! Workbench is ordinary admission, in a later slice. Every read re-checks the
+//! Workbench is ordinary admission, only through the explicit Restore
+//! workspace action the user starts (a later slice), never at start-up
+//! (ADR 0061, question 1, decided 2026-10-31). Every read re-checks the
 //! offered rows cheaply: the drive or share each recorded path is on is probed
 //! once, then the object at the path is opened for its attributes only,
 //! without data access or a link followed, and its file ID, volume serial and
@@ -485,7 +487,7 @@ pub struct RestoredGroupDto {
     pub rows: Vec<RestoredRowDto>,
 }
 
-/// What the start-up restore found.
+/// What the start-up read found. It puts nothing back.
 ///
 /// `leftover_copies` counts the files beside the document that can still hold
 /// paths: copies kept aside when restore was turned on over a refused
@@ -704,7 +706,8 @@ impl WorkspaceRestoreStore {
         }
     }
 
-    /// The start-up restore, each waiting row re-checked now.
+    /// The start-up read, each waiting row re-checked now. It puts nothing
+    /// back.
     #[must_use]
     pub fn read(&self) -> WorkspaceRestoreReadDto {
         let (startup, enabled, restored, leftover_copies) = {
