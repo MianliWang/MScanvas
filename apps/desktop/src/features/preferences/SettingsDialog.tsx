@@ -75,8 +75,9 @@ export function SettingsDialog() {
 
   const close = () => {
     // A write in flight settles on its own; its reply is still adopted.
-    // A change whose write failed stays this session's, and is said to be.
-    if (save.status === "failed") preferences.useForThisSession();
+    // A change whose write failed or was refused (an unusable stored record,
+    // left untouched) stays this session's, and is said to be.
+    if (save.status === "failed" || save.status === "storedRecordUnusable") preferences.useForThisSession();
     else if (preferences.state.draft !== null && !saving) preferences.discard();
     returnPending.current = true;
     returnSuperseded.current = false;

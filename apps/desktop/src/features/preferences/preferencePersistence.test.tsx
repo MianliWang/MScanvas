@@ -339,6 +339,22 @@ describe("durable UI preferences", () => {
     expect(document.querySelector('[data-live-region="preferences"]')).toHaveTextContent(zh.storedReplaced);
   });
 
+  it("keeps a choice refused by an unusable record for this session when Settings closes", async () => {
+    const { preferences } = mount({ preferences: { unusable: "unsupportedVersion" } });
+    await screen.findByText("No ProteoWizard installation was found");
+    const dialog = openSettings();
+    choose(dialog, en.simplifiedChinese);
+    expect(await within(dialog).findByText(zh.saveRefusedTitle)).toBeVisible();
+    await applyAndClose(dialog, zh.close);
+
+    // Settings have no Cancel, so Close never reverts what is on screen, and
+    // the unusable record is left as it was.
+    expect(document.documentElement.lang).toBe("zh-CN");
+    expect(preferences.requests).toHaveLength(1);
+    expect(preferences.stored()).toBeNull();
+    expect(within(openSettings()).getByText(zh.sessionOnlyNote)).toBeVisible();
+  });
+
   it("names an unknown stored problem instead of guessing at it", async () => {
     mount({ preferences: { unusable: "somethingThisBuildHasNeverHeardOf" } });
     await screen.findByText("No ProteoWizard installation was found");
