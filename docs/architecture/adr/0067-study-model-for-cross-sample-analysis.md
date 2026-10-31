@@ -2,13 +2,15 @@
 
 Status: **Proposed** on 2026-10-30. The owner directed that day that analysis is
 no longer deferred and is to be planned and built (recorded in
-`docs/development/OWNER_DECISIONS_V511.md` on `docs/roadmap-v511`, not yet on
-`main`). This record states the
-options and a recommendation for each, for the owner to decide. Nothing here is
-implemented, and nothing here reaches the interface. The governance amendment
-that un-defers analysis (AGENTS.md, "Analysis is deferred but architecturally
-allowed") is a separate owner decision, and this record takes effect only with
-it. The questions for the owner are listed
+[OWNER_DECISIONS_V511](../../development/OWNER_DECISIONS_V511.md), where this
+record's questions are B-6, and question 2 is answered with S-6). This record
+states the options and a recommendation for each, for the owner to decide.
+Nothing here is implemented, and nothing here reaches the interface. The
+owner decided on
+2026-10-30 (G1) that the governing records are amended to un-defer analysis
+(AGENTS.md, "Analysis is deferred but architecturally allowed"); the amendment
+itself is applied in its own PR, and this record takes effect only once it
+is. The questions for the owner are listed
 [at the end](#open-questions-for-the-owner).
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the session-only
 workspace), [0016](0016-explicit-converted-output-adoption.md) (explicit
@@ -916,7 +918,8 @@ outcomes.
 
 ### 13. What this record does not do
 
-- It does not un-defer analysis. The governance amendment is the owner's.
+- It does not un-defer analysis. The governance amendment the owner decided
+  (G1) is applied in its own PR.
 - It adds no interface and no recipe. Every pyOpenMS step (detection,
   alignment, linking, gap filling) also waits for ADR 0066, the runtime
   release: release builds answer `recipeUnavailable` until then. Track A
@@ -943,7 +946,7 @@ outcomes.
 | --- | --- | --- |
 | **Per study, keyed by `LayerId` within it (recommended)** | One acquisition in several designs; imported columns without a layer; a statistic names its design | A layer in two studies carries two copies, which may differ |
 | Per layer, for the whole project | Simplest record; one design per project | No second design without a second project; imported columns need a second place anyway |
-| Per layer as current state, each study revision recording a copy of the values it used (recommended by the roadmap's owner-decision note, `docs/development/OWNER_DECISIONS_V511.md` on `docs/roadmap-v511`, to match S-6) | The roster classifies a row once, where the rows are; a finished study's results never change when a layer is edited, because the revision holds the copy | One design per project for layer-backed samples until a per-study override is added; imported columns still need a per-study place |
+| Per layer as current state, each study revision recording a copy of the values it used (recommended by B-6 of [OWNER_DECISIONS_V511](../../development/OWNER_DECISIONS_V511.md), to match S-6) | The roster classifies a row once, where the rows are; a finished study's results never change when a layer is edited, because the revision holds the copy | One design per project for layer-backed samples until a per-study override is added; imported columns still need a per-study place |
 
 **How a large matrix is stored.**
 
@@ -1012,9 +1015,9 @@ outcomes.
    a payload ledger (option a), rather than per-sample runs with pruning or a
    larger document?
 2. **Metadata scope.** Per study (recommended), per layer with one design per
-   project, or per layer with each revision recording a copy (the roadmap
-   note's recommendation)? Answer it together with S-6 in
-   `docs/development/OWNER_DECISIONS_V511.md` on `docs/roadmap-v511`, which
+   project, or per layer with each revision recording a copy (B-6's
+   recommendation)? Answer it together with S-6 of
+   [OWNER_DECISIONS_V511](../../development/OWNER_DECISIONS_V511.md), which
    records this conflict.
 3. **Matrix format and bounds.** Accept `mscanvas.studyMatrix/1`: chunks of at
    most 8 MiB, binary64 values, 1,000,000 rows, 1,024 columns, 2^27 cells?
