@@ -82,7 +82,9 @@ never reads or writes the real profile's workspace, and the commands answer
 `unavailable`. Once the preference store exposes the directory it is bound to
 (`UiPreferenceStore::sibling_directory`, which the conversion preset store adds
 on its own branch), the restore store binds that instead, so a QA build uses its
-own QA root. That change must land before the interface slice's rendered QA.
+own QA root. That change must land before the interface slice's rendered QA;
+whichever of the two branches reaches main second makes it, so the preset
+store's "one path policy and one QA root" stays true.
 
 ### 3. When it is written
 
@@ -100,6 +102,13 @@ whose objects (volume serial and file ID of every member) are a live row's is
 that row recorded twice: it is placed like any other and written once, as the
 live row.
 
+Rust reads its registry for a save only once that save is the one saving:
+saves are serialized from that read to their publish, apart from the lock the
+read, the clear and the switch take, so a save waiting for the workspace
+mutation gate holds none of them up. An arrangement the webview made before a
+later roster change therefore meets the later roster and is refused
+(`staleArrangement`); it never publishes last and takes a row out.
+
 The application is not single-instance (ADR 0060). A save is refused
 (`changedElsewhere`) when the document's name holds another object than the
 one this process last read or wrote there, or nothing where it held one, so a
@@ -109,8 +118,16 @@ nothing more until it restarts, and none of its own later writes lifts that.
 A document that is there but cannot be identified just now (another program
 holds it without sharing read) refuses the save or the turn-on with
 `identityUnknown` instead; that latches nothing, and the next write looks again.
+The one exception is this process's own write: if its identity cannot be read
+just after the replacement (another program opened the new document without
+sharing read in that instant), this process remembers nothing there, so its
+next guarded write finds an object it cannot call its own and is refused
+`changedElsewhere`, latched as above. That fails closed rather than guessing
+the document is its own.
 
-Off and clear (decision 8) are not refused: they are the user forgetting. Off
+Off and clear (decision 8) are not refused by this guard: they are the user
+forgetting. Like every write, they are refused while an unreadable document or
+an unsafe name is kept (decision 6). Off
 writes off. Clear keeps the switch only while the name still holds what this
 process last saw; otherwise it cannot know which switch the document holds, so
 it writes off and answers `turnedOff` with the reason (`changedElsewhere`, after
@@ -159,8 +176,10 @@ of:
 - `unreadable`: there, and its identity could not be established.
 - `unsafe`: a link, a directory or a device.
 
-A changed or missing file stays a marked row: it is never dropped, never
-relinked, and its recorded facts are never replaced by what is there now.
+A changed, missing or unreachable file, like any row not `matching`, stays a
+marked row: it is never dropped, never relinked, never aged out (decision 10),
+and its recorded facts are never replaced by what is there now. It leaves only
+when it is put back, dismissed or cleared.
 
 *Recommendation for the interface slice:* one explicit **Restore workspace**
 action puts the matching rows back, through ordinary admission (the same rule,
@@ -219,9 +238,15 @@ Prerequisites of the interface slice, whichever the owner chooses:
   live and restored together. A save that would record more is refused
   (`tooManyRows`); the stored document stays. Admission counts only live rows,
   so this refusal is reachable whenever the waiting restored rows and the live
-  rows together pass 1,024; the remedy is putting rows back, dismissing marked
-  rows (decision 4) or clearing. Decision 10 keeps the restored rows to one
-  session's worth, so the sum stays within two sessions' Workbenches.
+  rows together pass 1,024. Putting a row back does not lower the count (the
+  row is written once, as the live row); only clearing, or dismissing a
+  restored row once that command exists (decision 4), does. Decision 10 ages
+  out untaken matching offers, but a marked row stays until it is put back,
+  dismissed or cleared, so marked rows can build up across sessions toward
+  this refusal. *Recommendation:* fail closed, as implemented. The refused
+  session records nothing, so the next start offers the last recorded document
+  again; the interface answers `tooManyRows` by offering Start fresh (clear)
+  or, later, dismissing restored rows. The alternative is open question 9.
 - At most 1,024 named groups and exactly one Ungrouped; a group name follows the
   Workbench's own rule (not blank as the webview's `trim()` judges it, at most
   120 UTF-16 units).
@@ -314,20 +339,26 @@ them in `AHEAD_OF_THEIR_INTERFACE` until a webview caller exists.
 
 ### 10. How long a row that is not put back is offered
 
-Each stored row counts the starts that have offered it since it was last a
-Workbench row (`offered`; a live row is saved with 0). A start counts itself:
-a row whose count then passes `MAX_OFFERS` is not offered, and the read answer
-says how many such rows there were (`expired`). Nothing is written at start, so
-those rows leave the document at this session's first save, clear or off; a
-session that saves nothing ages nothing and reports the same rows again at the
-next start.
+Only an offer the user could take counts. Each stored row counts the sessions
+that declined it since it was last a Workbench row (`offered`; a live row is
+saved with 0): a session declines a row when one of its reads presented the
+row as `matching` and it then saved without putting the row back. A row a
+read presented in any other state (changed, missing, unreachable, unreadable,
+unsafe) could not be put back as itself, so it is not counted and stays
+offered, as a marked row, until it is put back, dismissed or cleared; so is a
+row in a session that saved without reading. At start, a row whose count has
+reached `MAX_OFFERS` is not offered, and the read answer says how many such
+rows there were (`expired`). Nothing is written at start, so those rows leave
+the document at this session's first save, clear or off; a session that saves
+nothing ages nothing and reports the same rows again at the next start.
 
 *Recommendation:* `MAX_OFFERS` = 1. The next start offers the last session's
-Workbench; a session that saves without taking that offer has declined it, and
-the start after that no longer offers those rows and says so. The document is
-then the last session's Workbench plus at most that session's untaken offer,
-never a history of every session. The value is one constant, so another answer
-is a one-line change.
+Workbench; a session that saw a row matching and saved without taking it has
+declined it, and the start after that no longer offers it and says so. The
+document is then the last session's Workbench, at most that session's untaken
+matching offer, and the marked rows still waiting, never a history of every
+session's offers. The value is one constant, so another answer is a one-line
+change.
 
 *Alternatives:*
 
@@ -340,6 +371,10 @@ is a one-line change.
 - End the whole offer at the user's first explicit choice, Restore or Start
   fresh. `clear_workspace_restore` already is Start fresh; but a user who makes
   neither choice still accumulates, so this needs a bound as well.
+- Age marked rows as well, as the first implementation did. That retires a row
+  on an unplugged disk or an offline share that the user never had a way to
+  take, which contradicts decision 4 and WSP-010's "marks missing files rather
+  than deleting rows silently".
 
 ## Consequences
 
@@ -349,13 +384,13 @@ is a one-line change.
   crash between a change and its save restores the previous arrangement. A
   row removed just before a crash can therefore come back as a restored row,
   never as a deletion.
-- Two saves of one process that arrive out of order can leave the older
-  arrangement stored: each takes its registry snapshot before it waits for the
-  store, so the save that publishes last can carry the older snapshot. A row
-  added just before that can then be missing at the next start, having been
-  recorded once and silently taken out again, if no later save follows. Saves
-  carry no revision; the workspace generation can serve as one if this is ever
-  observed.
+- Two saves of one process that arrive out of order never take a row out: the
+  later one reads the registry when it saves (decision 3), so an older
+  arrangement meets the newer roster and is refused. Two arrangements of the
+  same rows (an organization change, a checkbox) can still publish in either
+  order, so the older grouping, order or checked state can be the one stored
+  until the next save. Arrangements carry no revision; the webview can add one
+  if this is ever observed.
 - With two windows open, the first to write keeps recording and the other is
   refused (`changedElsewhere`) once it sees that write, until it restarts; its
   session is not recorded, and it is told so rather than writing over the
@@ -371,9 +406,11 @@ is a one-line change.
   answers slowly still costs one open per member, and there is no per-row
   timeout. The read answers only after every check, so its worst case is one
   timeout per unreachable root plus one slow open per member.
-- A restored row that is not put back is offered once more and then reported as
-  no longer offered (decision 10); a user who wants it back adds the file
-  again.
+- A restored row a session saw matching and did not put back is offered once
+  more and then reported as no longer offered (decision 10); a user who wants
+  it back adds the file again. A marked row is never aged out, so marked rows
+  wait until put back, dismissed or cleared, and can build up toward
+  `tooManyRows` (decision 5).
 - The interface slice cannot start before stable per-row slots and the
   put-back and dismiss commands exist (decision 4).
 
@@ -403,7 +440,15 @@ is a one-line change.
    a collision (recommended), or show only a `restored item N` tie-break as the
    live roster does for rows added directly?
 8. How long is a row that is not put back offered (decision 10)? Recommended:
-   at one start, so a session that saves without taking the offer ends it and
-   the next start says how many rows are no longer offered. Alternatives: more
-   starts; until put back or dismissed (the document then grows with every
-   session); or until the user's first Restore or Start fresh, plus a bound.
+   a row a read presented as matching is declined by one session that saves
+   without taking it, and the next start says how many rows are no longer
+   offered; a marked row (changed, missing, unreachable, unreadable, unsafe) is
+   never aged out and waits until put back, dismissed or cleared.
+   Alternatives: more sessions; until put back or dismissed (the document then
+   grows with every session); until the user's first Restore or Start fresh,
+   plus a bound; or age marked rows too.
+9. When the live and the waiting restored rows together pass 1,024
+   (decision 5), refuse the save (`tooManyRows`) and let the interface offer
+   Start fresh (recommended, as implemented: fail closed, nothing dropped
+   without the user), or record the live rows and retire untaken matching
+   offers, then marked rows, to make room, reporting how many?

@@ -331,28 +331,38 @@ fn a_missing_or_changed_file_is_a_marked_row_never_dropped_or_relinked() {
     );
     assert_eq!(stored_bytes(&scratch), before);
 
-    // One that places all three keeps their recorded facts, not today's, and
-    // counts this start's offer.
+    // One that places all three keeps their recorded facts, not today's. A
+    // marked row is an offer nobody could take, so nothing is counted.
+    let order = ["restored-2", "restored-0", "restored-1"];
     assert_eq!(
-        store.save(
-            &ungrouped(&["restored-2", "restored-0", "restored-1"]),
-            Vec::new()
-        ),
+        store.save(&ungrouped(&order), Vec::new()),
         WorkspaceRestoreWriteDto::Saved
     );
-    let offered_once = |row: &StoredRow| StoredRow {
-        offered: 1,
-        ..row.clone()
-    };
     let rows = &recorded.groups[0].rows;
-    assert_eq!(
-        stored(&scratch).groups[0].rows,
-        vec![
-            offered_once(&rows[2]),
-            offered_once(&rows[0]),
-            offered_once(&rows[1])
-        ]
-    );
+    let reordered = vec![rows[2].clone(), rows[0].clone(), rows[1].clone()];
+    assert_eq!(stored(&scratch).groups[0].rows, reordered);
+
+    // So it is offered at every later start, however many sessions save.
+    for _ in 0..3 {
+        let store = reopen(&scratch);
+        match store.read() {
+            WorkspaceRestoreReadDto::Restored {
+                groups, expired, ..
+            } => {
+                assert_eq!(expired, 0);
+                assert_eq!(states(&groups).len(), 3);
+            }
+            other => panic!("expected restored rows, got {other:?}"),
+        }
+        assert_eq!(
+            store.save(
+                &ungrouped(&["restored-0", "restored-1", "restored-2"]),
+                Vec::new()
+            ),
+            WorkspaceRestoreWriteDto::Saved
+        );
+        assert_eq!(stored(&scratch).groups[0].rows, reordered);
+    }
 }
 
 #[test]
@@ -414,14 +424,57 @@ fn a_path_on_a_drive_that_does_not_answer_is_unreachable_not_missing() {
         ..RestoreDocument::empty(true)
     };
     write_stored(&scratch, &write_document(&document));
+    // Three starts, each saving without putting anything back: neither row
+    // could be taken, so neither ages out.
+    for start in 0..3 {
+        let store = reopen(&scratch);
+        assert_eq!(
+            states(&restored(&store)),
+            vec![
+                ("a.mzML".to_owned(), RowState::Unreachable),
+                ("b.mzML".to_owned(), RowState::Missing),
+            ],
+            "a removed disk is not a deleted file; a removed folder on a drive that answers is"
+        );
+        assert!(
+            matches!(
+                store.read(),
+                WorkspaceRestoreReadDto::Restored { expired: 0, .. }
+            ),
+            "start {start}"
+        );
+        assert_eq!(
+            store.save(&ungrouped(&["restored-0", "restored-1"]), Vec::new()),
+            WorkspaceRestoreWriteDto::Saved
+        );
+    }
+    assert_eq!(stored(&scratch), document);
+}
+
+#[test]
+fn an_older_save_reaching_the_store_last_never_takes_a_newer_row_out() {
+    let scratch = Scratch::new("restore-order");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let b = scratch.write("b.mzML", b"<mzML/>");
+    let store = reopen(&scratch);
+    let roster = || vec![live("file-0", &a), live("file-1", &b)];
     assert_eq!(
-        states(&restored(&reopen(&scratch))),
-        vec![
-            ("a.mzML".to_owned(), RowState::Unreachable),
-            ("b.mzML".to_owned(), RowState::Missing),
-        ],
-        "a removed disk is not a deleted file; a removed folder on a drive that answers is"
+        store.save_with(&ungrouped(&["file-0", "file-1"]), roster),
+        WorkspaceRestoreWriteDto::Saved
     );
+    // Arranged before file-1 was added and arriving last: the registry is
+    // read only once this save is the one saving, so it meets file-1.
+    let snapshot = || {
+        assert!(store.saves.try_lock().is_err(), "read while saving");
+        roster()
+    };
+    assert_eq!(
+        store.save_with(&ungrouped(&["file-0"]), snapshot),
+        WorkspaceRestoreWriteDto::Refused {
+            problem: "staleArrangement"
+        }
+    );
+    assert_eq!(stored(&scratch).groups[0].rows.len(), 2);
 }
 
 #[cfg(windows)]

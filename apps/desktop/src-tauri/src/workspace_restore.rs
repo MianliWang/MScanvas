@@ -23,15 +23,16 @@
 //!
 //! A usable document becomes the session's *restored rows*. They are not
 //! Workbench rows: they carry `restored-N` handles, and putting one back in the
-//! Workbench is ordinary admission, in a later slice. A row is offered at a
-//! bounded number of starts ([`MAX_OFFERS`]) without being put back, then it is
-//! no longer offered and the start says how many such rows there were. Every
-//! read re-checks the offered rows cheaply: the drive or share each recorded
-//! path is on is probed once, then the object at the path is opened for its
-//! attributes only, without data access or a link followed, and its file ID,
-//! volume serial and length are compared with what was recorded. No byte is
-//! read and nothing is hashed. A changed or missing file stays a marked row;
-//! it is never dropped and never relinked.
+//! Workbench is ordinary admission, in a later slice. Every read re-checks the
+//! offered rows cheaply: the drive or share each recorded path is on is probed
+//! once, then the object at the path is opened for its attributes only,
+//! without data access or a link followed, and its file ID, volume serial and
+//! length are compared with what was recorded. No byte is read and nothing is
+//! hashed. A changed, missing or unreachable file stays a marked row; it is
+//! never dropped and never relinked. Only an offer the user could take ages a
+//! row: one a read presented as matching, in a session that then saved without
+//! putting it back, is offered at [`MAX_OFFERS`] such sessions, then no longer,
+//! and the start says how many such rows there were.
 //!
 //! ## When it is written
 //!
@@ -42,8 +43,9 @@
 //! live and every restored row of this process exactly once. A save is also
 //! refused once this process sees that another MSCanvas process has written
 //! the document since this one last read or wrote it. That check and the
-//! replacement are two steps, so a write racing between them is not excluded;
-//! off and clear always write.
+//! replacement are two steps, so a write racing between them is not excluded.
+//! Off and clear are not refused by that check; like every write, they are
+//! refused while an unreadable document or an unsafe name is kept.
 
 #[cfg(test)]
 mod tests;
@@ -90,10 +92,10 @@ const MAX_PATH_UTF16: usize = 32_767;
 /// handles, so one can never be taken for the other.
 const RESTORED_PREFIX: &str = "restored-";
 
-/// How many starts offer a row that is not put back (ADR 0061, decision 10,
-/// Proposed). A row the session that saw the offer did not put back is
-/// offered no more, so the document is the last session's Workbench and at
-/// most that session's untaken offer, never a growing history.
+/// How many sessions may decline a row that a read presented as matching
+/// (ADR 0061, decision 10, Proposed). Such a row a session saved without
+/// putting back is offered no more, so untaken offers never become a growing
+/// history. A marked row could not be taken and is never counted.
 pub const MAX_OFFERS: u32 = 1;
 
 // ------------------------------------------------------------------ document
@@ -152,8 +154,9 @@ pub struct StoredGroup {
 pub struct StoredRow {
     pub family: Family,
     pub checked: bool,
-    /// How many starts have offered this row since it was last in the
-    /// Workbench, as of the last save: 0 for a live row.
+    /// How many sessions have presented this row as matching and saved
+    /// without putting it back, since it was last in the Workbench: 0 for a
+    /// live row and for a row only ever marked.
     pub offered: u32,
     /// Primary first.
     pub members: Vec<StoredMember>,
@@ -466,10 +469,11 @@ pub struct RestoredGroupDto {
 pub enum WorkspaceRestoreReadDto {
     /// The rows still waiting to be put back, in their stored groups and
     /// order, each re-checked now. Empty on a first run or after a clear.
-    /// `expired`: stored rows this start no longer offers, because earlier
-    /// starts offered them [`MAX_OFFERS`] times and they were not put back.
-    /// They stay in the document until this session first saves, clears or
-    /// turns restore off, so a start that saves nothing reports them again.
+    /// `expired`: stored rows this start no longer offers, because
+    /// [`MAX_OFFERS`] earlier sessions presented them as matching and saved
+    /// without putting them back; a marked row never expires. They stay in
+    /// the document until this session first saves, clears or turns restore
+    /// off, so a start that saves nothing reports them again.
     Restored {
         groups: Vec<RestoredGroupDto>,
         expired: u32,
@@ -513,7 +517,10 @@ pub enum WorkspaceRestoreWriteDto {
     Off,
     /// Refused before anything was written. The stored document is unchanged.
     /// `changedElsewhere`: another MSCanvas process wrote it since this one
-    /// last read or wrote it; this session records nothing more until it
+    /// last read or wrote it, or this process could not identify its own
+    /// write just after making it (another program held the new document
+    /// without sharing read), which is refused the same way rather than
+    /// guessed to be its own; this session records nothing more until it
     /// restarts. Off and clear still work, and both leave restore off.
     /// `identityUnknown`: the document is there and could not be identified
     /// just now (another program holds it); retryable, nothing is latched.
@@ -575,13 +582,16 @@ struct Lane {
     /// on does not keep a second copy.
     kept_aside: bool,
     /// The start-up rows not yet back in the Workbench, in their stored
-    /// groups, each with this start counted in `offered`. The Nth row in
-    /// order is `restored-N`.
+    /// groups. The Nth row in order is `restored-N`.
     ///
     /// ponytail: only ever emptied whole (clear, off); putting one row back
     /// or dismissing one needs stable per-row slots, which the interface
     /// slice adds first (ADR 0061, decision 4).
     restored: Vec<StoredGroup>,
+    /// The restored rows a read of this session presented as matching: the
+    /// offers the user could take, which a save counts in `offered`. Never
+    /// refilled within a session, so positions stay meaningful.
+    presented: HashSet<usize>,
     /// The stored rows this start no longer offers (decision 10).
     expired: u32,
 }
@@ -612,6 +622,11 @@ impl Seen {
 pub struct WorkspaceRestoreStore {
     directory: Option<PathBuf>,
     lane: Mutex<Lane>,
+    /// Held by a save from its registry snapshot to its publish, so saves
+    /// publish in the order of their snapshots. Apart from the lane, so a
+    /// save waiting for the workspace mutation gate never holds up a read,
+    /// a clear or the switch. Taken before the lane, never after it.
+    saves: Mutex<()>,
 }
 
 impl WorkspaceRestoreStore {
@@ -635,6 +650,7 @@ impl WorkspaceRestoreStore {
                     foreign: false,
                     kept_aside: false,
                     restored: Vec::new(),
+                    presented: HashSet::new(),
                     expired: 0,
                 },
             ),
@@ -642,6 +658,7 @@ impl WorkspaceRestoreStore {
         Self {
             directory,
             lane: Mutex::new(lane),
+            saves: Mutex::new(()),
         }
     }
 
@@ -672,6 +689,7 @@ impl WorkspaceRestoreStore {
             Startup::Loaded => {
                 let mut index = 0;
                 let mut roots = Roots::new();
+                let mut matching = Vec::new();
                 let groups = restored
                     .into_iter()
                     .map(|group| RestoredGroupDto {
@@ -681,12 +699,17 @@ impl WorkspaceRestoreStore {
                             .iter()
                             .map(|row| {
                                 let dto = restored_row_dto(index, row, &mut roots);
+                                if dto.state == RowState::Matching {
+                                    matching.push(index);
+                                }
                                 index += 1;
                                 dto
                             })
                             .collect(),
                     })
                     .collect();
+                // Matching at any read of this session is an offer made.
+                self.locked().presented.extend(matching);
                 WorkspaceRestoreReadDto::Restored {
                     groups,
                     expired,
@@ -696,11 +719,29 @@ impl WorkspaceRestoreStore {
         }
     }
 
+    /// [`Self::save`], with the registry's rows taken only once this save is
+    /// the one saving. An arrangement the webview made before a later roster
+    /// change then meets the later roster and is refused
+    /// (`staleArrangement`), rather than publishing last and taking a row
+    /// out of the document.
+    #[must_use]
+    pub fn save_with(
+        &self,
+        arrangement: &WorkspaceArrangementDto,
+        live: impl FnOnce() -> Vec<LiveRow>,
+    ) -> WorkspaceRestoreWriteDto {
+        let _saving = self
+            .saves
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.save(arrangement, live())
+    }
+
     /// Replaces the document with the session as it is now: `live` from the
     /// registry, the waiting restored rows, and the webview's arrangement of
     /// both.
     #[must_use]
-    pub fn save(
+    fn save(
         &self,
         arrangement: &WorkspaceArrangementDto,
         live: Vec<LiveRow>,
@@ -723,7 +764,12 @@ impl WorkspaceRestoreStore {
             rows.insert(row.handle, stored);
         }
         for (index, row) in lane.restored.iter().flat_map(|g| &g.rows).enumerate() {
-            rows.insert(format!("{RESTORED_PREFIX}{index}"), row.clone());
+            let declined = u32::from(lane.presented.contains(&index));
+            let row = StoredRow {
+                offered: row.offered.saturating_add(declined),
+                ..row.clone()
+            };
+            rows.insert(format!("{RESTORED_PREFIX}{index}"), row);
         }
         let document = match arrange(arrangement, rows, &live_objects) {
             Ok(document) => document,
@@ -1038,6 +1084,7 @@ fn load(directory: &Path) -> Lane {
         foreign: false,
         kept_aside: false,
         restored,
+        presented: HashSet::new(),
         expired,
     };
     // Off: a refused document may be one the user had switched off.
@@ -1046,7 +1093,7 @@ fn load(directory: &Path) -> Lane {
         Ok(None) => lane(Startup::Loaded, true, Vec::new(), 0),
         Ok(Some(bytes)) => match read_document(&bytes) {
             Ok(document) => {
-                let (groups, expired) = offered_now(document.groups);
+                let (groups, expired) = still_offered(document.groups);
                 lane(Startup::Loaded, document.enabled, groups, expired)
             }
             Err(problem) => refusal(problem),
@@ -1057,15 +1104,15 @@ fn load(directory: &Path) -> Lane {
     }
 }
 
-/// Counts this start as one more offer of every stored row, and keeps back the
-/// rows already offered [`MAX_OFFERS`] times, counting them. Groups stay, even
-/// one left empty: an empty group is part of an arrangement.
-fn offered_now(mut groups: Vec<StoredGroup>) -> (Vec<StoredGroup>, u32) {
+/// Keeps back the rows [`MAX_OFFERS`] sessions have already declined, counting
+/// them. Nothing is counted here: the start-up read has not checked anything
+/// yet, and only an offer a read presents as matching ages a row. Groups stay,
+/// even one left empty: an empty group is part of an arrangement.
+fn still_offered(mut groups: Vec<StoredGroup>) -> (Vec<StoredGroup>, u32) {
     let mut expired = 0_u32;
     for group in &mut groups {
-        group.rows.retain_mut(|row| {
-            row.offered = row.offered.saturating_add(1);
-            let kept = row.offered <= MAX_OFFERS;
+        group.rows.retain(|row| {
+            let kept = row.offered < MAX_OFFERS;
             expired += u32::from(!kept);
             kept
         });

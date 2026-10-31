@@ -2395,8 +2395,12 @@ async fn save_workspace_restore(
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let restore = Arc::clone(&restore);
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || restore.save(&arrangement, service.workspace_restore_rows()))
-        .await
+    // The registry is read once this save is the one saving, so an older
+    // arrangement never publishes over a newer roster.
+    off_the_async_runtime(move || {
+        restore.save_with(&arrangement, || service.workspace_restore_rows())
+    })
+    .await
 }
 
 /// Forgets every row the document stored, and writes restore off, answering
