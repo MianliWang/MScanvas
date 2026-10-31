@@ -1,7 +1,9 @@
 # ADR 0067 — Study model for cross-sample analysis
 
 Status: **Proposed** on 2026-10-30. The owner directed that day that analysis is
-no longer deferred and is to be planned and built. This record states the
+no longer deferred and is to be planned and built (recorded in
+`docs/development/OWNER_DECISIONS_V511.md` on `docs/roadmap-v511`, not yet on
+`main`). This record states the
 options and a recommendation for each, for the owner to decide. Nothing here is
 implemented, and nothing here reaches the interface. The governance amendment
 that un-defers analysis (AGENTS.md, "Analysis is deferred but architecturally
@@ -10,8 +12,10 @@ it. The questions for the owner are listed
 [at the end](#open-questions-for-the-owner).
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the session-only
 workspace), [0016](0016-explicit-converted-output-adoption.md) (explicit
-adoption), [0047](0047-first-windows-beta-scope-and-implementation-route.md)
-(beta scope; the targeted-MS1 runtime is not shipped),
+adoption), [0028](0028-figure-renderer-and-semantic-specification.md)
+(screen and export figures),
+[0047](0047-first-windows-beta-scope-and-implementation-route.md) (beta scope;
+the targeted-MS1 runtime is not shipped),
 [0048](0048-stored-targeted-result-reuse-and-export.md) (a stored result is read
 without running anything; absent is an empty cell),
 [0049](0049-content-bound-execution-snapshot.md) (content binding),
@@ -58,11 +62,13 @@ The only durable per-acquisition identity is the layer (PRJ-005).
 document is at most 4 MiB, parsed whole, and history is append-only (M9
 closure §3.4, §13). The M9 closure (§8) measured 4.7 kB of run and 1.2 kB of
 result record per acquisition, plus the plan. In this record a **step** is
-one recipe step over every included sample, and a **pass** is the four steps
-of decision 4. A 300-sample step recorded the ADR 0050 way therefore costs
-about 2 MB, so a document holds about two such steps in its whole lifetime
-(one pass, which has two per-sample steps), and 2,048 runs or artifacts are
-reached in the seventh step **[arith]**. The same closure shows the second
+one recipe step over every included sample, and a **pass** is the five steps
+of decision 4. A 300-sample step recorded the ADR 0050 way, with a run, a
+result record and a plan of about 1.5 kB for each sample, therefore costs
+about 2.2 MB, so a document holds one such step in its whole lifetime and not
+a second, which is less than one pass (a pass has two per-sample steps);
+2,048 runs or artifacts would be reached in the seventh step even if bytes
+allowed it **[arith]**. The same closure shows the second
 trap: every plan stores its whole target list, so a 16 × 200 batch costs about
 0.84 MiB. A study plan that
 inlined its sample list would repeat that.
@@ -97,10 +103,14 @@ A project holds zero or more **studies**. A study has a durable `StudyId`
     has no acquisition in the project. Importing such a table is part of
     "Track A", the analysis work that needs no Python runtime (imported
     tables, sample metadata and Rust statistics). Such a sample can enter
-    statistics and nothing that reads an acquisition.
+    statistics and nothing that reads an acquisition. Its source is named
+    before anything is imported: the table's project reference (`InputId`)
+    and the column's 1-based ordinal in that file, with the column's header
+    text kept for display. The import review (decision 6) adds these samples
+    as a study edit before the import step runs.
 
-  A layer backs at most one sample of a study (`studyDuplicateSource`
-  otherwise); it may back samples in several studies;
+  A layer, or a table column, backs at most one sample of a study
+  (`studyDuplicateSource` otherwise); it may back samples in several studies;
 - a **role** for each sample, from a closed vocabulary: `sample`, `qc`
   (pooled quality control), `blank`, `standard`;
 - **groups** and **batches**: lists of `{id, label}` (`GroupId`, `BatchId`),
@@ -119,11 +129,13 @@ a run used is pinned by the revision it was given (decision 2), so editing a
 study never rewrites a result and does not grow the history.
 
 Bounds, as guards against a malformed document for the first build, not
-scientific limits: at most 1,024 samples per study (the roster's capacity, ADR
-0057) and at most 64 studies per project. Layer-backed samples are already
-capped at 512 by the project's input bound, so 1,024 binds only when imported
-columns are included. A study record costs about 250–300 bytes per sample
-pretty-printed, about 90 kB for 300 samples **[arith]**. The counts are not a
+scientific limits: at most 1,024 samples per study (the Workbench roster's
+capacity, `MAX_WORKSPACE_DATASETS` of ADR 0006, reused as a round guard; an
+imported column has no roster row) and at most 64 studies per project.
+Layer-backed samples are already capped at 512 by the project's input bound,
+so 1,024 binds only when imported columns are included. A study record costs
+about 250–300 bytes per sample pretty-printed, about 90 kB for 300 samples
+**[arith]**. The counts are not a
 capacity: 64 studies at their sample bound would be about 8–19 MiB
 **[arith]**, so the 4 MiB document bound binds long before them.
 
@@ -138,9 +150,12 @@ full document (M9 closure §8).
 
 Removing a sample from a study deletes no input, no source file and no
 artifact. A layer that a study names cannot be removed from the project
-(`layerInStudy`), nor can its input (`inputInStudy`), until its samples are
-removed, so no sample dangles. What a recorded study run consumed is
-protected by the run itself (decision 4), as today.
+(`layerInStudy`), nor can its input or the input of a table whose column it
+names (`inputInStudy`), until its samples are removed, so no sample dangles.
+What a recorded study run consumed is protected by the run itself (decision
+4), as today. A study that a recorded plan names cannot be removed
+(`studyUsedByRun`), as a layer a run consumed cannot, so no plan's `StudyId`
+dangles; its samples can still be removed.
 
 **Per study, not per layer.** Role, group, batch and order are kept on the
 study's samples, keyed by `LayerId` within the study, not on the layer itself.
@@ -154,20 +169,27 @@ layers.
 The canonical form of what a step is given about the study is its **revision**.
 It lists every sample of the study at review, in study order, each with its
 `SampleId`, its source (the layer, its reference and the length and SHA-256 of
-each member that reference recorded, or the imported column), its role, its
-group and batch (`GroupId`, `BatchId` and label), its injection order, and
-whether the step includes it. An excluded sample carries its reason, from a
-closed vocabulary: `noUpstreamOutput`, `otherPolarity`, `sourceChanged`,
-`roleNotUsed` or `excludedAtReview`. The revision is named by the SHA-256 of
-that form (`studyRevisionSha256`), so the digest pins the exclusions as well
-as the metadata.
+each member that reference recorded; or, for an imported column, the table's
+reference, its recorded length and SHA-256, and the column's ordinal and
+header), its role, its group and batch (`GroupId`, `BatchId` and label), its
+injection order, and whether the step includes it. An excluded sample carries
+its reason, from a closed vocabulary: `noUpstreamOutput`, `otherPolarity`,
+`notCentroided`, `sourceChanged`, `roleNotUsed` or `excludedAtReview`. The
+revision also names its study by `StudyId` and label. It is named by the
+SHA-256 of that form (`studyRevisionSha256`), so the digest pins the
+exclusions as well as the metadata.
 
 The revision file (`study.json`) is stored in the payload of every artifact a
-study step produces (decision 4). Plans name it only by digest and hold only
-the counts of included and excluded samples. No plan inlines the sample
-list, so a study plan's size does not depend on the number of samples. The
-run lists the layers it consumed, for lineage (decision 4), and nothing else
-of the revision.
+study step produces (decision 4). Its bytes are exactly the canonical form,
+and a reader recomputes their SHA-256 and refuses the artifact as
+`payloadCorrupt` unless it equals the plan's `studyRevisionSha256`: the
+manifest proves only that the file is unchanged since it was written, not that
+it is the revision the plan was reviewed with. The study slice tests both a
+re-serialized and an altered `study.json`. Plans name it only by digest and
+hold only the counts of included and excluded samples. No plan inlines the
+sample list, so a study plan's size does not depend on the number of samples.
+The run lists the layers it consumed, for lineage (decision 4), and nothing
+else of the revision.
 
 Earlier revisions therefore live in the artifacts that used them, not in the
 document. A statistics result names its revision, so the metadata it used can
@@ -189,7 +211,18 @@ A study recipe is a chain of **steps**, each its own reviewed plan and run:
   cross-sample result says about that sample.
 - A **cross-sample step** is given the derived outputs of the included samples
   (for example, their feature maps), never the acquisitions. Alignment and
-  linking run in the worker; statistics run in Rust with no worker.
+  linking run in the worker; assembly (decision 4) and statistics run in Rust
+  with no worker.
+- **Every payload file a worker is given is bound as an acquisition is** (ADR
+  0049), whether a cross-sample step's inputs or the cross-sample result in
+  gap filling's request. Rust opens it with a handle that refuses writers and
+  deletion, checks its length and SHA-256 through that handle against the
+  ledger, manifest or `matrix.json` that names it, and gives the worker a hard
+  link proven to be the held object or a verified copy, never the store's
+  path. The handle is held until the worker has exited. So the worker reads the
+  bytes Rust checked, and cannot write an earlier artifact even though read
+  confinement is not enforced (M9 closure §3.3). A Rust step reads payload
+  files through held, verified handles in the same way.
 - A step that must read several acquisitions in one invocation (the pyOpenMS
   GNPS MGF writer reads every mzML at once) is admitted only by its own recipe
   record, with a capacity check that sums its copies. The recommended GNPS
@@ -197,12 +230,12 @@ A study recipe is a chain of **steps**, each its own reviewed plan and run:
 
 **Review.** A step's review lists every sample of the study. A sample the step
 cannot take is listed with its reason: no completed upstream output, the other
-polarity, a changed source, a role the step does not use. The step runs only
-the samples the user keeps. The revision (decision 2) names every excluded
-sample with its reason, including the ones the user left out, so nothing is
-dropped unnamed and the plan still holds only counts. A cross-sample step
-needs at least two included samples. What statistics need beyond that is the
-statistics record's decision.
+polarity, profile data, a changed source, a role the step does not use. The
+step runs only the samples the user keeps. The revision (decision 2) names
+every excluded sample with its reason, including the ones the user left out,
+so nothing is dropped unnamed and the plan still holds only counts. A
+cross-sample step needs at least two included samples. What statistics need
+beyond that is the statistics record's decision.
 
 **Kept from ADR 0050:**
 
@@ -213,7 +246,8 @@ statistics record's decision.
 - each sample's failure is its own, as ADR 0050's decision 4 table sets out
   per member;
 - one Stop, with the semantics of ADR 0050, decision 5, for the sample it
-  reaches; unlike a batch member's publication, the study run's own
+  reaches, whether that sample is running an invocation or copying a reused
+  output; unlike a batch member's publication, the study run's own
   publication is outside the Stop's reach (decision 5);
 - nothing completed is rolled back because a later sample failed.
 
@@ -231,23 +265,30 @@ recipe step. Which step a plan is, is its recipe binding (decision 12).
 - **Plan**: the recipe binding (recipe identifier, version, adapter, engine
   profile and runtime manifest digests, and the `experimental` flag of
   decision 10), the parameters (decision 12 gives their one generic shape), the
-  `StudyId`, the `studyRevisionSha256`, the
+  `StudyId`, the `studyRevisionSha256`, the step's polarity (decision 9), the
   upstream artifacts the step consumes (at most eight), the reuse choice of
   decision 5 with the number of samples expected to reuse, and the counts of
   included and excluded samples. It is named by the SHA-256 of its canonical
   form and recorded only once a run executes it, as today.
 - **Run**: one per study step. Its `inputs` list what it consumed, as every
   run's do: the layer of each included sample, for a step that reads
-  acquisitions, and each upstream artifact. It holds the plan digest, the
-  attempt facts the invocations share (runtime manifest, interpreter and
-  adapter digests, loaded modules), counts of sample outcomes, the run's own
-  failure or stop where it has one, and the ledger's digest. Its outcome
+  acquisitions, the table's input, for an import (decision 6), and each
+  upstream artifact. It holds the plan digest, the attempt facts the
+  invocations share (runtime manifest, interpreter and adapter digests,
+  loaded modules), counts of sample outcomes with the number
+  actually `reused` counted on its own, the run's own failure or stop where it
+  has one, and the ledger's digest. The attempt facts and the application
+  version describe only what this run executed. A reused output's own facts
+  are those of the run that produced it, which the ledger names. A run in which
+  every sample reused an output, and so no worker ran, records no attempt
+  (`null`); for a study run that is a valid `completed` run. Its outcome
   follows the table in decision 5.
-- **Artifact**: one for every study run that started at least one invocation.
-  Its payload always holds `study.json` and the **ledger** (`samples.jsonl`): one
+- **Artifact**: one for every study run that started (decision 5). Its
+  payload always holds `study.json` and the **ledger** (`samples.jsonl`): one
   line per included sample, in sample order, with the consumed content, the
   execution view (`hardLinkInWorkArea` or `verifiedSnapshotInWorkArea`), the
-  outcome (`completed`, `failed`, `cancelled`, `notStarted`), a failure code
+  polarity and centroid state the invocation found, the outcome
+  (`completed`, `failed`, `cancelled`, `notStarted`), a failure code
   and stage or stop facts where there is one, the source of a reused output
   (decision 5), and each output file's length and digest. It holds an output
   for each sample that completed (per-sample steps), or the step's result
@@ -262,11 +303,21 @@ recipe step. Which step a plan is, is its recipe binding (decision 12).
   within the 64 KiB small-record bound at any sample count, and the record's
   size does not depend on it. The ledger and `matrix.json` are ordinary payload
   files, at most 64 MiB, verified whole against the digest that names them when
-  they are read. Save As copies and verifies every file the three name. For a
-  Rust step, such as statistics, the run "starts" when its computation starts,
-  and a sample whose output is reused (decision 5) counts as started.
-- **Refused before the first invocation**: nothing is recorded, as for a
-  single run.
+  they are read. Save As copies and verifies every file the three name.
+- **Payload file names are MSCanvas's.** Every name in the manifest, the
+  ledger or `matrix.json` is generated from a fixed pattern of its format, with
+  only an MSCanvas ordinal or a `SampleId` put in: `study.json`,
+  `samples.jsonl`, `matrix.json`, `values-NNNNN.bin`, `cells-NNNNN.bin`,
+  `reasons-NNNNN.bin`, `attr-AA-NNNNN.bin` and `<SampleId>.<kind>.bin`, where
+  the kind is a recipe token. No name comes from a column header, an attribute
+  name or a user's text; those are kept as display text inside `matrix.json` or
+  the ledger. A reader checks every listed name against its pattern, and with
+  the same checks as today's `bounded_member_name`, before it opens anything,
+  and refuses the artifact as `payloadCorrupt` otherwise. So a hand-edited
+  ledger cannot make Save As or a view read or write outside the artifact's
+  directory.
+- **Refused before the run starts**: nothing is recorded, as for a single
+  run (decision 5 says when a study run starts).
 
 **Lineage.** Because the run lists its layers, today's rules hold unchanged:
 `remove_layer` and `remove_input` refuse what a run consumed
@@ -285,59 +336,86 @@ representable. The no-cycle argument in `lineage.rs` is rewritten to say so in
 the same change. Reused outputs (decision 5) are not consumption: the ledger
 names their source artifact, and no artifact can be removed.
 
+**A pass** is five steps: detection (per sample), alignment and linking
+(cross-sample, worker), gap filling (per sample), **assembly** (cross-sample,
+Rust) and statistics (cross-sample, Rust). Gap filling writes only each
+sample's own output; assembly is the step that writes the gap-filled matrix,
+as a new matrix artifact. It consumes the linking matrix and the gap-filling
+artifact, keeps every linking cell, and replaces only the cells gap filling
+decided for a sample whose gap filling completed. For a sample whose gap
+filling failed, was cancelled or did not start, the column stays, with its
+linking cells unchanged, and each cell gap filling was to decide is
+`undecided` with the reason `gapFillingNotCompleted` (decision 7). Statistics
+read the assembled matrix and nothing else of the pass.
+
 **Document cost.** About 8 kB per step (the M9 closure's 4.7 kB run and 1.2 kB
 result record, and a plan with no list in it), plus about 108 bytes for each
 layer the run lists **[arith]**. At 300 samples, a per-sample step (detection,
 gap filling) costs about 40 kB and a cross-sample step (alignment and linking,
-statistics) about 8 kB, so a pass of the four costs about 97 kB. About forty
-passes fit beside a 300-sample study record, less what the references and
-layers themselves take; recorded the ADR 0050 way, about one would
-**[arith]**. The ledger costs about 1–2 kB per sample per step, and it lives in
-the payload **[arith]**.
+assembly, statistics) about 8 kB, so a pass of the five costs about 105 kB.
+About thirty-nine passes fit beside a 300-sample study record, less what the
+references and layers themselves take; recorded the ADR 0050 way, not one
+would **[arith]**. The ledger costs about 1–2 kB per sample per step, and it
+lives in the payload **[arith]**.
 
 **The worst case is reserved before any worker runs.** A study run's records
 are bounded, not fixed. The plan bounds its own lists, and the worker reports
 the loaded modules (at most 32, `MAX_LOADED_MODULES`) and the engine report's
 five strings (200 characters each). When Rust accepts the run, it computes
 the bytes the plan, run and artifact records would take with every list full
-and every string at the most bytes its bound allows: about 45 kB, plus about
-108 bytes per listed layer **[arith]**. It refuses `oversized` if the document
-plus that much exceeds 4 MiB, and otherwise holds those bytes as a
-reservation until the run is recorded. While the reservation is held, every
-operation that grows the document (adding a reference or a layer, either
-capture, a study edit, a CSV import) is measured with the reservation added,
-and is refused `oversized` over 4 MiB. The run's own records therefore always
-fit. This closes, for study runs, the M9 closure's limit that "the 4 MiB bound
-is met after the member's worker ran".
+and every string at the most bytes its bound allows (up to 4 bytes a
+character): about 56 kB, plus about 108 bytes per listed layer **[arith]**,
+mostly the 32 modules (about 30 kB), the 32 parameters (about 15 kB, a
+`decimal` spelling being at most 327 characters) and the engine report (about
+4 kB). The reservation also holds **slots**: one run, one artifact and, when
+the plan is not already recorded, one plan, against `MAX_RUNS`,
+`MAX_ARTIFACTS` and `MAX_PLANS`. It refuses `oversized` if the document plus
+those bytes exceeds 4 MiB or any count plus its slot exceeds its bound, and
+otherwise holds both until the run is recorded. While the reservation is held,
+every operation that grows the document (adding a reference or a layer,
+either capture, a study edit, a CSV import) is measured with the reserved
+bytes and slots added, and is refused `oversized` over either bound: a
+capture is refused once the runs or artifacts recorded plus the reserved
+slot reach their bound, not only when the recorded ones do, as
+`refuse_full_history` checks today. The run's own records therefore always
+fit, in bytes and in count, and the study slice tests a capture refused for
+a reserved slot. This closes, for study runs, the M9 closure's limit that
+"the 4 MiB bound is met after the member's worker ran".
 
 ### 5. Stop, failure, restart and reuse
 
-- **Stop.** The sample running meets the stop as an ADR 0050 member does
-  (decision 5): if the stop reaches it before its output is accepted into the
-  run's staging, that sample is `cancelled` and its output is discarded. Later
-  samples are `notStarted`. The Stop reaches only invocations, never the run's
-  own publication: what completed is always published, and a Stop that
-  arrives after the last invocation ended stops nothing and is not recorded.
-  A Stop that arrives before the first invocation starts records nothing, as
-  a refusal before the first invocation does, and releases the reservation.
-  No completed work is discarded.
+- **When a run starts and ends.** A study run **starts** when its first sample
+  begins: its first invocation, its first reuse copy, or, for a Rust step
+  (assembly, statistics, an import), its computation. It **ends** when its last
+  sample has ended, before the publication. A Stop or a refusal before the
+  start records nothing and releases the reservation.
+- **Stop.** A Stop accepted between the start and the end makes the run
+  `cancelled`, wherever it lands. The sample in progress meets it as an ADR
+  0050 member does (decision 5): an invocation, a reuse copy or a Rust
+  computation that has not had its output accepted into the run's staging is
+  `cancelled`, and what it wrote is discarded. A Stop that lands between two
+  samples cancels none; every sample not yet begun is `notStarted`. The Stop
+  never reaches the run's own publication: what completed is always
+  published, and a Stop that arrives after the end stops nothing and is not
+  recorded. No completed work is discarded.
 - **Quarantine** (`workerNotAccountedFor`). No later sample starts, as in ADR
   0050. What completed is published the same way.
 - **Outcome.** A study run's outcome and its one artifact follow this table:
 
   | How the run ended | Run outcome | Artifact |
   | --- | --- | --- |
-  | every invocation ended (or its output was reused), and at least one sample completed, or the cross-sample invocation completed | `completed` | `complete` if every included sample completed, `partial` otherwise |
-  | every invocation ended, and none completed | `failed`, with the run-level code `noSampleCompleted` for a per-sample step or the invocation's own failure for a cross-sample step | `noResult` |
-  | a Stop reached an invocation | `cancelled` | `partial`, or `noResult` if none completed |
+  | the run ended with no Stop accepted and no quarantine, and at least one sample completed (a reused output counts), or the cross-sample computation completed | `completed` | `complete` if every included sample completed, `partial` otherwise |
+  | the run ended with no Stop accepted and no quarantine, and none completed | `failed`, with the run-level code `noSampleCompleted` for a per-sample step or the computation's own failure for a cross-sample step | `noResult` |
+  | a Stop was accepted between the start and the end | `cancelled` | `partial`, or `noResult` if none completed |
   | quarantine (`workerNotAccountedFor`) | `failed` | `partial`, or `noResult` if none completed |
 
   This changes a validation rule for study runs only: today a `failed` or
   `cancelled` run that names an artifact is refused (`inconsistentRecord`). A
   study run produces exactly one artifact whatever its outcome, `complete` only
-  with `completed`. The ledger and the counts say which samples did what. The rule
-  and its test change with the study slice, and every other run keeps today's
-  rule. A user-stopped or quarantined run is never recorded as `completed`.
+  with `completed`. The ledger and the counts say which samples did what. The
+  rule and its test change with the study slice, and every other run keeps
+  today's rule. A user-stopped or quarantined run is never recorded as
+  `completed`.
 - **A crash** before the publication leaves only `.staging/`. That is not
   collected (M9 closure §13), and nothing is recorded or reused from it.
   Checkpointed publication within a run is not decided here (open question 7).
@@ -348,17 +426,17 @@ is met after the member's worker ran".
   else of the study: not the revision digest, and not the sample's role,
   group, batch or order, so editing the study or adding samples changes no
   detection key. Gap filling's key does change when the cross-sample result it
-  is given changes, as it must. An output with an equal
-  key comes from the same invocation on the same bytes. It is verified against
-  its digest and copied into the new artifact, so every artifact's directory
-  stays complete on its own for Save As. The ledger names the artifact it came
-  from. Reuse is not re-execution and claims nothing about what the engine
-  would produce again. The review says how many samples reuse an output;
-  reuse is the default, and running every sample afresh is one choice at
-  review. The choice (`reuseMatching` or `runEverySample`) and the number of
-  samples expected to reuse are in the plan, so they are part of its digest.
-  This is how a stopped 300-sample run, or a study that gained ten
-  samples, avoids repeating hours of work.
+  is given changes, as it must. An output with an equal key came from an
+  equivalent request on the same bytes, not from this run. It is verified
+  against its digest and copied into the new artifact, so every artifact's
+  directory stays complete on its own for Save As. The ledger names the
+  artifact it came from. Reuse is not re-execution and claims nothing about
+  what the engine would produce again. The review says how many samples
+  reuse an output; reuse is the default, and running every sample afresh is
+  one choice at review. The choice (`reuseMatching` or `runEverySample`) and
+  the number of samples expected to reuse are in the plan, so they are part
+  of its digest. This is how a stopped 300-sample run, or a study that gained
+  ten samples, avoids repeating hours of work.
 - **A reuse source that fails.** If, when its turn comes, a sample's reuse
   source is `payloadMissing`, `payloadCorrupt` or no longer matches its
   digest, that sample fails with `reuseSourceUnavailable`. It is never run
@@ -370,23 +448,27 @@ is met after the member's worker ran".
 A study matrix (features × samples) is stored in a project-owned format,
 `mscanvas.studyMatrix/1`. It adds no dependency: no Arrow and no Parquet.
 
-- `matrix.json`: the format, the row and column counts, the column order as
-  `SampleId`s, the row-block size, the value type (`f64le`), the attribute
-  columns, the reason vocabulary of decision 7, and every chunk file with its
-  length and SHA-256. It is not a small record: at 1,024 columns and 128 row
-  blocks, each with a reason file, it is about 110 kB pretty-printed
-  **[arith]**. It is an ordinary payload file that the manifest names by
-  digest (decision 4), verified whole when read, with a guard of 1 MiB.
+- `matrix.json`: the format, the polarity (decision 9), the row and column
+  counts, the column order as `SampleId`s, the row-block size, the value type
+  (`f64le`), the attribute columns (at most 16, each with its display name and
+  type), the reason vocabulary of decision 7, and every chunk file with its
+  length and SHA-256. It is not a small record: at 1,024 columns, 128 row
+  blocks, a reason file in each block and 16 attribute columns, it is about
+  450 kB pretty-printed **[arith]**. It is an ordinary payload file that the
+  manifest names by digest (decision 4), verified whole when read, with a
+  guard of 1 MiB.
 - `values-NNNNN.bin`: a row block of R rows × all columns, binary64 little
   endian, row-major. `cells-NNNNN.bin`: one state byte per cell (decision 7),
   in the same layout. `reasons-NNNNN.bin`, only for a block that has an
   `undecided` cell: each such cell's index in the block and its reason code,
-  in index order. `attr-<name>.bin`: one column file per feature attribute
-  (feature identifier, m/z, retention time and its range, and the like), each
-  with its own digest.
-- R is chosen so that a values chunk is at most 8 MiB, so a matrix at the cell
-  bound has about 128 row blocks. **No byte reaches a window unverified.** A
-  view verifies each chunk the first time a window touches it, and keeps that
+  in index order. `attr-AA-NNNNN.bin`: attribute column AA (by ordinal) for the
+  block's rows (feature identifier, m/z, retention time and its range, and the
+  like), each with its own digest. A text attribute value is at most 256 bytes
+  of UTF-8; a longer one refuses the write with a typed reason.
+- R is chosen so that no chunk of a row block, values or attribute, exceeds
+  8 MiB, so a matrix at the cell bound has at most 128 row blocks.
+  **No byte reaches a window unverified.** A view verifies each chunk the
+  first time a window touches it, and keeps that
   chunk open under a held handle that refuses writers and deletion, as ADR
   0049 holds a source, until the view closes. Later windows read through the
   held handle and verify nothing again, because nothing can change the file
@@ -403,7 +485,8 @@ columns is already 150,000 cells. The starting bound is 50,000 cells, and the
 slice sets the final one with a rendered measurement.
 
 **Sort and filter run in Rust.** Sorting on an attribute column reads only that
-column. Sorting on a sample column reads, and so verifies, every chunk once.
+column's chunks. Sorting on a sample column reads, and so verifies, every
+chunk once.
 A sorted view scatters its rows over the blocks: 100 consecutive rows of a
 10^5 × 500 matrix sorted by a p-value fall in nearly all 48 blocks, so the
 first sorted window may verify about 450 MB **[arith]**, and the windows after
@@ -415,9 +498,11 @@ the visible window and the view's description (sort key and filter). For study
 tables, this selects "on-screen result sorting and filtering", which the
 after-beta-1 plan (7.6) lists as reversible and not selected.
 
-Figures over a matrix (volcano, loadings, heatmap) are drawn by Rust through
-the shared `FigureSpec`, with Rust-side decimation and hit-testing. Each plot
-kind is its own record, and the 2D map is ADR 0068's.
+Figures over a matrix (volcano, loadings, heatmap) follow ADR 0028
+unchanged: Rust reads the matrix, decimates it and answers hit tests, and
+produces the shared `FigureSpec`; the screen draws it in the repository's
+TypeScript SVG and export renders it in Rust. Each plot kind is its own
+record, and the 2D map is ADR 0068's.
 
 **Per-sample outputs** (a sample's feature map) are ordinary payload files of
 at most 64 MiB. A feature map of 10^5 features × about ten fields is about 8 MB
@@ -425,12 +510,18 @@ in binary **[arith]**. A larger output fails its sample with a typed reason;
 it is not split.
 
 **Imported tables** (Track A) are written into the same format when they are
-imported. An import is recorded as a study step that runs in Rust, like
-statistics: its plan holds the import's declarations (decision 7), its run
-consumes the table file through a project reference, and its artifact is the
-matrix. How a table file becomes a project reference is the Track A record's
-decision. So a statistics run over imported columns consumes an artifact an
-earlier run produced, as decision 4 requires.
+imported. The table file is first a project reference; how it becomes one is
+the Track A record's decision. The import review reads its header, and the
+user picks the sample columns, their polarity and the declarations of decision
+7. Confirming adds one study sample per picked column (decision 1), as a
+measured study edit, and only then is the import step reviewed against the
+revision that now lists them, as any step is. An import is recorded as a study
+step that runs in Rust, like statistics: its plan holds the polarity and the
+declarations, its run consumes the table's reference, and its artifact is the
+matrix. If the import fails, the samples stay, with no upstream output, and a
+later step excludes them as `noUpstreamOutput`. So a statistics run over
+imported columns consumes an artifact an earlier run produced, as decision 4
+requires.
 
 ### 7. Each cell says what it is, and absent is never zero
 
@@ -442,31 +533,49 @@ The cell state is a closed vocabulary, one byte a cell. It belongs to the
 | `measured` | detected in that sample by the per-sample step | yes |
 | `reintegrated` | found again in that sample's raw data by gap filling; a different quantity from a detection | yes |
 | `engineImputed` | returned by the engine without being measured (M9.0: a failed fit imputed by regression) | yes, never used by a test |
-| `engineDiscarded` | the engine looked and dropped it (`ENGINE_DISCARDED_NO_VALID_FIT`) | none |
 | `undecided` | the step could not decide for that sample; never an absence (M9 closure §3.2) | none; a reason code in the block's reason file |
 | `missing` | not found in that sample, which is not proof of absence | none |
 | `imported` | taken from an imported table whose producer did not say how it was obtained | yes |
 
 - **A failure is not a missing value.** A cell is `undecided` where the step
-  looked and could not decide: the M9 reasons `EXTRACTION_AT_SPECTRUM_EDGE`,
-  `RELATED_TARGET_AT_SPECTRUM_EDGE`, `CANDIDATES_WITHOUT_FEATURE` and
-  `WINDOW_WITHOUT_MS1_PEAKS`, or a gap-filling window that maps outside that
-  sample's acquired retention-time range. The reason vocabulary is the
-  recipe's, listed in `matrix.json`. No statistic counts an `undecided` cell as
-  `missing`; what it does with one is the statistics record's decision, and is
-  recorded with each result.
-- A cell with no value holds a NaN in its value slot. No reader interprets it:
-  readers decide by the state, never by the value. No cell is ever written as 0
-  to mean absence. Exports write an empty cell where there is no value (ADR
-  0048) and carry the states beside the values.
+  could not decide: the M9 `FAILED` reasons `EXTRACTION_AT_SPECTRUM_EDGE`,
+  `RELATED_TARGET_AT_SPECTRUM_EDGE`, `CANDIDATES_WITHOUT_FEATURE`,
+  `WINDOW_WITHOUT_MS1_PEAKS` and `ENGINE_DISCARDED_NO_VALID_FIT`, a
+  gap-filling window that maps outside that sample's acquired retention-time
+  range, or `gapFillingNotCompleted` (decision 4). The engine's discard is one
+  of these reasons, not a state of its own: M9.0 read in the engine's source
+  (not exercised) that it happens when no fit in the whole request is valid,
+  so it is a failure of the run's fitting, not a finding about one feature.
+  The reason vocabulary is the recipe's, listed in `matrix.json`. No
+  statistic counts an `undecided` cell as `missing`, whatever its reason;
+  what it does with one is the statistics record's decision, and is recorded
+  with each result.
+- **Every value is finite.** A cell in a state with a value (`measured`,
+  `reintegrated`, `engineImputed`, `imported`) holds a finite binary64; a
+  writer refuses a non-finite one, and a reader that finds one refuses the
+  artifact as `payloadCorrupt`. A cell with no value holds a NaN in its value
+  slot. No reader interprets it: readers decide by the state, never by the
+  value. No cell is ever written as 0 to mean absence. Exports write an empty
+  cell where there is no value (ADR 0048) and carry the states beside the
+  values.
 - **An imported zero is declared, never assumed.** MZmine-2-style tables
   commonly write 0 where a feature was not detected. The import review asks
   how the table writes "not detected" (`zeroMeansNotDetected` or
   `zeroIsAValue`) and records the answer in the import's plan. An empty cell is
   always `missing`.
+- **Imported text that is not a finite number is declared or refused.** A
+  value cell's text must read as a finite decimal. Any other non-empty text
+  (`NA`, `NaN`, `inf`, `n.d.` and the like, which a float parser may accept as
+  NaN or infinity) refuses the import, naming its line and column, unless the
+  import review declared that exact text to mean "not detected". The
+  declaration is a `token` parameter in the import's plan, so only text of
+  token shape (decision 12) can be declared, and a declared cell is `missing`.
 - **A failed sample is not a column of missing cells.** A sample whose
-  per-sample step failed is left out of the matrix, with its reason in the
-  ledger.
+  detection (or import) failed has no column: it is left out of the matrix,
+  with its reason in the ledger. A sample whose later per-sample step failed
+  keeps its column as decision 4's assembly sets out. A completed sample whose
+  every cell is `undecided`, as after an engine discard, keeps its column too;
+  it is not a failed sample.
 - Which states a statistic uses is the statistics record's decision, recorded
   with each result. `engineImputed` never enters a test.
 - A value-changing step (normalization, or any later imputation or correction)
@@ -511,15 +620,27 @@ instead; it is an option for reuse, not decided here (open question 6).
 
 ### 9. Polarity and negative mode
 
-- Every feature table and matrix has **one polarity**. A step refuses, at
-  review, a sample of the other polarity or of mixed polarity. Nothing is split
-  or filtered silently.
+- Every feature table and matrix has **one polarity**, and it is recorded: in
+  each study plan (so in its digest) and in `matrix.json`. A cross-sample
+  step's polarity must equal its upstream artifacts'. An import's polarity is
+  declared by the user at its review, because a table does not say. Nothing is
+  split or filtered silently.
 - Each sample's polarity is what its source declares. It is checked at each
-  per-sample invocation, as ANA-004's adapter checks it today
-  (`SOURCE_POLARITY_UNSUPPORTED`), and recorded in the ledger. The review shows
-  it once the reader reports polarity (the reader-metadata amendment to ADR
-  0056, decision 1, on `be/reader-meta`). Until then the review does not
-  assume a polarity.
+  per-sample invocation, as ANA-004's adapter checks it today: a sample of the
+  other polarity or of mixed polarity fails there
+  (`SOURCE_POLARITY_UNSUPPORTED`, `SOURCE_MIXED_POLARITY`), and what was found
+  is recorded in the ledger. Once
+  the reader reports polarity (the reader-metadata amendment to ADR 0056,
+  decision 1, on `be/reader-meta`), the review also excludes such a sample
+  (`otherPolarity`) before anything runs. Until then the review does not
+  assume a polarity, and the invocation's check is the only one.
+- **Centroid state** is handled the same way. A per-sample step that needs
+  centroided MS1 fails a profile sample at its invocation
+  (`SOURCE_NOT_CENTROID`, as ANA-004's adapter does), records what it found in
+  the ledger, and, once
+  the reader reports it, the review excludes such a sample (`notCentroided`).
+  Nothing is centroided implicitly; centroided data comes from the conversion
+  route (decision 8).
 - The words `positive` and `negative` are both in the schema from the start,
   so a negative-mode recipe needs no schema change. Whether a recipe admits
   negative mode is the recipe's own domain. The recommendation is positive
@@ -551,19 +672,27 @@ Format `mscanvas_study_samples`, version 1:
 - **Columns**, a closed set of English names: `sample_id` (optional; MSCanvas's
   id), `file` (the primary member's file name), `role` (required; `sample`,
   `qc`, `blank` or `standard`, matched without regard to ASCII case and stored
-  in that spelling), `group`, `batch`, `injection_order` (a positive integer or
-  empty) and `label`. An unknown or repeated column refuses the import and is
-  named. Nothing in a file is dropped unreported.
+  in that spelling), `group`, `batch` and `injection_order` (a positive integer
+  or empty). There is no free label column: a sample has no name of its own
+  beyond its file or its imported column's header. An unknown or repeated
+  column refuses the import and is named. Nothing in a file is dropped
+  unreported.
 - **Matching.** A row matches by `sample_id` when that column has a value,
   which must name a sample of this study. Otherwise its `file` must equal
   exactly one project reference's primary file name. A row that matches none
   is refused with its line, and so is a row that matches more than one: two
   folders can each hold a `QC_01.mzML`, and `sample_id` tells them apart. A
-  file not yet in the project is listed, not added: adding a reference hashes
-  the file and remains its own explicit action. A `group` or `batch` value
+  file not yet in the project matches none, so its row is refused, and the
+  refusal says to add it as a reference first: adding a reference hashes the
+  file and remains its own explicit action. A row whose reference has no layer
+  is refused in the same way, because creating a layer is also the user's own
+  action. A row whose reference has a layer that is not yet a sample of the
+  study adds that sample, listed at review. A `group` or `batch` value
   names the study's group or batch with that label, compared without regard to
   ASCII case, as labels are unique on that comparison (decision 1). A label the
-  study does not have is a new group or batch, listed at review.
+  study does not have is a new group or batch, listed at review. An import
+  whose result would repeat an injection order within a batch (or within the
+  study, for samples with no batch) is refused, naming the lines.
 - **Review before anything changes.** The import shows every change (new
   samples, changed roles, groups, batches and orders, new group and batch
   labels) and every refusal by line. Nothing applies until the user confirms,
@@ -587,7 +716,8 @@ The new document content:
   its targeted MS1 shape, and both count towards `MAX_PLANS`. A run's
   `studyStep` block is present exactly when its operation is `studyStepV1`, as
   `targetedMs1` is for a targeted run;
-- the closed vocabularies: roles, polarity, the reuse choice, artifact
+- the closed vocabularies: roles, polarity (a study plan's, decision 9), the
+  reuse choice, artifact
   completeness (`complete`, `partial`, `noResult`) and the run failure code
   `noSampleCompleted` (decision 5).
 
@@ -631,23 +761,40 @@ outcomes.
   outside the generic ones above, such as a new run outcome or a new `RunInput`
   variant, is its own schema decision.
 - **Schema 4 stays frozen.** On the schema-4 read path, every added word and
-  field is `malformed`, as #161's
-  `schema_four_shares_only_beta_one_words_and_fields` requires: the `studies`
-  and `studyPlans` fields, a run's `studyStep` field, the operation
-  `studyStepV1`, the artifact kind `studyStepResultV1`, the `artifact`
-  variant of `RunInput` and the failure code `noSampleCompleted`. A schema-4
-  document is held with `studies: []` and
-  `studyPlans: []`.
+  field is `malformed`: the `studies` and `studyPlans` fields, a run's
+  `studyStep` field, the operation `studyStepV1`, the artifact kind
+  `studyStepResultV1`, the `artifact` variant of `RunInput` and the failure
+  code `noSampleCompleted`. #161's
+  `schema_four_shares_only_beta_one_words_and_fields` only makes an added word
+  or field fail to compile until someone decides it ("The check is the
+  compiler's; running it asserts nothing more"); it refuses nothing. The
+  refusal is this record's to build. Because a run's `studyStep` is required,
+  as an explicit `null` on every other run, the shared `RunRecord` cannot
+  read a beta-1 run, which has no such field. So the schema-4 path reads runs,
+  run inputs, the run operation, artifact payloads and failure codes through
+  schema-4 types of its own, as #161 already does for inputs
+  (`SchemaFourInput`), and its `upgraded()` gives every run `studyStep: null`,
+  `studies: []` and `studyPlans: []`. The study slice adds a test that refuses
+  each added word and field on the schema-4 path, one by one, and a test that
+  a beta-1 document with runs still opens.
 - **Size.** An upgraded document gains `"studies": []` and `"studyPlans": []`,
   and each existing run gains `"studyStep": null`: about 40 bytes, plus about
   25 bytes a run **[arith]**. The known limitation that #161's revision of ADR
   0055 records for a beta-1 document near the 4 MiB bound grows by those
   bytes.
-- **Development files.** A schema-5 document written by a development build
-  between #161's merge and the study slice has no `studies`, `studyPlans` or
-  `studyStep`. It is refused as
-  `malformed`, because an omitted field is malformed. Only test projects are
-  affected.
+- **Development files, in both directions.** If the study slice joins schema
+  5 after #161 merges, two development shapes of schema 5 exist for a time. A
+  schema-5 document written by a build between #161's merge and the study
+  slice has no `studies`, `studyPlans` or `studyStep`, and a study build
+  refuses it as `malformed`, because an omitted field is malformed. A document
+  written by a study build has those fields, and a build between the two
+  merges refuses it as `malformed` too, not as `unsupportedVersion`. That is
+  the mislabelling `parse` reads the version first to avoid, and it is
+  contrary to #161's rule that "a later schema belongs to the build that wrote
+  it". The
+  condition above means no release writes either shape, so only documents
+  written by development builds meet this. If that is not acceptable, the
+  study model takes schema 6 whenever #161 merges first.
 
 ### 13. What this record does not do
 
@@ -668,8 +815,8 @@ outcomes.
 
 | Option | For | Against |
 | --- | --- | --- |
-| **(a) Study-level runs, a revision named by digest, per-sample facts in the payload (recommended)** | About 8 kB per step plus about 108 bytes per listed layer, so about forty 300-sample passes per document **[arith]**; lineage stays in the document; the worst case is reserved before any worker runs; ADR 0050's per-member isolation is kept in the ledger | Per-sample facts are readable only while the payload is available; one new run, plan and artifact shape, and a new run-to-artifact edge |
-| (b) One ordinary run per sample per step, as ADR 0050, plus history pruning | No new record shape | About two 300-sample steps, one pass, per document before pruning **[arith]**; 2,048 runs reached in the seventh step; pruning an append-only history is its own design and loses what users may still read |
+| **(a) Study-level runs, a revision named by digest, per-sample facts in the payload (recommended)** | About 8 kB per step plus about 108 bytes per listed layer, so about thirty-nine 300-sample passes per document **[arith]**; lineage stays in the document; the worst case is reserved before any worker runs; ADR 0050's per-member isolation is kept in the ledger | Per-sample facts are readable only while the payload is available; one new run, plan and artifact shape, and a new run-to-artifact edge |
+| (b) One ordinary run per sample per step, as ADR 0050, plus history pruning | No new record shape | One 300-sample step whole, less than one pass, per document before pruning **[arith]**; 2,048 runs reached in the seventh step; pruning an append-only history is its own design and loses what users may still read |
 | (c) A larger or sharded document | Keeps today's shapes | Parsed and validated whole on every open and write; a shard format is a larger change than (a), and moves the limit rather than removing it |
 
 **Where sample metadata lives.**
@@ -706,14 +853,16 @@ outcomes.
 
 ## Consequences
 
-- Alignment, linking, gap filling and statistics have a place to run and
-  record that the document can hold for about forty 300-sample passes, and
-  ADR 0050 keeps targeted MS1 as it is.
-- While a study run holds its reservation, an edit that would leave the run's
-  records no room is refused `oversized` (decision 4).
+- Alignment, linking, gap filling, assembly and statistics have a place to run
+  and record that the document can hold for about thirty-nine 300-sample
+  passes, and ADR 0050 keeps targeted MS1 as it is.
+- While a study run holds its reservation, an edit or a capture that would
+  leave the run's records no room, in bytes or in count, is refused
+  `oversized` (decision 4).
 - A study run holds the project for its whole length, which may be hours: Save
-  works, and Save As and Close wait. A Stop keeps every completed sample, and
-  reuse makes the rerun cover only the rest.
+  works, and New, Open, Close and Save As are refused (`analysisRunning`). A
+  Stop keeps every completed sample, and reuse makes the rerun cover only the
+  rest.
 - A crash during a run loses that run's unpublished work. Its staging is left
   uncollected, as today.
 - Per-sample facts are in the payload. A missing or corrupt payload loses
@@ -729,8 +878,10 @@ outcomes.
   open after that. A sorted view's first window may verify the whole matrix.
   A measurement of window latency, sorted and in file order, belongs to the
   first matrix slice.
-- Development schema-5 projects written before the study slice are refused
-  (decision 12).
+- If the study slice joins schema 5 after #161 merges, development schema-5
+  projects written on either side of the study slice are refused as
+  `malformed` by builds on the other side (decision 12). No release writes
+  either shape.
 
 ## Open questions for the owner
 
@@ -741,8 +892,10 @@ outcomes.
    per project?
 3. **Matrix format and bounds.** Accept `mscanvas.studyMatrix/1`: chunks of at
    most 8 MiB, binary64 values, 1,000,000 rows, 1,024 columns, 2^27 cells?
-4. **Cell states.** Accept the seven states, including `engineDiscarded`,
-   `undecided` and `imported`, and the declared reading of an imported zero?
+4. **Cell states.** Accept the six states, including `undecided` (which also
+   carries the engine's discard as a reason) and `imported`, the declared
+   reading of an imported zero, and the refusal of non-numeric imported text
+   unless it is declared to mean "not detected"?
 5. **CSV.** Refuse unknown columns (recommended), or list them and import the
    rest?
 6. **Reuse.** Reuse matching per-sample outputs by default, with "run every
