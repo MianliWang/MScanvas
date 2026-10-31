@@ -509,33 +509,47 @@ impl SpectrumSnapshot {
         &self,
         request: SpectrumRangeRequest,
     ) -> Result<ResolvedSpectrumRange, SpectrumRangeRefusal> {
-        let window = match request.scope {
-            SpectrumRangeScope::Full => return Ok(ResolvedSpectrumRange::Full),
-            SpectrumRangeScope::Current => request.domain,
-        };
         // Answered from the verdict this snapshot has carried since it was
         // retained. Re-reading the arrays could not produce a different answer:
         // the source is immutable behind its `Arc`, so the same spectrum always
         // gets the same verdict.
-        let source = match self.viewport_domain {
-            ViewportDomain::Admitted(domain) => domain,
-            ViewportDomain::Refused(refusal) => {
-                return Err(SpectrumRangeRefusal::NoViewportDomain(refusal));
-            }
-        };
-        let Some(window) = window else {
-            // Nothing narrower is committed, so the current range is the whole
-            // authoritative admitted domain. Resolved from the snapshot rather
-            // than fabricated as a subrange to make `Current` look unlike
-            // `Full`, and it stays a current-range export because that is what
-            // was chosen and what the document will say.
-            return Ok(ResolvedSpectrumRange::Current(source));
-        };
-        if window.low() < source.low() || window.high() > source.high() {
-            return Err(SpectrumRangeRefusal::OutsideSource);
-        }
-        Ok(ResolvedSpectrumRange::Current(window))
+        resolve_spectrum_range(self.viewport_domain, request)
     }
+}
+
+/// [`SpectrumSnapshot::resolve`]'s rule, for a caller that settled the viewport
+/// domain itself: a reopened saved figure (ADR 0062) resolves its window
+/// against the spectrum it read again, through this and nothing else.
+///
+/// # Errors
+///
+/// As [`SpectrumSnapshot::resolve`].
+pub(super) fn resolve_spectrum_range(
+    viewport_domain: ViewportDomain,
+    request: SpectrumRangeRequest,
+) -> Result<ResolvedSpectrumRange, SpectrumRangeRefusal> {
+    let window = match request.scope {
+        SpectrumRangeScope::Full => return Ok(ResolvedSpectrumRange::Full),
+        SpectrumRangeScope::Current => request.domain,
+    };
+    let source = match viewport_domain {
+        ViewportDomain::Admitted(domain) => domain,
+        ViewportDomain::Refused(refusal) => {
+            return Err(SpectrumRangeRefusal::NoViewportDomain(refusal));
+        }
+    };
+    let Some(window) = window else {
+        // Nothing narrower is committed, so the current range is the whole
+        // authoritative admitted domain. Resolved from the snapshot rather
+        // than fabricated as a subrange to make `Current` look unlike
+        // `Full`, and it stays a current-range export because that is what
+        // was chosen and what the document will say.
+        return Ok(ResolvedSpectrumRange::Current(source));
+    };
+    if window.low() < source.low() || window.high() > source.high() {
+        return Err(SpectrumRangeRefusal::OutsideSource);
+    }
+    Ok(ResolvedSpectrumRange::Current(window))
 }
 
 /// Which chromatogram one export writes.
@@ -1556,10 +1570,8 @@ impl ScientificExportSlots {
         // The link has to be visible in the figure that claims to make it. A
         // marker outside the drawn range would be a linked figure with nothing
         // linked, and widening the range to fit would export something other
-        // than what was asked for. Edges count as inside.
-        if selected_retention_time < range.domain().low()
-            || selected_retention_time > range.domain().high()
-        {
+        // than what was asked for.
+        if scan_outside_range(range, selected_retention_time) {
             return Err(BeginExportRefusal::SelectedScanOutsideRange);
         }
         if !traces.any() {
@@ -1835,6 +1847,13 @@ pub(super) fn two_panel_minimum_height() -> f64 {
 /// Whether these settings can hold two panels.
 fn fits_two_panels(settings: FigureRenderSettings) -> bool {
     f64::from(settings.height()) >= two_panel_minimum_height()
+}
+
+/// Whether a linked scan at retention time `at` lies outside the drawn range.
+/// Edges count as inside. The one rule the linked export and a reopened saved
+/// figure (ADR 0062) both ask.
+pub(super) fn scan_outside_range(range: ResolvedRange, at: f64) -> bool {
+    at < range.domain().low() || at > range.domain().high()
 }
 
 /// Builds the figure one selected spectrum exports as.
