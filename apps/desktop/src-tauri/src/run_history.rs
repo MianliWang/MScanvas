@@ -525,9 +525,14 @@ struct ActiveRun {
 }
 
 impl ActiveRun {
+    /// Gone, not merely uninspectable: on any other error the write is tried,
+    /// and owed where it fails.
     fn forgotten(&self, directory: &Path) -> bool {
         self.written
-            && fs::symlink_metadata(directory.join(file_name_of(&self.record.run_id))).is_err()
+            && matches!(
+                fs::symlink_metadata(directory.join(file_name_of(&self.record.run_id))),
+                Err(error) if error.kind() == io::ErrorKind::NotFound
+            )
     }
 }
 

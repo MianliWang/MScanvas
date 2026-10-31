@@ -287,7 +287,8 @@ and of G16, cross-session staging ownership, unchanged.
   record of this schema version that does not parse is malformed and kept
   aside. So any change to a record's shape must raise `schemaVersion`: an
   older build would otherwise set aside a newer build's run while that build
-  is still writing it.
+  is still writing it. Schema 1 has not been released, so its shape is fixed
+  when this record is accepted; until then it changes without a new version.
 
 ### 7. Privacy
 
