@@ -386,17 +386,92 @@ fn pca_signs_are_fixed_and_reruns_are_identical() {
 /// residual correction the NumAcc4 mean is 1e-14 off.
 #[test]
 fn the_variance_is_two_pass_on_nist_numacc1_and_numacc4() {
-    let (mean, var) = mean_var(&[10000001.0, 10000003.0, 10000002.0]);
+    let (mean, sd) = mean_sd(&[10000001.0, 10000003.0, 10000002.0]);
     assert_eq!(mean, 10000002.0);
-    assert_eq!(var.sqrt(), 1.0);
+    assert_eq!(sd, 1.0);
 
     let mut numacc4 = vec![10000000.2];
     for _ in 0..500 {
         numacc4.extend([10000000.1, 10000000.3]);
     }
-    let (mean, var) = mean_var(&numacc4);
+    let (mean, sd) = mean_sd(&numacc4);
     assert!((mean - 10000000.2).abs() <= 1e-15 * 10000000.2);
     // The data are decimal; their nearest doubles are 1.9e-9 apart, so the
     // certified 0.1 is met to that representation, not to 15 digits.
-    assert!((var.sqrt() - 0.1).abs() <= 1e-8 * 0.1, "{:e}", var.sqrt());
+    assert!((sd - 0.1).abs() <= 1e-8 * 0.1, "{sd:e}");
+}
+
+#[track_caller]
+fn close(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() <= 1e-12 * expected.abs(),
+        "{actual:e} against {expected:e}"
+    );
+}
+
+#[test]
+fn pca_scales_a_feature_whose_squares_overflow_instead_of_dropping_it() {
+    let m = table(&[
+        &all(&[1e200, -1e200, 0.0, 5.0]),
+        &all(&[1.0, 2.0, 4.0, 3.0]),
+    ]);
+    // Auto scaling gives each feature unit variance, so the two components
+    // share a total of 2 and the ratios a total of 1.
+    let auto = pca(&m, Scaling::Auto, 2).unwrap();
+    assert_eq!(auto.used_features, [0, 1]);
+    close(auto.explained_variance.iter().sum(), 2.0);
+    close(auto.explained_variance_ratio.iter().sum(), 1.0);
+    // Pareto scaling leaves each feature its standard deviation as variance,
+    // so the first feature's carries the one resolved component.
+    let pareto = pca(&m, Scaling::Pareto, 1).unwrap();
+    close(pareto.explained_variance[0], 1e200 * (2.0_f64 / 3.0).sqrt());
+
+    let same = table(&[&all(&[1e200, 2e200, 3e200]), &all(&[1.0, 2.0, 3.0])]);
+    let one = pca(&same, Scaling::Auto, 1).unwrap();
+    close(one.explained_variance[0], 2.0);
+    close(one.explained_variance_ratio[0], 1.0);
+}
+
+#[test]
+fn pca_refuses_an_overflowing_trace_or_eigenvalue() {
+    let s = 7.0e153;
+    let orthogonal = table(&[&all(&[s, -s, 0.0, 0.0]), &all(&[0.0, 0.0, s, -s])]);
+    assert_eq!(
+        pca(&orthogonal, Scaling::None, 2),
+        Err(StatsError::Overflow)
+    );
+    let s = 1e154;
+    let alternating = table(&[&all(&[s, -s, s, -s])]);
+    assert_eq!(
+        pca(&alternating, Scaling::None, 1),
+        Err(StatsError::Overflow)
+    );
+}
+
+#[test]
+fn tiny_values_keep_their_spread_and_an_underflowing_gram_matrix_is_refused() {
+    let m = table(&[&all(&[1e-170, 2e-170, 3e-170])]);
+    let qc = qc_metrics(&m, &[0, 1, 2], &[0]).unwrap();
+    close(qc[0].qc_rsd_percent.unwrap(), 50.0);
+    let auto = pca(&m, Scaling::Auto, 1).unwrap();
+    assert_eq!(auto.used_features, [0]);
+    // Unscaled, the squares are below the smallest double.
+    assert_eq!(pca(&m, Scaling::None, 1), Err(StatsError::Overflow));
+}
+
+#[test]
+fn pca_treats_a_spread_within_rounding_as_zero_variance() {
+    let c = 1e6;
+    let (up, down) = (
+        c * (1.0 + 2.0 * f64::EPSILON),
+        c * (1.0 - 2.0 * f64::EPSILON),
+    );
+    let m = table(&[
+        &all(&[1.0, 2.0, 4.0, 3.0, 6.0, 5.0]),
+        &all(&[5.0, 1.0, 2.0, 2.5, 4.0, 3.0]),
+        &all(&[c, up, c, down, c, up]),
+    ]);
+    let result = pca(&m, Scaling::Auto, 2).unwrap();
+    assert_eq!(result.used_features, [0, 1]);
+    assert_eq!(result.excluded_features, [(2, Unavailable::ZeroVariance)]);
 }

@@ -44,7 +44,9 @@ pub enum StatsError {
     TooLarge { samples: usize, features: usize },
     #[error("p-value {value} at {index} is not in [0, 1]")]
     InvalidPValue { index: usize, value: f64 },
-    #[error("an intermediate value overflowed")]
+    /// A value left the range of `f64`: it overflowed, or (for a PCA's Gram
+    /// matrix) underflowed so far that its digits are lost.
+    #[error("an intermediate value overflowed or underflowed")]
     Overflow,
     #[error("the eigen decomposition did not converge")]
     NotConverged,
@@ -55,7 +57,9 @@ pub enum StatsError {
 pub enum Unavailable {
     /// Fewer than two observed values (in either group, for a test).
     TooFewObservations,
-    /// Every observed value is identical (in both groups, for a test).
+    /// Every observed value is identical (in both groups, for a test). For
+    /// PCA, also a standard deviation within n·ε·max|x|, which rounding alone
+    /// can produce.
     ZeroVariance,
     /// The feature has a missing value; PCA uses complete features only.
     Missing,
@@ -145,12 +149,14 @@ fn observed(values: &[Option<f64>], set: &[usize]) -> Vec<f64> {
     set.iter().filter_map(|&s| values[s]).collect()
 }
 
-/// Mean and sample variance (n − 1) of at least one value. The mean is
-/// corrected by the mean of the residuals before the variance is summed around
-/// it (the corrected two-pass algorithm). Identical values give exactly zero
-/// variance, which one rounding of the mean would otherwise turn into a tiny
-/// positive one.
-fn mean_var(x: &[f64]) -> (f64, f64) {
+/// Mean and sample standard deviation (n − 1) of at least one value. The mean
+/// is corrected by the mean of the residuals before the deviation is summed
+/// around it (the corrected two-pass algorithm). The residuals are divided by
+/// the largest of them before they are squared, so the squares can neither
+/// overflow nor underflow; a deviation outside `f64` comes back non-finite, as
+/// does a mean that overflowed. Identical values give exactly zero, which one
+/// rounding of the mean would otherwise turn into a tiny positive deviation.
+fn mean_sd(x: &[f64]) -> (f64, f64) {
     let first = x[0];
     if x.iter().all(|&v| v == first) {
         return (first, 0.0);
@@ -158,8 +164,15 @@ fn mean_var(x: &[f64]) -> (f64, f64) {
     let n = x.len() as f64;
     let rough = x.iter().sum::<f64>() / n;
     let mean = rough + x.iter().map(|v| v - rough).sum::<f64>() / n;
-    let squares: f64 = x.iter().map(|v| (v - mean) * (v - mean)).sum();
-    (mean, squares / (n - 1.0))
+    let scale = x.iter().map(|v| (v - mean).abs()).fold(0.0, f64::max);
+    let squares: f64 = x
+        .iter()
+        .map(|v| {
+            let r = (v - mean) / scale;
+            r * r
+        })
+        .sum();
+    (mean, scale * (squares / (n - 1.0)).sqrt())
 }
 
 /// One feature's two-sided Welch test on log2 values.
@@ -219,10 +232,11 @@ fn welch_one(a: &[f64], b: &[f64]) -> Result<Welch, Unavailable> {
     if a.len() < 2 || b.len() < 2 {
         return Err(Unavailable::TooFewObservations);
     }
-    let (mean_a, var_a) = mean_var(a);
-    let (mean_b, var_b) = mean_var(b);
+    let (mean_a, sd_a) = mean_sd(a);
+    let (mean_b, sd_b) = mean_sd(b);
     let (na, nb) = (a.len() as f64, b.len() as f64);
-    let (se_a, se_b) = (var_a / na, var_b / nb);
+    // log2 values lie within ±1075, so these squares stay in range.
+    let (se_a, se_b) = (sd_a * sd_a / na, sd_b * sd_b / nb);
     let se = se_a + se_b;
     if se == 0.0 {
         return Err(Unavailable::ZeroVariance);
@@ -298,7 +312,9 @@ pub fn volcano(tests: &[Result<Welch, Unavailable>]) -> Result<Vec<VolcanoRow>, 
         .collect())
 }
 
-/// One feature's quality-control metrics.
+/// One feature's quality-control metrics. Any present value counts as
+/// detected, zero and negative ones included: the import maps "not detected"
+/// to missing (ADR 0069, open question 7).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QcFeature {
     /// Fraction of the QC injections with a value.
@@ -336,11 +352,15 @@ fn rsd_percent(x: &[f64]) -> Result<f64, Unavailable> {
     if x.len() < 2 {
         return Err(Unavailable::TooFewObservations);
     }
-    let (mean, var) = mean_var(x);
+    let (mean, sd) = mean_sd(x);
+    // An overflowed mean is not a non-positive one.
+    if !mean.is_finite() {
+        return Err(Unavailable::Overflow);
+    }
     if mean <= 0.0 {
         return Err(Unavailable::NonPositiveMean);
     }
-    let rsd = 100.0 * var.sqrt() / mean;
+    let rsd = 100.0 * sd / mean;
     if rsd.is_finite() {
         Ok(rsd)
     } else {
@@ -409,15 +429,23 @@ pub fn pca(values: &Matrix, scaling: Scaling, components: usize) -> Result<Pca, 
             excluded_features.push((feature, Unavailable::Missing));
             continue;
         };
-        let (mean, var) = mean_var(&x);
-        if var == 0.0 {
+        let (mean, sd) = mean_sd(&x);
+        if !mean.is_finite() || !sd.is_finite() {
+            return Err(StatsError::Overflow);
+        }
+        // A deviation within n·ε·max|x|, the order of the rounding error a
+        // summed mean can carry (cf. Chan, Golub and LeVeque 1983), does not
+        // resolve the feature from a constant; scaling it to unit variance
+        // would weigh rounding noise like a real feature.
+        let peak = x.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
+        if sd <= n as f64 * f64::EPSILON * peak {
             excluded_features.push((feature, Unavailable::ZeroVariance));
             continue;
         }
         let divisor = match scaling {
             Scaling::None => 1.0,
-            Scaling::Auto => var.sqrt(),
-            Scaling::Pareto => var.sqrt().sqrt(),
+            Scaling::Auto => sd,
+            Scaling::Pareto => sd.sqrt(),
         };
         columns.extend(x.iter().map(|v| (v - mean) / divisor));
         used_features.push(feature);
@@ -440,7 +468,12 @@ pub fn pca(values: &Matrix, scaling: Scaling, components: usize) -> Result<Pca, 
     if gram.iter().any(|v| !v.is_finite()) {
         return Err(StatsError::Overflow);
     }
+    // An infinite trace would turn every ratio into 0; a zero or subnormal one
+    // means the Gram matrix underflowed and lost its digits.
     let total = gram.trace();
+    if !total.is_normal() {
+        return Err(StatsError::Overflow);
+    }
     // LAPACK's own iteration bound for the symmetric tridiagonal QR.
     let eigen =
         SymmetricEigen::try_new(gram, f64::EPSILON, 30 * n).ok_or(StatsError::NotConverged)?;
@@ -450,6 +483,9 @@ pub fn pca(values: &Matrix, scaling: Scaling, components: usize) -> Result<Pca, 
     // A component's loadings carry a relative error of about ε · λ₁ / λ through
     // the Gram route, so one with λ ≤ √ε · λ₁ is not resolved and not reported.
     let largest = eigen.eigenvalues[order[0]];
+    if !largest.is_normal() {
+        return Err(StatsError::Overflow);
+    }
     let floor = largest * f64::EPSILON.sqrt();
     let rank = order
         .iter()

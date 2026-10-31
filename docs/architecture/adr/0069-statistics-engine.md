@@ -106,8 +106,10 @@ published `nalgebra`, `simba` or `approx` crate, so Apache-2.0 §4(d) adds
 nothing today. Dependabot's cargo entry covers the workspace root with
 `dependency-name: "*"`, so the new crates are already in scope.
 
-**Development only:** numpy 2.5.4, scipy 1.18.1 and statsmodels 0.15.0, pinned
-in the fixture generator (decision 7). They are not dependencies of the product.
+**Development only, not covered by D7:** numpy 2.5.4, scipy 1.18.1 and
+statsmodels 0.15.0, pinned in the fixture generator (decision 7), which `uv`
+runs. They are not dependencies of the product, and neither CI nor the tests
+run them. Their own dependencies (pandas, patsy and others) are not pinned.
 
 ### 3. What the library computes
 
@@ -120,11 +122,11 @@ a missing value. A non-finite value refuses the matrix.
 | Welch's test | t = (mean A − mean B) / √(s²A/nA + s²B/nB) on log2 values; Welch-Satterthwaite df; two-sided p = 2·sf(\|t\|) from `statrs`' Student's t, never 1 − cdf |
 | Benjamini-Hochberg | the step-up q = min over ranks ≥ i of p·m/rank, capped at 1, over exactly the family passed |
 | Volcano rows | (fold change, p, q) for each tested feature; the BH family is exactly the tested features of the slice passed |
-| Variance | n − 1; the corrected two-pass algorithm; identical values give exactly 0 |
+| Variance | n − 1; the corrected two-pass algorithm, with the residuals divided by the largest before squaring, so no square overflows or underflows; identical values give exactly 0 |
 | QC detection rate | QC injections with a value / QC injections |
 | QC RSD | 100 · sd / mean of the observed QC values, raw scale; needs 2 values and a positive mean |
 | Missing fraction | study samples with no value / study samples |
-| PCA | complete, varying features; mean-centred; scaled by none, auto (sd) or Pareto (√sd); eigen decomposition of the samples × samples Gram matrix; scores = U·√λ; loadings = Xᵀ·u/√λ, of unit length; explained variance = λ/(n − 1); ratio = λ/trace |
+| PCA | complete, varying features, where varying is sd > n·ε·max\|x\| (a smaller sd is within the rounding error of the mean, cf. Chan, Golub and LeVeque 1983, and is `ZeroVariance`); mean-centred; scaled by none, auto (sd) or Pareto (√sd); eigen decomposition of the samples × samples Gram matrix; scores = U·√λ; loadings = Xᵀ·u/√λ, of unit length; explained variance = λ/(n − 1); ratio = λ/trace |
 
 A value that cannot be computed for one feature is a typed `Unavailable` reason:
 `TooFewObservations`, `ZeroVariance`, `Missing`, `NonPositiveMean` or `Overflow`.
@@ -151,7 +153,9 @@ The crate forbids `unsafe` code. No input panics it.
   No 1/5-minimum and no zero is filled in. A zero-variance feature is left out
   and listed as `ZeroVariance`.
 - **QC.** A missing value counts toward the missing fraction and against the
-  detection rate.
+  detection rate. Any present value counts as detected and enters the RSD,
+  zero and negative ones included. That holds only because the import maps
+  "not detected" to missing (open question 7).
 - **A non-positive intensity** in either tested group refuses the call, naming
   the feature and the sample. It has no log2, and flooring it would invent a
   value. A zero in a feature table may mean "not detected" or may be an export
@@ -197,7 +201,9 @@ The crate forbids `unsafe` code. No input panics it.
   view filter never changes a q-value. The family is stored with the result in
   the artifact slice.
 - **No silent NaN.** Non-finite input is refused. Overflow is the `Overflow`
-  error or reason.
+  error or reason. In PCA, so is a non-finite mean, standard deviation, trace
+  or largest eigenvalue, and a Gram matrix whose trace underflowed below the
+  smallest normal double (an unscaled matrix of values near 1e-170).
 - **No imputation, no normalisation, no drift or batch correction** (classes D,
   E and F below).
 - **No floor for log2,** and no p-value for an untestable feature.
@@ -224,13 +230,18 @@ The crate forbids `unsafe` code. No input panics it.
 | Quantity | Tolerance | Worst measured |
 | --- | --- | --- |
 | log2 fold change, t, df | 1e-12 · max(1, \|x\|) | 3.6e-15, 8.8e-15, 2.5e-16 |
-| p (smallest 7.3e-32) | 1e-10 relative | 1.0e-13 |
+| p (smallest 7.3e-32), for df up to 2e4 | 1e-10 relative | 1.0e-13 |
 | q from BH on the same p (ties, p = 0 and p = 1) | 1e-14 relative | 1.3e-16 |
 | q in the volcano (carries the p error) | 1e-10 relative | 1.0e-13 |
 | QC detection rate, missing fraction | exact | exact |
 | QC RSD | 1e-12 · max(1, \|x\|) | 7.3e-16 |
 | PCA scores, loadings | 1e-10 · max(1, \|x\|), no sign alignment | 2.8e-14, 9.7e-16 |
 | PCA explained variance, ratio | 1e-10 · max(1, \|x\|) | 2.4e-15, 4.4e-16 |
+
+The fixture's Welch df are at most about 22. Against scipy 1.18.1, `statrs`'
+`sf` is within 3.3e-12 relative up to df 2e4, but 7.9e-11 at df 1e5 and
+3.8e-10 at df 1e6 (t = 2), so the p tolerance holds up to df 2e4, far above a
+cohort's.
 
 **Unit tests** cover:
 
@@ -239,6 +250,8 @@ The crate forbids `unsafe` code. No input panics it.
   with repeats;
 - a p-value below 1e-30 where 1 − cdf would be 0, and p = 1 at t = 0;
 - the PCA sign rule and identical reruns;
+- values whose squares overflow (1e200) or underflow (1e-170), an overflowing
+  trace or eigenvalue, and a spread within rounding, which is `ZeroVariance`;
 - NIST StRD NumAcc1 (sd exactly 1) and NumAcc4 (mean exact, sd within 1e-8
   relative, the precision of its decimal data as doubles).
 
