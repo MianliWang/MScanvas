@@ -127,22 +127,32 @@ function scientificLabel(integer: number, exponent: number): string {
  * `svg.rs` `axis_ends`, for a range the rule has no ticks for: one tick at the
  * only value of a range with no width, and two numbers that read as two
  * otherwise. Fixed point while it states them, else the shortest exponent form.
- *
- * ponytail: `toFixed` rounds an exact tie up and the figure rounds it to even, so
- * `12.0078125` reads `12.007813` here and `12.007812` there. Port the rounding if
- * a real axis ever lands on one.
  */
 function endTicks(low: number, high: number): readonly AxisTick[] {
   const span = high - low;
   const ends = span > 0 ? [low, high] : [low];
   let decimals = span > 0 && Number.isFinite(span) ? Math.min(6, Math.max(0, Math.ceil(-Math.log10(span)) + 2)) : 6;
-  while (ends.length === 2 && decimals < 17 && low.toFixed(decimals) === high.toFixed(decimals)) decimals += 1;
-  const fixed = ends.map(value => value.toFixed(decimals));
-  // `toFixed` itself turns exponential from 1e21, where the figure's fixed form is past its length bound.
+  while (ends.length === 2 && decimals < 17 && fixedNumber(low, decimals) === fixedNumber(high, decimals)) decimals += 1;
+  const fixed = ends.map(value => fixedNumber(value, decimals));
   const exponential = (ends.length === 2 && fixed[0] === fixed[1]) || ends.some((value, index) =>
-    fixed[index].length > 24 || Math.abs(value) >= 1e21 || (value !== 0 && Number(fixed[index]) === 0));
+    fixed[index].length > 24 || (value !== 0 && Number(fixed[index]) === 0));
   return ends.map((value, index) => ({ value,
     label: exponential ? value.toExponential().replace("e+", "e") : fixed[index] }));
+}
+
+/**
+ * `svg.rs` `format_number`, Rust's `{:.decimals$}`. `toFixed` differs from it
+ * twice: an exact tie goes up there and to the even digit here, and from 1e21 it
+ * turns exponential, where every double is an integer `BigInt` writes in full.
+ */
+function fixedNumber(value: number, decimals: number): string {
+  if (Math.abs(value) >= 1e21) return `${BigInt(value)}${decimals > 0 ? `.${"0".repeat(decimals)}` : ""}`;
+  // A hundred places hold every digit of a tie, which ends one place past `decimals`.
+  const exact = value.toFixed(100);
+  const point = exact.indexOf(".");
+  const down = exact.slice(0, decimals > 0 ? point + 1 + decimals : point);
+  const tie = /^50*$/u.test(exact.slice(point + 1 + decimals));
+  return tie && Number(down.at(-1)) % 2 === 0 ? down : value.toFixed(decimals);
 }
 
 /**

@@ -66,6 +66,17 @@ describe("plot axis ticks", () => {
     expect(niceTicks(Number.NaN, 1)).toEqual([]);
   });
 
+  it("writes an end label digit for digit as the figure does, where toFixed would not", () => {
+    // An exact tie goes to the even digit, either way and with either sign.
+    expect(labels(12.0078125, 12.0078125)).toEqual(["12.007812"]);
+    expect(labels(12.0234375, 12.0234375)).toEqual(["12.023438"]);
+    expect(labels(-12.0078125, -12.0078125)).toEqual(["-12.007812"]);
+    // From 1e21 fixed point still states every digit, up to the 24 characters an end label may have.
+    expect(labels(4.436925591500016e21, 4.436925591500016e21 + 2 ** 19))
+      .toEqual(["4436925591500015796224", "4436925591500016320512"]);
+    expect(labels(1e21, 1e21)).toEqual(["1e21"]);
+  });
+
   it("adds headroom only on the sides that hold values, and leaves zero where it is", () => {
     expect(withHeadroom(0, 9000)).toEqual({ low: 0, high: 9450 });
     expect(withHeadroom(-40, 60)).toEqual({ low: -45, high: 65 });
