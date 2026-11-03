@@ -204,8 +204,8 @@ describe("what a put-back does to the arrangement", () => {
 
   it("puts a later group of one name after the earlier, wherever the user has moved that", () => {
     const here = organize(organize(initialOrganization, { type: "create", name: "Other" }), { type: "create", name: "Batch" });
-    const state = placeRestored(here, ["Batch", "Other", "Batch"], [{ handle: "file-1", group: 2 }]);
-    expect(state.groups.map(group => [group.name, group.handles])).toEqual([["", []], ["Other", []], ["Batch", []], ["Batch", ["file-1"]]]);
+    const state = placeRestored(here, ["Batch", "Other", "Batch"], [{ handle: "file-0", group: 0 }, { handle: "file-1", group: 2 }]);
+    expect(state.groups.map(group => [group.name, group.handles])).toEqual([["", []], ["Other", []], ["Batch", ["file-0"]], ["Batch", ["file-1"]]]);
   });
 
   it("leaves a row that was already live as it was: its group and its unchecked box", () => {
