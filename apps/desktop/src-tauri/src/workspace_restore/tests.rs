@@ -1612,6 +1612,85 @@ fn a_row_admission_refused_after_the_press_was_refused_not_declined() {
     assert_eq!(expired, 0, "the next start offers it again");
 }
 
+/// The press could not take a row that was not there. Back in this session, it
+/// is an offer the user could take like any other, and is declined like one.
+#[test]
+fn a_row_missing_at_the_press_that_returns_and_is_not_taken_is_declined() {
+    let scratch = Scratch::new("restore-back-after-press");
+    let (_a, b) = stored_a_and_b(&scratch);
+    let store = reopen(&scratch);
+    // Stored order: Ungrouped (b, restored-0), then Batch (a, restored-1).
+    let _ = restored(&store);
+    let away = scratch.join("b.away");
+    fs::rename(&b, &away).expect("b goes away");
+
+    let service = workspace();
+    let answer = store.put_back(&service).expect("the batch runs");
+    let [placed] = answer.placed.as_slice() else {
+        panic!("only a is placed: {:?}", answer.placed);
+    };
+
+    fs::rename(&away, &b).expect("b comes back, the same object");
+    assert_eq!(
+        states(&restored(&store)),
+        vec![("b.mzML".to_owned(), RowState::Matching)]
+    );
+    assert_eq!(
+        store.save_with(&ungrouped(&[placed.handle.as_str(), "restored-0"]), || {
+            service.workspace_restore_rows()
+        }),
+        WorkspaceRestoreWriteDto::Saved
+    );
+
+    let WorkspaceRestoreReadDto::Restored { expired, .. } = reopen(&scratch).read() else {
+        panic!("expected restored rows");
+    };
+    assert_eq!(expired, 1, "saw it matching, saved without putting it back");
+}
+
+#[test]
+fn restore_puts_back_no_row_this_session_no_longer_offers() {
+    let scratch = Scratch::new("restore-expired-not-taken");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    assert_eq!(
+        reopen(&scratch).save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let declining = reopen(&scratch);
+    let _ = restored(&declining);
+    assert_eq!(
+        declining.save(&ungrouped(&["restored-0"]), Vec::new()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+
+    let store = reopen(&scratch);
+    let WorkspaceRestoreReadDto::Restored { expired, .. } = store.read() else {
+        panic!("expected restored rows");
+    };
+    assert_eq!(expired, 1);
+    let service = workspace();
+    let answer = store.put_back(&service).expect("the batch runs");
+    assert!(answer.placed.is_empty(), "{:?}", answer.placed);
+    assert_eq!(service.workspace_restore_rows().len(), 0);
+}
+
+#[test]
+fn restore_puts_back_no_row_the_user_dismissed() {
+    let scratch = Scratch::new("restore-dismissed-not-taken");
+    stored_a_and_b(&scratch);
+    let store = reopen(&scratch);
+    // Stored order: Ungrouped (b, restored-0), then Batch (a, restored-1).
+    let _ = restored(&store);
+    assert!(store.dismiss("restored-0"));
+
+    let service = workspace();
+    let answer = store.put_back(&service).expect("the batch runs");
+    assert_eq!(answer.placed.len(), 1, "{:?}", answer.placed);
+    let rows = service.workspace_restore_rows();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].members[0].path.ends_with("a.mzML"));
+}
+
 #[test]
 fn a_row_a_full_workspace_refused_stays_waiting_and_is_not_counted() {
     let scratch = Scratch::new("restore-full");
