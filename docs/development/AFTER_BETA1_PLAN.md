@@ -683,11 +683,11 @@ writer and Rust's ownership of files.
     View converts again. Presets and preferences stay. Installing over an install
     with `/S` or `/S /UPDATE` runs no uninstaller and keeps the cache. The hook
     cannot tell these apart by its switches.
-  - *2026-11-03, run on that runner, not an owner decision:* a `/P` uninstall after
-    a silent install stops at the template's language dialog, because a silent
-    install records no language, and waits there until someone answers. It was
-    still waiting when the job stopped it after five minutes. With a language
-    recorded, `/P` runs to its end.
+  - *2026-11-03, run on that runner and read from `MUI_UNGETLANGUAGE`, not an owner
+    decision:* a `/P` uninstall after a silent install had not finished when the
+    job stopped it after five minutes. A silent install records no language, so
+    anything but a silent uninstall asks for one, which is the likely cause: no one
+    saw the dialog. With a language recorded, `/P` runs to its end.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
