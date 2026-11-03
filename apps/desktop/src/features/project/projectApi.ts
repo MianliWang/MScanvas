@@ -19,6 +19,7 @@ import { createContext, useContext } from "react";
 import type {
   ExportedFigure,
   FigureSettings,
+  NotVerifiedByMscanvas,
   WorkspaceAddResult,
 } from "../mzml-preview/contracts";
 import { documentAuthorityHeaders } from "../ipc/documentAuthority";
@@ -67,6 +68,13 @@ export interface ProjectInput {
    * already holds rather than asking Rust again.
    */
   readonly workbenchDatasetHandle: string | null;
+  /**
+   * The "not verified by MSCanvas" label recorded with this reference
+   * (project schema 5): the session had adopted the registered object from a
+   * labelled conversion. `null` means none is recorded, never verified.
+   * Optional only until fixtures carry it; Rust always sends it.
+   */
+  readonly notVerifiedByMscanvas?: NotVerifiedByMscanvas | null;
 }
 
 /** A retention time exactly as the run summary reported it. */
@@ -572,6 +580,12 @@ export interface ProjectState {
   readonly name: string;
   readonly dirty: boolean;
   readonly published: boolean;
+  /**
+   * Whether the bound document is beta 1's schema 4, so the next Save that
+   * writes replaces it with schema 5, which beta 1 cannot open (ADR 0055).
+   * Optional only until fixtures carry it; Rust always sends it.
+   */
+  readonly savingUpgradesSchema?: boolean;
   readonly inputs: readonly ProjectInput[];
   readonly artifacts: readonly ProjectArtifact[];
   readonly runs: readonly ProjectRun[];

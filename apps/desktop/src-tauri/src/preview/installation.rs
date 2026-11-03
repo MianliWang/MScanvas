@@ -55,44 +55,6 @@ impl ToolIdentity {
         let path = tool.path.as_deref()?;
         Some(Self::of(path, tool.executable_sha256()))
     }
-
-    /// Whether the path still holds the file this identity saw.
-    ///
-    /// Metadata is the fast path, not the answer. Matching metadata means the
-    /// file is untouched and nothing more needs reading -- which is the case
-    /// on every check that is not about a change. Differing metadata is only a
-    /// question, because a backup restore or a timestamp normalisation rewrites
-    /// the modification time of bytes that did not change, and answering
-    /// "replaced" there would discard a preview the very same backend produced.
-    ///
-    /// So the digest is read only when the metadata disagrees, which keeps the
-    /// content-first rule `ToolIdentity::eq` states without paying for it on
-    /// the common path. With no digest recorded there is nothing to appeal to
-    /// and the metadata stands.
-    fn same_file_now(&self) -> bool {
-        self.same_as(&Self::of(&self.path, None))
-    }
-
-    /// Whether a fresh reading of this path describes the file this identity
-    /// saw. Split from the reading itself so the rule can be tested against
-    /// readings a development machine cannot produce.
-    fn same_as(&self, now: &Self) -> bool {
-        let metadata_agrees = now.filesystem == self.filesystem
-            && now.byte_length == self.byte_length
-            && now.modified == self.modified;
-        // Two unknown identities agreeing is not evidence of anything. Where a
-        // filesystem answers with no identity at all, length and timestamp are
-        // all the fast path has left, and an installer that preserved both
-        // would walk straight through it -- so the digest decides instead,
-        // whenever there is one to appeal to.
-        if metadata_agrees && (self.filesystem.is_some() || self.content.is_none()) {
-            return true;
-        }
-        let Some(recorded) = self.content else {
-            return false;
-        };
-        Sha256Digest::calculate_file(&self.path).is_ok_and(|digest| digest == recorded)
-    }
 }
 
 impl PartialEq for ToolIdentity {
@@ -266,18 +228,6 @@ impl fmt::Debug for PreviewProducerFacts {
 }
 
 #[cfg(test)]
-impl ToolIdentity {
-    /// One whose filesystem could not answer with an identity, which is the
-    /// position a volume without file IDs leaves every tool on it in.
-    fn without_filesystem_facts(path: &Path, content: Sha256Digest) -> Self {
-        Self {
-            filesystem: None,
-            ..Self::of(path, Some(content))
-        }
-    }
-}
-
-#[cfg(test)]
 impl InstallationIdentity {
     /// Builds one directly, for tests that model a backend rather than
     /// discovering a real one.
@@ -311,22 +261,6 @@ impl InstallationIdentity {
             build_date: build_date.map(str::to_owned),
             source_revision: source_revision.map(str::to_owned),
         }
-    }
-}
-
-impl InstallationIdentity {
-    /// Whether the tools this identity names are still the files it saw, judged
-    /// without launching anything.
-    ///
-    /// The filesystem facts only. Re-reading the digests would mean hashing two
-    /// executables, and re-resolving would mean two help probes, on every row a
-    /// user clicks -- for a check whose job is to refuse cheaply. This catches
-    /// the executables being deleted, replaced or rewritten, which is what a
-    /// stale preview looks like from here; the operation that follows reports
-    /// the identity it actually ran with, and that comparison catches the rest,
-    /// before anything is shown.
-    pub(crate) fn still_the_same_files(&self) -> bool {
-        self.msconvert.same_file_now() && self.msaccess.same_file_now()
     }
 }
 
@@ -714,82 +648,6 @@ mod tests {
             "the test needs a new mtime"
         );
         assert_eq!(before, after);
-    }
-
-    #[test]
-    fn a_touched_file_with_unchanged_bytes_is_still_the_same_file() {
-        // The pre-flight must keep the rule the equality states. A backup
-        // restore or a timestamp normalisation rewrites the modification time
-        // of bytes that did not change, and calling that a replacement would
-        // discard a preview the very same backend produced.
-        let tree = TempDir::new("touched");
-        let path = tree.file(MSCONVERT_EXE, b"one build");
-        let digest = Sha256Digest::calculate(b"one build").expect("digest");
-        let recorded = ToolIdentity::of(&path, Some(digest));
-
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(&path, b"one build").expect("rewrite with the same bytes");
-
-        assert!(recorded.same_file_now());
-    }
-
-    #[test]
-    fn a_tool_with_no_filesystem_identity_is_still_judged_by_its_bytes() {
-        // Some volumes answer with no file identity at all. Both readings are
-        // then `None`, and two unknowns comparing equal used to end the
-        // question -- so an installer that replaced the tool while preserving
-        // its length and timestamp was called the same tool, and the check that
-        // exists to refuse a stale preview cheaply refused nothing.
-        let tree = TempDir::new("no-filesystem-identity");
-        let path = tree.file(MSCONVERT_EXE, b"one build");
-        let recorded = ToolIdentity::without_filesystem_facts(
-            &path,
-            Sha256Digest::calculate(b"one build").expect("digest"),
-        );
-
-        // The replacement keeps the length and is given the timestamp back, so
-        // nothing but the identity and the bytes can tell it apart -- and the
-        // identity is what this volume does not have.
-        let before = std::fs::metadata(&path)
-            .expect("metadata")
-            .modified()
-            .expect("modification time");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(&path, b"two build").expect("replace with the same length");
-        std::fs::File::options()
-            .write(true)
-            .open(&path)
-            .expect("reopen to set times")
-            .set_times(std::fs::FileTimes::new().set_modified(before))
-            .expect("restore the modification time");
-        // A development machine has file identities, so the reading this volume
-        // would give is supplied rather than taken.
-        let now = ToolIdentity::without_filesystem_facts(
-            &path,
-            Sha256Digest::calculate(b"two build").expect("digest"),
-        );
-        assert_eq!(recorded.byte_length, now.byte_length);
-        assert_eq!(recorded.modified, now.modified);
-
-        assert!(!recorded.same_as(&now));
-        // The tool that really is unchanged still passes.
-        assert!(now.same_as(&now));
-    }
-
-    #[test]
-    fn a_replaced_file_is_not_the_same_file() {
-        let tree = TempDir::new("replaced");
-        let path = tree.file(MSCONVERT_EXE, b"one build");
-        let digest = Sha256Digest::calculate(b"one build").expect("digest");
-        let recorded = ToolIdentity::of(&path, Some(digest));
-
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(&path, b"a different build entirely").expect("replace");
-
-        assert!(!recorded.same_file_now());
-        // And a file that is gone is not it either.
-        std::fs::remove_file(&path).expect("remove");
-        assert!(!recorded.same_file_now());
     }
 
     #[test]

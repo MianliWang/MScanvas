@@ -130,7 +130,7 @@ describe("stick spectrum at profile-scale point counts", () => {
     };
     // Details says what the caption cannot, from the same reduction.
     function Source() {
-      return <p>{describeSpectrumSource(mz, intensity, drawing, false, useUiMessages())}</p>;
+      return <p>{describeSpectrumSource(mz, intensity, drawing, "notReported", useUiMessages())}</p>;
     }
     const { container } = render(
       <>

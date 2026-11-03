@@ -78,8 +78,10 @@ export interface MessageParameters {
   readonly m74CnvNamedDestination: { readonly name: string };
   readonly m74CnvOutputBound: { readonly count: number };
   readonly m74CnvAdoptionSummary: { readonly added: string; readonly duplicates: string; readonly refused: string };
-  readonly m74CnvMoreRefused: { readonly count: number };
   readonly m74CnvManyReady: { readonly count: number };
+  readonly m74CnvNotVerifiedBuild: { readonly release: string };
+  readonly m74CnvNotVerifiedCount: { readonly labelled: string; readonly planned: string };
+  readonly m74CnvAddNotVerified: { readonly labelled: string };
   readonly m74CnvManyDiagnostics: { readonly count: number };
   readonly m74CnvConvertSelected: { readonly count: number };
   readonly m74CnvConvertAll: { readonly count: number };
@@ -148,7 +150,6 @@ export interface MessageParameters {
   readonly stagingRecoveryOwned: { readonly count: number };
   readonly clearCounts: { readonly count: number; readonly total: number; readonly protected: string };
   readonly linkedHeight: { readonly value: string };
-  readonly viewerExportRtHelp: { readonly low: string; readonly high: string };
   readonly viewerExportRtWindow: { readonly low: string; readonly high: string };
   readonly viewerLinkedCopied: { readonly width: string; readonly height: string; readonly theme: string; readonly index: string; readonly count: number };
   readonly viewerLinkedSaved: { readonly name: string; readonly index: string; readonly rt: string; readonly count: number };
@@ -159,7 +160,11 @@ export interface MessageParameters {
   readonly plotNegativeMixed: { readonly count: number };
   readonly plotNegativeCount: { readonly count: number };
   readonly plotCaption: { readonly count: number; readonly total: number };
+  readonly plotLineCaption: { readonly count: number; readonly total: number };
   readonly plotTransferCaption: { readonly count: number; readonly total: number };
+  readonly plotAxisRtUnit: { readonly unit: string };
+  readonly plotAxisIntensityUnit: { readonly unit: string };
+  readonly plotAxisMzUnit: { readonly unit: string };
   readonly viewerShowing: { readonly low: string; readonly high: string };
   readonly viewerScanSource: { readonly count: number };
   readonly viewerScanReadout: { readonly name: string; readonly index: string; readonly scan: string; readonly level: string; readonly rt: string; readonly tic: string; readonly bpc: string };
@@ -178,8 +183,8 @@ export interface MessageParameters {
   readonly viewerSpectrumAbsent: { readonly index: string };
   readonly viewerSpectrumFailed: { readonly index: string };
   readonly viewerSpectrumSummary: { readonly index: string; readonly level: string; readonly count: number };
-  readonly viewerSpectrumPrefixRetained: { readonly count: number };
-  readonly viewerSpectrumPrefix: { readonly count: number };
+  readonly viewerSpectrumPrefixRetained: { readonly count: number; readonly total: number };
+  readonly viewerSpectrumPrefix: { readonly count: number; readonly total: number };
   readonly viewerPrecursorPrefix: { readonly count: number; readonly total: number };
   readonly viewerRetentionValue: { readonly value: string };
   readonly viewerBasePeakValue: { readonly mz: string; readonly value: string };

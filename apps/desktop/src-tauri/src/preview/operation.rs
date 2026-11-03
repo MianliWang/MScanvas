@@ -31,13 +31,13 @@ use std::time::{Duration, Instant};
 
 use mscanvas_proteowizard::{
     BackendDiagnosticText, CancellationFailure, CancellationReport, CancellationRequest,
-    ConversionIntent, FinalizedOutput, OperationRunIdentity, OwnedTreeDisposition,
-    ProcessAttemptOutcome, StagedOutputEvidence, StagingResidue, Termination,
+    FinalizedOutput, OperationRunIdentity, OwnedTreeDisposition, ProcessAttemptOutcome,
+    StagedOutputEvidence, StagingResidue, Termination,
 };
 
 use super::adoption::FinalizedOutputAdoptionTicket;
 use super::adoption::FinalizedOutputSetAdoptionTicket;
-use super::conversion::{process_dto, staged_output_dto};
+use super::conversion::{BoundIntent, process_dto, staged_output_dto};
 use super::destination::{
     DestinationHold, DestinationIdentity, DestinationLease, lease_destination,
 };
@@ -59,7 +59,7 @@ use super::dto::{
     queue_is_empty, queue_too_large,
 };
 use super::installation::InstallationIdentity;
-use super::selection::{DatasetId, DatasetSourceKind};
+use super::selection::{DatasetId, DatasetSourceKind, NotVerifiedByMscanvas};
 
 const CONVERSION_RESERVATION_PREFIX: &str = "conversion-reservation-";
 
@@ -436,7 +436,7 @@ pub(super) const fn item_state_of(class: super::conversion::OutcomeClass) -> Ite
 pub(super) fn item_output_topology(
     kind: DatasetSourceKind,
     file_name: &str,
-    intent: ConversionIntent,
+    intent: &BoundIntent,
 ) -> Result<ItemOutputTopology, PreviewErrorDto> {
     // Convertibility first, and for both arms. Producing an output set is a
     // statement about cardinality rather than a licence to convert: a family the
@@ -549,6 +549,9 @@ pub(super) struct QueueItem {
     // where the latest attempt is worth diagnosing, replaced whole when a later
     /// attempt settles, and dropped with the queue.
     diagnostic: Option<Arc<ConversionFailureDiagnosticTicket>>,
+    /// The "not verified by MSCanvas" label the plan stated for this row
+    /// (ADR 0055), so the row says it before any report exists.
+    not_verified: Option<NotVerifiedByMscanvas>,
 }
 
 /// What a stop established about one attempt, path-free.
@@ -631,7 +634,14 @@ impl QueueItem {
             staging_recovery: None,
             published: Vec::new(),
             diagnostic: None,
+            not_verified: None,
         }
+    }
+
+    /// The "not verified by MSCanvas" label this row runs under, bound at
+    /// `BEGIN` from the plan's own rule.
+    pub(super) fn set_not_verified(&mut self, label: Option<NotVerifiedByMscanvas>) {
+        self.not_verified = label;
     }
 
     pub(super) const fn dataset(&self) -> DatasetId {
@@ -747,6 +757,7 @@ impl QueueItem {
             file_name: self.dataset_dto.file_name.clone(),
             source_kind: self.dataset_dto.source_kind,
             output: self.output.to_dto(),
+            not_verified_by_mscanvas: self.not_verified.clone(),
             state: self.state.to_dto(),
             attempts: self.attempts,
             retryable: self.retryable,
@@ -899,7 +910,7 @@ pub(super) struct ConversionQueue {
     // keeping it here: a retry that re-derived an intent could convert the
     // second time under something the first attempt was never judged against,
     // and the user asked for one thing.
-    intent: ConversionIntent,
+    intent: BoundIntent,
     items: Vec<QueueItem>,
     /// Which item is running, or how many have finished when none is.
     current: usize,
@@ -955,7 +966,7 @@ impl ConversionQueue {
     pub(super) fn new(
         document_epoch: u64,
         conflict: ConversionConflictPolicyDto,
-        intent: ConversionIntent,
+        intent: BoundIntent,
         policy: DestinationPolicy,
         items: Vec<QueueItem>,
     ) -> Result<Self, PreviewErrorDto> {
@@ -965,7 +976,8 @@ impl ConversionQueue {
         if items.len() > MAX_CONVERSION_QUEUE_ITEMS {
             return Err(queue_too_large());
         }
-        // Quadratic over at most sixteen items, and deliberately so: a set
+        // Quadratic over at most `MAX_CONVERSION_QUEUE_ITEMS` items, about half
+        // a million integer comparisons at 1,024, and deliberately so: a set
         // would need one more thing to keep in step with the order, and the
         // order is the part that matters here.
         for (index, item) in items.iter().enumerate() {
@@ -1000,8 +1012,8 @@ impl ConversionQueue {
     }
 
     /// What this queue converts under, first attempt and every retry alike.
-    pub(super) const fn intent(&self) -> ConversionIntent {
-        self.intent
+    pub(super) const fn intent(&self) -> &BoundIntent {
+        &self.intent
     }
 
     /// The bound membership, in the order it will run.
@@ -1516,6 +1528,13 @@ pub(super) struct ConversionSlot {
     current_attempt: Option<CurrentAttempt>,
     /// A stop accepted for an attempt whose handle was not yet bound.
     pending_item_stop: Option<PendingItemStop>,
+    /// The latest one-click view (ADR 0060 decision 5). While it runs it holds
+    /// this slot, so every route the slot refuses is refused; the queue state
+    /// above is left exactly as it was.
+    view: Option<super::raw_view::RawView>,
+    /// How many views this session has begun: the next one's operation, and a
+    /// part of the incarnation a workspace clear is planned against.
+    views_begun: u64,
 }
 
 impl Default for ConversionSlot {
@@ -1532,6 +1551,8 @@ impl Default for ConversionSlot {
             stop_requested_at: None,
             current_attempt: None,
             pending_item_stop: None,
+            view: None,
+            views_begun: 0,
         }
     }
 }
@@ -1588,7 +1609,7 @@ impl ConversionSlot {
     }
     /// New queues and retries are distinct confirmations even when their rows
     /// happen to be identical. Settling one attempt does not change this key.
-    pub(super) fn incarnation(&self) -> (u64, u64) {
+    pub(super) fn incarnation(&self) -> (u64, u64, u64) {
         let round = match &self.state {
             SlotState::Idle => 0,
             SlotState::AwaitingDestination { queue, .. }
@@ -1596,12 +1617,20 @@ impl ConversionSlot {
             | SlotState::Stopping { queue }
             | SlotState::Terminal { queue, .. } => queue.retry_round,
         };
-        (self.operation, round)
+        (self.operation, round, self.views_begun)
     }
 
     /// A reserved picker has launched no process. Retiring its reservation
     /// makes its eventual answer stale; it cannot start work after Clear.
     pub(super) fn request_clear_stop(&mut self) -> Result<StopAccepted, PreviewErrorDto> {
+        // Clear treats a running view as active work (ADR 0060 decision 5):
+        // Cancel and clear cancels it, and waits for its worker as for a queue.
+        // No queue is busy beside it: Begin and Retry refuse while a view
+        // runs, and a view begins only on a slot that is not busy.
+        if let Some(view) = self.view.as_ref().filter(|view| view.is_running()) {
+            view.request_cancel();
+            return Ok(StopAccepted::AlreadyRequested);
+        }
         if matches!(self.state, SlotState::AwaitingDestination { .. }) {
             self.cancel(self.operation);
             return Ok(StopAccepted::AlreadyRequested);
@@ -1617,12 +1646,64 @@ impl ConversionSlot {
     // A terminal queue does not: it is a thing to read, not work in flight.
     /// This is what every workspace mutation asks before it proceeds.
     pub(super) const fn is_busy(&self) -> bool {
-        matches!(
-            self.state,
-            SlotState::AwaitingDestination { .. }
-                | SlotState::Running { .. }
-                | SlotState::Stopping { .. }
-        )
+        self.view_is_running()
+            || matches!(
+                self.state,
+                SlotState::AwaitingDestination { .. }
+                    | SlotState::Running { .. }
+                    | SlotState::Stopping { .. }
+            )
+    }
+
+    /// Whether a one-click view holds the slot.
+    pub(super) const fn view_is_running(&self) -> bool {
+        match &self.view {
+            Some(view) => view.is_running(),
+            None => false,
+        }
+    }
+
+    /// What a route the slot refuses answers with: `raw_view_busy` while the
+    /// holder is a view, so the reason names the work that is in the way.
+    pub(super) fn busy_refusal(&self) -> PreviewErrorDto {
+        if self.view_is_running() {
+            super::raw_view::raw_view_busy()
+        } else {
+            conversion_busy()
+        }
+    }
+
+    /// Takes the slot for a new view, dropping the previous view's state.
+    pub(super) fn begin_view(
+        &mut self,
+        dataset: DatasetId,
+        file_name: String,
+    ) -> Result<u64, PreviewErrorDto> {
+        if self.is_busy() {
+            return Err(self.busy_refusal());
+        }
+        self.views_begun = self
+            .views_begun
+            .checked_add(1)
+            .expect("a session begins fewer than u64::MAX views");
+        self.view = Some(super::raw_view::RawView::new(
+            self.views_begun,
+            dataset,
+            file_name,
+        ));
+        Ok(self.views_begun)
+    }
+
+    /// The latest view, whatever its state.
+    pub(super) const fn view(&self) -> Option<&super::raw_view::RawView> {
+        self.view.as_ref()
+    }
+
+    /// The view this operation names, whatever its state.
+    pub(super) fn view_mut(&mut self, operation: u64) -> Option<&mut super::raw_view::RawView> {
+        self.view
+            .as_mut()
+            .filter(|view| view.operation == operation)
     }
 
     /// Whether a busy queue holds this row.
@@ -1635,6 +1716,13 @@ impl ConversionSlot {
     // request has been made and the attempt has not settled, so the row may
     /// still be being read.
     pub(super) fn busy_holds(&self, dataset: DatasetId) -> bool {
+        if self
+            .view
+            .as_ref()
+            .is_some_and(|view| view.is_running() && view.dataset == dataset)
+        {
+            return true;
+        }
         match &self.state {
             SlotState::AwaitingDestination { queue, .. }
             | SlotState::Running { queue }
@@ -1653,7 +1741,7 @@ impl ConversionSlot {
         queue: ConversionQueue,
     ) -> Result<WorkspaceConversionReservationDto, PreviewErrorDto> {
         if self.is_busy() {
-            return Err(conversion_busy());
+            return Err(self.busy_refusal());
         }
         let reservation = ConversionReservationId(self.next_reservation);
         self.next_reservation = self
@@ -2311,20 +2399,28 @@ impl ConversionSlot {
                     item.set_run = None;
                 }
                 let planned = item.output.planned_name().unwrap_or_default().to_owned();
-                item.adoption = finalized.zip(destination).map(|(finalized, destination)| {
-                    QueueAdoptionAuthority::Single(Arc::new(FinalizedOutputAdoptionTicket::new(
+                // The label the item's own report carries, so the adopted row
+                // and the queue outcome cannot disagree (ADR 0055; owner
+                // decision 2 of 2026-10-29).
+                let not_verified = item.report.as_ref().and_then(|report| {
+                    NotVerifiedByMscanvas::of(
+                        report.unverified_settings(),
+                        report.unverified_build_release().map(str::to_owned),
+                    )
+                });
+                let ticket = finalized.zip(destination).map(|(finalized, destination)| {
+                    Arc::new(FinalizedOutputAdoptionTicket::new(
                         operation,
                         item.dataset,
                         item.dataset_dto.file_name.clone(),
                         planned,
                         destination,
                         *finalized,
-                    )))
+                        not_verified,
+                    ))
                 });
-                item.finalized_outputs = match &item.adoption {
-                    Some(QueueAdoptionAuthority::Single(ticket)) => vec![Arc::clone(ticket)],
-                    _ => Vec::new(),
-                };
+                item.finalized_outputs = ticket.iter().cloned().collect();
+                item.adoption = ticket.map(QueueAdoptionAuthority::Single);
             }
             ItemOutcome::ReportedSet(settlement) => {
                 let settlement = *settlement;
@@ -2337,7 +2433,7 @@ impl ConversionSlot {
                     item.diagnostic_identity(operation, index),
                     &mut settlement,
                 )
-                .map(Arc::new);
+                .map(|ticket| Arc::new(ticket.labelled(item.not_verified.as_ref())));
                 item.error = None;
                 item.report = None;
                 item.set_state = Some(settlement.state());
@@ -2367,15 +2463,18 @@ impl ConversionSlot {
                     item.set_state = None;
                     item.set_run = None;
                 }
-                item.diagnostic = Some(Arc::new(ConversionFailureDiagnosticTicket::of_refusal(
-                    item.diagnostic_identity(operation, index),
-                    retryable,
-                    &error,
-                    // The same facts the row just recorded. One origin, so the
-                    // saved document cannot describe an attempt the queue is
-                    // describing differently.
-                    attempt,
-                )));
+                item.diagnostic = Some(Arc::new(
+                    ConversionFailureDiagnosticTicket::of_refusal(
+                        item.diagnostic_identity(operation, index),
+                        retryable,
+                        &error,
+                        // The same facts the row just recorded. One origin, so the
+                        // saved document cannot describe an attempt the queue is
+                        // describing differently.
+                        attempt,
+                    )
+                    .labelled(item.not_verified.as_ref()),
+                ));
                 item.report = None;
                 item.error = Some(error);
             }
@@ -2408,7 +2507,7 @@ impl ConversionSlot {
                     diagnostics,
                     stopped_set,
                 )
-                .map(Arc::new);
+                .map(|ticket| Arc::new(ticket.labelled(item.not_verified.as_ref())));
                 item.report = None;
                 item.error = None;
                 item.published.clear();

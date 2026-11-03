@@ -586,7 +586,7 @@ fn discard(temporary: std::fs::File, path: &Path, refusal: WriteRefusal) -> Publ
 /// reading of the SDK union, `0` refuses an existing name -- and leaves no
 /// indeterminate filler byte.
 #[cfg(windows)]
-fn replace_with(
+pub(crate) fn replace_with(
     file: &std::fs::File,
     _temporary_path: &Path,
     target: &Path,
@@ -662,7 +662,7 @@ fn replace_with(
 /// being renamed, not the object the bytes went into. Windows is the supported
 /// target and carries the stronger form above.
 #[cfg(not(windows))]
-fn replace_with(
+pub(crate) fn replace_with(
     _file: &std::fs::File,
     temporary_path: &Path,
     target: &Path,

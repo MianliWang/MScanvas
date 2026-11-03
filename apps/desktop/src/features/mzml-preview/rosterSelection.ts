@@ -42,7 +42,8 @@ export type RowPresentation = "ready" | "opening" | "loaded" | "replaced" | "mis
  *
  * `file_identity_changed` is `revalidate` finding that the remembered path now
  * resolves to another object; `file_not_resolvable` is acceptance failing to
- * open it at all. Nothing else is mapped: `not_a_regular_file`, for instance,
+ * open it at all. A superseded open leaves the row as it was. Nothing else is
+ * mapped: `not_a_regular_file`, for instance,
  * says the name now points at something this boundary never accepts, which is a
  * failure of this attempt rather than a claim that the acquisition was replaced.
  */
@@ -52,6 +53,11 @@ export function rowStateForError(kind: string): RowPresentation {
   }
   if (kind === "file_not_resolvable") {
     return "missing";
+  }
+  // A newer open took the read's place (ADR 0056): nothing was wrong with the
+  // file, so the row says nothing against it.
+  if (kind === "selection_superseded") {
+    return "ready";
   }
   return "failed";
 }

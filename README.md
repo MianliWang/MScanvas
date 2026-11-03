@@ -53,7 +53,9 @@ None of them is in an installer or a release.
   Opening a project restores no Workbench session; a checked reference is put in
   the Workbench only when you ask. See the
   [M8 record](docs/product/M8_1_FIRST_CLOSED_LOOP.md) and PRJ-001 to PRJ-006 in
-  the [feature catalog](docs/product/FEATURE_CATALOG.md).
+  the [feature catalog](docs/product/FEATURE_CATALOG.md). The next version opens
+  beta-1 projects; once a project is saved in it, beta 1 can no longer open
+  that project, so keep a copy of the file to go back.
 - **Targeted MS1 lookup (M9) — bounded and experimental.** In a saved project, a
   typed list of up to 200 small-molecule targets is reviewed as a digest-named
   plan over one positive-mode, centroided mzML acquisition, or one plan each over

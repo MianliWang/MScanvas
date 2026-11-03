@@ -16,7 +16,76 @@
 
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
+import { admittedIntents } from "../../apps/desktop/src/test/previewFixtures";
+import type { SelectedFile } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { IPC_TABLE_KEY } from "./harness";
 import { revealRosterRow } from "./viewer";
+
+/**
+ * Answers each plan question for the rows it names, as Rust's describe does.
+ * A Thermo vendor-centroiding row is refused for a plan holding any row that
+ * is not Thermo RAW (ADR 0059); every other question is planned. With
+ * `unverifiedBuild`, every row runs on that unmeasured release and is labelled
+ * not verified by MSCanvas (ADR 0055).
+ */
+export async function answerPlans(rows: readonly SelectedFile[], unverifiedBuild: string | null = null): Promise<void> {
+  await browser.execute(
+    (tableKey: string, known: readonly SelectedFile[], intents: readonly { id: string; processing: string }[], release: string | null) => {
+      const table = Reflect.get(window, tableKey) as Record<string, unknown>;
+      const internals = Reflect.get(window, "__TAURI_INTERNALS__") as {
+        invoke: (name: string, args: Record<string, unknown>, ...rest: unknown[]) => Promise<unknown>;
+      };
+      const invoke = internals.invoke;
+      internals.invoke = (name, args, ...rest) => {
+        if (name === "describe_workspace_conversion_queue") {
+          const request = args["request"] as {
+            handles: string[];
+            intentId: string;
+            conflictPolicy: string;
+            destinationPolicy: unknown;
+            expectedReceipt: number;
+          };
+          const intent = intents.find((candidate) => candidate.id === request.intentId);
+          const members = request.handles.map((handle) => known.find((candidate) => candidate.handle === handle)!);
+          table[name] = intent?.processing.startsWith("vendor_centroiding") === true &&
+            members.some((row) => row.sourceKind !== "thermo_raw")
+            ? { __reject: {
+              kind: "conversion_settings_not_evidenced_for_source",
+              summary: "MSCanvas has not measured those conversion settings on this kind of acquisition.",
+              detail: null,
+              retryable: false,
+            } }
+            : {
+              outcome: "planned",
+              plan: {
+                items: members.map((row) => ({
+                  datasetHandle: row.handle,
+                  fileName: row.fileName,
+                  sourceKind: row.sourceKind,
+                  output: { kind: "knownSingle", fileName: row.fileName.replace(/\.(raw|mzML)$/u, ".mzML") },
+                  unverifiedBuildRelease: release,
+                  unverifiedSettings: release !== null,
+                })),
+                outputFormat: "mzML",
+                compression: "zlib",
+                validationMode: "output_only",
+                capacity: Math.max(16, known.length),
+                intent,
+                conflictPolicy: request.conflictPolicy,
+                destinationPolicy: request.destinationPolicy,
+                receipt: request.expectedReceipt,
+              },
+            };
+        }
+        return invoke(name, args, ...rest);
+      };
+    },
+    IPC_TABLE_KEY,
+    rows,
+    admittedIntents,
+    unverifiedBuild,
+  );
+}
 
 /** The surface's own section, which owns its scroll. */
 export const CONVERSION_SURFACE = "#workbench-conversion";

@@ -25,10 +25,9 @@ export function buildPreviewScanModel(table: SpectrumTable): ScanModel {
     scanNumber: row.scanNumber,
     msLevel: row.msLevel,
     retentionTime: row.retentionTime.value,
-    // The boolean the wire carries, forwarded rather than interpreted. What it
-    // means for a model is `scanModel.ts`'s decision, and this build's answer
-    // is to produce none: a unit was reported without saying which.
-    retentionTimeUnitKnown: row.retentionTime.unitKnown,
+    // Forwarded rather than interpreted: whether the rows share one unit is
+    // `scanModel.ts`'s decision.
+    retentionTimeUnit: row.retentionTime.unit,
     totalIonCurrent: row.totalIonCurrent,
     basePeakIntensity: row.basePeakIntensity,
   }));

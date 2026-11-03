@@ -21,6 +21,7 @@ import { renderWithPreferences as render } from "../../test/renderWithPreference
 import { useScanTableView } from "./viewer/useScanTableView";
 import type { Selection } from "./viewer/interactionState";
 import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
+import type { RetentionTimeUnit } from "./contracts";
 
 /** v5.11's compact scan list; the rest of a scan's facts are in Details. */
 const COLUMN_LABELS = [
@@ -32,7 +33,8 @@ const COLUMN_LABELS = [
 /** What each header is called: its short label first, then its full name where they differ. */
 const COLUMN_NAMES = [
   "Scan",
-  "RT (Retention time)",
+  // The unit is heard as well as seen (P11, ADR 0056).
+  "RT (Retention time) (unit not reported)",
   "MS (MS level)",
   "Prec. m/z (Precursor m/z)",
 ];
@@ -59,11 +61,13 @@ interface TableOptions {
   readonly canSelectPrevious?: boolean;
   readonly canSelectNext?: boolean;
   readonly selectionAvailability?: SpectrumSelectionAvailability;
+  readonly retentionTimeUnit?: RetentionTimeUnit;
 }
 
 function renderTable(options: TableOptions = {}) {
   const rowCount = options.rowCount ?? 40;
-  const rows = buildRows(rowCount);
+  const unit = options.retentionTimeUnit;
+  const rows = buildRows(rowCount).map(row => unit === undefined ? row : { ...row, retentionTime: { ...row.retentionTime, unit } });
   const onSelect = vi.fn();
   const onRendered = vi.fn();
   const onSelectPrevious = vi.fn();
@@ -143,6 +147,16 @@ describe("spectrum table columns", () => {
     expect(headers.map((header) => within(header).getByRole("button").getAttribute("aria-label") ??
       within(header).getByRole("button").textContent)).toEqual(COLUMN_NAMES);
     expect(within(headers[1]!).getByRole("button")).toHaveAttribute("title", "Retention time");
+  });
+
+  it("says a declared retention-time unit in the RT header, seen and heard", () => {
+    renderTable({ retentionTimeUnit: "minute" });
+
+    const rt = screen.getAllByRole("columnheader")[1]!;
+    expect(rt).toHaveTextContent("RT(min)");
+    expect(within(rt).getByRole("button", { name: "RT (Retention time) (min)" })).toBeVisible();
+    // The search's description says nothing of retention-time units; the header does.
+    expect(document.getElementById("scan-view-help")?.textContent).not.toMatch(/retention/iu);
   });
 
   it("puts every field the table sorts by under its own header on the Scans tab (P11)", () => {
