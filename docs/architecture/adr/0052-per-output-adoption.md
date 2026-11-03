@@ -180,6 +180,7 @@ large SCIEX set judges whether the item's record reads well enough.
   > workspace, 0 not added", which says the latest answer and not the set. Rust
   > keeps no per-member answer. The webview keeps each output's latest answer
   > for its status line until the queue-wide Add or a new settling of the queue.
+  > An answer about a row is said only while that row is in the workspace.
   > Every refusal of one output's Add is said on that output's own line, because
   > the queue-level notice sits above a list the output may be far down:
   > `outputs_not_adoptable` as "not added: this queue no longer offers it", and

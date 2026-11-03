@@ -25,10 +25,10 @@ export interface OutputAddOffer {
   readonly refusedBy: string | null;
   /** Whether the adoption under way is this output's. */
   readonly adding: boolean;
-  /** What the latest Add of this output did. */
+  /** What the latest Add of this output did; none once the row it names has left. */
   readonly answer: OutputAdoptionAnswer | null;
   readonly notVerified: NotVerifiedByMscanvas | null;
-  /** Takes the reader to the row the answer names, while that row is live. */
+  /** Takes the reader to the row the answer names. */
   readonly onShow: ((handle: string) => void) | null;
 }
 

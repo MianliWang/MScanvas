@@ -1607,7 +1607,9 @@ function QueueState({
                   ) : null}
                   {item.finalizedOutputs.map(output => {
                     const answer = conversion.outputAnswers.get(output.outputId) ?? null;
-                    const live = answer !== null && "handle" in answer && liveDatasetHandles?.has(answer.handle) === true;
+                    // "Already in the workspace" is false once that row has left,
+                    // and Rust never reissues a handle, so no newer row can answer for it.
+                    const left = answer !== null && "handle" in answer && liveDatasetHandles?.has(answer.handle) !== true;
                     return <OutputOpenActions key={output.outputId} output={output} add={addOffered ? {
                       onAdd: () => conversion.adopt(output.outputId),
                       refused: !conversion.canAdopt,
@@ -1616,9 +1618,9 @@ function QueueState({
                       // and these point there. Its own Add has its own line.
                       refusedBy: conversion.adopting ? STATUS_BUSY_ID : refusedBy.adopt,
                       adding: conversion.adoptingOutput === output.outputId,
-                      answer,
+                      answer: left ? null : answer,
                       notVerified: itemNotVerified(item),
-                      onShow: live ? onShowInWorkbench ?? null : null,
+                      onShow: onShowInWorkbench ?? null,
                     } : null} />;
                   })}
                   {/* Where the row's one word stops being the whole answer. The

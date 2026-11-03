@@ -24,7 +24,7 @@ import type {
   WorkspaceConversionState,
   WorkspaceOutputAdoptionResult,
 } from "./contracts";
-import { rosterActionRefused } from "../../test/rosterActions";
+import { chooseRosterAction, closeRosterListMenu, rosterActionRefused } from "../../test/rosterActions";
 
 /**
  * Adding a terminal queue's finalized outputs to the workspace, from the
@@ -597,6 +597,35 @@ describe("adding one converted output", () => {
 
     fireEvent.click(await within(group(panel, "run-1.mzML")).findByRole("button", { name: showName }));
     await waitFor(() => { expect(document.getElementById("workbench-evidence")).not.toHaveAttribute("hidden"); });
+  });
+
+  it("says nothing of a row that has left, and answers again when it is added again", async () => {
+    const api = apiWith(terminalOf([offered("file-1", "run-1.raw")]));
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => { expect(rows()).toHaveLength(2); });
+    const status = () => within(group(panel, "run-1.mzML")).getByRole("status");
+    const showName = "Show in Workbench: run-1.mzML";
+
+    fireEvent.click(addIn(panel, "run-1.mzML"));
+    await within(group(panel, "run-1.mzML")).findByText(UI_RESOURCES.en.outputAdded);
+    fireEvent.click(addIn(panel, "run-1.mzML"));
+    await within(group(panel, "run-1.mzML")).findByText(UI_RESOURCES.en.outputAlreadyInWorkspace);
+    await waitFor(() => { expect(rows()).toHaveLength(3); });
+
+    fireEvent.click(rows()[2] as HTMLElement);
+    await chooseRosterAction("removeHighlighted");
+    await closeRosterListMenu();
+    await waitFor(() => { expect(rows().map((row) => row.dataset["handle"])).toEqual(["file-1", "file-2"]); });
+    // Pressing a row opened the Workbench; the output's line is back on Conversion.
+    fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
+    expect(status()).toBeEmptyDOMElement();
+    expect(within(panel).queryByRole("button", { name: showName })).toBeNull();
+    expect(addIn(panel, "run-1.mzML")).not.toHaveAttribute("aria-disabled");
+
+    fireEvent.click(addIn(panel, "run-1.mzML"));
+    await within(group(panel, "run-1.mzML")).findByText(UI_RESOURCES.en.outputAdded);
+    await within(panel).findByRole("button", { name: showName });
   });
 
   it("shows the label beside Add for a labelled output, and none otherwise", async () => {

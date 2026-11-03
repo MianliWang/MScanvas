@@ -1165,6 +1165,27 @@ const STOPS: readonly Stop[] = [
     anchor: ".output-open-actions button:nth-of-type(4)",
   },
   {
+    // That row removed: the line says nothing of it, no Show, Add offered again.
+    name: "conversion-output-row-left",
+    table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)),
+      adopt_workspace_conversion_output: outputAnswer(ROWS, FIRST.handle, "QC_pool_01.mzML", "alreadyInWorkspace"),
+      remove_workspace_datasets: { roster: { datasets: ROWS, capacity: 1024 }, removedHandles: ["added-output"], unknownHandles: [] } }),
+    drive: async () => {
+      await addTheFirstOutput();
+      await browser.$(".output-open-actions button:nth-of-type(4)").waitForExist({ timeout: 30_000 });
+      await revealRosterRow("added-output");
+      await browser.$('.grouped-roster [data-handle="added-output"] .dataset-row-name').click();
+      await revealRosterRow("added-output");
+      await browser.$("[data-roster-list-menu]").click();
+      await browser.$("[data-roster-remove]").click();
+      await browser.$('.grouped-roster [data-handle="added-output"]').waitForExist({ reverse: true, timeout: 30_000 });
+      await go(2);
+      await browser.$(OUTPUT_ADD).scrollIntoView({ block: "center" });
+      await frames();
+    },
+    anchor: `${OUTPUT_ADD}:not([aria-disabled="true"])`,
+  },
+  {
     // A refusal naming a long output: its line wraps inside the results.
     name: "conversion-output-refused-long-name",
     table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LONG_NAME)), adopt_workspace_conversion_output: outputAnswer(ROWS, FIRST.handle, LONG_OUTPUT_NAME, "refused") }),

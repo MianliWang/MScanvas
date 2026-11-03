@@ -208,6 +208,47 @@ describe("A0055 and ADR 0052, rendered", () => {
     expect(await unexpectedConsole()).toEqual([]);
   });
 
+  for (const [locale, width, height] of [["en", 960, 640], ["zh-CN", 1366, 768]] as const) {
+    it(`says nothing of a row that has left, and Add answers again, ${locale} ${String(width)}x${String(height)}`, async () => {
+      const table = conversionWorld(locale, [RAW], LABELLED_FINISHED);
+      const answered = {
+        operationId: OPERATION,
+        retryRound: 0,
+        roster: { datasets: [RAW, ADDED_ROW], capacity: 1024 },
+        outcomes: [{ kind: "alreadyInWorkspace", itemIndex: 0, memberIndex: 0, sourceHandle: RAW.handle, outputFileName: OUTPUT_NAME, dataset: ADDED_ROW }],
+      };
+      table.adopt_workspace_conversion_output = answered;
+      table.remove_workspace_datasets = { roster: { datasets: [RAW], capacity: 1024 }, removedHandles: [ADDED_ROW.handle], unknownHandles: [] };
+      await open(table, locale, width, height);
+      await showConversion();
+      const scope = `${CONVERSION_SURFACE} ${group(locale, OUTPUT_NAME)}`;
+      const line = browser.$(`${scope} [role="status"]`);
+      await browser.$(`${scope} ${OUTPUT_ADD}`).waitForExist({ timeout: 30_000 });
+      await browser.$(`${scope} ${OUTPUT_ADD}`).click();
+      await browser.waitUntil(async () => (await line.getText()) === BUNDLES[locale].outputAlreadyInWorkspace, { timeout: 15_000 });
+      expect(await browser.$(`${scope} button:nth-of-type(4)`).isExisting()).toBe(true);
+
+      await revealRosterRow(ADDED_ROW.handle);
+      await browser.$(`.grouped-roster [data-handle="${ADDED_ROW.handle}"] .dataset-row-name`).click();
+      await revealRosterRow(ADDED_ROW.handle);
+      await browser.$("[data-roster-list-menu]").click();
+      await browser.$("[data-roster-remove]").click();
+      await browser.$(`.grouped-roster [data-handle="${ADDED_ROW.handle}"]`).waitForExist({ reverse: true, timeout: 15_000 });
+      await showConversion();
+      await browser.$(`${scope} ${OUTPUT_ADD}`).waitForDisplayed({ timeout: 15_000 });
+      expect(await line.getText()).toBe("");
+      expect(await browser.$(`${scope} button:nth-of-type(4)`).isExisting()).toBe(false);
+      expect(await browser.$(`${scope} ${OUTPUT_ADD}`).getAttribute("aria-disabled")).toBe(null);
+      await shot(`output-row-left-${locale}-${String(width)}`);
+
+      // The same press answers again, and the sentence is back with its row.
+      await browser.$(`${scope} ${OUTPUT_ADD}`).click();
+      await browser.waitUntil(async () => (await line.getText()) === BUNDLES[locale].outputAlreadyInWorkspace, { timeout: 15_000 });
+      expect(await browser.$(`${scope} button:nth-of-type(4)`).isExisting()).toBe(true);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  }
+
   for (const [locale, width, height] of [["en", 960, 640], ["zh-CN", 960, 640], ["zh-CN", 1366, 768]] as const) {
     it(`fits one Add per member of a 24-member set, and adds one, ${locale} ${String(width)}x${String(height)}`, async () => {
       const table = conversionWorld(locale, [WIFF], setFinished());
