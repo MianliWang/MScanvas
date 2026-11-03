@@ -24,9 +24,9 @@ Related: [0013](0013-serial-conversion-queue.md) (the serial queue and its
 [0057](0057-conversion-capacity-and-viewing-during-conversion.md) (capacity
 1,024), [0058](0058-user-saved-conversion-presets.md) (the nearest store),
 [0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)
-(the application is not single-instance), and ADR 0061, restore workspace
-(accepted by the owner on 2026-10-31; its record arrives with PR #177), whose
-review found the multi-instance failure this design avoids. RUN-005, RUN-007 and RUN-009 in the
+(the application is not single-instance), and
+[0061](0061-restore-workspace.md) (restore workspace), whose review found the
+multi-instance failure this design avoids. RUN-005, RUN-007 and RUN-009 in the
 [feature catalog](../../product/FEATURE_CATALOG.md); project runs in the
 [M8.1 record](../../product/M8_1_FIRST_CLOSED_LOOP.md).
 

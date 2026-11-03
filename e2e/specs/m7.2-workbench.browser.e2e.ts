@@ -1,9 +1,12 @@
 /** Real production composition. Synthetic roster metadata and controlled IPC are browser evidence only. */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { installIpcBoundary, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult } from "../support/harness";
+import { installIpcBoundary, ipcCalls as allIpcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
 import { cdp } from "../support/cdp";
+
+/** Everything but the record of the arrangement, the one call organizing a list now makes (ADR 0061). */
+const ipcCalls = async () => (await allIpcCalls()).filter(call => call.command !== "save_workspace_restore");
 import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
 import { selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 

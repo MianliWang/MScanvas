@@ -19,6 +19,7 @@ mod raw_view_run;
 mod run_recording;
 mod staging_recovery;
 mod workspace_clear;
+pub(crate) mod workspace_rows;
 
 use mscanvas_proteowizard::{
     ArrayProblem, ConversionSourceKind, LocalFileWriteError, LocalFileWriteFailure, MetadataEntry,

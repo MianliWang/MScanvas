@@ -1,4 +1,5 @@
 import { Button, Icon } from "../../components/ui";
+import type { WorkspaceRestoreSession } from "../mzml-preview/useWorkspaceRestore";
 import { SettingsDialog } from "../preferences/SettingsDialog";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 
@@ -15,13 +16,15 @@ const SURFACES = ["workbench", "conversion", "project"] as const;
  * Details and Settings…. What the session is doing is the status bar's;
  * nothing here changes width when work starts or stops.
  */
-export function WorkbenchHeader({ surface, onNavigate, conversionBusy, conversionRetained, projectBusy }: {
+export function WorkbenchHeader({ surface, onNavigate, conversionBusy, conversionRetained, projectBusy, restore }: {
   readonly surface: WorkbenchSurface;
   readonly onNavigate: (surface: WorkbenchSurface) => void;
   readonly conversionBusy: boolean;
   readonly conversionRetained: boolean;
   /** A project operation is under way; the Project tab carries a dot. */
   readonly projectBusy: boolean;
+  /** Settings' workspace restore section. */
+  readonly restore?: WorkspaceRestoreSession;
 }) {
   const t = useUiMessages();
   const { panels } = useSessionPreferences();
@@ -90,7 +93,7 @@ export function WorkbenchHeader({ surface, onNavigate, conversionBusy, conversio
           onClick={() => panels.toggle("details")}>{t("inspectorToggle")}</Button>
         {loading === null ? null : <span id={DETAILS_REASON_ID} className="header-action-reason">{loading}</span>}
       </span>
-      <SettingsDialog />
+      <SettingsDialog restore={restore} />
     </div>
     {/* Mounted from the first render and empty until there is something to
         say: a region that arrives with its text already in it is the one
