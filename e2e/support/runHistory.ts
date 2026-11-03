@@ -104,6 +104,9 @@ export const REFUSED_END_ITEMS = [item("First_01.raw"), item("Second_02.raw", { 
 /** Still being written, by this instance or another. */
 export const RUNNING = run("00000000000000000000000000000005", { state: "running", startedAtMs: NOON + 2 * HOUR, endedAtMs: null, finalizedCount: 0 });
 
+/** In its second pass: two files converted in the first, and one failed then, waiting again as RETRY_WAITING_ITEM. */
+export const RETRYING = run("00000000000000000000000000000009", { state: "running", startedAtMs: NOON + 2 * HOUR, endedAtMs: null, passes: 2, itemCount: 3 });
+
 /** Outgrew its bound: a SCIEX queue kept as counts. */
 export const OMITTED = run("00000000000000000000000000000006", { itemsOmitted: true, itemCount: 800, finalizedCount: 790, failedCount: 10, startedAtMs: NOON - 96 * HOUR, endedAtMs: NOON - 60 * HOUR });
 
