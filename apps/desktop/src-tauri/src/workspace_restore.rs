@@ -1045,8 +1045,9 @@ impl WorkspaceRestoreStore {
             .filter(|(_, _, row)| check_row(row, &mut roots) == RowState::Matching)
             .collect();
         // Before admission can refuse them: the press asked for these rows. A
-        // row the re-check marked is not among them; if it matches again and is
-        // left, it is declined like any other.
+        // row the re-check marked is not among them: if a read of this session
+        // presented it as matching and the session saves, it is declined like
+        // any other, whether or not it ever matches again.
         self.locked()
             .asked
             .extend(matching.iter().map(|(index, _, _)| *index));

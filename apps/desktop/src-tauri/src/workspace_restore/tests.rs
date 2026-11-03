@@ -1648,6 +1648,82 @@ fn a_row_missing_at_the_press_that_returns_and_is_not_taken_is_declined() {
     assert_eq!(expired, 1, "saw it matching, saved without putting it back");
 }
 
+/// An earlier read's matching is the offer made. A row missing at the press was
+/// not handed to admission, so the press does not protect it, and the save
+/// counts it though no later read found it matching (decision 10's as-built note).
+#[test]
+fn a_row_seen_matching_and_missing_from_the_press_on_is_still_declined() {
+    let scratch = Scratch::new("restore-gone-after-press");
+    let (_a, b) = stored_a_and_b(&scratch);
+    let store = reopen(&scratch);
+    // Stored order: Ungrouped (b, restored-0), then Batch (a, restored-1).
+    let _ = restored(&store);
+    let away = scratch.join("b.away");
+    fs::rename(&b, &away).expect("b goes away");
+
+    let service = workspace();
+    let answer = store.put_back(&service).expect("the batch runs");
+    let [placed] = answer.placed.as_slice() else {
+        panic!("only a is placed: {:?}", answer.placed);
+    };
+    assert_eq!(
+        states(&restored(&store)),
+        vec![("b.mzML".to_owned(), RowState::Missing)]
+    );
+    assert_eq!(
+        store.save_with(&ungrouped(&[placed.handle.as_str(), "restored-0"]), || {
+            service.workspace_restore_rows()
+        }),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(offered_counts(&scratch), vec![0, 1]);
+
+    fs::rename(&away, &b).expect("b comes back, the same object");
+    let WorkspaceRestoreReadDto::Restored { expired, .. } = reopen(&scratch).read() else {
+        panic!("expected restored rows");
+    };
+    assert_eq!(
+        expired, 1,
+        "no longer offered, and the source file is untouched"
+    );
+}
+
+/// "One of its reads" (decision 10): matching first at a later read of the
+/// session is an offer made as much as at the first.
+#[test]
+fn a_row_first_matching_at_a_later_read_is_an_offer_made() {
+    let scratch = Scratch::new("restore-later-read");
+    let (_a, b) = stored_a_and_b(&scratch);
+    let away = scratch.join("b.away");
+    fs::rename(&b, &away).expect("b is away at the first read");
+    let store = reopen(&scratch);
+    assert_eq!(
+        states(&restored(&store)),
+        vec![
+            ("b.mzML".to_owned(), RowState::Missing),
+            ("a.mzML".to_owned(), RowState::Matching)
+        ]
+    );
+
+    let service = workspace();
+    let answer = store.put_back(&service).expect("the batch runs");
+    let [placed] = answer.placed.as_slice() else {
+        panic!("only a is placed: {:?}", answer.placed);
+    };
+    fs::rename(&away, &b).expect("b comes back, the same object");
+    assert_eq!(
+        states(&restored(&store)),
+        vec![("b.mzML".to_owned(), RowState::Matching)]
+    );
+    assert_eq!(
+        store.save_with(&ungrouped(&[placed.handle.as_str(), "restored-0"]), || {
+            service.workspace_restore_rows()
+        }),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(offered_counts(&scratch), vec![0, 1]);
+}
+
 #[test]
 fn restore_puts_back_no_row_this_session_no_longer_offers() {
     let scratch = Scratch::new("restore-expired-not-taken");
