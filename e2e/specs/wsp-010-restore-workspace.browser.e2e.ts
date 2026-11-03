@@ -334,6 +334,42 @@ describe("WSP-010 Restore workspace, rendered", () => {
     await expectCleanConsole();
   });
 
+  it("says the rows are being added while a put-back runs, on the line its refusals point at", async () => {
+    await start({ read_workspace_restore: OFFER, restore_workspace: { workspace: { roster: { datasets: [], capacity: 1024 }, outcomes: [] }, placed: [] } }, [], ["restore_workspace"]);
+    const action = browser.$("[data-restore-action]");
+    await action.waitForClickable();
+    await action.click();
+    await browser.waitUntil(async () => (await action.getAttribute("aria-disabled")) === "true");
+    const said = await browser.execute(() => {
+      const id = document.querySelector('[data-restore="offer"] [data-restore-start-fresh]')?.getAttribute("aria-describedby");
+      return id === null || id === undefined ? null : document.getElementById(id)?.textContent ?? null;
+    });
+    expect(said).toBe("Adding 2 files again…");
+    await releaseInvokeHold("restore_workspace");
+    await browser.waitUntil(async () => (await action.getAttribute("aria-disabled")) === null);
+    await expectCleanConsole();
+  });
+
+  it("says what is happening in Settings while Off is held, on the line its refusals point at", async () => {
+    await start({}, [], ["set_workspace_restore_enabled"]);
+    await browser.$("[data-settings-entry]").click();
+    const off = browser.$('[role="radio"]:has([data-setting-value="restore-off"])');
+    await off.waitForExist();
+    await browser.waitUntil(async () => (await off.getAttribute("aria-disabled")) === null);
+    await browser.execute(() => document.querySelector('[role="radio"]:has([data-setting-value="restore-off"])')?.scrollIntoView());
+    await off.click();
+    await browser.waitUntil(async () => (await off.getAttribute("aria-disabled")) === "true");
+    const said = await browser.execute(() => {
+      const id = document.querySelector('[role="radio"]:has([data-setting-value="restore-off"])')?.getAttribute("aria-describedby");
+      return id === null || id === undefined ? null : document.getElementById(id)?.textContent ?? null;
+    });
+    expect(said).toBe(en.restoreBusy);
+    await browser.$(".settings-storage-note[data-restore-settings=\"working\"]").waitForDisplayed();
+    await releaseInvokeHold("set_workspace_restore_enabled");
+    await browser.$('[data-restore-settings="working"]').waitForExist({ reverse: true });
+    await expectCleanConsole();
+  });
+
   it("says when there is nowhere to keep a record, and that line can be put away", async () => {
     await start({ read_workspace_restore: { outcome: "unavailable", problem: "rootUnresolved" } });
     const notice = browser.$('[data-restore="unavailable"]');

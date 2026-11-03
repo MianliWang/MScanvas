@@ -1216,6 +1216,16 @@ const STOPS: readonly Stop[] = [
     anchor: '.notice[data-restore="working"]',
   },
   {
+    name: "restore-putting-back",
+    table: (locale) => ({ ...restoreTable(RESTORE_OFFER)(locale), restore_workspace: RESTORE_ANSWER }),
+    hold: ["restore_workspace"],
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await browser.$("[data-restore-action]").click();
+    },
+    anchor: '[data-restore-action][aria-busy="true"]',
+  },
+  {
     name: "restore-later-writer",
     table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }),
     drive: toggleTheFirstRow,
@@ -1276,6 +1286,18 @@ const STOPS: readonly Stop[] = [
       await browser.execute(() => document.querySelector('[data-restore-settings="action"]')?.scrollIntoView({ block: "center" }));
     },
     anchor: '[data-restore-settings="action"]',
+  },
+  {
+    name: "settings-restore-working",
+    table: restoreTable(restored([])),
+    hold: ["set_workspace_restore_enabled"],
+    drive: async () => {
+      await openRestoreSettings('[role="radio"]:has([data-setting-value="restore-off"])');
+      await browser.$('[role="radio"]:has([data-setting-value="restore-off"])').click();
+      await browser.$('.settings-storage-note[data-restore-settings="working"]').waitForExist();
+      await browser.execute(() => document.querySelector('[data-restore-settings="working"]')?.scrollIntoView({ block: "center" }));
+    },
+    anchor: '.settings-storage-note[data-restore-settings="working"]',
   },
 ];
 
