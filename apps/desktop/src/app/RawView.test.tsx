@@ -540,6 +540,15 @@ describe("viewing a Thermo RAW row", () => {
     expect(alert()).toHaveTextContent("");
   });
 
+  it("treats a failure on another surface as out of sight, though its row is highlighted", async () => {
+    const { world } = session({ state: running("converting") });
+    await highlight();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: words.conversionTask })); });
+    world.state = failed("view_cache_not_stored", true);
+    await waitFor(() => expect(statusBar()).toHaveTextContent(`${RAW.fileName} could not be viewed.`), { timeout: 2_000 });
+    expect(document.querySelector('[data-live-region="raw-view-alert"]')).toHaveTextContent(words.errViewCacheNotStored);
+  });
+
   describe("while a view holds the slot", () => {
     it("keeps the row being prepared in the list", async () => {
       session({ state: running("converting") });

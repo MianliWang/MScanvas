@@ -544,7 +544,7 @@ export function PreviewWorkspace() {
    */
   const rawViewFailed = workspace.rawView.state.state === "failed" ? workspace.rawView.state : null;
   const seenRawViewFailure = useRef<number | null>(null);
-  if (rawViewFailed !== null && rawViewFailed.handle === rawPaneRow?.handle) seenRawViewFailure.current = rawViewFailed.operation;
+  if (rawViewFailed !== null && surface === "workbench" && rawViewFailed.handle === rawPaneRow?.handle) seenRawViewFailure.current = rawViewFailed.operation;
   const rawViewFailedUnseen = rawViewFailed !== null && seenRawViewFailure.current !== rawViewFailed.operation ? rawViewFailed : null;
   const rawViewFailedName = rawViewFailedUnseen === null ? null : nameOfRow(rawViewFailedUnseen.handle);
   const foldDrawerForRawPane = () => {
