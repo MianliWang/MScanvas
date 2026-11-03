@@ -8,9 +8,8 @@ name: Uninstall view cache
 # %LOCALAPPDATA%\org.mscanvas.desktop, so they stay in this file: never run them
 # on a computer someone uses.
 #
-# What this cannot show: the interactive pages. The box "Delete the application
-# data" ticked or not, and "Uninstall before installing" on a newer installer's
-# page. Passive and silent runs skip them.
+# The interactive pages are driven by window messages, not by a person: what a
+# page looks like and how it reads is not checked here.
 
 on:
   pull_request:
@@ -72,19 +71,64 @@ jobs:
           function Check([string]$label, [bool]$ok) {
             if ($ok) { Write-Host "  ok    $label" } else { Write-Host "  FAIL  $label"; $script:failed++ }
           }
-          # Waits for the program itself, and gives its real exit status.
+          # Waits for the program itself, and gives its real exit status, or -1.
           function Run-Waited([string]$program, [string[]]$arguments) {
             $process = Start-Process -FilePath $program -ArgumentList $arguments -PassThru
             $null = $process.Handle
-            if (-not $process.WaitForExit(300000)) {
+            if (-not $process.WaitForExit(180000)) {
               $process.Kill()
-              throw "$program $arguments did not finish in five minutes"
+              Write-Host "  stopped $program $arguments after three minutes"
+              return -1
             }
             $process.ExitCode
           }
           # In place, as a newer installer's page runs it: a real exit status.
           function Uninstall-InPlace([string[]]$flags) {
             Run-Waited $uninstaller ($flags + "_?=$install")
+          }
+          # A silent install records no language, and without one anything but a
+          # silent uninstall stops at the template's language dialog. An
+          # interactive install records this.
+          function Set-RecordedLanguage {
+            Set-ItemProperty 'HKCU:\Software\MSCanvas contributors\MSCanvas' 'Installer Language' '1033'
+          }
+          Add-Type -Namespace Win32 -Name Native -MemberDefinition @'
+          [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+          public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string windowClass, string title);
+          [DllImport("user32.dll")]
+          public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+          [DllImport("user32.dll")]
+          public static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+          '@
+          # Presses the primary button (control 1) of the program's window, and of
+          # an uninstaller it starts, until the program ends. Every other choice
+          # stays at its default, except the box when it is asked to tick it.
+          function Drive([string]$program, [string[]]$arguments, [bool]$tick) {
+            $process = Start-Process -FilePath $program -ArgumentList $arguments -PassThru
+            $null = $process.Handle
+            $deadline = (Get-Date).AddMinutes(3)
+            while (-not $process.HasExited) {
+              if ((Get-Date) -gt $deadline) {
+                $process.Kill()
+                Write-Host "  stopped $program after three minutes"
+                return -1
+              }
+              foreach ($running in @(@($process) + @(Get-Process uninstall -ErrorAction SilentlyContinue) | Sort-Object Id -Unique)) {
+                $running.Refresh()
+                $window = $running.MainWindowHandle
+                if ($window -eq [IntPtr]::Zero) { continue }
+                if ($tick) {
+                  $page = [Win32.Native]::FindWindowEx($window, [IntPtr]::Zero, '#32770', $null)
+                  $box = [Win32.Native]::FindWindowEx($page, [IntPtr]::Zero, 'Button', 'Delete the application data')
+                  if ($box -eq [IntPtr]::Zero) { continue }
+                  $null = [Win32.Native]::SendMessage($box, 0x00F1, [IntPtr]1, [IntPtr]::Zero)
+                  $tick = $false
+                }
+                $null = [Win32.Native]::PostMessage($window, 0x0111, [IntPtr]1, [IntPtr]::Zero)
+              }
+              Start-Sleep -Seconds 1
+            }
+            $process.ExitCode
           }
           function New-Cache([string]$at) {
             New-Item -ItemType Directory -Force "$at\entries\$key", "$at\staging\$attempt\entry" | Out-Null
@@ -150,10 +194,31 @@ jobs:
 
           $null = Start-Case '/P removes a recognized cache'
           New-Neighbours; New-Cache $root
+          Set-RecordedLanguage
           $code = Uninstall-InPlace @('/P')
           Check "exit status 0 ($code)" ($code -eq 0)
           Check 'removed view-cache' (-not (Test-Path -LiteralPath $root))
           Check-Neighbours
+
+          $null = Start-Case 'the interactive page with the box not ticked removes a recognized cache and keeps the rest'
+          New-Neighbours; New-Cache $root
+          Set-RecordedLanguage
+          $code = Drive $uninstaller @("_?=$install") $false
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'removed view-cache' (-not (Test-Path -LiteralPath $root))
+          Check-Neighbours
+          Check 'kept the install location in the registry' (Test-Path 'HKCU:\Software\MSCanvas contributors\MSCanvas')
+
+          $null = Start-Case 'the interactive page with the box ticked removes the parent, and the hook does no harm'
+          New-Neighbours; New-Cache $root
+          New-Item -ItemType Directory -Force "$env:APPDATA\org.mscanvas.desktop" | Out-Null
+          Set-Content "$env:APPDATA\org.mscanvas.desktop\roaming.txt" 'roaming'
+          Set-RecordedLanguage
+          $code = Drive $uninstaller @("_?=$install") $true
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'the template removed the local parent' (-not (Test-Path -LiteralPath $data))
+          Check 'the template removed the roaming folder' (-not (Test-Path -LiteralPath "$env:APPDATA\org.mscanvas.desktop"))
+          Check 'the template removed the registry key' (-not (Test-Path 'HKCU:\Software\MSCanvas contributors'))
 
           $null = Start-Case '/S /UPDATE removes nothing'
           New-Neighbours; New-Cache $root
@@ -257,6 +322,18 @@ jobs:
           $code = Uninstall-InPlace @('/S')
           Check "exit status 0 ($code)" ($code -eq 0)
           Check 'made no folder' (-not (Test-Path -LiteralPath $data))
+
+          # Last: the installer's finish page starts the application. Not an owner
+          # decision, a record of what the template does (AFTER_BETA1_PLAN 7.2).
+          $null = Start-Case "a newer installer's default, Uninstall before installing, removes a recognized cache and keeps the rest"
+          New-Neighbours; New-Cache $root
+          Set-RecordedLanguage
+          Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MSCanvas' 'DisplayVersion' '0.0.1'
+          $code = Drive $setup @() $false
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'removed view-cache' (-not (Test-Path -LiteralPath $root))
+          Check-Neighbours
+          Check 'installed again' (Test-Path -LiteralPath $uninstaller)
 
           Write-Host "failed checks: $script:failed"
           exit $script:failed
