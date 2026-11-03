@@ -1594,11 +1594,6 @@ const DEFAULT_FIGURE: FigureSettingsDraft = {
 
 type Operation = "svg" | "png" | TargetedTableFormat;
 
-/** What an output is called on screen; only the spreadsheet CSV has a name of its own (ADR 0054). */
-function operationName(operation: Operation, t: UiMessage) {
-  return operation === "spreadsheetCsv" ? t("targetedTableSpreadsheetCsv") : operation.toUpperCase();
-}
-
 /** What the figure's text alternative says is drawn, by what the row holds. */
 const DRAWN_KEYS = {
   featureAndCandidates: "targetedFigureDrawnFeatureCandidates",
@@ -1648,7 +1643,11 @@ function describeOutput(state: OutputState, t: UiMessage, errorText: (error: Pre
     case "idle":
       return "";
     case "running":
-      return t("viewerExportChoose", { name: operationName(state.operation, t) });
+      // Whole sentences for the spreadsheet CSV (ADR 0054): its name is words,
+      // not a file extension, so the shared "{{name}}" templates would space it.
+      return state.operation === "spreadsheetCsv"
+        ? t("targetedTableSpreadsheetChoose")
+        : t("viewerExportChoose", { name: state.operation.toUpperCase() });
     case "cancelled":
       return t("viewerExportCancelled");
     case "savedFigure":
@@ -2050,9 +2049,11 @@ export function TargetedMs1Report({
                   data-targeted-export={format}
                   onClick={() => exportTable(format)}
                 >
-                  {t(initiated(format, null) ? "viewerExporting" : "viewerExportFormat", {
-                    name: operationName(format, t),
-                  })}
+                  {format === "spreadsheetCsv"
+                    ? t(initiated(format, null) ? "targetedTableSpreadsheetExporting" : "targetedTableSpreadsheetExport")
+                    : t(initiated(format, null) ? "viewerExporting" : "viewerExportFormat", {
+                        name: format.toUpperCase(),
+                      })}
                 </Button>
               ))}
             </div>

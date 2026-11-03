@@ -1065,8 +1065,7 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
     for (const locale of ["en", "zh-CN"] as const) {
       it(`saves the spreadsheet CSV by keyboard at ${String(width)}x${String(height)} in ${locale}`, async () => {
         const copy = locale === "en" ? en : zh;
-        const name = copy.targetedTableSpreadsheetCsv;
-        const choose = copy.viewerExportChoose.replace("{{name}}", name);
+        const choose = copy.targetedTableSpreadsheetChoose;
         const fileName = "mscanvas-targeted-ms1-eeeeeeee-results-spreadsheet.csv";
         const chooser = '[data-targeted-table-export] [data-targeted-export="spreadsheetCsv"]';
         /** The row's three buttons: what each says and refuses with, and where it sits. */
@@ -1132,9 +1131,11 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
 
         // Idle: three bordered buttons, nothing said yet.
         const idle = await shot("1-idle");
-        expect(idle.buttons.map((button) => button.text)).toEqual(
-          ["CSV", "TSV", name].map((format) => copy.viewerExportFormat.replace("{{name}}", format)),
-        );
+        expect(idle.buttons.map((button) => button.text)).toEqual([
+          copy.viewerExportFormat.replace("{{name}}", "CSV"),
+          copy.viewerExportFormat.replace("{{name}}", "TSV"),
+          copy.targetedTableSpreadsheetExport,
+        ]);
         expect(idle.buttons.map((button) => button.refused)).toEqual([null, null, null]);
 
         // Keyboard: the row in reading order from the report's heading.
@@ -1162,7 +1163,7 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
         expect(exporting.buttons.map(({ text, refused, reason }) => [text, refused, reason])).toEqual([
           [copy.viewerExportFormat.replace("{{name}}", "CSV"), "true", choose],
           [copy.viewerExportFormat.replace("{{name}}", "TSV"), "true", choose],
-          [copy.viewerExporting.replace("{{name}}", name), "true", choose],
+          [copy.targetedTableSpreadsheetExporting, "true", choose],
         ]);
         await browser.$('[data-targeted-table-export] [data-targeted-export="csv"]').click();
         expect(await heldCallers("export_targeted_ms1_table")).toBe(1);
@@ -1228,7 +1229,7 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
         }
         await shot("7-panels-open");
         if (width === 1366) {
-          // The narrowest window that still docks them, where the row has the least room.
+          // A window just wide enough to dock them, where the row's head wraps.
           await metrics(1060, height);
           await shot("8-panels-docked-1060");
         }

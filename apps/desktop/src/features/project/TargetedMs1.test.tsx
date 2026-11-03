@@ -1087,11 +1087,11 @@ describe("a stored result reused (M9.2)", () => {
   it("says the spreadsheet CSV in Chinese in a Chinese session", async () => {
     const api = await inspectResult(targetedProject(), undefined, "zh-CN");
     await screen.findByText(zh.targetedRowsCaption);
-    expect(button("spreadsheetCsv").textContent).toBe("导出 电子表格 CSV…");
+    expect(button("spreadsheetCsv").textContent).toBe("导出电子表格 CSV…");
     const release = api.holdOnce("exportTargetedMs1Table");
     await press(button("spreadsheetCsv"));
-    expect(status("table").textContent).toBe("选择 电子表格 CSV 文件的保存位置。");
-    expect(button("spreadsheetCsv").textContent).toBe("正在导出 电子表格 CSV…");
+    expect(status("table").textContent).toBe("选择电子表格 CSV 文件的保存位置。");
+    expect(button("spreadsheetCsv").textContent).toBe("正在导出电子表格 CSV…");
     await act(async () => {
       release();
     });
