@@ -416,6 +416,36 @@ interim defaults the owner may still change:
 - **Page tabs.** English labels keep the 80 px budget, so they stay short.
 - **The spectrum head.** The facts a narrow head drops stay visible in Details.
 
+### Project in the v5.11 look (2026-11-03): interim, not owner decisions
+
+A draft ports Project's own stylesheet. The owner has not seen it and none of
+these is an owner decision. They are the answers the draft ships with, for the
+owner to change. Where the accepted Workbench draws the same thing the draft
+uses its value, and elsewhere v5.11's final value:
+
+- **Insets.** 16 px in from the card, which is `.workbench-project`'s padding in
+  `workbench.css`; the surface adds none. That rule's scrollbar gutter stays, so
+  the right edge is 31 px in where the gutter is 15 px wide.
+- **Page title.** 17 px at v5.11's 650. Below v5.11's `h2` at 19 px, because
+  `TargetedMs1.test.tsx` holds 17 px and this draft changes no `.tsx` file.
+- **Section heads.** v5.11's `.panel-head` with a bare `h3`: 14 px at 650 over
+  the `#dce3eb` hairline, and not `.section-title h3`'s 13 px.
+- **Rows.** v5.11's 44 px row and `#edf1f5` hairline, with names at the roster's
+  13 px and 500. v5.11's `.data-name` is 600.
+- **Notices.** The shell's `.notice` values, which are v5.11's `.note`. A busy
+  notice takes `.note.blue`. A notice is not counted as a card in a card.
+- **Results table.** The Workbench scan table's size and head: 28 px rows under a
+  sticky 30 px head at 12 px. v5.11's 44 px feature rows would leave about six
+  rows in the 320 px box. The selected row is v5.11's fill and 3 px edge.
+- **Run and batch blocks.** A region under a hairline, like the review above
+  them, in place of a tinted well. The acquisitions field is hairline rows in
+  place of a box, and the result's figure has no border.
+- **Provenance.** The Workbench's Details values: 16 px in, facts at 7 px, section
+  rules as wide as the column. In the drawer only the kind and name give way to
+  Close.
+- **The inspected row.** Told by its pressed Details. It does not take the
+  roster's bar and fill.
+
 ## M6.6 destination and conflict surface
 
 This is a focused continuation of the accepted v5.11 organization using the

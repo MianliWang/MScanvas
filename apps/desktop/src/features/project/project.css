@@ -1,9 +1,11 @@
 /*
- * The project surface, in direction A's language: flat. A head row with the
- * project's name and its file actions, then sections that are a heading over
- * a hairline, rows separated by hairlines, states as tags and notices as
- * tinted wells. No card inside the shell's card (V12). Built from the shared
- * tokens only; every control is a components/ui Button, styled by ui.css.
+ * The project surface, in the v5.11 look (owner decision FE-2): flat. A head
+ * row with the project's name and its file actions, then sections that are a
+ * heading over a hairline, rows separated by lighter hairlines, states as tags
+ * and notices as v5.11's .note. No card inside the shell's card (V12). Where the
+ * accepted Workbench draws the same thing, this draws it the same way. Built
+ * from the shared tokens and v5.11's literal hairlines; every control is a
+ * components/ui Button, styled by ui.css.
  *
  * A state is never colour alone: each tag says it in words, and the rows carry
  * `data-verification` / `data-outcome` for anything reading rather than
@@ -24,8 +26,9 @@
   scrollbar-gutter: stable;
 }
 
-/* The shell's workspace card is the outer box; the surface is its padding.
-   A line of reading width, so a row's actions stay near its name. */
+/* The shell's workspace card is the outer box, and workbench.css's padding on
+   .workbench-project is the 16 px inset, so the surface adds none. A line of
+   reading width, so a row's actions stay near its name. */
 .project-surface {
   display: flex;
   flex: 1 0 auto;
@@ -35,7 +38,7 @@
   width: 100%;
   max-width: 1080px;
   margin: 0 auto;
-  padding: 8px 16px 24px;
+  padding: 0 0 8px;
   background: var(--color-surface);
   font-size: 13px;
 }
@@ -62,7 +65,8 @@
 .project-header h2 {
   margin: 0;
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 650;
+  letter-spacing: -0.2px;
   line-height: 1.3;
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
@@ -70,7 +74,7 @@
 
 /* "Not saved yet": the document's state, and why Save waits. */
 .project-head-state {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text-secondary);
 }
 
@@ -81,18 +85,18 @@
   gap: 8px;
 }
 
-/* Tags: a state in words, tinted by tone. */
+/* Tags (v5.11 .tag): a state in words, tinted by tone, 24 px tall. */
 .project-tag,
 .project-proposal {
   display: inline-flex;
   align-items: center;
   max-width: 100%;
-  padding: 0 6px;
+  padding: 2px 6px;
   border-radius: 4px;
   background: var(--color-surface-subtle);
   color: var(--color-text-secondary);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 550;
   line-height: 20px;
   white-space: nowrap;
 }
@@ -122,16 +126,17 @@
   white-space: normal;
 }
 
-/* A section's item count, beside its title. */
+/* A section's item count, beside its title: plain text, as the roster's is. */
 .project-count {
   color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
 
-/* Notices: what is happening, what is asked, what went wrong. Tinted wells,
-   not boxes. */
+/* Notices: what is happening, what is asked, what went wrong. v5.11's .note,
+   at the values the shell's own .notice uses: a tinted line with a tinted edge.
+   A notice holds a sentence and its answers, so it is not a card in a card. */
 .project-busy,
 .project-unsaved,
 .project-problem,
@@ -141,11 +146,12 @@
   align-items: center;
   gap: 8px 12px;
   margin: 0;
-  padding: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface-subtle);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -162,17 +168,20 @@
   gap: 4px 12px;
 }
 
+/* v5.11 .note.blue. */
 .project-busy {
-  background: var(--color-surface-selected);
-  color: var(--color-text-primary);
+  border-color: var(--color-selected-border);
+  background: #f2f7ff;
 }
 
 .project-unsaved {
+  border-color: #ebd4a5;
   background: var(--color-warning-soft);
   color: var(--color-warning);
 }
 
 .project-problem {
+  border-color: #e8bbb5;
   background: var(--color-danger-soft);
   color: var(--color-danger);
 }
@@ -191,26 +200,36 @@
 .project-empty {
   margin: 0;
   max-width: 72ch;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--color-text-secondary);
 }
 
-/* A section: its heading and actions over a hairline, then its rows. */
+.project-empty {
+  font-size: 13px;
+}
+
+/* A section: its heading and actions over a hairline, then its rows, which
+   start at that hairline. */
 .project-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin-top: 8px;
+}
+
+.project-section-head + .project-list {
+  margin-top: -8px;
 }
 
 .project-section-head {
   display: flex;
-  min-height: 40px;
+  min-height: 36px;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 4px 16px;
-  padding-bottom: 8px;
+  padding-bottom: 6px;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -225,7 +244,8 @@
 .project-section h3 {
   margin: 0;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 650;
+  line-height: 1.4;
   color: var(--color-text-primary);
 }
 
@@ -233,6 +253,7 @@
 .project-action-reason {
   margin: 0;
   font-size: 12px;
+  line-height: 1.5;
   color: var(--color-text-secondary);
 }
 
@@ -243,15 +264,16 @@
 }
 
 /* The open setup is the task in hand, not one more project section (PM9.5
-   O3): the accent bar a viewed row carries, along its top edge. Still an h3
+   O3): the 2 px accent bar a viewed row carries, along its top edge. Still an h3
    under the surface's h2, on the one section-title size (V2). */
 .targeted-setup {
   padding-top: 8px;
-  box-shadow: inset 0 3px 0 var(--color-accent);
+  box-shadow: inset 0 2px 0 var(--color-accent);
 }
 
-/* Rows: hairlines, not boxes. A row is its name and states, then its actions
-   at the end of the same line; a narrow column wraps the actions under it. */
+/* Rows: hairlines, not boxes, at v5.11's 44 px row. A row is its name and
+   states, then its actions at the end of the same line; a narrow column wraps
+   the actions under it. */
 .project-list {
   display: flex;
   flex-direction: column;
@@ -262,12 +284,12 @@
 
 .project-row {
   display: flex;
-  min-height: 28px;
+  min-height: 44px;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 16px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--color-chart-grid);
+  padding: 6px 0;
+  border-bottom: 1px solid #edf1f5;
   /* Wrapping rather than truncation: a file name is the thing a reader is
      looking for, and the roster made the same choice. */
   overflow-wrap: anywhere;
@@ -305,7 +327,7 @@
   min-width: 8rem;
   max-width: 100%;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 
@@ -371,16 +393,17 @@
 }
 
 /*
- * The provenance region, in Details (v5.11 .inspector): the object's kind and
- * name, then sections under a hairline, facts as label-and-value rows.
- * Current file state carries the check tones; history is quiet text.
+ * The provenance region, in Details (v5.11 .inspector, at the Workbench
+ * Details' values): the object's kind and name, then sections under a hairline
+ * as wide as the column, facts as label-and-value rows. Current file state
+ * carries the check tones; history is quiet text.
  */
 .panel.provenance {
   display: flex;
   min-height: 100%;
   flex-direction: column;
   gap: 4px;
-  padding: 16px 14px;
+  padding: 16px;
   border: 0;
   border-radius: 0;
   background: var(--color-surface);
@@ -392,32 +415,32 @@
 .panel.provenance { position: relative; }
 .panel.provenance > .provenance-close { display: none; }
 [data-drawer="details"] .panel.provenance > .provenance-close { position: absolute; top: 8px; right: 8px; display: inline-flex; }
-[data-drawer="details"] .panel.provenance { padding-right: 46px; }
+[data-drawer="details"] .panel.provenance > :is(.provenance-kind, .provenance-name, .provenance-empty) { padding-right: 32px; }
 
 /* The object's kind, in plain sentence case (V4). */
 .provenance-kind {
   margin: 0;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--color-text-secondary);
 }
 
 .provenance-name {
   margin: 0 0 4px;
   font-size: 16px;
-  font-weight: 600;
-  line-height: 1.35;
+  font-weight: 650;
+  line-height: 1.4;
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
 }
 
 .provenance-section-label {
-  margin: 12px 0 2px;
-  padding-top: 12px;
+  margin: 12px -16px 4px;
+  padding: 16px 16px 0;
   border-top: 1px solid var(--color-border);
   font-size: 12px;
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--color-text-secondary);
 }
 
 .provenance-current-row {
@@ -515,18 +538,20 @@
 .provenance-facts {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 0 12px;
   margin: 0;
   font-size: 12px;
 }
 
 .provenance-facts dt,
 .provenance-facts dd {
-  padding: 5px 0;
+  padding: 7px 0;
   border-bottom: 1px solid #edf1f5;
 }
 
+/* The space between label and value is the label's, so the row's hairline runs
+   unbroken. */
 .provenance-facts dt {
+  padding-right: 12px;
   color: var(--color-text-secondary);
 }
 
@@ -552,10 +577,19 @@
 
 /* In the 245 px Details column a fact is its label over its value: beside a
    column as wide as the longest label, a digest had no room (PM9 UI-25). At
-   1050 px and below Details is a 300 px drawer and keeps them side by side. */
+   1050 px and below Details is a 300 px drawer and keeps them side by side,
+   the value at the end as the Workbench's Details has it. */
+.workbench-inspector .provenance-facts dd {
+  text-align: end;
+}
+
 @media (width > 1050px) {
   .workbench-inspector .provenance-facts {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workbench-inspector .provenance-facts dd {
+    text-align: start;
   }
 
   .workbench-inspector .provenance-facts dt {
@@ -616,23 +650,26 @@
 .qc-report-table caption {
   padding-bottom: 4px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   text-align: left;
   color: var(--color-text-secondary);
 }
 
 .qc-report-table th,
 .qc-report-table td {
-  padding: 5px 12px 5px 0;
+  padding: 5px 12px;
   border-top: 1px solid #edf1f5;
   text-align: left;
   vertical-align: top;
 }
 
+/* A table's head as the Workbench's scan table draws it. */
 .qc-report-table thead th {
   border-top: none;
-  font-weight: 600;
-  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+  font-weight: 650;
+  color: var(--color-text-tertiary);
 }
 
 .qc-report-table tbody th {
@@ -653,15 +690,17 @@
   overflow-wrap: anywhere;
 }
 
-/* A required disclosure, as a tinted well rather than a box (V12, W2). */
+/* A required disclosure, as the warning notice (W2). */
 .targeted-experimental {
   margin: 0;
   max-width: 72ch;
-  padding: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid #ebd4a5;
   border-radius: var(--radius-sm);
   background: var(--color-warning-soft);
-  font-size: 13px;
-  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-warning);
 }
 
 .targeted-parameters {
@@ -674,16 +713,18 @@
 .targeted-targets {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-text-secondary);
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.5;
+  color: var(--color-text-primary);
 }
 
+/* v5.11's fields. */
 .targeted-parameters input,
 .targeted-targets textarea {
-  min-height: 30px;
-  padding: 4px 8px;
+  min-height: 34px;
+  padding: 7px 9px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-input);
   background: var(--color-surface);
@@ -691,6 +732,12 @@
   font: inherit;
   font-size: 13px;
   font-weight: 400;
+  line-height: 1.45;
+}
+
+.targeted-parameters input:hover,
+.targeted-targets textarea:hover {
+  border-color: #6d829d;
 }
 
 .targeted-parameters input {
@@ -768,7 +815,7 @@
 
 .targeted-table-export-label {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--color-text-secondary);
 }
 
@@ -799,23 +846,27 @@
   vertical-align: middle;
 }
 
+/* The apex and the area read as numbers, under heads that line up with them. */
+.targeted-rows :is(th, td):is(:nth-child(3), :nth-child(4)) {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .targeted-rows thead th {
   position: sticky;
   top: 0;
   z-index: 1;
   height: 30px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface);
 }
 
 .targeted-rows tbody th {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--color-text-primary);
 }
 
-.targeted-row-action {
+.targeted-rows td.targeted-row-action {
   width: 1%;
-  padding-right: 0;
+  padding-right: 8px;
   text-align: end;
   white-space: nowrap;
 }
@@ -826,8 +877,13 @@
   padding-bottom: 0;
 }
 
+/* v5.11's selected row: the selected fill and an inset blue edge. */
 .targeted-rows tr.is-chosen > * {
   background: var(--color-surface-selected);
+}
+
+.targeted-rows tr.is-chosen > :first-child {
+  box-shadow: inset 3px 0 0 var(--color-accent);
 }
 
 .targeted-rows tr[data-outcome="FAILED"] td:nth-child(2) {
@@ -857,6 +913,7 @@
   gap: 2px 12px;
   margin: 0;
   font-size: 13px;
+  font-weight: 650;
   color: var(--color-text-primary);
 }
 
@@ -874,8 +931,6 @@
   display: block;
   max-width: 100%;
   height: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
 }
 
 /* The fixed engine profile, as text: it wraps rather than scrolling sideways. */
@@ -892,22 +947,23 @@
   color: var(--color-text-primary);
 }
 
-/* Which acquisitions a request is for. */
+/* Which acquisitions a request is for: a field over hairline rows, not a box
+   in the card (V12). */
 .targeted-members {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 4px;
   margin: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  padding: 0;
+  border: 0;
 }
 
 .targeted-members > legend {
-  padding: 0 4px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: 0 0 2px;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.5;
   color: var(--color-text-primary);
 }
 
@@ -918,13 +974,18 @@
   flex-direction: column;
   margin: 0;
   padding: 0;
+  border-block: 1px solid var(--color-border);
   overflow: auto;
   list-style: none;
 }
 
+.targeted-member-list > li + li {
+  border-top: 1px solid #edf1f5;
+}
+
 .targeted-member-list label {
   display: flex;
-  min-height: 30px;
+  min-height: 32px;
   align-items: center;
   gap: 8px;
   font-size: 13px;
@@ -954,8 +1015,11 @@
 }
 
 /* The targeted task as one path (PM9.5): the request, its review, Run, then
-   the run or batch it started, each under its own heading. */
-.targeted-review-area {
+   the run or batch it started, each a region under a hairline and its own
+   heading. */
+.targeted-review-area,
+.targeted-run,
+.targeted-batch {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -968,6 +1032,7 @@
 .targeted-batch h4 {
   margin: 0;
   font-size: 13px;
+  font-weight: 650;
   color: var(--color-text-primary);
 }
 
@@ -984,17 +1049,6 @@
   align-self: flex-start;
 }
 
-/* One run's or one batch's own block: a tinted well, not a box (V12). */
-.targeted-run,
-.targeted-batch {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-subtle);
-}
-
 /* Sixteen members scroll inside the section, never sideways across the page. */
 .targeted-batch-scroll {
   max-height: 320px;
@@ -1007,8 +1061,13 @@
   vertical-align: middle;
 }
 
+/* v5.11's current step: the fill and the inset blue edge. */
 .targeted-batch tr[aria-current="step"] > * {
   background: var(--color-surface-selected);
+}
+
+.targeted-batch tr[aria-current="step"] > :first-child {
+  box-shadow: inset 3px 0 0 var(--color-accent);
 }
 
 .targeted-batch tr[data-state="failed"] td:nth-child(3) {
