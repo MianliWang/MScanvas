@@ -19,6 +19,14 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **Conversion runs are now remembered, and you can see and forget them.**
+  Conversion → **Conversion history** lists every run with when it started and
+  ended, or that it was cut short, and reads one run's files, outputs and checks
+  after a restart. The record stays on this computer, holds each source's path
+  and is never uploaded; the screen shows names and no path. **Clear history…**
+  forgets ended runs and **Turn off…** in Settings forgets every run and records
+  none; neither touches an acquisition or a converted file
+  ([ADR 0065](docs/architecture/adr/0065-conversion-run-history.md)).
 - **A saved PNG figure now carries the figure's title and description.** Every
   PNG saved from a spectrum, a chromatogram, the linked figure or a stored
   targeted result holds two uncompressed `iTXt` text chunks, `Title` and
