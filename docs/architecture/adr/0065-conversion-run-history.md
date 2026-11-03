@@ -354,8 +354,8 @@ and of G16, cross-session staging ownership, unchanged.
     Off and an On in another instance before that write lands do not stop it.
   - **A run Off could not remove:** a file a holder keeps leaves the run this
     session's (section 2). If recording is on again by then, its record, paths
-    included, goes on being written until that run ends. Shipped 2026-11-03, not
-    an owner decision.
+    included, goes on being written until that run ends, and again if a retry of
+    its queue reopens it. Shipped 2026-11-03, not an owner decision.
   - **A retry at the moment of a Clear:** a retry of the same queue that reopens
     a run after Clear read it as ended and before Clear removes its file is not
     recorded: its next write finds the file gone and stops, and nothing says so.
@@ -449,7 +449,9 @@ shows the queue.
   ended the queue. A file shows its state, attempts, failure in the queue's own
   sentence beside its stable code, and on Details its outputs and checks. A file a
   retry has not reached offers no Details: the record keeps its earlier attempt for
-  section 5, and that attempt is not why it waits. An
+  section 5, and that attempt is not why it waits. The queue's own row does offer
+  Details on such a file, because it goes by attempts. Shipped 2026-11-03, not an
+  owner decision. An
   interrupted file says its outcome is unknown; an oversized run says its files
   were not kept. A code appears only beside its sentence. What ended the queue is
   said as what happened, since the queue's own sentence is about that moment.
