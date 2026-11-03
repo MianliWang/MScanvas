@@ -54,10 +54,10 @@ export const documentIsKept = (code: string) => code === "unreadable" || code ==
 
 /** The heading and the sentences of one problem, for the notice and for Settings alike. */
 export function explainRestoreProblem(problem: RestoreProblem, t: UiMessage): { readonly title: string; readonly detail: string } {
-  if (problem.kind === "error") return { title: t("restoreNotRecorded"), detail: ownedErrorMessage(problem.error, t) };
+  if (problem.kind === "error") return { title: t(problem.action === true ? "restoreNotChanged" : "restoreNotRecorded"), detail: ownedErrorMessage(problem.error, t) };
   if (problem.kind === "turnedOff") return { title: t("restoreTurnedOff"), detail: lookUp(WRITE_PROBLEM, problem.problem, t) };
   const detail = lookUp(WRITE_PROBLEM, problem.problem, t);
-  return { title: t("restoreNotRecorded"), detail: problem.temporaryLeftBehind ? `${detail} ${t("restoreProblemTemporaryLeft")}` : detail };
+  return { title: t(problem.action === true ? "restoreNotChanged" : "restoreNotRecorded"), detail: problem.temporaryLeftBehind ? `${detail} ${t("restoreProblemTemporaryLeft")}` : detail };
 }
 
 /** Whether Try again can do anything about this problem. */

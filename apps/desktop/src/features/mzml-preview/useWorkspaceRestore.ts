@@ -21,9 +21,9 @@ export type RestoreReading =
 
 /** Why the last save, clear or switch did not do what was asked. */
 export type RestoreProblem =
-  | { readonly kind: "write"; readonly problem: string; readonly retryable: boolean; readonly temporaryLeftBehind: boolean }
+  | { readonly kind: "write"; readonly problem: string; readonly retryable: boolean; readonly temporaryLeftBehind: boolean; readonly action?: boolean }
   | { readonly kind: "turnedOff"; readonly problem: string }
-  | { readonly kind: "error"; readonly error: PreviewError };
+  | { readonly kind: "error"; readonly error: PreviewError; readonly action?: boolean };
 
 export type RestoreWork = "restoring" | "dismissing" | "startingFresh" | "switching" | "reading";
 
@@ -107,6 +107,8 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   const recorded = useRef<string | null | undefined>(undefined);
   const latest = useRef<{ readonly key: string; readonly arrangement: WorkspaceArrangement } | null>(null);
   const saving = useRef(false);
+  /** The clear or switch a failure answered, which its Try again asks again. */
+  const failedWrite = useRef<(() => void) | null>(null);
   /** Another window wrote the record: this session records nothing more (question 6). */
   const latched = useRef(false);
 
@@ -134,6 +136,7 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
       while (latest.current !== null && latest.current.key !== recorded.current && !latched.current) {
         const { key, arrangement } = latest.current;
         recorded.current = key;
+        failedWrite.current = null;
         let write: WorkspaceRestoreWrite;
         try {
           write = await api.saveWorkspaceRestore(arrangement);
@@ -199,13 +202,12 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   }, [act, offerable, putBack]);
 
   const dismissRow = useCallback((handle: string) => {
+    failedWrite.current = null;
     act("dismissing", () => api.dismissRestoredRow(handle).then(() => setProblem(null), (cause: unknown) => {
-      if (mounted.current) setProblem({ kind: "error", error: toPreviewError(cause) });
+      if (mounted.current) setProblem({ kind: "error", error: toPreviewError(cause), action: true });
     }));
   }, [act, api]);
 
-  /** The clear or switch a failure answered, which its Try again asks again. */
-  const failedWrite = useRef<(() => void) | null>(null);
   /** A clear or a switch: a write that did what was asked owes a save of what is live now. */
   const writing = useCallback((kind: RestoreWork, write: () => Promise<WorkspaceRestoreWrite>) => {
     const again = () => writing(kind, write);
@@ -218,11 +220,11 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
         setExpiredDismissed(false);
       } else {
         failedWrite.current = again;
-        setProblem(writeProblem(answer));
+        setProblem(actionProblem(answer));
       }
     }, (cause: unknown) => {
       failedWrite.current = again;
-      if (mounted.current) setProblem({ kind: "error", error: toPreviewError(cause) });
+      if (mounted.current) setProblem({ kind: "error", error: toPreviewError(cause), action: true });
     }));
   }, [act]);
 
@@ -246,6 +248,12 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   const dismissExpired = useCallback(() => setExpiredDismissed(true), []);
 
   return { reading, work, problem, expiredDismissed, restore, dismissRow, startFresh, setEnabled, retry, retryRead, dismissExpired };
+}
+
+/** The same problem, as the answer to a clear or a switch rather than to a save. */
+function actionProblem(write: WorkspaceRestoreWrite): RestoreProblem | null {
+  const problem = writeProblem(write);
+  return problem?.kind === "write" ? { ...problem, action: true } : problem;
 }
 
 function writeProblem(write: WorkspaceRestoreWrite): RestoreProblem | null {

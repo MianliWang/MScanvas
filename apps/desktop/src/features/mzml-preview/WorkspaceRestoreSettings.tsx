@@ -44,8 +44,8 @@ export function WorkspaceRestoreSettings({ session }: { readonly session: Worksp
           { value: "off", refused, label: <span data-setting-value="restore-off">{t("restoreSwitchOff")}</span> }]}
         onChange={(next) => session.setEnabled(next === "on")} />
     </SettingField>
-    <SettingField labelId={freshId} label={t("restoreRemembered")}>
-      <Button size="sm" data-restore-settings-clear="" refused={refused || read?.outcome === "off"} reasonId={reasonId ?? switchId}
+    <SettingField labelId={freshId} label={t("restoreRemembered")} help={read?.outcome === "off" ? t("restoreRememberedOff") : undefined}>
+      <Button size="sm" data-restore-settings-clear="" refused={refused || read?.outcome === "off"} reasonId={reasonId ?? `${freshId}-help`}
         onClick={session.startFresh}>{t("restoreStartFresh")}</Button>
     </SettingField>
     {reading.status === "loading" || reading.status === "idle" ? <div className="settings-storage-note" role="status" id={noteId} data-restore-settings="loading">

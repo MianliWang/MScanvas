@@ -315,6 +315,31 @@ describe("the restore notice", () => {
     await waitFor(() => expect(problemNotice()).toBeNull());
   });
 
+  it("asks a failed Start fresh again, and never a later failed save's Try again", async () => {
+    const clears: WorkspaceRestoreWrite[] = [{ outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: true }, { outcome: "saved" }];
+    const clear = vi.fn(() => Promise.resolve(clears.shift() as WorkspaceRestoreWrite));
+    const save = vi.fn<() => Promise<WorkspaceRestoreWrite>>(() => Promise.resolve({ outcome: "failed", problem: "notWritten", retryable: true, temporaryLeftBehind: false }));
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      workspaceRestore: {
+        readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw", "missing")])),
+        clearWorkspaceRestore: clear,
+        saveWorkspaceRestore: save,
+      },
+    });
+    mount(api);
+    await waitFor(() => expect(offerNotice()).not.toBeNull());
+    fireEvent.click(within(offerNotice()!).getByRole("button", { name: en.restoreStartFresh }));
+    await waitFor(() => expect(problemNotice()).toHaveTextContent(en.restoreNotChanged));
+    expect(problemNotice()).toHaveTextContent(en.restoreProblemTemporaryLeft);
+    const row1 = document.querySelector<HTMLElement>(`[data-handle="${selectedFile.handle}"] input[type="checkbox"]`)!;
+    fireEvent.click(row1);
+    await waitFor(() => expect(problemNotice()).toHaveTextContent(en.restoreNotRecorded));
+    fireEvent.click(within(problemNotice()!).getByRole("button", { name: en.restoreTryAgain }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
+
   it("offers Try again for a read that failed, and reads again", async () => {
     let attempts = 0;
     const api = createFakePreviewApi({ workspaceRestore: {

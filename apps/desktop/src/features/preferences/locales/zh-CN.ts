@@ -1628,6 +1628,8 @@ export const zhCN = {
   restoreStateUnsafe: "不是普通文件：此路径上是链接、文件夹或设备。",
   restoreReadFailed: "无法读取上次会话的记录。",
   restoreNotRecorded: "此会话未被记录。",
+  restoreNotChanged: "记录未更改。",
+  restoreRememberedOff: "恢复功能已关闭，未记住任何内容。",
   restoreTurnedOff: "恢复功能已关闭。",
   restoreProblemChangedElsewhere: "另一个 MSCanvas 窗口写入了记录，其记录已保留。请重新启动此窗口以继续记录。",
   restoreProblemIdentityUnknown: "另一个程序正占用记录。请稍后重试。",

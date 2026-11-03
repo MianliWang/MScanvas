@@ -1677,6 +1677,8 @@ export const en = {
   restoreStateUnsafe: "Not a plain file: a link, a folder or a device is at this path.",
   restoreReadFailed: "The last session's record could not be read.",
   restoreNotRecorded: "This session is not being recorded.",
+  restoreNotChanged: "The record was not changed.",
+  restoreRememberedOff: "Restore is off, so nothing is remembered.",
   restoreTurnedOff: "Restore was turned off.",
   restoreProblemChangedElsewhere: "Another MSCanvas window wrote the record, and its record is kept. Restart this window to record again.",
   restoreProblemIdentityUnknown: "Another program is holding the record. Try again in a moment.",
