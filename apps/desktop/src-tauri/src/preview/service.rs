@@ -30,8 +30,8 @@ use mscanvas_proteowizard::{
 
 use super::chromatogram::{
     ChromatogramExportFormat, ChromatogramSource, LinkedFigureFormat, MixedRetentionTimeUnits,
-    RangeRequest, TraceSet, data_document as chromatogram_data, figure_spec as chromatogram_figure,
-    linked_figure_spec, shared_retention_time_unit,
+    RangeRequest, ResolvedRange, TraceSet, data_document as chromatogram_data,
+    figure_spec as chromatogram_figure, linked_figure_spec, shared_retention_time_unit,
 };
 use super::conversion::conversion_source_kind;
 #[cfg(test)]
@@ -154,10 +154,11 @@ use super::dto::{
     adoption_superseded, outputs_not_adoptable,
 };
 use super::export::{
-    BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
-    ClaimedSpectrumExport, FigureFailure, LinkedTokens, ScientificExportSlots,
-    SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest, data_document,
-    exported_point_count, figure_spec as spectrum_figure, labelled_figure, png_of, raster_of,
+    BeginExportRefusal, ChromatogramSnapshot, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
+    ClaimedSpectrumExport, FigureFailure, LinkedPair, LinkedTokens, ResolvedSpectrumRange,
+    ScientificExportSlots, SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest,
+    SpectrumSnapshot, data_document, exported_point_count, figure_spec as spectrum_figure,
+    labelled_figure, png_of, raster_of,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -1690,11 +1691,35 @@ impl PreviewService {
     }
 
     /// The label of the row a figure's source was read from. Memory only.
-    fn row_label(&self, owner: DatasetId) -> Option<NotVerifiedByMscanvas> {
+    ///
+    /// A row that is gone is `stale`'s refusal and never "no label": the row is
+    /// the only thing that knows, and a figure drawn without asking it could be
+    /// a labelled output's with the label lost.
+    fn row_label(
+        &self,
+        owner: DatasetId,
+        stale: fn() -> PreviewErrorDto,
+    ) -> Result<Option<NotVerifiedByMscanvas>, PreviewErrorDto> {
         self.workspace()
             .registry
             .get(owner)
-            .and_then(|row| row.not_verified().cloned())
+            .map(|row| row.not_verified().cloned())
+            .ok_or_else(stale)
+    }
+
+    /// [`Self::row_label`] for a claim, which keeps the label for its dialog. A
+    /// refused claim gives its reservation back: its dialog never opens, and
+    /// nothing else would.
+    fn claimed_row_label(
+        &self,
+        reservation: &str,
+        owner: DatasetId,
+        stale: fn() -> PreviewErrorDto,
+    ) -> Result<Option<Box<NotVerifiedByMscanvas>>, PreviewErrorDto> {
+        let label = self.row_label(owner, stale).inspect_err(|_| {
+            self.spectrum_export_slot().cancel(reservation);
+        })?;
+        Ok(label.map(Box::new))
     }
 
     /// Gives the row a project reference was admitted as the label the
@@ -3413,7 +3438,7 @@ impl PreviewService {
     // snapshot out of the slot first and work from that, so a selection that
     // lands while a dialog is open changes what a *new* export would name
     /// without disturbing one already under way.
-    fn spectrum_export_slot(&self) -> std::sync::MutexGuard<'_, ScientificExportSlots> {
+    pub(super) fn spectrum_export_slot(&self) -> std::sync::MutexGuard<'_, ScientificExportSlots> {
         self.spectrum_export
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3858,11 +3883,7 @@ impl PreviewService {
         // Rendered from the snapshot the claim took, off the locks. The
         // spectrum on screen may be replaced while this runs; what is copied is
         // the one the user asked for, over the range they asked for.
-        let figure = labelled_figure(
-            spectrum_figure(snapshot.spectrum(), settings, resolved),
-            self.row_label(snapshot.owner()).as_ref(),
-        )
-        .map_err(|_| Self::figure_failure(FigureFailure::Unspecifiable))?;
+        let figure = self.spectrum_copy_figure(&snapshot, resolved, settings)?;
         let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
@@ -3882,12 +3903,29 @@ impl PreviewService {
         })
     }
 
+    /// The figure one spectrum copy puts on the clipboard, with its row's label.
+    /// A clipboard image has no other words, so this is all the label it gets.
+    pub(super) fn spectrum_copy_figure(
+        &self,
+        snapshot: &SpectrumSnapshot,
+        resolved: ResolvedSpectrumRange,
+        settings: FigureRenderSettings,
+    ) -> Result<mscanvas_plot_spec::spec::FigureSpec, PreviewErrorDto> {
+        let label = self.row_label(snapshot.owner(), spectrum_export_stale)?;
+        labelled_figure(
+            spectrum_figure(snapshot.spectrum(), settings, resolved),
+            label.as_ref(),
+        )
+        .map_err(|_| Self::figure_failure(FigureFailure::Unspecifiable))
+    }
+
     /// Claims one issued reservation so its save dialog may be shown.
     //
     // # Errors
     //
     // Refuses a reservation that was never issued, has already been claimed,
-    /// or has since been cancelled.
+    // has since been cancelled, or whose source row has left the workspace.
+    /// A refused claim leaves the lane idle.
     pub fn claim_spectrum_export(
         &self,
         reservation: &str,
@@ -3900,7 +3938,8 @@ impl PreviewService {
             .spectrum_export_slot()
             .claim_spectrum(reservation)
             .ok_or_else(spectrum_export_stale)?;
-        claimed.source_label = self.row_label(claimed.snapshot.owner()).map(Box::new);
+        claimed.source_label =
+            self.claimed_row_label(reservation, claimed.snapshot.owner(), spectrum_export_stale)?;
         Ok(claimed)
     }
 
@@ -4075,7 +4114,11 @@ impl PreviewService {
             .spectrum_export_slot()
             .claim_chromatogram(reservation)
             .ok_or_else(chromatogram_export_stale)?;
-        claimed.source_label = self.row_label(claimed.snapshot.owner()).map(Box::new);
+        claimed.source_label = self.claimed_row_label(
+            reservation,
+            claimed.snapshot.owner(),
+            chromatogram_export_stale,
+        )?;
         Ok(claimed)
     }
 
@@ -4189,11 +4232,7 @@ impl PreviewService {
             .map_err(Self::chromatogram_refusal)?;
         let _in_flight = SpectrumExportInFlight(self);
 
-        let figure = labelled_figure(
-            chromatogram_figure(snapshot.source(), resolved, traces, settings),
-            self.row_label(snapshot.owner()).as_ref(),
-        )
-        .map_err(|_| chromatogram_export_refused())?;
+        let figure = self.chromatogram_copy_figure(&snapshot, resolved, traces, settings)?;
         let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
@@ -4213,6 +4252,22 @@ impl PreviewService {
             range_high: resolved.domain().high(),
             source_scan_count: snapshot.source().scan_count(),
         })
+    }
+
+    /// As [`Self::spectrum_copy_figure`], for one chromatogram.
+    pub(super) fn chromatogram_copy_figure(
+        &self,
+        snapshot: &ChromatogramSnapshot,
+        resolved: ResolvedRange,
+        traces: TraceSet,
+        settings: FigureRenderSettings,
+    ) -> Result<mscanvas_plot_spec::spec::FigureSpec, PreviewErrorDto> {
+        let label = self.row_label(snapshot.owner(), chromatogram_export_stale)?;
+        labelled_figure(
+            chromatogram_figure(snapshot.source(), resolved, traces, settings),
+            label.as_ref(),
+        )
+        .map_err(|_| chromatogram_export_refused())
     }
 
     // ------------------------------------------------- linked two-panel figure
@@ -4283,7 +4338,11 @@ impl PreviewService {
             .spectrum_export_slot()
             .claim_linked_figure(reservation)
             .ok_or_else(linked_figure_stale)?;
-        claimed.source_label = self.row_label(claimed.chromatogram.owner()).map(Box::new);
+        claimed.source_label = self.claimed_row_label(
+            reservation,
+            claimed.chromatogram.owner(),
+            linked_figure_stale,
+        )?;
         Ok(claimed)
     }
 
@@ -4391,23 +4450,7 @@ impl PreviewService {
             .map_err(Self::linked_figure_refusal)?;
         let _in_flight = SpectrumExportInFlight(self);
 
-        let row = pair
-            .chromatogram()
-            .source()
-            .row_for_spectrum(pair.spectrum().spectrum())
-            .ok_or_else(linked_figure_source_mismatch)?;
-        let figure = labelled_figure(
-            linked_figure_spec(
-                pair.chromatogram().source(),
-                pair.spectrum().spectrum(),
-                row,
-                pair.range(),
-                traces,
-                settings,
-            ),
-            self.row_label(pair.chromatogram().owner()).as_ref(),
-        )
-        .map_err(|_| linked_figure_not_drawable())?;
+        let figure = self.linked_copy_figure(&pair, traces, settings)?;
         let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
@@ -4429,6 +4472,33 @@ impl PreviewService {
             selected_index: pair.selected_index(),
             selected_retention_time: pair.selected_retention_time(),
         })
+    }
+
+    /// As [`Self::spectrum_copy_figure`], for one linked pair.
+    pub(super) fn linked_copy_figure(
+        &self,
+        pair: &LinkedPair,
+        traces: TraceSet,
+        settings: FigureRenderSettings,
+    ) -> Result<mscanvas_plot_spec::spec::FigureSpec, PreviewErrorDto> {
+        let row = pair
+            .chromatogram()
+            .source()
+            .row_for_spectrum(pair.spectrum().spectrum())
+            .ok_or_else(linked_figure_source_mismatch)?;
+        let label = self.row_label(pair.chromatogram().owner(), linked_figure_stale)?;
+        labelled_figure(
+            linked_figure_spec(
+                pair.chromatogram().source(),
+                pair.spectrum().spectrum(),
+                row,
+                pair.range(),
+                traces,
+                settings,
+            ),
+            label.as_ref(),
+        )
+        .map_err(|_| linked_figure_not_drawable())
     }
 
     /// The two-panel figure one claimed linked export draws.

@@ -2292,8 +2292,9 @@ mod tests {
     /// Two panels needed no contract change: the renderer has carried a
     /// `Vec<PanelSpec>` since ADR 0028, and ordered vertical bands already place
     /// and describe them. Version 3 (M9.2) added sample marks and intervals,
-    /// and version 4 printed sizes and edited axis titles; a linked figure at
-    /// pixel settings uses none of them.
+    /// version 4 printed sizes and edited axis titles, and version 5 the source
+    /// note; a linked figure of an unlabelled row at pixel settings uses none of
+    /// them.
     #[test]
     fn a_linked_figure_needs_no_new_schema_version() {
         let source = ordinary();
