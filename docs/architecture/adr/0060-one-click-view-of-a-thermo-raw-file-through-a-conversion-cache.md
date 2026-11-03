@@ -384,6 +384,11 @@ under the `e2e` feature it is the same task-owned QA root.
 - **The uninstaller.** Whatever it does with the application data, it does with
   the cache. What its "Delete the application data" choice removes is not yet
   observed (plan section 7.2, as ADR 0058 records for presets).
+  - Owner decision, 2026-11-03 (OWNER_DECISIONS_V511 DEF-2, option (b)): every
+    uninstall removes the cache folder, including `/S` and `/P`, except on
+    `/UPDATE`. Presets and preferences stay opt-in behind "Delete the application
+    data". As built in `apps/desktop/src-tauri/installer-hooks.nsh`, and what ran
+    and did not: plan section 7.2.
 
 **Ownership marker.** The marker, `.mscanvas-view-cache-owner`, holds a
 constant, `mscanvas-view-cache\n`, as the staging marker does: it proves which

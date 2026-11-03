@@ -650,6 +650,35 @@ writer and Rust's ownership of files.
     recommendation is to always remove the cache folder (except on
     `/UPDATE`) and keep the key, presets and preferences opt-in. A
     release-path change, so the owner's.
+  - Owner decision, 2026-11-03 (DEF-2, option (b)): always remove the cache
+    folder on uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets
+    and preferences stay opt-in behind Delete the application data.
+  - *2026-11-03, built:* `apps/desktop/src-tauri/installer-hooks.nsh`, at
+    `NSIS_HOOK_POSTUNINSTALL`, so after the template has closed the application
+    and, with the box checked, removed the parent, when it finds nothing to do.
+    It removes `view-cache` only where Rust would open it: spelled so, a plain
+    directory under a parent that is no reparse point, with the marker byte for
+    byte, and with no reparse point anywhere below; otherwise nothing. It never
+    fails the uninstall and never prompts: a locked file stays with the marker,
+    so the root is still recognized and the next uninstall finishes it. A test in
+    `view_cache/tests.rs` pins its names to Rust's constants;
+    `.github/workflows/uninstall-view-cache.yml`, not a required check, installs
+    and uninstalls for real on a GitHub-hosted runner. It cannot drive the
+    interactive pages, so the box checked or not was not observed.
+  - *2026-11-03, run against scratch folders with NSIS 3.11, not an owner
+    decision:* `RMDir /r` follows a junction, as the folder named or inside it,
+    and deletes what the target holds. The hook never uses it. The template's
+    checked path does (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not
+    changed: with the box checked, a junction under that folder loses its target's
+    contents.
+  - *2026-11-03, read (not run) from `PageReinstall` of the same template, not an
+    owner decision:* an installer passes `/UPDATE` on to the old uninstaller only
+    when it was given `/UPDATE` itself. A person who runs a newer installer and
+    keeps the page's first choice, Uninstall before installing, therefore runs
+    the old uninstaller without it, and once that uninstaller carries the hook the
+    cache goes; each file's next View converts again. Presets and preferences
+    stay. Installing over an install with `/S` or `/UPDATE` runs no uninstaller.
+    The hook cannot tell these apart by its switches.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained

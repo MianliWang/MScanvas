@@ -315,6 +315,41 @@ fn the_root_is_made_whole_with_its_marker_and_nothing_is_left_beside_it() {
     assert_eq!(names(&parent(&scratch)), [ROOT_NAME]);
 }
 
+/// The uninstaller's hook spells the cache itself, in NSIS: it runs when this
+/// code cannot. A hook whose names differ, that the bundler is not told about, or
+/// under a macro name the template does not call, removes nothing and says
+/// nothing. A real install and uninstall is `uninstall-view-cache.yml`.
+#[test]
+fn the_uninstall_hook_spells_the_cache_as_this_module_does() {
+    let hook = include_str!("../../installer-hooks.nsh");
+    let content = std::str::from_utf8(ROOT_MARKER_CONTENT).expect("the marker is text");
+    for (name, value) in [
+        ("ROOT", ROOT_NAME.to_owned()),
+        ("MARKER", ROOT_MARKER.to_owned()),
+        ("MARKER_CONTENT", content.replace('\n', "$\\n")),
+        ("ENTRIES", ENTRIES.to_owned()),
+        ("STAGING", STAGING.to_owned()),
+    ] {
+        let define = format!("!define MSCANVAS_VIEW_CACHE_{name} \"{value}\"\n");
+        assert!(hook.contains(&define), "the hook lacks {define}");
+    }
+    assert!(hook.contains("!macro NSIS_HOOK_POSTUNINSTALL\n"));
+    // NSIS's RMDir /r follows a junction out of the tree it is removing.
+    assert!(
+        hook.lines()
+            .filter(|line| !line.trim_start().starts_with(';'))
+            .all(|line| !line.to_lowercase().contains("/r")),
+        "the hook must not remove anything recursively"
+    );
+
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).expect("the configuration");
+    assert_eq!(
+        config["bundle"]["windows"]["nsis"]["installerHooks"],
+        "installer-hooks.nsh"
+    );
+}
+
 #[test]
 fn losing_the_race_to_make_the_root_removes_only_the_losers_creation_directory() {
     let scratch = Scratch::new("vc-root-race");

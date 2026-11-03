@@ -37,6 +37,10 @@
 //! included --, an entry with anything else in it, an attempt with a link or
 //! other reparse point anywhere below it, and a root without its marker.
 //!
+//! The uninstaller is the one other thing that removes anything here:
+//! `installer-hooks.nsh` removes a root this module would recognize, and a test
+//! pins its names to the constants below.
+//!
 //! ## Names are held while they are used
 //!
 //! The root, `entries` and `staging` are held open for the cache's lifetime,

@@ -1,0 +1,262 @@
+name: Uninstall view cache
+
+# A real install and uninstall of the view cache hook
+# (apps/desktop/src-tauri/installer-hooks.nsh; OWNER_DECISIONS_V511 DEF-2, ADR
+# 0060) on a clean GitHub-hosted runner. Not a required check.
+#
+# These steps run the installer and the uninstaller and replace
+# %LOCALAPPDATA%\org.mscanvas.desktop, so they stay in this file: never run them
+# on a computer someone uses.
+#
+# What this cannot show: the interactive pages. The box "Delete the application
+# data" ticked or not, and "Uninstall before installing" on a newer installer's
+# page. Passive and silent runs skip them.
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/uninstall-view-cache.yml
+      - apps/desktop/src-tauri/installer-hooks.nsh
+      - apps/desktop/src-tauri/tauri.conf.json
+      - apps/desktop/src-tauri/src/view_cache.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  uninstall:
+    name: Uninstall view cache
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Install pinned pnpm
+        shell: pwsh
+        run: |
+          npm install --global --no-audit --no-fund pnpm@11.15.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --version
+          exit $LASTEXITCODE
+      - name: Install Rust
+        shell: pwsh
+        run: rustup toolchain install 1.97.1 --profile minimal
+      - run: pnpm install --frozen-lockfile
+      - name: Build the installer
+        run: pnpm tauri build --debug --bundles nsis
+      - name: Show that the generated script takes the hook
+        shell: pwsh
+        run: |
+          Select-String -LiteralPath target/debug/nsis/x64/installer.nsi -Pattern 'installer-hooks|NSIS_HOOK_POSTUNINSTALL' |
+            ForEach-Object { "installer.nsi:$($_.LineNumber): $($_.Line.Trim())" }
+      - name: Install, uninstall and check
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Get-ChildItem target/debug/bundle/nsis -Filter *-setup.exe -File | Select-Object -First 1).FullName
+          $local = $env:LOCALAPPDATA
+          $data = Join-Path $local 'org.mscanvas.desktop'
+          $root = Join-Path $data 'view-cache'
+          $install = Join-Path $local 'MSCanvas'
+          $uninstaller = Join-Path $install 'uninstall.exe'
+          $marker = '.mscanvas-view-cache-owner'
+          $key = 'a' * 64
+          $attempt = '11111111-1111-1111-1111-111111111111'
+          $outsideBase = Join-Path $local 'outside-the-cache'
+          $script:failed = 0
+          $script:caseNumber = 0
+
+          function Check([string]$label, [bool]$ok) {
+            if ($ok) { Write-Host "  ok    $label" } else { Write-Host "  FAIL  $label"; $script:failed++ }
+          }
+          # Waits for the program itself, and gives its real exit status.
+          function Run-Waited([string]$program, [string[]]$arguments) {
+            $process = Start-Process -FilePath $program -ArgumentList $arguments -PassThru
+            $null = $process.Handle
+            if (-not $process.WaitForExit(300000)) {
+              $process.Kill()
+              throw "$program $arguments did not finish in five minutes"
+            }
+            $process.ExitCode
+          }
+          # In place, as a newer installer's page runs it: a real exit status.
+          function Uninstall-InPlace([string[]]$flags) {
+            Run-Waited $uninstaller ($flags + "_?=$install")
+          }
+          function New-Cache([string]$at) {
+            New-Item -ItemType Directory -Force "$at\entries\$key", "$at\staging\$attempt\entry" | Out-Null
+            [IO.File]::WriteAllBytes("$at\$marker", [Text.Encoding]::ASCII.GetBytes("mscanvas-view-cache`n"))
+            Set-Content "$at\entries\$key\view.mzML" 'cached'
+            Set-Content "$at\entries\$key\entry.json" '{}'
+            Set-ItemProperty "$at\entries\$key\entry.json" IsReadOnly $true
+            Set-Content "$at\staging\$attempt\owner.json" '{}'
+            Set-Content "$at\staging\$attempt\entry\view.mzML" 'partial'
+          }
+          # Everything under the parent that is not the cache.
+          function New-Neighbours {
+            New-Item -ItemType Directory -Force $data, "$data\view-cache-old", "$data\view-cache.creating-$attempt" | Out-Null
+            Set-Content "$data\ui-preferences.json" '{}'
+            Set-Content "$data\conversion-presets.json" '{}'
+            Set-Content "$data\view-cache-old\$marker" "mscanvas-view-cache`n"
+            Set-Content "$data\view-cache.creating-$attempt\$marker" "mscanvas-view-cache`n"
+            Set-Content "$data\other.txt" 'other'
+          }
+          function Check-Neighbours {
+            foreach ($name in 'ui-preferences.json', 'conversion-presets.json', "view-cache-old\$marker", "view-cache.creating-$attempt\$marker", 'other.txt') {
+              Check "kept $name" (Test-Path -LiteralPath "$data\$name")
+            }
+          }
+          # Each case starts installed, with no data folder and its own outside
+          # folder. A finished case's data folder is set aside, never deleted.
+          function Start-Case([string]$name) {
+            $script:caseNumber++
+            Write-Host "== $name"
+            if (Test-Path -LiteralPath $data) {
+              Rename-Item -LiteralPath $data -NewName "org.mscanvas.desktop.case-$script:caseNumber"
+            }
+            $code = Run-Waited $setup @('/S')
+            if ($code -ne 0 -or -not (Test-Path -LiteralPath $uninstaller)) { throw "install exited $code" }
+            $outside = Join-Path $outsideBase "case-$script:caseNumber"
+            New-Item -ItemType Directory -Force $outside | Out-Null
+            Set-Content "$outside\canary.txt" 'canary'
+            $outside
+          }
+          function Check-CacheWhole([string]$at) {
+            foreach ($name in $marker, "entries\$key\view.mzML", "entries\$key\entry.json", "staging\$attempt\owner.json", "staging\$attempt\entry\view.mzML") {
+              Check "kept view-cache\$name" (Test-Path -LiteralPath "$at\$name")
+            }
+          }
+
+          # The positive control: if the hook never ran, this fails.
+          $null = Start-Case 'an uninstall as a person starts it (/S, through its temporary copy) removes a recognized cache'
+          New-Neighbours; New-Cache $root
+          $launcher = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+          Check "exit status 0 ($($launcher.ExitCode))" ($launcher.ExitCode -eq 0)
+          Check 'the uninstaller is gone' (-not (Test-Path -LiteralPath $uninstaller))
+          Check 'removed view-cache' (-not (Test-Path -LiteralPath $root))
+          Check 'kept the parent' (Test-Path -LiteralPath $data)
+          Check-Neighbours
+          Check 'kept the install location in the registry' (Test-Path 'HKCU:\Software\MSCanvas contributors\MSCanvas')
+
+          $null = Start-Case '/S in place removes a recognized cache'
+          New-Neighbours; New-Cache $root
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'removed view-cache' (-not (Test-Path -LiteralPath $root))
+          Check-Neighbours
+
+          $null = Start-Case '/P removes a recognized cache'
+          New-Neighbours; New-Cache $root
+          $code = Uninstall-InPlace @('/P')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'removed view-cache' (-not (Test-Path -LiteralPath $root))
+          Check-Neighbours
+
+          $null = Start-Case '/S /UPDATE removes nothing'
+          New-Neighbours; New-Cache $root
+          $code = Uninstall-InPlace @('/S', '/UPDATE')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check-CacheWhole $root
+          Check-Neighbours
+
+          $null = Start-Case 'installing over an install, /S and /S /UPDATE, runs no uninstaller and removes nothing'
+          New-Neighbours; New-Cache $root
+          $code = Run-Waited $setup @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check-CacheWhole $root
+          $code = Run-Waited $setup @('/S', '/UPDATE')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check-CacheWhole $root
+          Check-Neighbours
+
+          $null = Start-Case 'a folder with the name and no marker is kept'
+          New-Neighbours; New-Cache $root
+          Remove-Item -LiteralPath "$root\$marker" -Force
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the entry' (Test-Path -LiteralPath "$root\entries\$key\view.mzML")
+          Check-Neighbours
+
+          $null = Start-Case 'a marker that reads otherwise is kept'
+          New-Neighbours; New-Cache $root
+          [IO.File]::WriteAllBytes("$root\$marker", [Text.Encoding]::ASCII.GetBytes("mscanvas-view-cache`r`n"))
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check-CacheWhole $root
+
+          $null = Start-Case 'the name spelled otherwise on disk is kept'
+          New-Neighbours; New-Cache "$data\VIEW-CACHE"
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check-CacheWhole "$data\VIEW-CACHE"
+
+          $outside = Start-Case 'a cache root that is a junction leaves its target untouched'
+          New-Neighbours; New-Cache $outside
+          New-Item -ItemType Junction -Path $root -Target $outside | Out-Null
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
+          Check-CacheWhole $outside
+          Check 'kept the junction' (Test-Path -LiteralPath $root)
+
+          $outside = Start-Case 'a parent that is a junction leaves its target untouched'
+          New-Cache "$outside\view-cache"
+          Set-Content "$outside\view-cache\canary.txt" 'canary'
+          New-Item -ItemType Junction -Path $data -Target $outside | Out-Null
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\view-cache\canary.txt")
+          Check-CacheWhole "$outside\view-cache"
+          cmd /c rmdir $data
+          if ($LASTEXITCODE -ne 0) { throw 'could not remove the junction' }
+
+          $outside = Start-Case 'a junction inside the cache leaves its target untouched, and the tree whole'
+          New-Neighbours; New-Cache $root
+          New-Item -ItemType Junction -Path "$root\entries\$key\link" -Target $outside | Out-Null
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
+          Check-CacheWhole $root
+
+          $outside = Start-Case 'a junction where entries goes leaves its target untouched, and the tree whole'
+          New-Neighbours; New-Cache $root
+          Remove-Item -LiteralPath "$root\entries" -Recurse -Force
+          New-Item -ItemType Junction -Path "$root\entries" -Target $outside | Out-Null
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
+          Check 'kept staging' (Test-Path -LiteralPath "$root\staging\$attempt\owner.json")
+
+          $null = Start-Case 'a locked file stays with the marker, the uninstall still succeeds, and the next one finishes'
+          New-Neighbours; New-Cache $root
+          $lock = [IO.File]::Open("$root\entries\$key\view.mzML", 'Open', 'Read', 'None')
+          $code = Uninstall-InPlace @('/S')
+          $lock.Close()
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the locked file' (Test-Path -LiteralPath "$root\entries\$key\view.mzML")
+          Check 'kept the marker' (Test-Path -LiteralPath "$root\$marker")
+          Check 'removed what was not locked' (-not (Test-Path -LiteralPath "$root\staging"))
+          Check 'the uninstall went to its end' (-not (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MSCanvas'))
+          $code = Run-Waited $setup @('/S')
+          Check "installing again exits 0 ($code)" ($code -eq 0)
+          $code = Uninstall-InPlace @('/S')
+          Check "the next uninstall exits 0 ($code)" ($code -eq 0)
+          Check 'the next uninstall removed the rest' (-not (Test-Path -LiteralPath $root))
+          Check-Neighbours
+
+          $null = Start-Case 'an uninstall with no cache folder succeeds and keeps the parent'
+          New-Neighbours
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check-Neighbours
+
+          $null = Start-Case 'an uninstall with no application data folder succeeds and makes none'
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'made no folder' (-not (Test-Path -LiteralPath $data))
+
+          Write-Host "failed checks: $script:failed"
+          exit $script:failed
