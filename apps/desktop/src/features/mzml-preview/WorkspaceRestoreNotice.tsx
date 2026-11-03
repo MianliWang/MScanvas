@@ -94,7 +94,7 @@ export function announceRestore(session: WorkspaceRestoreSession, t: UiMessage, 
   const restored = read?.outcome === "restored" ? read : null;
   const offered = restored === null ? 0 : offeredRows(restored.groups).length;
   if (work === "reading" || (work === null && session.slowRead)) return t("restoreLoading");
-  if (work === "restoring") return t("restoreWorking", { count: offered });
+  if (work === "restoring" && offered > 0) return t("restoreWorking", { count: offered });
   if (session.slowWork) return t("restoreBusy");
   if (workspaceError !== null && offered > 0) return `${t("workspaceFailed")} ${ownedErrorMessage(workspaceError, t)}`;
   const problem = session.failed.at(-1)?.problem ?? session.problem ?? session.stopped;

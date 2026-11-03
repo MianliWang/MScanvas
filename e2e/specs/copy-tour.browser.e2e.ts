@@ -1567,7 +1567,8 @@ const STOPS: readonly Stop[] = [
     anchor: "[data-restore-action]",
   },
   { name: "restore-refused-conversion", table: (locale) => ({ ...conversionWorld(locale, STARTED), read_workspace_restore: RESTORE_OFFER }), anchor: "#restore-reason" },
-  ...(["staleArrangement", "invalidArrangement", "notStorable", "storedDocumentKept"] as const).map(problem => ({
+  // The last: a code this build does not know is shown, not swallowed.
+  ...(["staleArrangement", "invalidArrangement", "notStorable", "storedDocumentKept", "someCodeFromANewerBuild"] as const).map(problem => ({
     name: `restore-save-refused-${problem}`,
     table: (locale: Locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem } }),
     drive: toggleTheFirstRow,
