@@ -56,6 +56,34 @@ function renderApp(
 }
 
 /**
+ * Presses `Add files…` once it is offered, which is the only press a user has.
+ *
+ * The first render refuses it: the mount-time installation check holds the
+ * workspace ("Waiting: Checking the installation…"), and a refused button
+ * swallows its press by design. Whether that check's commit or a press sent as
+ * soon as the button exists runs first is event-loop order, so pressing
+ * straight after `findByRole` sometimes added nothing, and the next `findBy*`
+ * waited out its whole timeout for rows nobody had asked for.
+ */
+async function pressAddFiles(): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+}
+
+/**
+ * `pressAddFiles` for `Add mzML folder…`, which the same mount-time check
+ * refuses, and the mount-time roster read as well.
+ */
+async function pressAddFolder(): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+}
+
+/**
  * Renders, then adds files through the workspace action, as a user would.
  *
  * Adding into an empty session reads exactly the first row that arrived, which
@@ -64,7 +92,7 @@ function renderApp(
  */
 async function openTheFile(api: PreviewApi): Promise<void> {
   renderApp(api);
-  fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+  await pressAddFiles();
 }
 
 /**
@@ -137,7 +165,7 @@ describe("mzML preview workspace", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(screen.getByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
@@ -672,7 +700,7 @@ describe("mzML preview workspace", () => {
     await screen.findByRole("grid", { name: "Scans" });
 
     // The user reaches for more files and the dialog will not open.
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     expect(await screen.findByText("The file picker could not be opened")).toBeVisible();
 
     // Failing to choose new files is no reason to take away what is already
@@ -1296,8 +1324,11 @@ describe("native Explorer drop presentation", () => {
     );
     expect(screen.queryByText("The dropped items could not be added")).toBeNull();
     const addFiles = screen.getByRole("button", { name: "Add files…" });
-    expect(addFiles).not.toHaveAttribute("aria-disabled");
-    expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
+    // Once the mount-time installation check has committed (pressAddFiles).
+    await waitFor(() => {
+      expect(addFiles).not.toHaveAttribute("aria-disabled");
+      expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
+    });
     expect(api.rosterReads()).toBe(1);
 
     const retry = screen.getByRole("button", { name: "Reconnect drop" });
@@ -1491,7 +1522,7 @@ describe("the session workspace roster", () => {
 
     // A second picker operation, adding to a session that already has a file
     // open. Nothing about that is a request to read something else.
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     expect(await screen.findByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
 
     expect(api.openedHandles).toEqual(["file-0"]);
@@ -1507,7 +1538,7 @@ describe("the session workspace roster", () => {
     await openTheFile(api);
     await screen.findByRole("grid", { name: "Scans" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     expect(await screen.findByText(/1 file already in the workspace/, VISIBLE)).toBeVisible();
     expect(screen.getByText("QC_pool_01.mzML is already in the workspace.")).toBeVisible();
@@ -1541,7 +1572,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /sample\.mzML.*batch-2/ });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     expect(
       await screen.findByText("sample.mzML, batch-2 is already in the workspace.", VISIBLE),
@@ -1889,7 +1920,7 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     const row = await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     expect(api.openCount()).toBe(0);
@@ -1916,7 +1947,7 @@ describe("the session workspace roster", () => {
     const applicationRegions = regions();
     expect(applicationRegions).toHaveLength(12);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     await waitFor(() => {
       expect(regions().map((region) => region.textContent).join(" ")).toContain(
@@ -1964,7 +1995,7 @@ describe("the session workspace roster", () => {
         pickedFiles: [selectedFile, selectedFile],
       });
       renderApp(api);
-      fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+      await pressAddFiles();
 
       await waitFor(() => {
         expect(
@@ -2099,7 +2130,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
@@ -2134,7 +2165,7 @@ describe("the session workspace roster", () => {
       availability: availableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     // All four rows arrive, in picker order, each saying its family.
     await screen.findByRole("row", { name: /sample-29\.lcd/ });
@@ -2169,7 +2200,7 @@ describe("the session workspace roster", () => {
     });
     renderApp(api);
     // Deliberately not waiting for the roster: this is the window under test.
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     expect(await screen.findByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
     // Both rows are there, because Rust answered with everything it holds.
@@ -2188,7 +2219,7 @@ describe("the session workspace roster", () => {
       availability: unavailableBackend,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     await screen.findByRole("row", { name: /Blank_03\.mzML/ });
     const before = api.calls();
 
@@ -2208,7 +2239,7 @@ describe("the session workspace roster", () => {
   it("keeps the preview, the query and the sort while the view changes", async () => {
     const api = createFakePreviewApi({ pickedFiles: [selectedFile, secondFile, thirdFile] });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     // The first addition into an empty session reads exactly one file.
     await screen.findByRole("grid", { name: "Scans" });
     const reads = api.openCount();
@@ -2241,7 +2272,7 @@ describe("the session workspace roster", () => {
     chooseExecutionOrder("name-desc");
     expect(rosterRows()).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
 
     // The arrival does not match, and is on screen because it was selected.
     // The footer counts the checked rows; the list menu names the highlight
@@ -2400,7 +2431,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     expect(await screen.findByText("The workspace list could not be read")).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+    await pressAddFiles();
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
     fireEvent.click(screen.getByRole("row", { name: /QC_pool_01\.mzML/ }));
@@ -2519,7 +2550,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(screen.getByRole("row", { name: /QC_pool_02\.mzML/ })).toBeVisible();
@@ -2540,7 +2571,7 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /Blank_03\.mzML/ });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(api.openCount()).toBe(0);
@@ -2553,7 +2584,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     expect(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ })).toBeVisible();
     expect(api.openCount()).toBe(0);
@@ -2572,7 +2603,7 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
     // Chosen while the scan is unresolved, which is exactly what a captured
     // selection would throw away.
     const workingRow = rosterRow(/QC_pool_02\.mzML/);
@@ -2614,7 +2645,7 @@ describe("adding a folder of mzML files", () => {
     });
     const readsBefore = api.openCount();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
     scan.resolve({ files: [{ file: thirdFile, parents: [] }] });
 
     await waitFor(() => {
@@ -2637,7 +2668,7 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }), { ctrlKey: true });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     // Acquiring more waits: a second batch in flight would answer with a roster
     // from before this one's rows existed.
@@ -2684,7 +2715,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     await chooseRosterAction("removeHighlighted");
 
@@ -2917,7 +2948,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     await chooseRosterAction("clearList");
 
@@ -2956,7 +2987,7 @@ describe("adding a folder of mzML files", () => {
       clearWorkspace: () => clearing.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
@@ -3020,7 +3051,7 @@ describe("adding a folder of mzML files", () => {
       clearWorkspace: () => clearing.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
     clearing.resolve({ datasets: [], capacity: 1_024 });
@@ -3059,7 +3090,7 @@ describe("adding a folder of mzML files", () => {
       clearWorkspace: () => clearing.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
     fireEvent.click(screen.getByRole("button", { name: "Clear list" }));
 
     imported.resolve({
@@ -3157,7 +3188,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
     fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
@@ -3176,7 +3207,7 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add mzML folder…" })).not.toHaveAttribute("aria-disabled");
@@ -3207,7 +3238,7 @@ describe("adding a folder of mzML files", () => {
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await screen.findByRole("grid", { name: "Scans" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     expect(await screen.findByText("The folder could not be added")).toBeVisible();
     expect(screen.getByText(/MSCanvas does not follow links when scanning/)).toBeVisible();
@@ -3234,7 +3265,7 @@ describe("adding a folder of mzML files", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     expect(await screen.findByText(/none of its files were added/)).toBeVisible();
     expect(rosterRows()).toHaveLength(1);
@@ -3244,7 +3275,7 @@ describe("adding a folder of mzML files", () => {
     const scan = deferred<FolderScan | null>();
     const api = createFakePreviewApi({ scannedFolder: () => scan.promise });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     cleanup();
     scan.resolve({ files: [{ file: selectedFile, parents: [] }] });
@@ -3296,7 +3327,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     expect(await screen.findByText("Added 2 files.", VISIBLE)).toBeVisible();
     await waitFor(() => {
@@ -3316,7 +3347,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     expect(
       await screen.findByText(/No files were added, and the scan was incomplete\./, VISIBLE),
@@ -3337,7 +3368,7 @@ describe("adding a folder of mzML files", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     expect(
       await screen.findByText("No mzML files were found in that folder.", VISIBLE),
@@ -3355,13 +3386,13 @@ describe("adding a folder of mzML files", () => {
     const spoken = () =>
       document.querySelector("[data-live-region='workspace']")?.textContent ?? "";
 
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
     await waitFor(() => {
       expect(spoken()).toContain("No mzML files were found in that folder.");
     });
     const afterFirst = spoken();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     await waitFor(() => {
       expect(spoken()).not.toBe(afterFirst);
@@ -3395,7 +3426,7 @@ describe("telling two identically named acquisitions apart", () => {
   }
 
   async function importTheFolder(): Promise<void> {
-    fireEvent.click(await screen.findByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
     await screen.findByRole("row", { name: /unique\.mzML/ });
   }
 
@@ -3418,7 +3449,7 @@ describe("telling two identically named acquisitions apart", () => {
     // It was unique when the preview DTO was produced, so that response has no
     // context. The later folder answer recomputes the current roster instead.
     expect(within(summary).getByText(/^sample\.mzML ·/)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Add mzML folder…" }));
+    await pressAddFolder();
 
     const collidingIdentity = await within(summary).findByText(/^sample\.mzML, batch-1 ·/);
     expect(collidingIdentity).toBeVisible();
@@ -3567,6 +3598,9 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
+    await waitFor(() => {
+      expect(folder).not.toHaveAttribute("aria-disabled");
+    });
     folder.focus();
 
     fireEvent.click(folder);
@@ -3593,6 +3627,9 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
+    await waitFor(() => {
+      expect(folder).not.toHaveAttribute("aria-disabled");
+    });
     folder.focus();
 
     fireEvent.click(folder);
@@ -3623,6 +3660,9 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    await waitFor(() => {
+      expect(durable).not.toHaveAttribute("aria-disabled");
+    });
 
     // The first attempt creates the transient shell recovery action. It starts
     // with the pointer, so no restoration from the durable action is pending.
@@ -3665,6 +3705,9 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    await waitFor(() => {
+      expect(durable).not.toHaveAttribute("aria-disabled");
+    });
 
     fireEvent.click(durable);
     const noticeHeading = await screen.findByText("The folder could not be added");
@@ -3700,6 +3743,9 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    await waitFor(() => {
+      expect(durable).not.toHaveAttribute("aria-disabled");
+    });
     fireEvent.click(durable);
     const noticeHeading = await screen.findByText("The folder could not be added");
     const notice = noticeHeading.closest<HTMLElement>('[role="status"]');
@@ -3737,6 +3783,9 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    await waitFor(() => {
+      expect(durable).not.toHaveAttribute("aria-disabled");
+    });
     fireEvent.click(durable);
     const retryButton = await screen.findByRole("button", { name: "Choose another folder" });
     const focusing = vi.spyOn(durable, "focus");
@@ -3776,6 +3825,9 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const durable = await screen.findByRole("button", { name: "Add mzML folder…" });
+    await waitFor(() => {
+      expect(durable).not.toHaveAttribute("aria-disabled");
+    });
     fireEvent.click(durable);
     const retryButton = await screen.findByRole("button", { name: "Choose another folder" });
     retryButton.focus();
@@ -3814,6 +3866,10 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const add = await screen.findByRole("button", { name: "Add files…" });
+    // Offered first: a press on the refused button is swallowed (pressAddFiles).
+    await waitFor(() => {
+      expect(add).not.toHaveAttribute("aria-disabled");
+    });
     add.focus();
 
     fireEvent.click(add);
@@ -3835,6 +3891,9 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
+    await waitFor(() => {
+      expect(folder).not.toHaveAttribute("aria-disabled");
+    });
     folder.focus();
     fireEvent.click(folder);
     blurAsABrowserWould(folder);
@@ -3859,6 +3918,9 @@ describe("giving the keyboard back after an acquisition picker", () => {
     });
     renderApp(api);
     const folder = await screen.findByRole("button", { name: "Add mzML folder…" });
+    await waitFor(() => {
+      expect(folder).not.toHaveAttribute("aria-disabled");
+    });
 
     // Not focused first: a press that did not take the keyboard has no place to
     // return it to, and putting it here would be a move of its own.
@@ -4009,7 +4071,11 @@ describe("saying what a folder import is doing", () => {
     renderApp(api);
 
     const add = await screen.findByRole("button", { name: "Add files…" });
-    expect(add).not.toHaveAttribute("aria-disabled");
+    // Once the mount-time installation check has committed (pressAddFiles); the
+    // roster read is still held open below.
+    await waitFor(() => {
+      expect(add).not.toHaveAttribute("aria-disabled");
+    });
     expect(screen.getByRole("button", { name: "Add mzML folder…" })).toHaveAttribute("aria-disabled", "true");
     // And the window says it is still reading rather than claiming the session
     // is empty.
