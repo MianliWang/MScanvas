@@ -142,8 +142,8 @@ function endTicks(low: number, high: number): readonly AxisTick[] {
 
 /**
  * `svg.rs` `format_number`, Rust's `{:.decimals$}`. `toFixed` differs from it
- * twice: an exact tie goes up there and to the even digit here, and from 1e21 it
- * turns exponential, where every double is an integer `BigInt` writes in full.
+ * twice: it rounds an exact tie up where Rust takes the even digit, and from 1e21
+ * it turns exponential, where every double is an integer `BigInt` writes in full.
  */
 function fixedNumber(value: number, decimals: number): string {
   if (Math.abs(value) >= 1e21) return `${BigInt(value)}${decimals > 0 ? `.${"0".repeat(decimals)}` : ""}`;

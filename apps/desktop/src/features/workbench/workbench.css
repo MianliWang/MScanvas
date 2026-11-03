@@ -303,9 +303,9 @@
 .plot-tick { position: absolute; color: var(--color-text-secondary); line-height: 14px; white-space: nowrap; }
 /* Centred on its place, unless that would pass the frame's right edge: cut there,
    "1000.12025" reads as "1000.1202", another number. --tick-at is the place along
-   this row and 1cqw a hundredth of its width, so a resize needs no repaint; 14px
-   is the frame's right padding less two. */
-.plot-x-ticks .plot-tick { top: 0; transform: translateX(min(-50%, calc((100 - var(--tick-at)) * 1cqw + 14px - 100%))); }
+   this row, which paintTicks writes on each label, and 1cqw a hundredth of its
+   width, so a resize needs no repaint; 14px is the frame's right padding less two. */
+.plot-x-ticks .plot-tick { --tick-at: 50; top: 0; transform: translateX(min(-50%, calc((100 - var(--tick-at)) * 1cqw + 14px - 100%))); }
 .plot-y-ticks .plot-tick { right: 5px; transform: translateY(-50%); }
 .plot-gridlines line { stroke: var(--color-chart-grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .plot-baseline { stroke: var(--color-border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
