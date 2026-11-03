@@ -94,7 +94,7 @@ describe("WSP-010 Restore workspace, rendered", () => {
       read_workspace_restore: OFFER,
       restore_workspace: {
         workspace: { roster: { datasets: [MZML_ROW], capacity: 1024 }, outcomes: [{ outcome: "added", dataset: MZML_ROW }] },
-        placed: [{ handle: MZML_ROW.handle, group: null, checked: true, added: true }],
+        placed: [{ handle: MZML_ROW.handle, group: 0, checked: true, added: true }],
       },
     });
     await browser.$("[data-restore-action]").waitForDisplayed();
@@ -149,14 +149,61 @@ describe("WSP-010 Restore workspace, rendered", () => {
     await browser.$('[data-restore="offer"]').waitForExist({ reverse: true });
   });
 
-  it("keeps the later writer's refusal on screen and stops recording", async () => {
-    await start({ save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }, [MZML_ROW]);
+  it("keeps the later writer's refusal on screen through a dismiss and a later change, and stops recording", async () => {
+    await start({ read_workspace_restore: MARKED, save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }, [MZML_ROW]);
+    await browser.$("[data-restored-row]").waitForDisplayed();
     await toggleRow();
-    await browser.$('[data-restore="problem"]').waitForDisplayed();
-    expect(await text('[data-restore="problem"]')).toContain(en.restoreProblemChangedElsewhere);
+    const stopped = browser.$('[data-restore="stopped"]');
+    await stopped.waitForDisplayed();
+    expect(await stopped.getText()).toBe(`${en.restoreNotRecorded}\n${en.restoreProblemChangedElsewhere}`);
     expect(await browser.$("[data-restore-retry]").isExisting()).toBe(false);
+    await setInvokeResult("read_workspace_restore", read(ROW_STATES.slice(1).map((state, index) => row(index + 1, `${state}.raw`, state))));
+    await browser.$('[data-state="changed"] [data-restore-dismiss]').click();
+    await browser.waitUntil(async () => (await browser.$$("[data-restored-row]").length) === 4);
+    expect(await stopped.isDisplayed()).toBe(true);
     await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"] input[type="checkbox"]`).click();
     expect(await calls("save_workspace_restore")).toHaveLength(1);
+    expect(await stopped.isDisplayed()).toBe(true);
+    expect(await browser.$('[data-live-region="restore"]').getProperty("textContent")).toContain(en.restoreProblemChangedElsewhere);
+    await expectCleanConsole();
+  });
+
+  it("keeps a failed Off and its Try again through a later save that went through", async () => {
+    await start({ set_workspace_restore_enabled: { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false } }, [MZML_ROW]);
+    await browser.$("[data-settings-entry]").click();
+    const off = browser.$('[role="radio"]:has([data-setting-value="restore-off"])');
+    await off.waitForExist();
+    await browser.execute(() => document.querySelector('[role="radio"]:has([data-setting-value="restore-off"])')?.scrollIntoView());
+    await browser.waitUntil(async () => (await off.getAttribute("aria-disabled")) === null);
+    await off.click();
+    const inSettings = browser.$('[data-restore-settings="action"]');
+    await inSettings.waitForExist();
+    expect(await inSettings.getText()).toContain(en.restoreProblemNotPublished);
+    await browser.keys("Escape");
+    await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
+    await toggleRow();
+    await browser.waitUntil(async () => (await calls("save_workspace_restore")).length === 1);
+    const action = browser.$('[data-restore="action"]');
+    await action.waitForDisplayed();
+    expect(await action.getText()).toContain(en.restoreProblemNotPublished);
+    await setInvokeResult("set_workspace_restore_enabled", { outcome: "saved" });
+    await setInvokeResult("read_workspace_restore", { outcome: "off", leftoverCopies: 0 });
+    await browser.$('[data-restore="action"] [data-restore-retry]').click();
+    await action.waitForExist({ reverse: true });
+    expect((await calls("set_workspace_restore_enabled")).map(call => call.args["enabled"])).toEqual([false, false]);
+    await expectCleanConsole();
+  });
+
+  it("asks a failed dismiss again on Try again, and not a save", async () => {
+    await start({ read_workspace_restore: MARKED, dismiss_restored_row: { __reject: { kind: "unexpected_error", summary: "no answer", detail: null, retryable: true } } });
+    await browser.$("[data-restored-row]").waitForDisplayed();
+    await browser.$('[data-state="missing"] [data-restore-dismiss]').click();
+    await browser.$('[data-restore="action"]').waitForDisplayed();
+    await setInvokeResult("dismiss_restored_row", null);
+    await setInvokeResult("read_workspace_restore", read(ROW_STATES.filter(state => state !== "missing").map(state => row(ROW_STATES.indexOf(state), `${state}.raw`, state))));
+    await browser.$('[data-restore="action"] [data-restore-retry]').click();
+    await browser.$('[data-restore="action"]').waitForExist({ reverse: true });
+    expect((await calls("dismiss_restored_row")).map(call => call.args["handle"])).toEqual(["restored-1", "restored-1"]);
     await expectCleanConsole();
   });
 
@@ -215,14 +262,18 @@ describe("WSP-010 Restore workspace, rendered", () => {
   });
 
   it("turns restore off and starts fresh from Settings, saying the kept copies remain", async () => {
-    await start({ read_workspace_restore: read([], 0, 2) });
+    await start({ read_workspace_restore: read([row(0, "QC.raw", "missing")], 0, 2) });
     await browser.$("[data-settings-entry]").click();
     const copies = browser.$('[data-restore-settings="leftovers"]');
     await copies.waitForExist();
     expect(await copies.getText()).toContain("2 kept-aside copies remain");
     await browser.execute(() => document.querySelector("[data-restore-settings-clear]")?.scrollIntoView());
+    await setInvokeResult("read_workspace_restore", read([], 0, 2));
     await browser.$("[data-restore-settings-clear]").click();
     await browser.waitUntil(async () => (await calls("clear_workspace_restore")).length === 1);
+    // Nothing is waiting now, so another press would only be written again at once.
+    await browser.waitUntil(async () => (await browser.$("[data-restore-settings-clear]").getAttribute("aria-disabled")) === "true");
+    expect(await browser.$('[data-live-region="settings-restore"]').getProperty("textContent")).toBe(en.restoreNothingWaiting);
     await setInvokeResult("read_workspace_restore", { outcome: "off", leftoverCopies: 2 });
     await browser.$('[role="radio"]:has([data-setting-value="restore-off"])').click();
     await browser.waitUntil(async () => (await calls("set_workspace_restore_enabled")).length === 1);
@@ -232,18 +283,130 @@ describe("WSP-010 Restore workspace, rendered", () => {
     await expectCleanConsole();
   });
 
-  it("says when a turned-off record's clear found another window's write", async () => {
-    await start({ read_workspace_restore: read([], 0, 0), clear_workspace_restore: { outcome: "turnedOff", problem: "changedElsewhere" } });
-    await browser.$("[data-settings-entry]").click();
-    await browser.$("[data-restore-settings-clear]").waitForExist();
-    await setInvokeResult("read_workspace_restore", { outcome: "off", leftoverCopies: 0 });
-    await browser.execute(() => document.querySelector("[data-restore-settings-clear]")?.scrollIntoView());
-    await browser.$("[data-restore-settings-clear]").click();
-    const problem = browser.$('[data-restore-settings="problem"]');
-    await problem.waitForExist();
-    expect(await problem.getText()).toContain(en.restoreTurnedOff);
+  for (const [problem, sentence] of [
+    ["changedElsewhere", en.restoreTurnedOffChangedElsewhere],
+    ["identityUnknown", en.restoreTurnedOffIdentityUnknown],
+  ] as const) {
+    it(`says a clear that found ${problem} emptied the record and turned restore off, and offers no retry`, async () => {
+      await start({ read_workspace_restore: read([], 3, 0), clear_workspace_restore: { outcome: "turnedOff", problem } });
+      await browser.$("[data-settings-entry]").click();
+      await browser.$("[data-restore-settings-clear]").waitForExist();
+      await browser.waitUntil(async () => (await browser.$("[data-restore-settings-clear]").getAttribute("aria-disabled")) === null);
+      await setInvokeResult("read_workspace_restore", { outcome: "off", leftoverCopies: 0 });
+      await browser.execute(() => document.querySelector("[data-restore-settings-clear]")?.scrollIntoView());
+      await browser.$("[data-restore-settings-clear]").click();
+      const inSettings = browser.$('[data-restore-settings="action"]');
+      await inSettings.waitForExist();
+      expect(await inSettings.getText()).toContain(sentence);
+      await browser.keys("Escape");
+      await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
+      const action = browser.$('[data-restore="action"]');
+      await action.waitForDisplayed();
+      expect(await action.getText()).toBe(`${en.restoreTurnedOff}\n${sentence}`);
+      expect(await browser.$("[data-restore-retry]").isExisting()).toBe(false);
+      await browser.$('[data-restore="action"] .notice-dismiss').click();
+      await action.waitForExist({ reverse: true });
+      await expectCleanConsole();
+    });
+  }
+
+  it("says what is happening while a dismiss and its re-read are held, on the line a refusal points at", async () => {
+    await start({ read_workspace_restore: MARKED }, [], ["dismiss_restored_row"]);
+    await browser.$("[data-restored-row]").waitForDisplayed();
+    await holdInvoke("read_workspace_restore");
+    await browser.$('[data-state="changed"] [data-restore-dismiss]').click();
+    const fresh = browser.$('[data-restore="offer"] [data-restore-start-fresh]');
+    const described = async () => browser.execute(() => {
+      const refused = document.querySelector('[data-restore="offer"] [data-restore-start-fresh]');
+      const id = refused?.getAttribute("aria-describedby");
+      return { refused: refused?.getAttribute("aria-disabled") ?? null, target: id === null || id === undefined ? null : document.getElementById(id)?.textContent ?? null };
+    });
+    await browser.waitUntil(async () => (await fresh.getAttribute("aria-disabled")) === "true");
+    expect(await described()).toEqual({ refused: "true", target: en.restoreBusy });
+    await browser.$('.notice[data-restore="working"]').waitForDisplayed();
+    await releaseInvokeHold("dismiss_restored_row");
+    await browser.waitUntil(async () => (await calls("read_workspace_restore")).length === 2);
+    expect(await described()).toEqual({ refused: "true", target: en.restoreBusy });
+    expect(await browser.$('.notice[data-restore="working"]').isDisplayed()).toBe(true);
+    await releaseInvokeHold("read_workspace_restore");
+    await browser.$('[data-restore="working"]').waitForExist({ reverse: true });
+    await browser.waitUntil(async () => (await fresh.getAttribute("aria-disabled")) === null);
     await expectCleanConsole();
   });
+
+  it("says when there is nowhere to keep a record, and that line can be put away", async () => {
+    await start({ read_workspace_restore: { outcome: "unavailable", problem: "rootUnresolved" } });
+    const notice = browser.$('[data-restore="unavailable"]');
+    await notice.waitForDisplayed();
+    expect(await notice.getText()).toContain(en.restoreUnavailable);
+    expect(await browser.$('[data-live-region="restore"]').getProperty("textContent")).toContain(en.restoreUnavailable);
+    await browser.$('[data-restore="unavailable"] .notice-dismiss').click();
+    await notice.waitForExist({ reverse: true });
+    await expectCleanConsole();
+  });
+
+  it("counts the marked rows beside the offered ones", async () => {
+    await start({ read_workspace_restore: MIXED });
+    await browser.$("[data-restore-action]").waitForDisplayed();
+    expect(await text("[data-restore-attention]")).toBe("2 files from the last session need attention.");
+    expect(await browser.$('[data-live-region="restore"]').getProperty("textContent")).toBe("1 file from the last session can be added again. 2 files from the last session need attention.");
+    await expectCleanConsole();
+  });
+
+  it("shows neither switch choice as made after a failed read, and says why it failed", async () => {
+    await start({ read_workspace_restore: { __reject: { kind: "unexpected_error", summary: "boom", detail: null, retryable: true } } });
+    await browser.$('[data-restore="read-failed"]').waitForDisplayed();
+    await browser.$("[data-settings-entry]").click();
+    await browser.$('[data-restore-settings="read-failed"]').waitForExist();
+    for (const choice of ["restore-on", "restore-off"]) {
+      expect(await browser.$(`[role="radio"]:has([data-setting-value="${choice}"])`).getAttribute("aria-checked")).toBe("false");
+    }
+    await expectCleanConsole();
+  });
+
+  it("keeps the keyboard on the row it was on, so a second Enter dismisses a row in view", async () => {
+    const name = (index: number) => `run_${String(index).padStart(2, "0")}.raw`;
+    const rows = Array.from({ length: 40 }, (_, index) => row(index, name(index), "missing"));
+    await start({ read_workspace_restore: read(rows) }, [], [], [960, 640]);
+    await browser.$("[data-restored-row]").waitForDisplayed();
+    const focused = () => browser.execute(() => {
+      const active = document.activeElement;
+      const box = active?.getBoundingClientRect();
+      const track = document.querySelector(".shell-notices")?.getBoundingClientRect();
+      return { label: active?.getAttribute("aria-label") ?? null, inView: box !== undefined && track !== undefined && box.top >= track.top - 0.5 && box.bottom <= track.bottom + 0.5 };
+    });
+    await browser.execute(() => document.querySelector<HTMLElement>('[data-restored-row="restored-29"] [data-restore-dismiss]')?.focus());
+    await setInvokeResult("read_workspace_restore", read(rows.filter(entry => entry.handle !== "restored-29")));
+    await browser.keys("Enter");
+    await browser.waitUntil(async () => (await browser.$$("[data-restored-row]").length) === 39);
+    await browser.waitUntil(async () => (await focused()).label === `Dismiss ${name(30)}`);
+    expect((await focused()).inView).toBe(true);
+    await setInvokeResult("read_workspace_restore", read(rows.filter(entry => entry.handle !== "restored-29" && entry.handle !== "restored-30")));
+    await browser.keys("Enter");
+    await browser.waitUntil(async () => (await browser.$$("[data-restored-row]").length) === 38);
+    expect((await calls("dismiss_restored_row")).map(call => call.args["handle"])).toEqual(["restored-29", "restored-30"]);
+    await expectCleanConsole();
+  });
+
+  for (const size of [[1366, 768], [960, 640]] as const) {
+    it(`shows the name and the reason beside a group name of the longest length at ${String(size[0])}x${String(size[1])}`, async () => {
+      const longName = "组".repeat(120);
+      await start({ read_workspace_restore: { outcome: "restored", groups: [{ name: null, rows: [] }, { name: longName, rows: [row(0, "QC_01.raw", "missing")] }], expired: 0, leftoverCopies: 0 } }, [], [], size);
+      await browser.$("[data-restored-row]").waitForDisplayed();
+      const widths = await browser.execute(() => {
+        const width = (css: string) => document.querySelector(css)?.getBoundingClientRect().width ?? 0;
+        const notice = document.querySelector<HTMLElement>('[data-restore="offer"]');
+        return { name: width(".restore-marked-name"), group: width(".restore-marked-group"), reason: width(".restore-marked-reason"), client: notice?.clientWidth ?? 0, scroll: notice?.scrollWidth ?? 0 };
+      });
+      expect(widths.name).toBeGreaterThan(0);
+      expect(widths.reason).toBeGreaterThan(0);
+      expect(widths.group).toBeGreaterThan(0);
+      expect(widths.scroll).toBeLessThanOrEqual(widths.client);
+      const overflow = await horizontalOverflow();
+      expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
+      await expectCleanConsole();
+    });
+  }
 
   it("fits a long marked list in the narrow window, without moving the page sideways", async () => {
     const many = read(Array.from({ length: 40 }, (_, index) => row(index, `long_acquisition_name_for_a_narrow_window_${String(index)}.raw`, "missing")));

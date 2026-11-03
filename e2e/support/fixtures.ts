@@ -254,6 +254,7 @@ export function ipcTable(
     save_workspace_restore: { outcome: "saved" },
     clear_workspace_restore: { outcome: "saved" },
     set_workspace_restore_enabled: { outcome: "saved" },
+    dismiss_restored_row: null,
     subscribe_workspace_drop_updates: null,
     // The conversion slot, and the authority it is answered under. Every
     // response in this shape carries the projection -- the poll included, which
