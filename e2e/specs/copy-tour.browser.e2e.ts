@@ -1234,6 +1234,16 @@ const STOPS: readonly Stop[] = [
     },
     anchor: "[data-save='failed']",
   },
+  {
+    // The text read with a restore refusal above it: the tallest Settings there is.
+    name: "diagnostics-read-below-restore-refusal",
+    table: (locale) => ({ ...restoreTable({ outcome: "refused", problem: "malformed", leftoverCopies: 1 })(locale), read_environment_diagnostics: ENVIRONMENT_DIAGNOSTICS }),
+    drive: async () => {
+      await openRestoreSettings('[data-restore-settings="refused"]');
+      await browser.$("[data-diagnostics-read]").click();
+    },
+    anchor: "[data-diagnostics-preview]",
+  },
   // The conversion history (ADR 0065): the rail's entry, every state of the list
   // and of one run, and the off switch in Settings.
   { name: "run-history-entry", table: (locale) => conversionWorld(locale, { status: "idle" }), drive: () => go(2), anchor: "[data-run-history-entry]" },

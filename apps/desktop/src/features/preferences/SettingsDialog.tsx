@@ -180,9 +180,6 @@ export function SettingsDialog({ restore }: {
               <Button size="sm" data-layout-reset="" refused={layoutRefusal !== undefined} reasonId={`${layoutId}-help`}
                 onClick={panels.reset}>{message("layoutReset")}</Button>
             </SettingField>
-            {restore === undefined ? null : <WorkspaceRestoreSettings session={restore} />}
-            <h3 className="settings-section-title">{message("runHistoryTitle")}</h3>
-            <RunHistorySetting />
             {/* The shell's layout region is aria-hidden behind this modal, so
                 the dialog says it here. Mounted empty, so the change is heard. */}
             <p aria-live="polite" className="visually-hidden" data-live-region="settings-layout">
@@ -233,8 +230,12 @@ export function SettingsDialog({ restore }: {
               <p>{explainStoredProblem(save.problem, message)}</p>
               <p>{message("storedUnusableBody")}</p>
             </div> : null}
-            {/* Last, because it grows: what a save or a stored record has to say
-                stays beside the choices that raised it. */}
+            {/* Below those, so what a save or a stored record has to say stays
+                beside the choices that raised it, in view when Settings opens. */}
+            {restore === undefined ? null : <WorkspaceRestoreSettings session={restore} />}
+            <h3 className="settings-section-title">{message("runHistoryTitle")}</h3>
+            <RunHistorySetting />
+            {/* Last, because it grows. */}
             <h3 className="settings-section-title">{message("supportSection")}</h3>
             <CopyDiagnostics />
           </div>
