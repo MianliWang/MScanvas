@@ -1275,7 +1275,7 @@ const STOPS: readonly Stop[] = [
     anchor: `[data-run-detail="${RUNNING.runId}"] [data-run-item]`,
   },
   {
-    // A stop nobody could confirm, and a code this build does not know, named once.
+    // A stop nobody could confirm: no code, because neither the queue nor its file keeps one.
     name: "run-history-stop-failed",
     table: runHistoryWorld(listed([STOP_FAILED]), found(STOP_FAILED, STOP_FAILED_ITEMS)),
     drive: openRunHistory,

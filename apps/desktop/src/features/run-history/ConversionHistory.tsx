@@ -7,8 +7,6 @@ import { CONVERSION_VALUE_LABEL } from "../mzml-preview/ConversionSettings";
 import { NotVerifiedTag } from "../mzml-preview/NotVerifiedTag";
 import {
   SOURCE_KIND_LABEL,
-  conversionOutcomePassedThenUnpublished,
-  conversionOutcomeRefusedByIntegrity,
   toPreviewError,
   type ConversionCatalogRow,
   type ConversionValidation,
@@ -20,7 +18,7 @@ import { catalogRow } from "../mzml-preview/conversionIntentSelection";
 import { formatByteLength, formatCount } from "../mzml-preview/format";
 import { joinSentences, type UiMessage } from "../preferences/i18n";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { completenessSentence, explainRunHistoryError, explainRunHistoryProblem, RUN_STATE_LABEL, writeProblem } from "./runHistoryMessages";
+import { completenessSentence, explainRunHistoryError, explainRunHistoryProblem, queueEndingSentence, RUN_STATE_LABEL, writeProblem } from "./runHistoryMessages";
 import { useRunHistoryApi, type RunItem, type RunItemProgress, type RunListOutcome, type RunReadOutcome, type RunSummary } from "./runHistoryApi";
 import { useRunList, useRunWrite } from "./useRunList";
 
@@ -94,18 +92,15 @@ function codeAsError(code: string): PreviewError {
 /** What the record says of one item's outputs. Nothing is opened from here: ADR 0065 §8 is a later slice. */
 function ItemDetails({ item }: { readonly item: RunItem }): ReactElement | null {
   const t = useUiMessages();
-  const { outputs, completeness, setAdoptable, outcome, failure } = item.progress;
+  const { outputs, completeness, setAdoptable, failure } = item.progress;
+  // A single output is recorded only once finalized, so anything else has none.
   if (outputs.length === 0 && completeness === null) return null;
   // The first validated output's, as the queue's own row says it. The record's
   // mode is the same identifier a report carries, and an unknown one is named.
   const firstChecks = (outputs.find((output) => output.checks !== null)?.checks ?? null) as ConversionValidation | null;
   const advisories = [...new Set(outputs.flatMap((output) => output.checks?.advisory ?? []))];
-  // Neither an output refused nor one that passed and lost its name keeps its
-  // checks, and neither may read as "nothing was checked".
-  const refused = completeness === null
-    ? outcome !== null && conversionOutcomeRefusedByIntegrity(outcome)
-    : failure === "multi_output_member_rejected";
-  const passedThenUnpublished = completeness === null && outcome !== null && conversionOutcomePassedThenUnpublished(outcome);
+  // A rejected member keeps no checks, and must not read as "nothing was checked".
+  const refused = completeness !== null && failure === "multi_output_member_rejected";
   return (
     <Disclosure label={t("cnvDetails")} aria-label={t("cnvDetailsFor", { name: item.displayName })}
       className="conversion-item-toggle" regionProps={{ className: "conversion-item-detail" }}>
@@ -113,7 +108,7 @@ function ItemDetails({ item }: { readonly item: RunItem }): ReactElement | null 
         <div>
           <dt>{t("cnvIntegrityTitle")}</dt>
           <dd>
-            {integritySentence(firstChecks, outputs.length > 1, refused, passedThenUnpublished, null, t)}
+            {integritySentence(firstChecks, outputs.length > 1, refused, false, null, t)}
             {advisories.length === 0 ? null : (
               <> <span className="conversion-item-advisories">
                 {advisories.length === 1
@@ -211,7 +206,8 @@ function ItemList({ items, run }: { readonly items: readonly RunItem[]; readonly
             <div className="conversion-run-detail">
               {progress.attempts > 1 ? <span className="conversion-queue-attempts">{t("m74CnvAttempt", { count: progress.attempts })}</span> : null}
               {failure === null ? null : <span className="conversion-queue-reason">{failure}</span>}
-              {progress.failure === null ? null : <StableCode code={progress.failure} sentence={failure ?? ""} />}
+              {/* Only beside its sentence: a file a retry has not reached still holds its earlier failure, which is not why it waits. */}
+              {failure === null || progress.failure === null ? null : <StableCode code={progress.failure} sentence={failure} />}
               <ItemDetails item={item} />
             </div>
           </li>
@@ -236,7 +232,7 @@ function RunDetail({ run, read: answer, catalog }: {
   // What the read says wins over the list's copy, which can be a moment older.
   const shown = read.outcome === "found" ? read.run : run;
   const label = runLabel(shown);
-  const ended = shown.failure === null ? "" : conversionErrorMessage(codeAsError(shown.failure), t);
+  const ended = shown.failure === null ? "" : queueEndingSentence(shown.failure, t) ?? conversionErrorMessage(codeAsError(shown.failure), t);
   return (
     <div className="conversion-running conversion-run-rows" data-run-detail={shown.runId} data-run-state={shown.state}>
       <div className="conversion-column-head">

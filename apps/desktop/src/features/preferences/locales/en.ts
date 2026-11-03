@@ -1678,6 +1678,8 @@ export const en = {
   runHistoryPasses: "Passes",
   runHistorySettings: "Settings",
   runHistoryFailure: "What ended the queue",
+  runHistoryEndedUnconfirmedProcess: "MSCanvas could not confirm that a ProteoWizard process had ended, so the queue went no further.",
+  runHistoryEndedDestinationChanged: "The destination folder changed, so the queue went no further.",
   runHistoryItemInterrupted: "Interrupted, outcome unknown",
   runHistoryItemsOmitted: "This run was too large to keep each file's record.",
   runHistoryCompleteness: "Sample completeness",

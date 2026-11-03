@@ -90,6 +90,31 @@ describe("what a recorded failure says", () => {
     expect(document.querySelector("[data-run-item] .run-history-code")?.textContent).toBe("backend_quarantined");
   });
 
+  it("prints no code without its sentence: an outcome unknown, or a file a retry has not reached", async () => {
+    for (const state of ["interrupted", "running", "pending"]) {
+      const read: RunReadOutcome = { outcome: "found", run: RUN, items: [failedItem({ state, attempts: 2, failure: "file_unreadable" })] };
+      const view = withApi(api({ listRuns: () => Promise.resolve(listed([RUN])), readRun: () => Promise.resolve(read) }), history);
+      await waitFor(() => expect(document.querySelector(`[data-run-item][data-item-state="${state}"]`)).not.toBeNull());
+      expect(document.querySelector("[data-run-item] .run-history-code")).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("says what ended a queue as what happened, with the code beside it, and a stranger as itself", async () => {
+    const cases = [
+      ["backend_quarantined", en.runHistoryEndedUnconfirmedProcess],
+      ["queue_destination_changed", en.runHistoryEndedDestinationChanged],
+      ["later_build_code", "later_build_code"],
+    ] as const;
+    for (const [code, sentence] of cases) {
+      const ended = { ...RUN, failure: code };
+      const view = withApi(api({ listRuns: () => Promise.resolve(listed([ended])), readRun: () => Promise.resolve({ outcome: "found", run: ended, items: [] }) }), history);
+      await waitFor(() => expect(document.querySelector("[data-run-failure] dd")?.textContent).toContain(sentence));
+      expect(document.querySelector("[data-run-failure] .run-history-code")?.textContent ?? null).toBe(code === sentence ? null : code);
+      view.unmount();
+    }
+  });
+
   it("shows a time past what a Date holds as a number, and the application stays up", async () => {
     const far = { ...RUN, startedAtMs: 1e19 };
     withApi(api({ listRuns: () => Promise.resolve(listed([far])), readRun: () => Promise.resolve({ outcome: "found", run: far, items: [] }) }), history);

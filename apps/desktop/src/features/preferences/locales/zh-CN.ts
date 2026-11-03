@@ -1633,6 +1633,8 @@ export const zhCN = {
   runHistoryPasses: "轮次",
   runHistorySettings: "设置",
   runHistoryFailure: "队列结束的原因",
+  runHistoryEndedUnconfirmedProcess: "无法确认 ProteoWizard 进程已结束，因此队列没有继续。",
+  runHistoryEndedDestinationChanged: "目标文件夹已改变，因此队列没有继续。",
   runHistoryItemInterrupted: "已中断，结果未知",
   runHistoryItemsOmitted: "此次运行过大，未保留各文件的记录。",
   runHistoryCompleteness: "样品完整性",

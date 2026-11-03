@@ -132,12 +132,12 @@ export const RUNNING_ITEMS = [
   item("Plasma_QC_batch_08.raw", { state: "pending", attempts: 0, outcome: null, outputs: [] }),
 ];
 
-/** A stop nobody could confirm: the file it was on says so, in a code this build knows. */
+/** A stop nobody could confirm, as a queue records it: no code for the queue or the file it was on. */
 export const STOP_FAILED = run("00000000000000000000000000000007", {
-  state: "stopFailed", startedAtMs: NOON - 120 * HOUR, endedAtMs: NOON - 119 * HOUR, failure: "backend_quarantined", itemCount: 2, finalizedCount: 0, failedCount: 0,
+  state: "stopFailed", startedAtMs: NOON - 120 * HOUR, endedAtMs: NOON - 119 * HOUR, itemCount: 2, finalizedCount: 0, failedCount: 0,
 });
 export const STOP_FAILED_ITEMS = [
-  item("Unconfirmed_01.raw", { state: "cancellationFailed", outcome: null, failure: "queue_stop_unconfirmed", outputs: [] }),
+  item("Unconfirmed_01.raw", { state: "cancellationFailed", outcome: null, outputs: [] }),
   item("Unconfirmed_02.raw", { state: "notRun", attempts: 0, outcome: null, outputs: [] }),
 ];
 

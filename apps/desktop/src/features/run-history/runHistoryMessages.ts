@@ -55,6 +55,20 @@ export function completenessSentence(reason: string, t: UiMessage): string {
   });
 }
 
+/** The two refusals that can end a run that bound a build, as a record tells them later. */
+const QUEUE_ENDING = {
+  backend_quarantined: "runHistoryEndedUnconfirmedProcess",
+  queue_destination_changed: "runHistoryEndedDestinationChanged",
+} as const satisfies Record<string, MessageKey>;
+
+/**
+ * The queue's own sentences for these are about that moment: one says to restart,
+ * the other that nothing was retried. `null` for a code this table does not know.
+ */
+export function queueEndingSentence(code: string, t: UiMessage): string | null {
+  return Object.hasOwn(QUEUE_ENDING, code) ? t(QUEUE_ENDING[code as keyof typeof QUEUE_ENDING]) : null;
+}
+
 export const RUN_STATE_LABEL = {
   running: "runHistoryStateRunning",
   completed: "runHistoryStateCompleted",
