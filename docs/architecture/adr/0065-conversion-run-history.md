@@ -298,7 +298,7 @@ and of G16, cross-session staging ownership, unchanged.
   next start or list only tries to take the name off. It counts once, unless the
   holder also keeps the name from being read, which counts it again until the
   holder lets go. Another document at that name is another run, with its own
-  link.
+  link. As shipped on 2026-11-03, not an owner decision.
 - **Newer schema:** left exactly where it is and never rewritten. The list
   counts it as `newer`. Neither pruning nor Clear removes it, and pruning does
   not count it: a later build's run may be one its live instance is still
