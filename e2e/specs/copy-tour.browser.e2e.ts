@@ -1238,6 +1238,13 @@ const STOPS: readonly Stop[] = [
     anchor: '[data-run-history-note="newer"]',
   },
   {
+    // A run Off could not remove: still listed, with recording off and nothing owed.
+    name: "run-history-off-held",
+    table: runHistoryWorld(listed([ENDED], { recording: false }), found(ENDED, ENDED_ITEMS)),
+    drive: openRunHistory,
+    anchor: '[data-run-history-note="off"]',
+  },
+  {
     name: "run-history-unavailable",
     table: runHistoryWorld({ outcome: "unavailable", problem: "unsafeDirectory" }),
     drive: openRunHistory,

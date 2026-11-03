@@ -136,6 +136,26 @@ describe("Conversion history", () => {
     await focused('[data-run-item][data-item-state="finalized"] .conversion-item-toggle');
   });
 
+  // A run Off could not remove stays listed with nothing owed, so this note is all the rail says of it.
+  it("says recording is off beside a run still listed, and leaves an empty list to the main column", async () => {
+    const notes = () => browser.execute(() => [...document.querySelectorAll("[data-run-history-note]")].map((note) => note.getAttribute("data-run-history-note")));
+    await start(world({ list_conversion_runs: listed([ENDED], { recording: false }), read_conversion_run: found(ENDED, ENDED_ITEMS) }));
+    await browser.$(ENTRY).click();
+    await browser.$(`[data-run-detail="${ENDED.runId}"] [data-run-item]`).waitForDisplayed();
+    expect(await notes()).toEqual(["off"]);
+    expect(await browser.$('[data-run-history-note="off"]').getText()).toBe(en.runHistoryRecordingOff);
+
+    await setInvokeResult("list_conversion_runs", listed([ENDED]));
+    await browser.$("[data-run-history-refresh]").click();
+    await browser.$('[data-run-history-note="off"]').waitForExist({ reverse: true });
+
+    await setInvokeResult("list_conversion_runs", listed([], { recording: false }));
+    await browser.$("[data-run-history-refresh]").click();
+    await browser.$(".run-history-empty").waitForDisplayed();
+    expect(await browser.$(".run-history-empty").getText()).toBe(en.runHistoryRecordingOff);
+    expect(await notes()).toEqual([]);
+  });
+
   it("gives Conversion back to the queue when anything sends the reader to a surface", async () => {
     await start(world({ list_conversion_runs: listed([]) }));
     await browser.$(ENTRY).click();
