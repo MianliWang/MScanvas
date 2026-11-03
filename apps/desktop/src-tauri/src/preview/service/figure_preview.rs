@@ -151,13 +151,11 @@ impl PreviewService {
             return Err(spectrum_export_stale());
         }
         if svg.len() > MAX_FIGURE_PREVIEW_BYTES {
-            return Err(PreviewErrorDto {
-                kind: "figure_preview_too_large".to_owned(),
-                summary: "This figure exceeds the preview display limit.".to_owned(),
-                detail: None,
-                retryable: false,
-                context: None,
-            });
+            return Err(PreviewErrorDto::new(
+                "figure_preview_too_large",
+                "This figure exceeds the preview display limit.",
+                false,
+            ));
         }
         Ok((svg, empty))
     }

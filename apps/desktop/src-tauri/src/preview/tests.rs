@@ -3883,6 +3883,9 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         registered,
         [
             "get_bootstrap_status",
+            // ENV-004's environment summary (ADR 0063): one read, no argument,
+            // text back. It writes, sends and launches nothing.
+            "read_environment_diagnostics",
             // The UI preference store. Two commands for the record the
             // webview owns: reading and committing are the whole boundary,
             // and the reset-and-replace of an unusable record is a commit
@@ -4085,11 +4088,12 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     //
     // The registered commands no caller names yet: ADR 0052's per-output
     // adoption, which lands in Rust before its contract and hook slice (the
-    // webview is rebuilt on its own branch), and ADR 0060 slice 2's view
+    // webview is rebuilt on its own branch), ADR 0060 slice 2's view
     // commands, which its slice 3, the interface, will call once the owner
-    // chooses its direction. Declared rather than skipped, so the list cannot
-    // grow silently, and the declaration retires itself: once the frontend
-    // calls one, this list must lose it.
+    // chooses its direction, and ADR 0063's environment summary, which has no
+    // caller until the interface lane adds Copy diagnostics. Declared rather
+    // than skipped, so the list cannot grow silently, and the declaration
+    // retires itself: once the frontend calls one, this list must lose it.
     let awaiting_a_caller = [
         "adopt_workspace_conversion_output",
         "begin_raw_view",
@@ -4098,6 +4102,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         "open_raw_view",
         "describe_view_cache",
         "clear_view_cache",
+        "read_environment_diagnostics",
     ];
     for name in &registered[1..] {
         if awaiting_a_caller.contains(name) {
