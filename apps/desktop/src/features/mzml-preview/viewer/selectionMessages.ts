@@ -20,6 +20,7 @@ const SELECTION_MESSAGE = {
   "backend-unavailable": "viewerSelectionBackend",
   "backend-changing": "viewerSelectionChecking",
   "conversion-running": "viewerSelectionConverting",
+  "raw-view-running": "rawViewBusyUnnamed",
 } as const satisfies Record<SpectrumSelectionUnavailableReason, MessageKey>;
 
 export function spectrumSelectionMessage(

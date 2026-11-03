@@ -17,7 +17,7 @@ use mscanvas_proteowizard::{ConflictPolicy, ConversionIntent, ConversionRunOutco
 
 use super::super::authority::BackendAuthorityState;
 use super::super::backend::backend_label;
-use super::super::configuration::intent_dto;
+use super::super::configuration::{ConversionConfiguration, intent_dto};
 use super::super::raw_view::{
     Ended, MAX_RAW_BYTES, Progress, RawView, RawViewAvailabilityDto, RawViewBeginRequestDto,
     RawViewOperationRequestDto, RawViewPhaseDto, RawViewSnapshotDto, RawViewStateDto,
@@ -243,8 +243,8 @@ impl PreviewService {
 
     /// Decision 4's table, in its order, from what the session already holds:
     /// the backend as last observed, never a fresh probe. A catalog not read
-    /// yet says nothing about the build, so the press is still open and its
-    /// worker's own binding answers.
+    /// yet cannot name the build, and "available" with no release says verified,
+    /// so View waits for it; a read that failed answers as a press would.
     fn raw_view_availability(&self, handle: &str) -> RawViewAvailabilityDto {
         let refused = |code: &str| RawViewAvailabilityDto::Refused {
             available: false,
@@ -258,7 +258,7 @@ impl PreviewService {
         let Some((kind, byte_length)) = row else {
             return refused(&unknown_dataset().kind);
         };
-        let capabilities = {
+        let build = {
             let mut observed = self
                 .resolved
                 .lock()
@@ -267,11 +267,17 @@ impl PreviewService {
                 BackendAuthorityState::Settled {
                     binding,
                     preview_availability: PreviewAvailability::Usable,
-                } if binding.is_installed() => Some(observed.configurations.capabilities(binding)),
+                } if binding.is_installed() => {
+                    let failed = match observed.configurations.for_binding(binding) {
+                        ConversionConfiguration::Failed { error } => Some(error.kind.clone()),
+                        _ => None,
+                    };
+                    Some((observed.configurations.capabilities(binding), failed))
+                }
                 _ => None,
             }
         };
-        let Some(capabilities) = capabilities else {
+        let Some((capabilities, failed_read)) = build else {
             return refused("backend_not_found");
         };
         if self.backend_is_quarantined() {
@@ -303,11 +309,17 @@ impl PreviewService {
         if byte_length > MAX_RAW_BYTES {
             return refused(&view_cache_entry_too_large().kind);
         }
-        RawViewAvailabilityDto::Available {
-            available: true,
-            unverified_build_release: capabilities.as_ref().and_then(|capabilities| {
-                unverified_build_release(capabilities, ConversionSourceKind::ThermoRawFile)
-            }),
+        // Last: a transient wait must not hide what would still refuse after it.
+        match (capabilities, failed_read) {
+            (Some(capabilities), _) => RawViewAvailabilityDto::Available {
+                available: true,
+                unverified_build_release: unverified_build_release(
+                    &capabilities,
+                    ConversionSourceKind::ThermoRawFile,
+                ),
+            },
+            (None, Some(code)) => refused(&code),
+            (None, None) => refused("raw_view_build_unknown"),
         }
     }
 

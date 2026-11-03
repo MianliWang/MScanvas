@@ -57,7 +57,9 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
     stateRef.current = next;
     setState(next);
     busyRef.current = next.state === "running";
-    if (next.state === "running") setRefusal(null);
+    // A refusal was about a moment: it lasts until the operation moves on, and
+    // a poll that finds the same state is not that.
+    if (was.state !== next.state) setRefusal(null);
     if (was.state === "running" && next.state === "ready" && was.operation === next.operation && next.openable) {
       onReadyRef.current(next.operation, next.handle);
     }
@@ -119,7 +121,10 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
     const current = stateRef.current;
     if (current.state !== "running") return;
     reads.current += 1;
-    void api.cancelRawView(current.operation).then(apply).catch(() => undefined).finally(() => {
+    void api.cancelRawView(current.operation).then(apply).catch((cause: unknown) => {
+      // A document that lost the epoch (decision 12) is refused: the press says so.
+      if (mounted.current) setRefusal({ handle: current.handle, error: toPreviewError(cause) });
+    }).finally(() => {
       if (mounted.current) read();
     });
   }, [api, apply, read]);

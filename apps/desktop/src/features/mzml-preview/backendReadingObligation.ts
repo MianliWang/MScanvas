@@ -59,6 +59,7 @@ export type BackendCheckFacts = Omit<ProbeAdmissionFacts, "backendQuarantined">;
 export type BackendCheckRefusal =
   | "backendChanging"
   | "laneClaimed"
+  | "rawViewRunning"
   | "previewReading"
   | "probeInFlight"
   | "reclaimingStaging";
@@ -73,6 +74,7 @@ export type BackendCheckRefusal =
 const CHECK_REFUSAL_ORDER: readonly BackendCheckRefusal[] = [
   "backendChanging",
   "laneClaimed",
+  "rawViewRunning",
   "previewReading",
   "reclaimingStaging",
   "probeInFlight",
@@ -98,6 +100,7 @@ const CHECK_REFUSAL_ORDER: readonly BackendCheckRefusal[] = [
  */
 const CHECK_OCCASION_FACTS: readonly BackendCheckRefusal[] = [
   "laneClaimed",
+  "rawViewRunning",
   "previewReading",
   "probeInFlight",
 ];

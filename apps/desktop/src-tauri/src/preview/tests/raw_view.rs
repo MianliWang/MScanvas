@@ -1969,6 +1969,39 @@ fn the_availability_answer_follows_decision_4s_table_and_touches_nothing() {
 }
 
 #[test]
+fn a_catalog_not_read_yet_never_reads_as_a_verified_build() {
+    let unmeasured = conversion_capabilities("3.0.26204", None, &"e".repeat(64));
+    let runner = FakeConversionRunner::new(BackendAct::ConvertViewable);
+    let arguments = runner.arguments();
+    let session = viewing_on(
+        unmeasured,
+        "raw-view-availability-unread",
+        runner,
+        arguments,
+        open_responses(),
+    );
+    // Observed, but no configuration read: the build's release is not known.
+    session.service.inspect_backend();
+    assert_eq!(refusal(&session, &session.handle), "raw_view_build_unknown");
+
+    // A slot's holder still comes first, because that is what the reader waits for.
+    let answered = session.service.begin_conversion_queue(
+        &begin_request(
+            std::slice::from_ref(&session.handle),
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            current_receipt(&session.service),
+        ),
+        current_document(&session.service),
+    );
+    assert!(matches!(
+        answered.outcome,
+        ConversionBeginOutcomeDto::Reserved { .. }
+    ));
+    assert_eq!(refusal(&session, &session.handle), "conversion_busy");
+}
+
+#[test]
 fn a_running_view_and_a_quarantine_are_refused_by_their_own_codes() {
     let (runner, started, release) = StopAwareRunner::parked(StopEnding::Unterminated);
     let session = viewing_with(

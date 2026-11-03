@@ -2653,7 +2653,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
           hasLoadedPreview: handle !== null,
           backendUsable: backendUsableRef.current,
           backendBusy: backendBusyRef.current,
-          conversionBusy: conversionBusyRef.current || rawViewBusyRef.current,
+          conversionBusy: conversionBusyRef.current,
+          rawViewBusy: rawViewBusyRef.current,
         })
       ) {
         return;
@@ -3754,10 +3755,6 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
    * start?*, which stays `ConversionConfigurationProbeAdmission`'s.
    */
   const configurationProbe = useConversionProbeLane();
-  // A running view holds the conversion slot, and Rust refuses what a running
-  // queue refuses (ADR 0060 decision 5). These gates are what stop the interface
-  // asking, as they do for a read.
-  const previewLaneBusy = previewBackendBusy || rawView.busy;
   /**
    * The conversion lane's facts that this hook owns, as a render sees them.
    *
@@ -3770,7 +3767,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     () => ({
       backendUsable,
       backendChanging: backendBusy,
-      previewReading: previewLaneBusy,
+      previewReading: previewBackendBusy,
+      rawViewRunning: rawView.busy,
       configurationProbing: configurationProbe.probing,
       workspaceSettling,
     }),
@@ -3778,7 +3776,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendBusy,
       backendUsable,
       configurationProbe.probing,
-      previewLaneBusy,
+      previewBackendBusy,
+      rawView.busy,
       workspaceSettling,
     ],
   );
@@ -3798,7 +3797,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendChanging: backendBusyRef.current,
       // A count rather than a flag, so a stale read settling never clears the
       // marker a newer one is relying on.
-      previewReading: viewerRequests.current > 0 || rawViewBusyRef.current,
+      previewReading: viewerRequests.current > 0,
+      rawViewRunning: rawViewBusyRef.current,
       // The probe's own synchronous half, written beside its rendered twin in
       // `useConversionProbeLane`. A conversion dispatched in the same commit
       // that issued a configuration read has to see the claim the read raised,
@@ -3836,9 +3836,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendChanging: backendBusy,
       laneClaimed: conversion.lane.laneClaimed,
       reclaimingStaging: conversion.reclaimingStaging,
-      previewReading: previewLaneBusy,
+      previewReading: previewBackendBusy,
+      rawViewRunning: rawView.busy,
     }),
-    [backendBusy, backendQuarantined, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewLaneBusy],
+    [backendBusy, backendQuarantined, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewBackendBusy, rawView.busy],
   );
   /**
    * The same four facts, from the refs each of them is written beside.
@@ -3859,7 +3860,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendChanging: backendBusyRef.current,
       laneClaimed: conversion.laneClaimedRef.current,
       reclaimingStaging: conversion.reclaimingStagingRef.current,
-      previewReading: viewerRequests.current > 0 || rawViewBusyRef.current,
+      previewReading: viewerRequests.current > 0,
+      rawViewRunning: rawViewBusyRef.current,
     }),
     [conversion.laneClaimedRef, conversion.reclaimingStagingRef, rawViewBusyRef],
   );
@@ -3892,10 +3894,11 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendChanging: backendBusy,
       laneClaimed: conversion.lane.laneClaimed,
       reclaimingStaging: conversion.reclaimingStaging,
-      previewReading: previewLaneBusy,
+      previewReading: previewBackendBusy,
+      rawViewRunning: rawView.busy,
       probeInFlight: configurationProbe.probing,
     }),
-    [backendBusy, configurationProbe.probing, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewLaneBusy],
+    [backendBusy, configurationProbe.probing, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewBackendBusy, rawView.busy],
   );
   // **Before the configuration read, and that ordering is the decision.** A
   // `BEGIN` that resolves a replacement and refuses leaves a check and a read
@@ -4039,7 +4042,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         // there would take away a selection the operation would have made, and
         // would say a conversion was running while a text file finished being
         // written.
-        conversionBusy: conversion.lane.laneClaimed || rawView.busy,
+        conversionBusy: conversion.lane.laneClaimed,
+        rawViewBusy: rawView.busy,
       }),
     [backendBusy, backendUsable, conversion.lane.laneClaimed, hasLoadedPreview, rawView.busy],
   );

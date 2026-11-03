@@ -84,6 +84,16 @@ function outputSetSummary(maxMembers: number, t: UiMessage): string {
   return t("m74CnvOutputBound", { count: maxMembers });
 }
 
+/** What the refusal says of the view holding the slot, and the way to its Cancel. */
+export interface ConversionRawViewHolder {
+  readonly reason: string;
+  /** The whole name, where the reason and the button shortened it. */
+  readonly title: string;
+  readonly showText: string;
+  readonly showLabel: string;
+  readonly onShow: () => void;
+}
+
 export interface ConversionPanelProps {
   readonly conversion: ConversionOperation;
   /**
@@ -114,6 +124,8 @@ export interface ConversionPanelProps {
   readonly onSortChange: (sort: SortMode) => void;
   /** The release the bound ProteoWizard build reports, for the plan rail (C11). */
   readonly buildRelease?: string | null;
+  /** A one-click view holding the slot, for the refusal that names it (ADR 0060 decision 5). */
+  readonly rawViewHolder?: ConversionRawViewHolder | null;
 }
 
 /**
@@ -130,6 +142,7 @@ export function ConversionPanel({
   onScopeChange,
   onSortChange,
   buildRelease = null,
+  rawViewHolder = null,
 }: ConversionPanelProps): ReactElement | null {
   const t = useUiMessages();
   const { state } = conversion;
@@ -500,7 +513,7 @@ export function ConversionPanel({
         {/* The rail's last child, pinned to the bottom of whatever scrolls
             (the rail, or the whole page in a short window). */}
         <div className="conversion-rail-foot" data-start-offered={planShown || undefined}>
-          <AvailabilityNotice refusals={refusals} />
+          <AvailabilityNotice refusals={refusals} rawViewHolder={rawViewHolder} />
           {!planShown ? null : (
             <PlanStart
               conversion={conversion}
@@ -537,9 +550,11 @@ export function ConversionPanel({
  */
 function AvailabilityNotice({
   refusals,
+  rawViewHolder,
 }: {
   /** One entry per action, `null` for each action not on screen. */
   readonly refusals: readonly (ConversionRefusal | null)[];
+  readonly rawViewHolder: ConversionRawViewHolder | null;
 }): ReactElement {
   const t = useUiMessages();
   return (
@@ -548,7 +563,14 @@ function AvailabilityNotice({
       className="conversion-availability"
       data-live-region="conversion-availability"
     >
-      {conversionNotices(refusals).map((notice) => (
+      {conversionNotices(refusals).map((notice) => notice.reason === "raw-view-running" && rawViewHolder !== null ? (
+        // The sentence alone is the reason a control points at; Show is its recovery
+        // (decision 5), because this surface has no Cancel for a view.
+        <div className="notice notice-warning raw-view-notice" key={notice.reason}>
+          <p id={notice.id} title={rawViewHolder.title}>{rawViewHolder.reason}</p>
+          <Button size="sm" aria-label={rawViewHolder.showLabel} title={rawViewHolder.title} onClick={rawViewHolder.onShow}>{rawViewHolder.showText}</Button>
+        </div>
+      ) : (
         <p className="notice notice-warning" id={notice.id} key={notice.reason}>
           {conversionNoticeMessage(notice.reason, t)}
         </p>

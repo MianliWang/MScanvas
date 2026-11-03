@@ -111,7 +111,8 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
     <h3>{t("cnvSettingsTitle")}</h3>{controls}
   </div>;
   if (held === null || held.configuration === "unattempted") return <div className="conversion-settings" data-settings-state="loading">
-    {head()}<p className="quiet-text">{t("cnvSettingsLoading")}</p>{retry()}
+    {/* Held behind a view that has the slot, nothing is being read yet (ADR 0060 slice 3 note 8). */}
+    {head()}<p className="quiet-text">{configuration.refusal === "rawViewRunning" && !configuration.reading ? t("rawViewBusyUnnamed") : t("cnvSettingsLoading")}</p>{retry()}
   </div>;
   if (held.configuration === "unavailableForBinding") return null;
   if (held.configuration === "failed") return <div className="conversion-settings" data-settings-state="failed">

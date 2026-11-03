@@ -90,6 +90,7 @@ const MESSAGE = {
   view_cache_entry_unavailable: "errViewCacheEntryUnavailable",
   view_cache_unreadable: "errViewCacheUnreadable",
   view_export_withheld: "errViewExportWithheld",
+  raw_view_build_unknown: "backendCheckingInstallation",
   viewed_through_cache: "errViewedThroughCache",
   source_requires_bundle_handoff: "errSourceRequiresBundle",
   source_identity_unavailable: "errSourceIdentityUnavailable",

@@ -126,6 +126,7 @@ const REFUSALS = {
   inputUsedByRun: "projectRefusedInputUsedByRun",
   layerUsedByRun: "projectRefusedLayerUsedByRun",
   previewNotCurrent: "projectRefusedPreviewNotCurrent",
+  viewed_through_cache: "errViewedThroughCache",
   producerUnidentified: "projectRefusedProducerUnidentified",
   summaryTooLarge: "projectRefusedSummaryTooLarge",
   // A capture's own names for two shared refusals; see `useProject`.
