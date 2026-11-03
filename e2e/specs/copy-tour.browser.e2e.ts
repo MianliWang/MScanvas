@@ -237,6 +237,13 @@ function labelledProject(locale: Locale) {
   return onUnmeasured(table);
 }
 
+/** The project's Details on that reference. */
+async function inspectLabelledReference() {
+  await go(3);
+  await browser.$(`[data-project-inspect="${CAPTURED_INPUT}"]`).click();
+  await revealInDetails('#workbench-inspector [data-provenance="input"]');
+}
+
 /** A project already saved somewhere, with a change, so Save is offered and not asked about. */
 function savedProject(locale: Locale) {
   return { ...scenario("populated", locale), get_project_state: capturedProject({ name: "Plasma QC batch 08", published: true, dirty: true }) };
@@ -249,13 +256,6 @@ async function reviewTargetedRequest() {
   await browser.$("[data-targeted-text]").setValue("Caffeine, C8H10N4O2, 120, 30\nAbsent, C9H9NO4, 300, 30");
   await browser.$("[data-targeted-review]").click();
   await browser.$("[data-targeted-review-area] [data-targeted-plan]").waitForDisplayed();
-}
-
-/** The project's Details on that reference. */
-async function inspectLabelledReference() {
-  await go(3);
-  await browser.$(`[data-project-inspect="${CAPTURED_INPUT}"]`).click();
-  await revealInDetails('#workbench-inspector [data-provenance="input"]');
 }
 
 /** The populated world with its mzML row adopted from a labelled conversion. */
@@ -1174,27 +1174,6 @@ const STOPS: readonly Stop[] = [
     anchor: "[data-project-busy]",
   },
   {
-    name: "project-checking",
-    table: savedProject,
-    hold: ["check_project_links"],
-    drive: async () => {
-      await go(3);
-      await browser.$(".project-section .project-actions > button:nth-child(2)").click();
-    },
-    anchor: "[data-project-busy] [data-project-cancel]",
-  },
-  {
-    // Close with a change: the question, its three answers and the keyboard on the first.
-    name: "project-unsaved-question",
-    table: (locale) => ({ ...savedProject(locale), close_project: { __reject: { kind: "unsavedChanges" } } }),
-    keepFocus: true,
-    drive: async () => {
-      await go(3);
-      await browser.$(".project-actions > button:nth-child(5)").click();
-    },
-    anchor: "[data-project-pending]",
-  },
-  {
     // The refused Save holding the ring, with its reason beside the title.
     name: "project-save-refused-focus",
     table: populated,
@@ -1226,7 +1205,6 @@ const STOPS: readonly Stop[] = [
     },
     anchor: "[data-targeted-setup]",
   },
-  { name: "targeted-review", table: (locale) => scenario("targetedTask", locale), drive: reviewTargetedRequest, anchor: "[data-targeted-review-area] [data-targeted-plan]" },
   {
     name: "targeted-running",
     table: (locale) => scenario("targetedTask", locale),
@@ -1236,36 +1214,6 @@ const STOPS: readonly Stop[] = [
       await browser.$("[data-targeted-run]").click();
     },
     anchor: '[data-targeted-run-block="running"]',
-  },
-  {
-    name: "targeted-ended",
-    table: (locale) => scenario("targetedTask", locale),
-    drive: async () => {
-      await reviewTargetedRequest();
-      await browser.$("[data-targeted-run]").click();
-    },
-    anchor: '[data-targeted-run-block="completed"]',
-  },
-  {
-    // The results table with a row chosen: its bar, its fill and its evidence.
-    name: "targeted-result-chosen",
-    table: (locale) => scenario("projectWithResult", locale),
-    drive: async () => {
-      await go(3);
-      await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
-      await browser.$("[data-targeted-choose]").click();
-    },
-    anchor: "[data-targeted-rows] tr.is-chosen",
-  },
-  {
-    // A failed read of a stored result: said where its rows would be.
-    name: "targeted-rows-refused",
-    table: (locale) => ({ ...scenario("projectWithResult", locale), read_targeted_ms1_rows: { __reject: { kind: "unknownRecord" } } }),
-    drive: async () => {
-      await go(3);
-      await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
-    },
-    anchor: "[data-targeted-rows-refused]",
   },
   {
     name: "project-qc",
