@@ -86,7 +86,7 @@ The implemented shell uses a white header, quiet gray background, blue active
 underline and one logo/name Home target. Workbench and Conversion & results are
 real mounted surfaces. Existing export controls stay with their scientific panel;
 no future navigation target is exposed. Wide workbench regions are 240px / flex /
-245px in one card, the reference's own (FE-2 draft, pending the owner's verdict;
+245px in one card, the reference's own (FE-2, [accepted 2026-10-31](#fe-2-accepted-2026-10-31);
 the record said a 280px roster, main rendered 264px, flat); from 1051px to 1365px
 Details is 219px, so the card does not narrow the viewer column. Below 1050px, auxiliary panels
 fold into reachable header actions before displacing evidence. Header actions do
@@ -223,21 +223,21 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
 
 - **Shell insets.** The header, the notices and the content share one left
   edge (UI-01): 24 px, and 16 px at 1050 px and below, the content being one
-  card inset by that edge (FE-2 draft, pending the owner's verdict; it was
+  card inset by that edge (FE-2, [accepted 2026-10-31](#fe-2-accepted-2026-10-31); it was
   16 px at every width, and the content ran edge to edge, with no card).
 - **Page tabs (G4).** Room for two more page tabs at 960 px: each new English
   label is at most 80 px at 13 px ("Features", "Statistics"; not "Features and
   annotation"). The header has no fallback, so a longer label scrolls the page
-  sideways. PM9.1's FE-2 case holds the room. (FE-2 draft, pending the owner's
-  verdict on short labels or icon-only header actions at 960 px.)
+  sideways. PM9.1's FE-2 case holds the room. (FE-2, [accepted 2026-10-31](#fe-2-accepted-2026-10-31):
+  short labels, an interim default the owner may still change.)
 - **The header's second line.** What gives way is computed, not left to
   flex-shrink ratios (UI-48): the drop hint first and whole, its gap with it;
   then each context item by rank, lowest first, down to its floor; an
   operation's status never. The floor is 5.5em, and 7em for a project with
   unsaved changes, which leads with that fact ("Unsaved changes: …", UI-03).
 - **Roster width.** 240 px at every width that shows the roster beside the
-  evidence, v5.11's measured column at 1366 (FE-2 draft, pending the owner's
-  verdict; the record said 280 px, against the reference's 285 px at 1920,
+  evidence, v5.11's measured column at 1366 (FE-2, [accepted 2026-10-31](#fe-2-accepted-2026-10-31);
+  the record said 280 px, against the reference's 285 px at 1920,
   UI-14, and main rendered 264 px). The card's insets cost the viewer column
   26 px; they come back from the scan list (354 px beside the spectrum with
   Details closed) and, from 1051 to 1365 px, from Details (219 px), so with the
@@ -320,7 +320,7 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   ranges, the scan table's sort headers and result count -- and a roster row's
   folder context. It sits under the reference's 12 px caption; raising it is a
   type-scale decision, not a defect fix, and would reflow the headers PM9.3
-  measured. Superseded by FE-2 (draft, pending the owner's verdict): the
+  measured. Superseded by FE-2 ([accepted 2026-10-31](#fe-2-accepted-2026-10-31)): the
   "Showing" ranges, plot readouts, ticks, axis titles and a roster row's facts
   are at the reference's 12 px; the census above predates it.
 
@@ -392,6 +392,29 @@ The rules above stand except where this list says otherwise.
   says nothing visible ("up to date" is announced only), and the last preview
   stays on screen while the next one for the same source is drawn, so Export
   does not move.
+
+## FE-2 accepted (2026-10-31)
+
+The owner looked at the FE-2 draft (PR #197: the Workbench in the v5.11 look,
+the side-by-side page and the copy tour's screenshots) and wrote, verbatim,
+"我感觉你外观改得挺好" ("I think you changed the look quite well").
+[Owner decision FE-2](../development/OWNER_DECISIONS_V511.md#fe-2-the-new-look)
+(a) is confirmed for this screen, and the look goes ahead.
+
+The draft's open layout questions take the answers it shipped with. They are
+interim defaults the owner may still change:
+
+- **Frame.** v5.11's: a 56 px header and a 30 px status bar. For this direction
+  this supersedes design goal L1's 48 and 28 px (`design/GOALS.md`, in the design
+  workspace, not in this repository).
+- **Card insets.** 24 px at the sides, 16 px at 1050 px and below, and 8 px at
+  the top and bottom, so the spectrum keeps its height.
+- **Plots.** Regions divided by hairlines inside the card: no boxed plots and no
+  card in a card.
+- **Conversion and Project.** The card frame, the 240 px roster and the colours
+  reach them through the shell and tokens until those screens are ported.
+- **Page tabs.** English labels keep the 80 px budget, so they stay short.
+- **The spectrum head.** The facts a narrow head drops stay visible in Details.
 
 ## M6.6 destination and conflict surface
 
