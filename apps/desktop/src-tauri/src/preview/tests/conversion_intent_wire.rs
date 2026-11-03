@@ -287,11 +287,12 @@ fn an_intent_the_build_cannot_express_is_refused_with_the_missing_name() {
     assert_eq!(reason(&error), Some("sortByScanTime"));
 }
 
-#[test]
-fn an_advanced_mzml_conversion_runs_is_labelled_and_its_adopted_row_keeps_the_label() {
-    let fixture = TestFile::new("wire-advanced-run");
-    let (service, handle) = mzml_service(&fixture);
-    let document = current_document(&service);
+/// One advanced, unverified conversion of `handle`, run to its terminal queue.
+fn convert_advanced(
+    service: &PreviewService,
+    handle: String,
+) -> (u64, WorkspaceConversionUpdateDto) {
+    let document = current_document(service);
     let request = ConversionBeginRequestDto {
         handles: vec![handle],
         intent_id: None,
@@ -310,7 +311,123 @@ fn an_advanced_mzml_conversion_runs_is_labelled_and_its_adopted_row_keeps_the_la
     let operation = service
         .claim_conversion(&reservation.reservation_id, document)
         .expect("the reservation is claimed");
-    let update = service.resolve_claimed_conversion(operation);
+    (operation, service.resolve_claimed_conversion(operation))
+}
+
+/// ADR 0055, owner decision A0055 (b) of 2026-10-31: the session's finalized
+/// outputs are recognised on every add route by the object, never by the name.
+/// Windows only: elsewhere a finalized output holds no object identity.
+#[cfg(windows)]
+#[test]
+fn every_add_route_recognises_a_finalized_output_by_its_object_and_not_its_name() {
+    let fixture = TestFile::new("wire-recognise");
+    let (service, handle) = mzml_service(&fixture);
+    convert_advanced(&service, handle.clone());
+    let label = crate::project::record::NotVerifiedByMscanvas::of(true, None);
+
+    let output = fixture.directory.join("run-converted.mzML");
+    let copy = fixture.directory.join("run-converted-copy.mzML");
+    fs::copy(&output, &copy).expect("a renamed copy is a new object");
+    let moved_to = fixture.directory.join("moved");
+    fs::create_dir(&moved_to).expect("a folder to move it to");
+    let moved = moved_to.join("renamed.mzML");
+    fs::rename(&output, &moved).expect("a move on one volume keeps the object");
+
+    // The next queue replaces the tickets, not what the session knows.
+    let (_, later) = convert_advanced(&service, handle);
+    assert!(matches!(
+        later.state,
+        WorkspaceConversionStateDto::Terminal { .. }
+    ));
+
+    let row_label = |name: &str| {
+        service
+            .roster()
+            .datasets
+            .iter()
+            .find(|row| row.file_name == name)
+            .unwrap_or_else(|| panic!("{name} has a row"))
+            .not_verified_by_mscanvas
+            .clone()
+    };
+
+    // Add files…, in the answer as well as the roster.
+    let added = service.add_files_now(&[copy.clone(), moved.clone()]);
+    assert!(added.outcomes.iter().any(|outcome| matches!(
+        outcome,
+        WorkspaceAddOutcomeDto::Added { dataset } if dataset.file_name == "renamed.mzML"
+            && dataset.not_verified_by_mscanvas == label
+    )));
+    assert_eq!(row_label("renamed.mzML"), label);
+    assert_eq!(row_label("run-converted-copy.mzML"), None);
+
+    // A project reference registered from those rows records what they carry.
+    let projects = crate::project::ProjectStore::new();
+    projects.create("Labels".to_owned(), false).expect("new");
+    for path in [&moved, &copy] {
+        projects
+            .register_input_labelled(path, |identity| {
+                service.not_verified_label_of_object(identity)
+            })
+            .expect("it registers");
+    }
+    let described = projects.describe();
+    assert_eq!(described.inputs[0].not_verified_by_mscanvas, label);
+    assert_eq!(described.inputs[1].not_verified_by_mscanvas, None);
+
+    let handle_of = |name: &str| {
+        service
+            .roster()
+            .datasets
+            .iter()
+            .find(|row| row.file_name == name)
+            .unwrap_or_else(|| panic!("{name} has a row"))
+            .handle
+            .clone()
+    };
+
+    // Add mzML folder…, with no row to inherit from.
+    service.remove_datasets_now(&[handle_of("renamed.mzML")]);
+    service
+        .import_folder(service.reserve_folder_import(), || walk(&moved_to))
+        .expect("the folder is fine");
+    assert_eq!(row_label("renamed.mzML"), label);
+
+    // And a drop, the route no button names.
+    service.remove_datasets_now(&[handle_of("renamed.mzML")]);
+    service
+        .process_native_drop_with(reserve_drop_work(&service, &[moved]), expand_drop_paths)
+        .expect("the drop completes");
+    assert_eq!(row_label("renamed.mzML"), label);
+}
+
+/// A finalized output with no row still answers a project registration: the
+/// label is the object's, and a removed row does not unlabel it.
+#[cfg(windows)]
+#[test]
+fn a_finalized_output_with_no_row_answers_a_project_registration() {
+    let fixture = TestFile::new("wire-no-row");
+    let (service, handle) = mzml_service(&fixture);
+    convert_advanced(&service, handle);
+    let projects = crate::project::ProjectStore::new();
+    projects.create("Labels".to_owned(), false).expect("new");
+    projects
+        .register_input_labelled(&fixture.directory.join("run-converted.mzML"), |identity| {
+            service.not_verified_label_of_object(identity)
+        })
+        .expect("it registers");
+    assert_eq!(
+        projects.describe().inputs[0].not_verified_by_mscanvas,
+        crate::project::record::NotVerifiedByMscanvas::of(true, None)
+    );
+}
+
+#[test]
+fn an_advanced_mzml_conversion_runs_is_labelled_and_its_adopted_row_keeps_the_label() {
+    let fixture = TestFile::new("wire-advanced-run");
+    let (service, handle) = mzml_service(&fixture);
+    let document = current_document(&service);
+    let (operation, update) = convert_advanced(&service, handle);
 
     let report = sole_report(&update.state).expect("the conversion reaches an outcome");
     assert_eq!(report.outcome, "finalized", "{report:?}");

@@ -1646,19 +1646,55 @@ impl PreviewService {
     /// Asked by a project registration about the object it just hashed, so
     /// the label follows the object whatever route the user registers it by.
     /// A row's identity is one its lease holds, so a match is that row's own
-    /// object. Memory only; reads nothing.
+    /// object. A finalized output with no row answers for itself (ADR 0055;
+    /// owner decision A0055 (b), 2026-10-31). Memory only; reads nothing.
     pub(crate) fn not_verified_label_of_object(
         &self,
         identity: (u64, [u8; 16]),
     ) -> Option<NotVerifiedByMscanvas> {
-        let workspace = self.workspace();
-        let registry = &workspace.registry;
-        registry
-            .ids()
-            .iter()
-            .filter_map(|id| registry.get(*id))
-            .find(|dataset| dataset.object_identities().first() == Some(&identity))
-            .and_then(|dataset| dataset.not_verified().cloned())
+        let of_row = {
+            let workspace = self.workspace();
+            let registry = &workspace.registry;
+            registry
+                .ids()
+                .iter()
+                .filter_map(|id| registry.get(*id))
+                .find(|dataset| dataset.object_identities().first() == Some(&identity))
+                .and_then(|dataset| dataset.not_verified().cloned())
+        };
+        of_row.or_else(|| self.conversion_slot().finalized_label(identity))
+    }
+
+    /// Registers one admitted file, with the label it carries as one of this
+    /// session's finalized outputs (ADR 0055; owner decision A0055 (b),
+    /// 2026-10-31).
+    ///
+    /// Every route a user adds a file by comes through here, so a route cannot
+    /// lose the label. By object identity and never by name: an output moved on
+    /// its volume keeps it, and a copy under any name is a new object without
+    /// it. The slot is asked first and let go of, as everywhere that needs both.
+    fn register_admitted(
+        &self,
+        accepted: AcceptedFile,
+        add: impl FnOnce(&mut DatasetRegistry, AcceptedFile) -> AddDatasetOutcome,
+    ) -> AddDatasetOutcome {
+        let label = self
+            .conversion_slot()
+            .finalized_label(accepted.identity().as_pair());
+        let mut workspace = self.workspace();
+        let outcome = add(&mut workspace.registry, accepted);
+        if let (Some(label), Some(id)) = (label, outcome.registered_id()) {
+            workspace.registry.label(id, label);
+        }
+        outcome
+    }
+
+    /// The label of the row a figure's source was read from. Memory only.
+    fn row_label(&self, owner: DatasetId) -> Option<NotVerifiedByMscanvas> {
+        self.workspace()
+            .registry
+            .get(owner)
+            .and_then(|row| row.not_verified().cloned())
     }
 
     /// Gives the row a project reference was admitted as the label the
@@ -1780,9 +1816,7 @@ impl PreviewService {
             // Taken per item rather than once for the batch, so a long batch
             // does not hold the workspace across the acceptance of every file
             // in it.
-            let mut workspace = self.workspace();
-            let outcome = workspace.registry.add_direct(accepted);
-            drop(workspace);
+            let outcome = self.register_admitted(accepted, DatasetRegistry::add_direct);
             // The dataset each outcome names is described after the batch, not
             // here: a row's context depends on what else the roster holds, and
             // the second file of a colliding pair is what gives the first one
@@ -5970,11 +6004,9 @@ impl PreviewService {
                 continue;
             }
             let relative_parents = parent_components(candidate.relative_components());
-            let mut workspace = self.workspace();
-            let outcome = workspace
-                .registry
-                .add_discovered(accepted, relative_parents);
-            drop(workspace);
+            let outcome = self.register_admitted(accepted, |registry, file| {
+                registry.add_discovered(file, relative_parents)
+            });
             outcomes.push(PendingOutcome::Registered {
                 candidate_name,
                 outcome,
@@ -6218,14 +6250,13 @@ impl PreviewService {
                 continue;
             }
 
-            let mut workspace = self.workspace();
-            let outcome = match candidate.origin {
-                DropCandidateOrigin::Direct => workspace.registry.add_direct(accepted),
-                DropCandidateOrigin::Folder { relative_parents } => workspace
-                    .registry
-                    .add_discovered(accepted, relative_parents),
-            };
-            drop(workspace);
+            let outcome =
+                self.register_admitted(accepted, |registry, file| match candidate.origin {
+                    DropCandidateOrigin::Direct => registry.add_direct(file),
+                    DropCandidateOrigin::Folder { relative_parents } => {
+                        registry.add_discovered(file, relative_parents)
+                    }
+                });
             outcomes.push(PendingOutcome::Registered {
                 candidate_name,
                 outcome,

@@ -24,6 +24,7 @@
 //! a reliable place to learn how it went. Rust holds the answer instead, and the
 //! interface reads it — on mount, and again while something is running.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1535,6 +1536,16 @@ pub(super) struct ConversionSlot {
     /// How many views this session has begun: the next one's operation, and a
     /// part of the incarnation a workspace clear is planned against.
     views_begun: u64,
+    /// The "not verified by MSCanvas" label of every labelled output this
+    /// session finalized, by object identity (ADR 0055; owner decision A0055
+    /// (b), 2026-10-31), so Add files… recognises one after its queue is gone.
+    ///
+    /// Nothing keeps these objects open: the user's finished file is not held
+    /// for the life of the process. So an identity can outlive its file and a
+    /// filesystem may reissue it. Unlike `DatasetRegistry::by_identity`, this
+    /// decides no row: the worst a reissued identity does is label one file
+    /// that needed no label, and the label only ever claims less.
+    finalized_labels: HashMap<(u64, [u8; 16]), NotVerifiedByMscanvas>,
 }
 
 impl Default for ConversionSlot {
@@ -1553,11 +1564,21 @@ impl Default for ConversionSlot {
             pending_item_stop: None,
             view: None,
             views_begun: 0,
+            finalized_labels: HashMap::new(),
         }
     }
 }
 
 impl ConversionSlot {
+    /// The label of the object `identity` names, when it is one of this
+    /// session's finalized outputs and has one. Memory only.
+    pub(super) fn finalized_label(
+        &self,
+        identity: (u64, [u8; 16]),
+    ) -> Option<NotVerifiedByMscanvas> {
+        self.finalized_labels.get(&identity).cloned()
+    }
+
     pub(super) fn attach_staging_recovery(
         &mut self,
         operation: u64,
@@ -2524,9 +2545,15 @@ impl ConversionSlot {
         // that no longer exist. Written once, after every arm, because every
         // arm is a new attempt.
         item.forget_adoption();
+        let labelled: Vec<_> = item
+            .finalized_outputs
+            .iter()
+            .filter_map(|ticket| Some((ticket.object_identity()?, ticket.not_verified()?.clone())))
+            .collect();
         // Counted rather than incremented: the queue's own position is "how
         // many are done", and after the last item that is the item count.
         queue.recount();
+        self.finalized_labels.extend(labelled);
         self.advance();
         true
     }
