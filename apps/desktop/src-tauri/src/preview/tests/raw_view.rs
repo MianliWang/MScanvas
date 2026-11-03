@@ -42,6 +42,8 @@ struct Recording<R = FakeConversionRunner> {
     sources: Arc<Mutex<Vec<PathBuf>>>,
     /// When armed, the next preview read announces itself and waits.
     park: Park,
+    /// When set, a configuration read answers that it could not be read.
+    read_fails: Arc<AtomicBool>,
 }
 
 type Park = Arc<Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>>;
@@ -75,7 +77,15 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for Recording<R> {
     }
 
     fn read_conversion_configuration(&self) -> ConfigurationReading {
-        self.inner.read_conversion_configuration()
+        let mut reading = self.inner.read_conversion_configuration();
+        if self.read_fails.load(Ordering::SeqCst) {
+            reading.conversion = Some(Err(PreviewErrorDto::new(
+                "capability_evidence_unavailable",
+                "The options could not be read.",
+                true,
+            )));
+        }
+        reading
     }
 
     fn conversion_backend(&self) -> ConversionBackendAttempt<'_> {
@@ -94,6 +104,7 @@ struct Viewing {
     arguments: Arc<Mutex<Vec<Vec<String>>>>,
     sources: Arc<Mutex<Vec<PathBuf>>>,
     park: Park,
+    read_fails: Arc<AtomicBool>,
 }
 
 const RAW_NAME: &str = "QC pool 01.raw";
@@ -128,10 +139,12 @@ fn viewing_on<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
     inner.inner = FakeProvider::available(responses);
     let sources = Arc::new(Mutex::new(Vec::new()));
     let park = Park::default();
+    let read_fails = Arc::new(AtomicBool::new(false));
     let service = Arc::new(PreviewService::new(Box::new(Recording {
         inner,
         sources: Arc::clone(&sources),
         park: Arc::clone(&park),
+        read_fails: Arc::clone(&read_fails),
     })));
     service.bind_view_cache(Some(app_data.directory.clone()));
     service.set_view_cache_free_space(|_| Some(1 << 40));
@@ -146,6 +159,7 @@ fn viewing_on<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
         arguments,
         sources,
         park,
+        read_fails,
     }
 }
 
@@ -1999,6 +2013,24 @@ fn a_catalog_not_read_yet_never_reads_as_a_verified_build() {
         ConversionBeginOutcomeDto::Reserved { .. }
     ));
     assert_eq!(refusal(&session, &session.handle), "conversion_busy");
+}
+
+#[test]
+fn a_catalog_read_that_failed_answers_its_own_code_and_not_a_wait() {
+    let session = viewing("raw-view-availability-read-failed");
+    session.read_fails.store(true, Ordering::SeqCst);
+    observed(&session);
+    assert_eq!(
+        refusal(&session, &session.handle),
+        "capability_evidence_unavailable"
+    );
+    // The catalog's retry cures it, as the Conversion surface offers.
+    session.read_fails.store(false, Ordering::SeqCst);
+    observed(&session);
+    assert!(matches!(
+        availability(&session, &session.handle),
+        RawViewAvailabilityDto::Available { .. }
+    ));
 }
 
 #[test]

@@ -25,6 +25,8 @@ export interface RawViewControl {
   readonly cancel: () => void;
   /** Reads the state and the row's availability again, after something it depends on moved. */
   readonly refresh: () => void;
+  /** This document is opening a ready operation, so it can no longer be opened. */
+  readonly markOpening: (operation: number) => void;
 }
 
 /**
@@ -52,7 +54,16 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
   /** Only the newest read speaks, so a slow answer cannot put back an older phase. */
   const reads = useRef(0);
 
-  const apply = useCallback((next: RawViewState) => {
+  /**
+   * The operation this document has begun opening. Its one open is spent the moment
+   * Rust gets the request, succeed or fail (decision 10), so Open leaves now rather
+   * than one read later, when a failed open's own card is already on screen.
+   */
+  const opening = useRef<number | null>(null);
+
+  const apply = useCallback((answer: RawViewState) => {
+    if (answer.state === "running") opening.current = null;
+    const next = answer.state === "ready" && answer.operation === opening.current ? { ...answer, openable: false } : answer;
     const was = stateRef.current;
     stateRef.current = next;
     setState(next);
@@ -129,5 +140,10 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
     });
   }, [api, apply, read]);
 
-  return { state, availability, refusal, busy: running || claimed, busyRef, begin, cancel, refresh: read };
+  const markOpening = useCallback((operation: number) => {
+    opening.current = operation;
+    apply(stateRef.current);
+  }, [apply]);
+
+  return { state, availability, refusal, busy: running || claimed, busyRef, begin, cancel, refresh: read, markOpening };
 }

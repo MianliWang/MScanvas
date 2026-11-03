@@ -1307,7 +1307,7 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const rawView = useRawView(api, highlightedRaw, (operation, handle) => {
     if (handle === highlightedRaw) openRawViewRef.current(operation, handle);
   });
-  const { busyRef: rawViewBusyRef, refresh: refreshRawView } = rawView;
+  const { busyRef: rawViewBusyRef, refresh: refreshRawView, markOpening: markRawViewOpening } = rawView;
 
   const recordMeasurement = useCallback(
     (name: PreviewMeasurementName, milliseconds: number, detail: PreviewMeasurementDetail) => {
@@ -2103,9 +2103,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         refreshRawView();
         return;
       }
+      markRawViewOpening(operation);
       loadPreview(handle, now(), () => api.openRawView(operation).finally(refreshRawView));
     },
-    [api, loadPreview, refreshRawView],
+    [api, loadPreview, markRawViewOpening, refreshRawView],
   );
   openRawViewRef.current = openRawView;
 

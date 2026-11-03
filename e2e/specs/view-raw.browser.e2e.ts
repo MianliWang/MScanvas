@@ -82,6 +82,15 @@ async function highlight(row: SelectedFile) {
   await browser.$("[data-raw-view-pane]").waitForExist({ timeout: 30_000 });
 }
 
+/** Where the roster is a drawer the evidence is inert under it. */
+async function foldNarrowRoster() {
+  const toggle = browser.$('[aria-controls="workbench-roster"]');
+  if ((await browser.execute(() => innerWidth < 1050)) && (await toggle.getAttribute("aria-expanded")) === "true") {
+    await toggle.click();
+    await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === "false");
+  }
+}
+
 async function offered(css: string) {
   await browser.waitUntil(async () => (await browser.$(css).getAttribute("aria-disabled")) === null, { timeoutMsg: `${css} was never offered` });
 }
@@ -121,7 +130,11 @@ for (const locale of ["en", "zh-CN"] as const) {
         expect(await browser.$("[data-raw-view-phase='checkingSource'] [data-raw-view-line]").isExisting()).toBe(true);
         await step(running("converting"));
         await phase("converting");
-        expect(await browser.$("[data-raw-view-phase='converting'] progress").getAttribute("value")).toBeNull();
+        // The queue's bar: an accent fill and a sweep, never the browser's own, and no fraction.
+        const bar = browser.$('[data-raw-view-bar="indeterminate"]');
+        await bar.waitForExist({ timeout: 10_000 });
+        expect(await bar.getAttribute("aria-valuenow")).toBeNull();
+        expect(await browser.execute(() => getComputedStyle(document.querySelector(".raw-view-bar .conversion-progress-current")!, "::after").animationName)).toBe("conversion-progress-sweep");
         expect(await browser.$("[data-raw-view-cancel]").isDisplayed()).toBe(true);
         await step(running("checkingOutput", { bytesRead: 5, bytesTotal: 10 }));
         await phase("checkingOutput");
@@ -241,9 +254,134 @@ for (const locale of ["en", "zh-CN"] as const) {
         await browser.$('[data-raw-view-refusal="raw_view_busy"]').waitForExist({ timeout: 10_000 });
         const named = await browser.$('[data-raw-view-refusal="raw_view_busy"]').getText();
         expect(named).toContain(FIRST.fileName);
+        // Add files waits too, pointing at its own visible line, which names the view.
+        await revealRosterRow(FIRST.handle);
+        const add = browser.$("[data-add-files]");
+        expect(await add.getAttribute("aria-disabled")).toBe("true");
+        expect(await add.getAttribute("aria-describedby")).toContain("roster-acquire-reason");
+        expect(await browser.$("#roster-acquire-reason").getText()).toContain(FIRST.fileName);
+        await foldNarrowRoster();
         const recoveries = await browser.$$(".raw-view-pane .evidence-actions .ui-button").getElements();
         await recoveries[1]!.click();
         await phase("converting");
+        await clean();
+      });
+
+      it("while a view runs the queue's Convert names the view, and Show goes to its Cancel", async () => {
+        const table = world(locale);
+        table.get_raw_view_state = { state: running("converting"), availability: { available: false, code: "raw_view_busy" } };
+        await open(locale, viewport, table);
+        await browser.$("[data-status-raw-view]").waitForExist({ timeout: 10_000 });
+        await revealRosterRow(FIRST.handle);
+        await browser.$(`.grouped-roster [data-handle="${FIRST.handle}"]`).click();
+        await browser.$('.workbench-navigation [data-surface-tab="conversion"]').click();
+        const notice = browser.$("#conversion-availability-raw-view-running");
+        await notice.waitForExist({ timeout: 10_000 });
+        expect(await notice.getText()).toContain(FIRST.fileName);
+        expect(await browser.$("#conversion-availability-preview-running").isExisting()).toBe(false);
+        await browser.$(".raw-view-notice button").click();
+        await browser.waitUntil(async () => (await browser.$(".workbench-shell").getAttribute("data-surface")) === "workbench");
+        await phase("converting");
+        await clean();
+      });
+
+      it("the row being prepared cannot be removed, and Clear asks in the view's words", async () => {
+        const table = world(locale);
+        table.get_raw_view_state = { state: running("converting"), availability: { available: false, code: "raw_view_busy" } };
+        table.plan_workspace_clear = { Ok: { planId: "p", totalCount: 3, removableCount: 2, protectedCount: 1, active: true } };
+        await open(locale, viewport, table);
+        await highlight(FIRST);
+        await phase("converting");
+        const listAction = async (css: string) => {
+          await revealRosterRow(FIRST.handle);
+          await browser.$(".roster-foot button[aria-haspopup='menu']").click();
+          const item = browser.$(css);
+          await item.waitForExist({ timeout: 10_000 });
+          return item;
+        };
+        expect(await (await listAction("[data-roster-remove]")).getAttribute("aria-disabled")).toBe("true");
+        await browser.keys("Escape");
+        await (await listAction(".roster-menu [data-roster-clear]")).click();
+        const dialog = browser.$('[role="dialog"]');
+        await dialog.waitForExist({ timeout: 10_000 });
+        expect(await calls("plan_workspace_clear")).toBeGreaterThan(0);
+        expect(await dialog.$("h2").getText()).toBe(locale === "en" ? "Clear while a view is being prepared" : "准备查看期间清理列表");
+        await browser.keys("Escape");
+        await clean();
+      });
+
+      it("a re-read of a failed open runs in the pane, with Cancel, and its failure shows", async () => {
+        const table = world(locale);
+        table.get_raw_view_state = { state: ready(), availability: AVAILABLE };
+        table.open_raw_view = { __reject: { kind: "view_cache_entry_lost", summary: "gone", detail: null, retryable: true } };
+        await open(locale, viewport, table);
+        await highlight(FIRST);
+        await browser.$("[data-raw-view-open]").waitForExist({ timeout: 10_000 });
+        await browser.$("[data-raw-view-open]").click();
+        const again = '#workbench-evidence[data-evidence="failed"] .evidence-actions button';
+        await browser.$(again).waitForExist({ timeout: 10_000 });
+        expect(await browser.$("#workbench-evidence [data-raw-view-convert]").isDisplayed()).toBe(true);
+
+        await step(running("checkingSource", { operation: 2 }));
+        await setInvokeResult("begin_raw_view", running("checkingSource", { operation: 2 }));
+        await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), again);
+        await browser.keys("Enter");
+        await phase("checkingSource");
+        // The pressed button left with the failure; the keyboard is on what replaced it.
+        await browser.waitUntil(async () => browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-cancel") === true), { timeout: 10_000, timeoutMsg: "the keyboard did not reach Cancel" });
+
+        await step({ state: "failed", operation: 2, handle: FIRST.handle, intentId: shippedIntent.id, code: "view_cache_not_stored", message: "Controlled", retryable: true, neededBytes: null, freeBytes: null });
+        await browser.$('[data-raw-view-code="view_cache_not_stored"]').waitForExist({ timeout: 10_000 });
+        expect(await browser.$("[data-raw-view-retry]").isExisting()).toBe(true);
+        await clean();
+      });
+
+      it("the keyboard is never left on the body: Storing with Cancel gone, and Open", async () => {
+        await open(locale, viewport);
+        await highlight(FIRST);
+        await pressView();
+        await phase("checkingSource");
+        await browser.execute(() => document.querySelector<HTMLElement>("[data-raw-view-cancel]")?.focus());
+        await step(running("storing"));
+        await phase("storing");
+        await browser.waitUntil(async () => browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-pane") === true), { timeout: 10_000, timeoutMsg: "Storing left the keyboard on the body" });
+
+        // A ready view whose row was left, so Open is there to press.
+        await highlight(SECOND);
+        await step(ready());
+        await browser.waitUntil(async () => !(await browser.$("[data-status-raw-view]").getText()).includes("0:12"), { timeout: 10_000 });
+        await browser.$("[data-status-raw-view] button").click();
+        await browser.$("[data-raw-view-open]").waitForExist({ timeout: 10_000 });
+        await browser.execute(() => document.querySelector<HTMLElement>("[data-raw-view-open]")?.focus());
+        await browser.keys("Enter");
+        await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 10_000 });
+        await browser.waitUntil(async () => browser.execute(() => document.activeElement?.id === "workbench-evidence"), { timeout: 10_000, timeoutMsg: "Open left the keyboard on the body" });
+        await clean();
+      });
+
+      it("the file row keeps its label on one line, and Convert leaves the tabs alone", async () => {
+        const name = "20261012_QE_HFX_Plasma_QC_replicate_04_long_acquisition_gradient.raw";
+        const release = "3.0.26204";
+        const available = { available: true, unverifiedBuildRelease: release };
+        const table = world(locale);
+        table.get_workspace_roster = { datasets: [{ ...FIRST, fileName: name }, SECOND, OPEN], capacity: 1024 };
+        table.get_raw_view_state = { state: ready({ unverifiedBuildRelease: release }), availability: available };
+        const answer = table.open_raw_view as { viewSource: object };
+        table.open_raw_view = { ...answer, file: { ...FIRST, fileName: name }, viewSource: { ...answer.viewSource, verified: false, unverifiedBuildRelease: release, providerRelease: release } };
+        await open(locale, viewport, table);
+        await highlight(FIRST);
+        await browser.$("[data-raw-view-open]").click();
+        await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 10_000 });
+        await foldNarrowRoster();
+        const facts = await browser.execute(() => {
+          const box = (css: string) => { const found = document.querySelector(css)!.getBoundingClientRect(); return { left: found.left, right: found.right, height: found.height }; };
+          const tag = document.querySelector<HTMLElement>(".viewer-file-actions .not-verified-tag")!;
+          return { tag: box(".viewer-file-actions .not-verified-tag"), clipped: tag.scrollWidth > tag.clientWidth, convert: box("[data-raw-view-convert]"), tabs: box(".viewer-tabs > .ui-tablist"), row: box(".viewer-file") };
+        });
+        expect(facts.tag.height).toBeLessThanOrEqual(24);
+        expect(facts.clipped).toBe(false);
+        expect(facts.convert.left).toBeGreaterThanOrEqual(facts.tabs.right);
+        expect(facts.convert.right).toBeLessThanOrEqual(facts.row.right);
         await clean();
       });
 

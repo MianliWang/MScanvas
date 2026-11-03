@@ -521,8 +521,7 @@ export function PreviewWorkspace() {
   const focusedRaw = focusedVendor?.sourceKind === "thermo_raw" ? focusedVendor : null;
   const focusedRawOperation = focusedRaw === null ? null : ownRawViewState(workspace.rawView.state, focusedRaw.handle);
   const rawOperationSpeaks = focusedRawOperation?.state === "running" || focusedRawOperation?.state === "failed"
-    // Being opened is the reading state's to show.
-    || (focusedRawOperation?.state === "ready" && focusedRawOperation.openable && preview.status !== "opening")
+    || (focusedRawOperation?.state === "ready" && focusedRawOperation.openable)
     || workspace.rawView.refusal?.handle === focusedRaw?.handle;
   const rawPaneRow = focusedRaw !== null && (focusedRaw.handle !== previewedHandle || rawOperationSpeaks) ? focusedRaw : null;
   const rawViewLocalReason = busyReason === null || busyReason === "conversion" || busyReason === rawViewReason ? null : busyReason;
@@ -537,7 +536,6 @@ export function PreviewWorkspace() {
   };
   const rawViewFinished = workspace.rawView.state.state === "ready" && workspace.rawView.state.openable ? workspace.rawView.state : null;
   const rawViewReadyName = rawViewFinished === null || rawViewFinished.handle === rawPaneRow?.handle
-    || (preview.status === "opening" && rawViewFinished.handle === previewedHandle)
     ? null : nameOfRow(rawViewFinished.handle);
   /**
    * A failure the reader has not seen: the row was not on screen when it ended.
@@ -993,6 +991,7 @@ export function PreviewWorkspace() {
             // Where the roster is a drawer it would cover the row's pane, so the
             // drawer folds and the keyboard moves to the pane (ADR 0060 decision 1).
             onRawHighlighted={foldDrawerForRawPane}
+            onReadHeld={rawViewRunning === null ? undefined : foldDrawerForRawPane}
             onRawEnter={handle => {
               foldDrawerForRawPane();
               if (rawPaneRow?.handle !== handle) return;

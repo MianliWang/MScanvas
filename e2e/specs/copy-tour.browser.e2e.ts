@@ -70,6 +70,8 @@ const raw = (index: number, fileName: string): SelectedFile => ({
 const FIRST = raw(1, "QC_pool_01.raw");
 const SECOND = raw(2, "Plasma_QC_batch_08_replicate_04_long_acquisition.raw");
 const OPEN: SelectedFile = { handle: "open", fileName: "reference_run.mzML", byteLength: 4_194_304, sourceKind: "mzml", relativeContext: null };
+/** Long enough that a name in a sentence or on a button has to lose its middle. */
+const LONG_NAME = raw(3, "20261012_QE_HFX_Plasma_QC_batch_08_replicate_04_long_acquisition_gradient_90min_column_C18_250mm_positive_mode.raw");
 const ROWS: readonly SelectedFile[] = [FIRST, SECOND, OPEN];
 /** A family Thermo's picker refuses (ADR 0059), for the stop that shows it. */
 const LCD: SelectedFile = { handle: "lcd", fileName: "Shimadzu_run_01.lcd", byteLength: 8_388_608, sourceKind: "shimadzu_lcd", relativeContext: null };
@@ -545,20 +547,20 @@ const viewFailed = (code: string, retryable: boolean, extra: Record<string, unkn
   state: "failed", operation: 1, handle: FIRST.handle, intentId: shippedIntent.id, code, message: "Controlled failure", retryable, neededBytes: null, freeBytes: null, ...extra,
 });
 
-/** The conversion world over three rows, a view at `state`, and what its open answers. */
-function viewWorld(state: unknown, availability: unknown = { available: true, unverifiedBuildRelease: null }, unmeasured: string | null = null): (locale: Locale) => Record<string, unknown> {
+/** The conversion world over four rows, a view at `state`, and what its open answers. */
+function viewWorld(state: unknown, availability: unknown = { available: true, unverifiedBuildRelease: null }, unmeasured: string | null = null, file: SelectedFile = FIRST): (locale: Locale) => Record<string, unknown> {
   return (locale: Locale) => {
-    const table = conversionWorld(locale, { status: "idle" });
+    const table = conversionWorld(locale, { status: "idle" }, [...ROWS, LONG_NAME]);
     table.get_raw_view_state = { state, availability };
     table.begin_raw_view = state;
     table.open_raw_view = {
       ...(table.open_mzml_preview as object),
-      file: FIRST,
+      file,
       qcSnapshotToken: null,
       qcProducerIdentified: false,
       viewSource: {
         kind: "viewCache",
-        sourceFileName: FIRST.fileName,
+        sourceFileName: file.fileName,
         sourceKind: "thermo_raw",
         sourceSha256: "9bb6f5d5033bb8ead925f67515538c1a5c246a71351c9f7c1830a3f190d590bd",
         providerRelease: unmeasured ?? "3.0.26013",
@@ -597,6 +599,40 @@ async function openTheView() {
   await browser.$("[data-raw-view-open]").click();
   await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 30_000 });
   await foldNarrowRoster();
+  await frames();
+}
+
+/** Presses the mzML row, as a reader would while whatever holds the slot runs. */
+async function pressOpenRow() {
+  await revealRosterRow(OPEN.handle);
+  await browser.$(`.grouped-roster [data-handle="${OPEN.handle}"]`).click();
+  await frames();
+}
+
+/** A ready view whose open fails: it left its entry in the cache, so the row can be read again. */
+function viewFailedOpenWorld(locale: Locale) {
+  return { ...viewWorld(viewReady())(locale), open_raw_view: { __reject: { kind: "view_cache_entry_lost", summary: "Controlled", detail: null, retryable: true } } };
+}
+
+const FAILED_OPEN_AGAIN = '#workbench-evidence[data-evidence="failed"] .evidence-actions button';
+
+async function failTheOpen() {
+  await highlight(FIRST);
+  await browser.$("[data-raw-view-open]").click();
+  await browser.$(FAILED_OPEN_AGAIN).waitForExist({ timeout: 30_000 });
+  await frames();
+}
+
+/** Presses Try reading this file again by keyboard, into a view that keeps running. */
+async function rereadTheFailedOpen() {
+  await failTheOpen();
+  const running = viewRunning("checkingSource", { operation: 2, bytesRead: 18_000_000, bytesTotal: 52_428_800 });
+  await setInvokeResult("begin_raw_view", running);
+  await setInvokeResult("get_raw_view_state", { state: running, availability: { available: false, code: "raw_view_busy" } });
+  await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), FAILED_OPEN_AGAIN);
+  await browser.keys("Enter");
+  await browser.$('[data-raw-view-phase="checkingSource"]').waitForExist({ timeout: 30_000 });
+  await browser.pause(450);
   await frames();
 }
 
@@ -1232,18 +1268,18 @@ const STOPS: readonly Stop[] = [
   { name: "view-idle", table: viewWorld({ state: "idle" }), drive: () => highlight(FIRST), anchor: VIEW_BUTTON },
   { name: "view-idle-unmeasured", table: viewWorld({ state: "idle" }, { available: true, unverifiedBuildRelease: UNMEASURED }), drive: () => highlight(FIRST), anchor: `${VIEW_BUTTON}` },
   { name: "view-keyboard-focus", table: viewWorld({ state: "idle" }), keepFocus: true, drive: async () => { await highlight(FIRST); await tabFrom("#workbench-evidence", 1); }, anchor: `${VIEW_BUTTON}:focus-visible` },
-  { name: "view-checking-file", table: viewWorld(viewRunning("checkingSource", { bytesRead: 18_000_000, bytesTotal: 52_428_800 })), drive: () => highlight(FIRST), anchor: '[data-raw-view-phase="checkingSource"] progress' },
-  { name: "view-checking-copy", table: viewWorld(viewRunning("checkingCachedCopy", { bytesRead: 80_000_000, bytesTotal: 100_663_296 })), drive: () => highlight(FIRST), anchor: '[data-raw-view-phase="checkingCachedCopy"] progress' },
+  { name: "view-checking-file", table: viewWorld(viewRunning("checkingSource", { bytesRead: 18_000_000, bytesTotal: 52_428_800 })), drive: () => highlight(FIRST), anchor: '[data-raw-view-phase="checkingSource"] [role="progressbar"]' },
+  { name: "view-checking-copy", table: viewWorld(viewRunning("checkingCachedCopy", { bytesRead: 80_000_000, bytesTotal: 100_663_296 })), drive: () => highlight(FIRST), anchor: '[data-raw-view-phase="checkingCachedCopy"] [role="progressbar"]' },
   { name: "view-converting", table: viewWorld(viewRunning("converting")), drive: () => highlight(FIRST), anchor: '[data-raw-view-phase="converting"] [data-raw-view-elapsed]' },
   { name: "view-converting-unmeasured", table: viewWorld(viewRunning("converting", { unverifiedBuildRelease: UNMEASURED })), drive: () => highlight(FIRST), anchor: '[data-raw-view-phase="converting"] .not-verified-tag' },
   { name: "view-converting-damaged", table: viewWorld(viewRunning("converting", { cachedCopyDamaged: true })), drive: () => highlight(FIRST), anchor: ".raw-view-note" },
-  { name: "view-checking-output", table: viewWorld(viewRunning("checkingOutput", { bytesRead: 90_000_000, bytesTotal: 153_092_096 })), drive: () => highlight(FIRST), anchor: '[data-raw-view-phase="checkingOutput"] progress' },
+  { name: "view-checking-output", table: viewWorld(viewRunning("checkingOutput", { bytesRead: 90_000_000, bytesTotal: 153_092_096 })), drive: () => highlight(FIRST), anchor: '[data-raw-view-phase="checkingOutput"] [role="progressbar"]' },
   { name: "view-storing", table: viewWorld(viewRunning("storing")), drive: () => highlight(FIRST), anchor: '[data-raw-view-phase="storing"]' },
   { name: "view-long-name", table: viewWorld(viewRunning("converting", { handle: SECOND.handle, fileName: SECOND.fileName })), drive: () => highlight(SECOND), anchor: '[data-raw-view-phase="converting"]' },
   { name: "view-ready", table: viewWorld(viewReady()), drive: () => highlight(FIRST), anchor: '[data-raw-view="ready"]' },
   { name: "view-ready-elsewhere", table: viewWorld(viewReady()), drive: () => highlight(SECOND), anchor: "[data-status-raw-view]" },
   { name: "view-busy-other-row", table: viewWorld(viewRunning("converting"), { available: false, code: "raw_view_busy" }), drive: () => highlight(SECOND), anchor: '[data-raw-view-refusal="raw_view_busy"]' },
-  { name: "view-busy-conversion-surface", table: viewWorld(viewRunning("converting")), drive: () => go(2), anchor: "[data-status-raw-view]" },
+  { name: "view-busy-conversion-surface", table: viewWorld(viewRunning("converting")), drive: () => go(2), anchor: "#conversion-availability-raw-view-running" },
   { name: "view-busy-project-surface", table: viewWorld(viewRunning("converting")), drive: () => go(3), anchor: "[data-status-raw-view]" },
   { name: "view-busy-add-refused", table: viewWorld(viewRunning("converting")), keepFocus: true, drive: async () => { await revealRosterRow(FIRST.handle); await tabFrom("[data-add-files]", 0); }, anchor: "[data-status-raw-view]" },
   { name: "view-cancelled-empty", table: viewWorld(viewEnded({ state: "cancelled", stored: false })), drive: () => highlight(FIRST), anchor: '[data-raw-view="cancelled"]' },
@@ -1268,6 +1304,48 @@ const STOPS: readonly Stop[] = [
   { name: "view-open-unmeasured", table: viewWorld(viewReady({ unverifiedBuildRelease: UNMEASURED }), { available: true, unverifiedBuildRelease: UNMEASURED }, UNMEASURED), drive: openTheView, anchor: ".viewer-file-actions .not-verified-tag" },
   { name: "view-open-metadata-unmeasured", table: viewWorld(viewReady({ unverifiedBuildRelease: UNMEASURED }), { available: true, unverifiedBuildRelease: UNMEASURED }, UNMEASURED), drive: async () => { await openTheView(); await browser.$('.viewer-tabs [role="tab"]:nth-child(3)').click(); await frames(); }, anchor: "[data-view-source] .not-verified-tag" },
   { name: "view-qc-refused", table: viewQcWorld, drive: async () => { await openTheView(); await go(3); }, anchor: '[data-project-qc-unavailable="qcViewedThroughCache"]' },
+  // The states the first rendered review found no stop for.
+  { name: "view-refused-raw_view_build_unknown", table: viewWorld({ state: "idle" }, { available: false, code: "raw_view_build_unknown" }), drive: () => highlight(FIRST), anchor: '[data-raw-view-refusal="raw_view_build_unknown"]' },
+  { name: "view-checking-installation", table: viewWorld({ state: "idle" }), hold: ["inspect_backend"], drive: () => highlight(FIRST), anchor: '[data-raw-view-refusal="local"]' },
+  { name: "view-availability-read-failed", table: (locale) => ({ ...viewWorld({ state: "idle" })(locale), get_raw_view_state: { __reject: { kind: "unexpected_error", summary: "Controlled", detail: null, retryable: true } } }), drive: () => highlight(FIRST), anchor: "[data-raw-view-reask]" },
+  { name: "view-press-refused", table: (locale) => ({ ...viewWorld({ state: "idle" })(locale), begin_raw_view: { __reject: { kind: "view_cache_unavailable", summary: "Controlled", detail: null, retryable: false } } }), keepFocus: true, drive: async () => { await highlight(FIRST); await browser.$(VIEW_BUTTON).click(); await frames(); }, anchor: '[data-raw-view-refusal="view_cache_unavailable"]' },
+  { name: "view-cancel-refused", table: (locale) => ({ ...viewWorld(viewRunning("converting"))(locale), cancel_raw_view: { __reject: { kind: "unexpected_error", summary: "Controlled", detail: null, retryable: false } } }), drive: async () => { await highlight(FIRST); await browser.$("[data-raw-view-cancel]").click(); await frames(); }, anchor: '.raw-view-note[data-raw-view-refusal="unexpected_error"]' },
+  { name: "view-failed-retry-refused", table: viewWorld(viewFailed("raw_view_source_changed", true), { available: false, code: "conversion_busy" }), drive: () => highlight(FIRST), anchor: '[data-raw-view-refusal="conversion_busy"]' },
+  { name: "view-failed-retry-quarantined", table: viewWorld(viewFailed("raw_view_source_changed", true), { available: false, code: "backend_quarantined" }), drive: () => highlight(FIRST), anchor: '[data-raw-view-refusal="backend_quarantined"]' },
+  { name: "view-failed-binding", table: viewWorld(viewFailed("provider_build_not_evidenced", false), { available: false, code: "provider_build_not_evidenced" }), drive: () => highlight(FIRST), anchor: '[data-raw-view-code="provider_build_not_evidenced"]' },
+  { name: "view-failed-binding-cured", table: viewWorld(viewFailed("provider_build_not_evidenced", false)), drive: () => highlight(FIRST), anchor: "[data-raw-view-retry]" },
+  { name: "view-failed-out-of-sight", table: viewWorld(viewFailed("view_cache_not_stored", true)), drive: () => highlight(SECOND), anchor: "[data-status-raw-view]" },
+  { name: "view-open-refused-reading", table: viewWorld(viewReady()), hold: ["open_mzml_preview"], drive: async () => { await pressOpenRow(); await highlight(FIRST); }, anchor: "[data-raw-view-open-reason]" },
+  { name: "view-open-refused-backend", table: (locale) => ({ ...viewWorld(viewReady())(locale), inspect_backend: unavailableBackend }), drive: () => highlight(FIRST), anchor: '[data-raw-view-open][aria-disabled="true"]' },
+  { name: "view-read-failed", table: viewFailedOpenWorld, drive: failTheOpen, anchor: '#workbench-evidence[data-evidence="failed"] [data-raw-view-convert]' },
+  { name: "view-reread-running", table: viewFailedOpenWorld, keepFocus: true, drive: rereadTheFailedOpen, anchor: '[data-raw-view-phase="checkingSource"] [data-raw-view-cancel]:focus' },
+  { name: "view-reread-failed", table: viewFailedOpenWorld, drive: async () => {
+    await rereadTheFailedOpen();
+    await setInvokeResult("get_raw_view_state", { state: viewFailed("view_cache_not_stored", true, { operation: 2 }), availability: { available: true, unverifiedBuildRelease: null } });
+    await browser.$('[data-raw-view-code="view_cache_not_stored"]').waitForExist({ timeout: 30_000 });
+  }, anchor: '[data-raw-view-code="view_cache_not_stored"]' },
+  { name: "view-open-long-label", table: viewWorld(viewReady({ handle: LONG_NAME.handle, unverifiedBuildRelease: UNMEASURED }), { available: true, unverifiedBuildRelease: UNMEASURED }, UNMEASURED, LONG_NAME), drive: async () => { await highlight(LONG_NAME); await browser.$("[data-raw-view-open]").click(); await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 30_000 }); await foldNarrowRoster(); await frames(); }, anchor: ".viewer-file-actions .not-verified-tag" },
+  { name: "view-open-scans", table: viewWorld(viewReady()), drive: async () => { await openTheView(); await browser.$('.viewer-tabs [role="tab"]:nth-child(2)').click(); await frames(); }, anchor: "[data-view-export-withheld]" },
+  { name: "view-long-name-busy", table: viewWorld(viewRunning("converting", { handle: LONG_NAME.handle, fileName: LONG_NAME.fileName }), { available: false, code: "raw_view_busy" }), drive: () => highlight(SECOND), anchor: '[data-raw-view-refusal="raw_view_busy"]' },
+  { name: "view-long-name-idle", table: viewWorld({ state: "idle" }), drive: () => highlight(LONG_NAME), anchor: VIEW_BUTTON },
+  { name: "view-busy-queue-refused", table: viewWorld(viewRunning("converting", { handle: LONG_NAME.handle, fileName: LONG_NAME.fileName })), drive: () => go(2), anchor: "#conversion-availability-raw-view-running" },
+  { name: "view-busy-mzml-pressed", table: viewWorld(viewRunning("converting")), drive: pressOpenRow, anchor: "[data-raw-view-held]" },
+  { name: "view-busy-scans-refused", table: viewWorld({ state: "idle" }), drive: async () => {
+    await pressOpenRow();
+    await browser.$("#workbench-evidence[data-evidence='loaded']").waitForExist({ timeout: 30_000 });
+    await setInvokeResult("get_raw_view_state", { state: viewRunning("converting"), availability: { available: false, code: "raw_view_busy" } });
+    await highlight(FIRST);
+    await browser.$("[data-status-raw-view]").waitForExist({ timeout: 30_000 });
+    await pressOpenRow();
+    await browser.$("#workbench-evidence[data-evidence='loaded']").waitForExist({ timeout: 30_000 });
+  }, anchor: "[data-status-raw-view]" },
+  { name: "view-busy-clear-dialog", table: (locale) => ({ ...viewWorld(viewRunning("converting"))(locale), plan_workspace_clear: { Ok: { planId: "copy-tour-plan", totalCount: 4, removableCount: 3, protectedCount: 1, active: true } } }), keepFocus: true, drive: async () => {
+    await revealRosterRow(FIRST.handle);
+    await browser.$(".roster-foot button[aria-haspopup='menu']").click();
+    await browser.$(".roster-menu [data-roster-clear]").click();
+    await browser.$('[role="dialog"] #active-clear-status').waitForExist({ timeout: 30_000 });
+    await frames();
+  }, anchor: '[role="dialog"]' },
   // Workspace restore (ADR 0061): what the start-up read found, over a first run.
   { name: "restore-loading", table: emptyTable, hold: ["read_workspace_restore"], anchor: '[data-restore="loading"]' },
   { name: "restore-offer", table: restoreTable(RESTORE_OFFER), anchor: "[data-restore-action]" },

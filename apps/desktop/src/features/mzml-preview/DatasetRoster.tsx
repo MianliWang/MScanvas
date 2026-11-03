@@ -57,6 +57,8 @@ export interface DatasetRosterProps {
   readonly onRawHighlighted?: (handle: string) => void;
   /** Enter on the highlighted Thermo RAW row: the pane's first action. */
   readonly onRawEnter?: (handle: string) => void;
+  /** An mzML row pressed while a view holds the slot: nothing is read, and the evidence says why. */
+  readonly onReadHeld?: () => void;
   /**
    * A row another surface has asked to reveal, with the activation that asked.
    *
@@ -185,6 +187,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   onActivate,
   onRawHighlighted,
   onRawEnter,
+  onReadHeld,
   revealRow = null,
   canAddFiles,
   canAddFolder,
@@ -720,7 +723,10 @@ export const DatasetRoster = memo(function DatasetRoster({
     if (event.ctrlKey || event.metaKey || event.shiftKey) return;
     const kind = state.datasets.find(row => row.handle === handle)?.sourceKind;
     if (kind === "thermo_raw") onRawHighlighted?.(handle);
-    else if (kind === "mzml" && canPreview) onActivate(handle);
+    else if (kind === "mzml") {
+      if (canPreview) onActivate(handle);
+      else onReadHeld?.();
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -751,7 +757,10 @@ export const DatasetRoster = memo(function DatasetRoster({
         // The one keystroke that reads a file. Every other key here moves
         // focus or changes the selection, and neither costs a process.
         const focused = state.datasets.find(row => row.handle === state.focused);
-        if (focused?.sourceKind === "mzml" && canPreview) {
+        if (focused?.sourceKind === "mzml" && !canPreview && onReadHeld !== undefined) {
+          dispatch({ type: "rowPressed", handle: focused.handle, modifiers: { ctrl: false, shift: false } });
+          onReadHeld();
+        } else if (focused?.sourceKind === "mzml" && canPreview) {
           onActivate(focused.handle);
         } else if (focused?.sourceKind === "thermo_raw" && !event.repeat) {
           // Two presses (ADR 0060 decision 1): the first highlights the row and

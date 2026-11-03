@@ -1376,9 +1376,12 @@ the decisions stand otherwise.
    - It asks what the session already holds: the last observed binding and the
      catalog read for it. A session that has observed nothing, or a build that
      cannot preview, answers `backend_not_found`; the webview says "Checking the
-     installation…" first while a check runs. A catalog not read yet says nothing
-     about the build, so the press stays open and its worker answers, as in slice
-     2 note 6. The webview reads the answer again when that catalog arrives.
+     installation…" first while a check runs. A catalog not read yet cannot name
+     the build, and "available" with no release would read as verified, so it
+     answers `raw_view_build_unknown`, said as "Checking the installation…", after
+     every refusal that would outlast the wait. A catalog read that failed answers
+     its own code, as a press would. The webview reads the answer again when the
+     catalog arrives. The worker's own answer of slice 2 note 6 stays, for a race.
    - The root is looked at by `ViewCache::inspect`, which makes nothing: a root
      that is not there is not a refusal, and `unreadable` is left to the press,
      which can offer Try again.
@@ -1406,15 +1409,49 @@ the decisions stand otherwise.
 7. **Deferred, each with its reason.**
    - **View with…** (`begin_raw_view_with`, `rawViewIntents`) and the **Settings
      row** (`describe_view_cache`, `clear_view_cache`, still awaiting a caller) are
-     not in this change. Both are ADR 0060's and neither gates View.
+     not in this change. Decision 16 puts both in this slice, so the split waits for
+     the owner (note 9).
    - A failure that is not retryable offers Convert this file… alone, as decision
-     10 says. View comes back with the next operation of any row.
+     10 says. View comes back with the next operation of any row, or with the cure
+     of a failure of the build (note 8).
    - A native drop while a view runs still says a conversion is under way (slice 2
      note 6), because that state is a webview-visible transfer object.
    - The digest memo, the reporting form of the post-run revalidation, and the
      key's move to the structured intent stay as slice 2 notes 4, 5 and 6 left them.
    - Native QA (decision 14) waits for its hold release, HR-1. This slice's evidence
      is the fake provider, Vitest and the browser boundary.
+8. **What the rendered review of this slice settled.**
+   - **The pane follows the row's own operation.** A row's own open or failed
+     preview gives way to the pane while its operation is running, failed or an
+     Open away, because a re-read needs its phases, its Cancel and its failure on
+     screen. Decision 3 keeps a view on screen during another setting's run; that is
+     View with…'s, and it can move there with it. Here Cancel brings the preview back.
+   - **A view is its own fact in the conversion lane,** not a read: the queue's
+     Convert answers `raw-view-running`, with decision 5's sentence and Show {name},
+     and the scan selection says the same.
+   - **A settings read waits for a running view,** as for a running queue, and is
+     issued as it ends. It takes the backend gate the worker needs. A document that
+     loads during a view therefore has its settings late, and says what they wait for.
+   - **Try again answers to Rust's availability** as View does, with its reason and
+     recovery, and Enter presses it only then. A failure of the build
+     (`provider_build_not_evidenced`, `backend_not_found`) offers Choose ProteoWizard
+     folder…, and Try again once availability says the cause has gone. That is the
+     one Try again decision 10 does not list.
+   - **A failure out of sight** has the status bar's line and Show {name} until its
+     row is looked at, and one `role="alert"`, as decision 1 asks.
+   - **The keyboard.** Tabs, then Convert, then the panel (`Tabs` takes `actions`).
+     Storing has no button, so the pane itself holds the keyboard. Open and a re-read
+     hand it to the evidence and the pane.
+   - **Converted at** is in the reader's locale, with the recorded instant as its title.
+9. **Waiting on the owner.**
+   - **DEF-2.** `OWNER_DECISIONS_V511.md` says it blocks shipping the view cache.
+     Until it is answered no uninstall removes the cache unless "Delete the
+     application data" is checked, and no NSIS hook is written here.
+   - **The split of View with… and the Settings row** (note 7). Until the row exists
+     the cache is bounded by its 10 GiB cap, and a person has no way to clear it.
+   - **The install and support page.** "What this amends" lists it for this change.
+     The beta 1 page describes a release that has no view cache, so the edit belongs
+     to the next release's page.
 
 ## Alternatives rejected
 
