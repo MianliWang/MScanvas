@@ -45,10 +45,11 @@ export function OutputOpenActions({ output, add = null }: { readonly output: Fin
       .finally(() => { claimed.current = false; if (live.current) setWorking(null); });
   };
   const opened = working !== null ? t("outputOpening") : answer === "failed" ? t("outputPlatformFailure") : answer?.status === "accepted" ? t("outputOpenAccepted") : answer?.status === "refused" ? t(REFUSAL[answer.reason]) : "";
-  const added = add?.answer == null ? "" : add.answer.kind === "added" ? t("outputAdded")
-    : add.answer.kind === "alreadyInWorkspace" ? t("outputAlreadyInWorkspace")
-    : notAddedSentence(output.fileName, add.answer.reason, t);
-  const shown = add?.answer != null && add.answer.kind !== "refused" && add.onShow !== null ? { handle: add.answer.handle, show: add.onShow } : null;
+  const last = add?.answer ?? null;
+  const added = last === null ? "" : last.kind === "refused" ? notAddedSentence(output.fileName, last.reason, t)
+    : t(last.kind === "added" ? "outputAdded" : "outputAlreadyInWorkspace");
+  const show = add?.onShow ?? null;
+  const shown = last !== null && last.kind !== "refused" && show !== null ? { handle: last.handle, show } : null;
   // Both stay Tab stops while one request is out; the status line below says
   // why they are refused ("Opening…").
   return <div className="output-open-actions" role="group" aria-label={t("outputOpenGroup", { name: output.fileName })}>
