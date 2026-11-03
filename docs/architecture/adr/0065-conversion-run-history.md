@@ -1,18 +1,20 @@
 # ADR 0065 — Persistent conversion run history
 
-Status: **Accepted (2026-10-30)** for open questions 1 to 5, by the owner's
-decision RUN-1 recorded under
-[Owner decision, 2026-10-30](#owner-decision-2026-10-30). Question 6 and the
-edge cases of section 7 stay **open**. Proposed on 2026-10-30. The owner asked
-for every backend function that can be done now to be built, with open details
-following the recommendations; this record states them. The Rust side is
-implemented on branch `be/run-history`
-(`apps/desktop/src-tauri/src/run_history.rs`, fed from
-`preview/service/run_recording.rs`). No interface calls it yet, and the
-application does not attach the store to the queue, so nothing is recorded in
-the product: recording source paths with no list, Clear or Off the user can
-reach would break section 7's promise. The interface slice attaches it. The
-questions for the owner are listed [at the end](#open-questions-for-the-owner).
+Status: **Accepted** for open questions 1 to 6: questions 1 to 5 on 2026-10-30
+by the owner's decision RUN-1, recorded under
+[Owner decision, 2026-10-30](#owner-decision-2026-10-30), and question 6 on
+2026-10-31, recorded under
+[Owner decision, 2026-10-31](#owner-decision-2026-10-31). The edge cases of
+section 7 stay **open**. Proposed on 2026-10-30. The owner asked for every
+backend function that can be done now to be built, with open details following
+the recommendations; this record states them. The store is
+`apps/desktop/src-tauri/src/run_history.rs`, fed from
+`preview/service/run_recording.rs`, and the interface
+([section 10](#10-the-interface-of-this-slice)) is
+`apps/desktop/src/features/run-history/`. The application attaches the store to
+the queue in the slice that offers the list, Clear and Off, so nothing was
+recorded before the user could see or stop it. The questions for the owner are
+listed [at the end](#open-questions-for-the-owner).
 Related: [0013](0013-serial-conversion-queue.md) (the serial queue and its
 *No persistence*), [0015](0015-user-visible-queue-stop.md) (stop),
 [0016](0016-explicit-converted-output-adoption.md) (adoption's object check),
@@ -291,10 +293,9 @@ and of G16, cross-session staging ownership, unchanged.
   record of this schema version that does not parse is malformed and kept
   aside. So any change to a record's shape must raise `schemaVersion`: an
   older build would otherwise set aside a newer build's run while that build
-  is still writing it. Schema 1 has not been released, so its shape is fixed
-  when this record is accepted in full, question 6 and the open edge cases of
-  section 7 included; until then it changes without a new version. Nothing in
-  the product writes a schema 1 run before the store is attached.
+  is still writing it. The store is attached, so the product writes schema 1
+  and its shape is fixed: any change to a record's shape from here on raises
+  `schemaVersion`. This follows from attaching it and is not an owner decision.
 
 ### 7. Privacy
 
@@ -336,8 +337,8 @@ turns it on, with a first-run choice.
 
 ### 8. What the interface can do with it
 
-These are later slices. Each one needs its own user goal, task path and
-rendered QA.
+List and detail are built (section 10). The rest are later slices. Each one
+needs its own user goal, task path and rendered QA.
 
 - **List and detail:** every run newest first, then one run's items with
   their outputs, checks and codes.
@@ -374,8 +375,9 @@ rendered QA.
 
 ### 9. The Tauri boundary
 
-Four document-bound commands, registered ahead of their interface and listed
-in `AHEAD_OF_THEIR_INTERFACE` in the command-surface test:
+Four document-bound commands, called from
+`apps/desktop/src/features/run-history/runHistoryApi.ts`, whose spellings a Rust
+test holds to the wire:
 
 | Command | Arguments |
 | --- | --- |
@@ -388,10 +390,48 @@ in `AHEAD_OF_THEIR_INTERFACE` in the command-surface test:
   boundary error codes, so no localized message is added.
 - A session with nowhere to keep runs answers `unavailable`.
 
+### 10. The interface of this slice
+
+**User goal.** After a restart or a crash in a long queue, see what ran, which
+files it wrote, under which settings and build, and whether it was cut short;
+forget it, or stop keeping it.
+
+**Task path.** Conversion, then **Conversion history** at the foot of the rail.
+The surface keeps its two columns: the runs newest first in the rail, the
+newest run's facts and files in the main column. Choosing a run reads it. The
+queue's panel stays mounted behind this and loses nothing; **Back to
+conversion** returns to it and the keyboard returns to the entry, and any move
+between surfaces closes the history, so whatever sends the reader to Conversion
+shows the queue.
+
+- **A run** shows its start, its end or when its interruption was found, the
+  counts, the settings, the build, the "not verified by MSCanvas" label and what
+  ended the queue. A file shows its state, attempts, failure in the queue's own
+  sentence beside its stable code, and on Details its outputs and checks. An
+  interrupted file says its outcome is unknown; an oversized run says its files
+  were not kept.
+- **Reads only.** Nothing opens an output or runs anything from here (section 8)
+  and no path reaches the document.
+- **Read again** re-lists on request, and the list is read again when the view
+  opens, when the queue changes state, and after any Clear or Off.
+- **Clear** and **Off** each ask first, with the keyboard on the answer that
+  keeps the runs. Clear is refused, with its reason beside it, while there is
+  nothing to clear or the history could not be read. It says how many runs it
+  kept, and how many files it could not remove.
+- **Off** is a button in Settings, not one of the dialog's segmented controls:
+  those choose as the arrow keys pass over them, and Off forgets. Settings reads
+  the switch each time it opens and refuses the button with its reason while it
+  reads, or when the store is unavailable.
+
+**Problem states.** `notWritten`, `ownerUnavailable`, the runs that could not be
+read or that a newer build wrote, an unusable or linked history directory, a
+read refused or gone and a refused request each say so in place, in English and
+Chinese, and a code this build does not know is shown as itself.
+
 ## Consequences
 
-- RUN-007's conversion half has a Rust side. The interface is a later slice,
-  and it is what attaches the store to the queue.
+- RUN-007's conversion half is in the product, attached to the queue, with its
+  list, Clear and Off.
 - ADR 0013's *No persistence* still holds for the queue itself: a restart does
   not restore a queue, and nothing can resume one. Its record survives the
   restart.
@@ -413,9 +453,10 @@ in `AHEAD_OF_THEIR_INTERFACE` in the command-surface test:
 
 ## Open questions for the owner
 
-*Questions 1 to 5 were answered by the owner on 2026-10-30, each as
-recommended; see [Owner decision, 2026-10-30](#owner-decision-2026-10-30).
-Question 6 is open.*
+*Questions 1 to 5 were answered by the owner on 2026-10-30 and question 6 on
+2026-10-31, each as recommended; see
+[Owner decision, 2026-10-30](#owner-decision-2026-10-30) and
+[Owner decision, 2026-10-31](#owner-decision-2026-10-31).*
 
 1. Is history on by default (recommended), or off until the user turns it on?
 2. Does Off also forget what is stored (recommended, as ADR 0061's Off does),
@@ -424,9 +465,9 @@ Question 6 is open.*
 4. Is the advanced intent stored, so a re-run can reproduce it (recommended),
    or only the verified row's identifier?
 5. Does Clear keep runs in progress (recommended), or forget them too?
-6. **Open.** Is the store attached to the queue in the same slice that gives
-   the user the list, Clear and Off (recommended), or earlier, recording
-   before the user can see or stop it?
+6. Is the store attached to the queue in the same slice that gives the user the
+   list, Clear and Off (recommended), or earlier, recording before the user can
+   see or stop it?
 
 ## Owner decision, 2026-10-30
 
@@ -445,6 +486,15 @@ project, as section 3 already decides. Its note on EXP-25, a run's JSON as one
 run's redacted record, belongs to a later slice that this record does not
 design.
 
-Not answered by RUN-1, and still **open**: question 6, and the edge cases
-listed in section 7. Until question 6 is answered, the application does not
-attach the store to the queue.
+Not answered by RUN-1: question 6, answered below, and the edge cases listed in
+section 7, still **open**.
+
+## Owner decision, 2026-10-31
+
+Shown question 6 with the questions the reviews had added since, the owner
+replied verbatim "全部按推荐" ("all as recommended"). That answers it as
+recommended: the run-history store does not record before an interface offers
+the list, Clear and Off, so the store is attached to the queue in the slice that
+offers them and this record's pull request merges together with that interface.
+
+The edge cases of section 7 were not among them and stay **open**.

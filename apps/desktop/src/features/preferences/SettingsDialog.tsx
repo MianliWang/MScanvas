@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { SettingField } from "../../components/fields/SettingField";
 import { Button, Icon, SegmentedControl } from "../../components/ui";
+import { RunHistorySetting } from "../run-history/RunHistorySetting";
 import { SESSION_DEFAULTS } from "./sessionPreferences";
 import { useSessionPreferences, useUiMessages } from "./SessionPreferencesProvider";
 import {
@@ -170,6 +171,8 @@ export function SettingsDialog() {
               <Button size="sm" data-layout-reset="" refused={layoutRefusal !== undefined} reasonId={`${layoutId}-help`}
                 onClick={panels.reset}>{message("layoutReset")}</Button>
             </SettingField>
+            <h3 className="settings-section-title">{message("runHistoryTitle")}</h3>
+            <RunHistorySetting />
             {/* The shell's layout region is aria-hidden behind this modal, so
                 the dialog says it here. Mounted empty, so the change is heard. */}
             <p aria-live="polite" className="visually-hidden" data-live-region="settings-layout">

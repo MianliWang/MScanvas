@@ -108,6 +108,12 @@ export interface MessageParameters {
   readonly m74CnvCancelNamed: { readonly name: string };
   readonly m74CnvOutputMetrics: { readonly bytes: string; readonly spectra: string; readonly chromatograms: string };
   readonly m74CnvPartialCounts: { readonly count: number; readonly total: number; readonly unpublished: string };
+  readonly runHistoryRunTitle: { readonly when: string };
+  readonly runHistoryUnreadable: { readonly count: number };
+  readonly runHistoryNewer: { readonly count: number };
+  readonly runHistoryClearedKept: { readonly count: number };
+  readonly runHistoryNotRemoved: { readonly count: number };
+  readonly runHistoryCompletenessNotEstablished: { readonly reason: string };
   readonly m74CnvCountConverted: { readonly count: number };
   readonly m74CnvCountSkipped: { readonly count: number };
   readonly m74CnvCountFailed: { readonly count: number };

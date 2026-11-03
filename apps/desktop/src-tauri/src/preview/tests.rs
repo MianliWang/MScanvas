@@ -3865,6 +3865,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // The conversion preset store's, beside the preference store it shares a
     // binding with.
     let presets = include_str!("../../../src/features/presets/presetsApi.ts");
+    // The conversion run history's, on its own store beside the queue.
+    let run_history = include_str!("../../../src/features/run-history/runHistoryApi.ts");
 
     let registered = host
         .split_once("generate_handler![")
@@ -4123,7 +4125,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
                 || drop_transport.contains(&format!("\"{name}\""))
                 || preferences.contains(&format!("\"{name}\""))
                 || projects.contains(&format!("\"{name}\""))
-                || presets.contains(&format!("\"{name}\"")),
+                || presets.contains(&format!("\"{name}\""))
+                || run_history.contains(&format!("\"{name}\"")),
             "the frontend never calls {name}"
         );
     }

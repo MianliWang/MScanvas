@@ -26,6 +26,7 @@ import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered 
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
+import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, RUNNING, SET_ITEM, STOPPED, STOPPED_ITEMS, found, listed } from "../support/runHistory";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
   admittedIntents,
@@ -1102,7 +1103,171 @@ const STOPS: readonly Stop[] = [
     },
     anchor: '[data-layout-reset][aria-disabled="true"]:focus-visible',
   },
+  // The conversion history (ADR 0065): the rail's entry, every state of the list
+  // and of one run, and the off switch in Settings.
+  { name: "run-history-entry", table: (locale) => conversionWorld(locale, { status: "idle" }), drive: () => go(2), anchor: "[data-run-history-entry]" },
+  { name: "run-history-loading", table: populated, hold: ["list_conversion_runs"], drive: openRunHistory, anchor: "[data-run-history-loading]" },
+  { name: "run-history-empty", table: populated, drive: openRunHistory, anchor: "[data-run-history] .run-history-empty" },
+  { name: "run-history-off-empty", table: runHistoryWorld(listed([], { recording: false })), drive: openRunHistory, anchor: '[data-run-history-note="off"]' },
+  {
+    name: "run-history-list",
+    table: runHistoryWorld(listed([ENDED, LABELLED, INTERRUPTED, STOPPED]), found(ENDED, ENDED_ITEMS)),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${ENDED.runId}"] [data-run-item]`,
+  },
+  {
+    name: "run-history-reading-run",
+    table: runHistoryWorld(listed([ENDED])),
+    hold: ["read_conversion_run"],
+    drive: openRunHistory,
+    anchor: '[data-run-read="reading"]',
+  },
+  {
+    // Labelled on both counts, retried, and one file's failure with its code.
+    name: "run-history-labelled",
+    table: runHistoryWorld(listed([LABELLED]), found(LABELLED, LABELLED_ITEMS)),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${LABELLED.runId}"] [data-not-verified]`,
+  },
+  {
+    // Found cut short: no end time, the running file unknown, the next one not run.
+    name: "run-history-interrupted",
+    table: runHistoryWorld(listed([INTERRUPTED]), found(INTERRUPTED, INTERRUPTED_ITEMS)),
+    drive: openRunHistory,
+    anchor: "[data-run-interrupted-note]",
+  },
+  {
+    // What ended the whole queue, in words and by its code.
+    name: "run-history-stopped",
+    table: runHistoryWorld(listed([STOPPED]), found(STOPPED, STOPPED_ITEMS)),
+    drive: openRunHistory,
+    anchor: "[data-run-failure]",
+  },
+  {
+    // A set open on its members, its finding and why it could not be added.
+    name: "run-history-set",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, [SET_ITEM])),
+    drive: async () => {
+      await openRunHistory();
+      await browser.$("[data-run-item] .conversion-item-toggle").click();
+      await browser.$("[data-run-item] .conversion-item-manifest").waitForDisplayed();
+    },
+    anchor: "[data-run-item] .conversion-item-manifest",
+  },
+  {
+    name: "run-history-many",
+    table: runHistoryWorld(listed(MANY_RUNS), found(MANY_RUNS[0]!, MANY_ITEMS)),
+    drive: openRunHistory,
+    anchor: '.run-history-list[data-windowed="true"]',
+  },
+  {
+    name: "run-history-omitted",
+    table: runHistoryWorld(listed([OMITTED]), found(OMITTED, [])),
+    drive: openRunHistory,
+    anchor: "[data-run-items-omitted]",
+  },
+  {
+    // Everything the list can say at once: off, a write this session owes,
+    // runs it could not read and runs from a later build.
+    name: "run-history-problems",
+    table: runHistoryWorld(listed([ENDED], { recording: false, problem: "notWritten", unreadable: 2, newer: 1 }), found(ENDED, ENDED_ITEMS)),
+    drive: openRunHistory,
+    anchor: '[data-run-history-note="newer"]',
+  },
+  {
+    name: "run-history-unavailable",
+    table: runHistoryWorld({ outcome: "unavailable", problem: "unsafeDirectory" }),
+    drive: openRunHistory,
+    anchor: '[data-run-history-problem="unsafeDirectory"]',
+  },
+  {
+    name: "run-history-list-refused",
+    table: runHistoryWorld({ __reject: { kind: "stale_document", summary: "", detail: null, retryable: false } }),
+    drive: openRunHistory,
+    anchor: '[data-run-history-problem="error"]',
+  },
+  {
+    name: "run-history-read-newer",
+    table: runHistoryWorld(listed([ENDED]), { outcome: "refused", problem: "newerVersion" }),
+    drive: openRunHistory,
+    anchor: '[data-run-read="newerVersion"]',
+  },
+  {
+    name: "run-history-read-gone",
+    table: runHistoryWorld(listed([ENDED]), { outcome: "notFound" }),
+    drive: openRunHistory,
+    anchor: '[data-run-read="notFound"]',
+  },
+  {
+    // The question before Clear, the keyboard on the safe answer.
+    name: "run-history-clear-ask",
+    table: runHistoryWorld(listed([ENDED, RUNNING]), found(ENDED, ENDED_ITEMS)),
+    drive: async () => {
+      await openRunHistory();
+      await browser.$("[data-run-history-clear]").click();
+      await browser.$('[data-run-history-keep]:focus').waitForExist();
+    },
+    anchor: "[data-run-history-confirm]",
+    keepFocus: true,
+  },
+  {
+    name: "run-history-cleared-kept",
+    table: runHistoryWorld(listed([RUNNING]), found(RUNNING, []), { outcome: "done", keptInProgress: 1 }),
+    drive: clearRunHistory,
+    anchor: "[data-run-history-clear-status]:not(:empty)",
+  },
+  {
+    name: "run-history-clear-failed",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS), { outcome: "failed", problem: "notRemoved", notRemoved: 3 }),
+    drive: clearRunHistory,
+    anchor: "[data-run-history-clear-problem]",
+  },
+  { name: "settings-run-history-checking", table: populated, hold: ["list_conversion_runs"], drive: openSettings, anchor: '[data-settings-dialog] [data-run-history-setting]' },
+  {
+    name: "settings-run-history-ask",
+    table: populated,
+    drive: async () => {
+      await openSettings();
+      await browser.$('[data-run-history-toggle="on"]').click();
+      await browser.$('[data-run-history-off-keep]:focus').waitForExist();
+    },
+    anchor: "[data-run-history-off-confirm]",
+    keepFocus: true,
+  },
+  { name: "settings-run-history-off", table: runHistoryWorld(listed([], { recording: false })), drive: openSettings, anchor: '[data-run-history-toggle="off"]' },
+  {
+    name: "settings-run-history-failed",
+    table: (locale) => ({ ...runHistoryWorld(listed([]))(locale), set_conversion_run_history_enabled: { outcome: "failed", problem: "notTurnedOff", notRemoved: 0 } }),
+    drive: async () => {
+      await openSettings();
+      await browser.$('[data-run-history-toggle="on"]').click();
+      await browser.$("[data-run-history-off-forget]").click();
+    },
+    anchor: "[data-run-history-setting-problem]",
+  },
 ];
+
+/** The populated world, its history answering `list`, `read` and `clear`. */
+function runHistoryWorld(list: unknown, read: unknown = { outcome: "notFound" }, clear: unknown = { outcome: "done", keptInProgress: 0 }) {
+  return (locale: Locale) => ({ ...scenario("populated", locale), list_conversion_runs: list, read_conversion_run: read, clear_conversion_runs: clear });
+}
+
+async function openRunHistory() {
+  await go(2);
+  await browser.$("[data-run-history-entry]").click();
+  await browser.$("[data-run-history]").waitForDisplayed();
+}
+
+async function clearRunHistory() {
+  await openRunHistory();
+  await browser.$("[data-run-history-clear]").click();
+  await browser.$("[data-run-history-forget]").click();
+}
+
+async function openSettings() {
+  await browser.$("[data-settings-entry]").click();
+  await browser.$("[data-settings-dialog]").waitForDisplayed();
+}
 
 async function expandBackend() {
   const item = browser.$("[data-backend-item]");

@@ -2837,13 +2837,15 @@ pub fn run() {
             // And conversion runs (ADR 0065), under the same binding. Opening
             // marks the runs of sessions that ended mid-run as interrupted.
             //
-            // Not attached to the queue, so nothing is recorded yet: until the
-            // interface gives the user the list, Clear and Off, recording
-            // source paths would be a store they can neither see nor turn off.
-            // The interface slice attaches it, once the owner accepts ADR 0065.
-            app.manage(SharedRunHistory::new(run_history::ConversionHistory::open(
+            // Attached to the queue because the interface offers the list, Clear
+            // and Off: nothing is recorded before it does (ADR 0065 question 6,
+            // answered 2026-10-31).
+            let history = SharedRunHistory::new(run_history::ConversionHistory::open(
                 preferences.sibling_directory(),
-            )));
+            ));
+            app.state::<SharedService>()
+                .attach_run_history(Arc::clone(&history));
+            app.manage(history);
             app.manage(SharedPreferences::new(preferences));
             // A ProteoWizard folder an earlier session remembered is where this
             // one's discovery starts. Nothing is launched here: the first

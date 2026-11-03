@@ -3,7 +3,8 @@
 use super::*;
 use crate::project::tests::Scratch;
 use crate::run_history::{
-    ConversionHistory, RunHistoryListDto, RunHistoryReadDto, RunState, SetCompleteness,
+    ConversionHistory, RunHistoryListDto, RunHistoryReadDto, RunHistoryWriteDto, RunState,
+    SetCompleteness,
 };
 
 #[test]
@@ -190,4 +191,95 @@ fn a_set_records_its_completeness_and_whether_it_was_adoptable() {
             sample_count: *sample_count,
         })
     );
+}
+
+/// The interface offers the list, Clear and Off, so the application attaches the
+/// store (ADR 0065 question 6). Host wiring no unit test can run.
+#[test]
+fn the_application_attaches_the_store_to_the_queue() {
+    assert!(include_str!("../../lib.rs").contains(".attach_run_history("));
+}
+
+/// Every field, state and outcome the wire carries is one the webview's types
+/// spell, so a rename here cannot quietly blank a row there.
+#[test]
+fn the_webview_types_spell_every_name_the_wire_carries() {
+    fn keys_of(value: &serde_json::Value, keys: &mut std::collections::BTreeSet<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, inner) in map {
+                    keys.insert(key.clone());
+                    keys_of(inner, keys);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                values.iter().for_each(|inner| keys_of(inner, keys));
+            }
+            _ => {}
+        }
+    }
+    let fixture = TestFile::new("run-history-spelling");
+    let destination = destination_root(&fixture, "out");
+    let profile = Scratch::new("run-history-spelling-profile");
+    let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    service.attach_run_history(Arc::clone(&history));
+    let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+    queue_and_run(&service, &[first], &destination);
+    let RunHistoryListDto::Listed { runs, .. } = history.list() else {
+        panic!("the history lists");
+    };
+    let answers = [
+        serde_json::to_value(history.list()).expect("serializes"),
+        serde_json::to_value(history.read(&runs[0].run_id)).expect("serializes"),
+        serde_json::to_value(SetCompleteness::Established {
+            method: "audit".to_owned(),
+            sample_count: 1,
+        })
+        .expect("serializes"),
+        serde_json::to_value(SetCompleteness::NotEstablished {
+            reason: "unknown".to_owned(),
+        })
+        .expect("serializes"),
+        serde_json::to_value(RunHistoryWriteDto::Failed {
+            problem: "notRemoved",
+            not_removed: 1,
+        })
+        .expect("serializes"),
+        serde_json::to_value(RunHistoryWriteDto::Done {
+            kept_in_progress: 0,
+        })
+        .expect("serializes"),
+    ];
+    let api = include_str!("../../../../src/features/run-history/runHistoryApi.ts");
+    let mut keys = std::collections::BTreeSet::new();
+    answers.iter().for_each(|answer| keys_of(answer, &mut keys));
+    assert!(keys.contains("keptInProgress") && keys.contains("sampleCount"));
+    for key in keys {
+        assert!(api.contains(&format!("readonly {key}")), "{key}");
+    }
+    let outcomes = [
+        serde_json::to_value(RunHistoryListDto::Unavailable { problem: "x" }),
+        serde_json::to_value(RunHistoryReadDto::NotFound),
+        serde_json::to_value(RunHistoryReadDto::Refused { problem: "x" }),
+        serde_json::to_value(RunHistoryWriteDto::Unavailable { problem: "x" }),
+    ];
+    for outcome in answers.iter().take(2).chain(answers.iter().skip(4)).chain(
+        outcomes
+            .iter()
+            .map(|outcome| outcome.as_ref().expect("serializes")),
+    ) {
+        let tag = outcome["outcome"].as_str().expect("a tagged outcome");
+        assert!(api.contains(&format!("\"{tag}\"")), "{tag}");
+    }
+    for state in [
+        RunState::Running,
+        RunState::Completed,
+        RunState::Stopped,
+        RunState::StopFailed,
+        RunState::Interrupted,
+    ] {
+        let spelled = serde_json::to_value(state).expect("serializes");
+        assert!(api.contains(&format!("{spelled}")), "{spelled}");
+    }
 }

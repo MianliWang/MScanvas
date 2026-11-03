@@ -17,6 +17,7 @@ import {
   shimadzuDataset,
   shippedIntent,
 } from "../../apps/desktop/src/test/previewFixtures";
+import { RUN_HISTORY_EMPTY } from "./runHistory";
 
 /**
  * The binding every answer in this table describes.
@@ -249,6 +250,7 @@ export function ipcTable(
       capacity: FAKE_WORKSPACE_CAPACITY,
     },
     subscribe_workspace_drop_updates: null,
+    ...RUN_HISTORY_EMPTY,
     // The conversion slot, and the authority it is answered under. Every
     // response in this shape carries the projection -- the poll included, which
     // is the session's only voice while a drain runs -- so a table that omitted

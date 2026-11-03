@@ -1,0 +1,92 @@
+/* The conversion history: the conversion surface's own two columns (app.css),
+   with the runs in the rail and one run's files in the main column. */
+
+.run-history > .conversion-main { grid-area: 1 / 1; }
+.run-history > .conversion-side { grid-area: 1 / 2; }
+.run-history h2 { outline: none; }
+.run-history .conversion-main > .notice:first-child { margin-top: 12px; }
+.run-history .conversion-side { min-height: 0; }
+.run-history-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.run-history-list {
+  display: flex;
+  min-height: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0 2px 2px;
+  list-style: none;
+}
+.run-history-list[data-windowed="true"] {
+  max-height: max(320px, calc(100vh - 300px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+}
+.run-history-list > li.list-window-spacer { flex: none; margin: 0; padding: 0; border: 0; list-style: none; }
+
+/* A row is a bordered button, in the selected look of the settings' tiles. */
+.run-history-row.ui-button {
+  display: grid;
+  width: 100%;
+  justify-content: stretch;
+  gap: 3px;
+  padding: 7px 10px;
+  text-align: left;
+  white-space: normal;
+}
+.run-history-row[aria-current="true"].ui-button {
+  border-color: var(--color-accent);
+  background: var(--color-surface-selected);
+}
+.run-history-row-top { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.run-history-when { min-width: 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.run-history-counts { color: var(--color-text-secondary); font-size: 12px; font-weight: 400; }
+
+[data-run-state="running"] > * > .run-history-state,
+[data-run-state="running"] > .conversion-column-head > .run-history-state {
+  background: var(--color-surface-selected);
+  color: var(--color-accent-hover);
+}
+[data-run-state="completed"] > * > .run-history-state {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+[data-run-state="stopped"] > * > .run-history-state,
+[data-run-state="interrupted"] > * > .run-history-state {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+[data-run-state="stopFailed"] > * > .run-history-state {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.metadata-list.run-history-facts {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 6px 24px;
+  padding-top: 0;
+  border-top: 0;
+}
+.run-history-code {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* What the record says of an item whose outcome no one knows: not a failure. */
+.conversion-run-list > li[data-item-state="interrupted"] > .conversion-run-symbol {
+  border-color: #e6cf9a;
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+.conversion-run-list > li[data-item-state="interrupted"] .conversion-queue-status {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.run-history-empty { flex: 1 1 auto; }
+[data-run-history-clear-status]:empty { display: none; }
+.run-history-confirm { display: grid; gap: 8px; font-size: 12px; }

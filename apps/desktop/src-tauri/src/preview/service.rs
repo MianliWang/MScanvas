@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 mod conversion_intent;
 mod figure_preview;
 mod output_opening;
-mod run_recording;
 /// The one-click view's work (ADR 0060, slice 2).
 mod raw_view_run;
+mod run_recording;
 mod staging_recovery;
 mod workspace_clear;
 

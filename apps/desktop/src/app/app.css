@@ -1270,6 +1270,9 @@ button:disabled,
 /* A backend-chosen basename can be long, and a truncated one is not a name
    anybody can find in a folder. */
 .conversion-item-manifest th[scope="row"] {
+  /* Beside a digest that cannot wrap, a floor keeps the name from going
+     character by character; the table scrolls in its own box. */
+  min-width: 14em;
   max-width: 22em;
   font-weight: 500;
   white-space: normal;

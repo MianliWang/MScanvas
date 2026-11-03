@@ -27,10 +27,6 @@ use crate::run_history::{
 impl PreviewService {
     /// Gives this session a run history. Set once, at start; a second call is
     /// ignored.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "attached by the run history interface slice")
-    )]
     pub(crate) fn attach_run_history(&self, history: Arc<ConversionHistory>) {
         let _ = self.run_history.set(history);
     }
