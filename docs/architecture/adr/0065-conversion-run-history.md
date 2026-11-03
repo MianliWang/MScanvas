@@ -25,8 +25,8 @@ Related: [0013](0013-serial-conversion-queue.md) (the serial queue and its
 1,024), [0058](0058-user-saved-conversion-presets.md) (the nearest store),
 [0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)
 (the application is not single-instance), and ADR 0061, restore workspace
-(proposed in PR #177, not on this branch), whose review found the
-multi-instance failure this design avoids. RUN-005, RUN-007 and RUN-009 in the
+(accepted by the owner on 2026-10-31; its record arrives with PR #177), whose
+review found the multi-instance failure this design avoids. RUN-005, RUN-007 and RUN-009 in the
 [feature catalog](../../product/FEATURE_CATALOG.md); project runs in the
 [M8.1 record](../../product/M8_1_FIRST_CLOSED_LOOP.md).
 
@@ -144,10 +144,11 @@ A refusal that ends a running queue is terminal too, with its code.
   list, read or start in another instance briefly does. A refused replace is
   tried again a few times over about 200 ms. One still refused is owed, as is
   any write while the off switch cannot be read: this session's own list and
-  read show the run as it is in memory, and its next write, list or read
-  makes the write, also after a later run has begun. Only a session that ends
-  while it still owes one leaves the earlier state on disk, which then reads
-  as interrupted (section 5).
+  read show the run as it is in memory, one whose first write never landed
+  included, and its next write, list or read makes the write, also after a later
+  run has begun. Once the switch can be read it decides: on writes, off forgets.
+  Only a session that ends while it still owes one leaves the earlier state on
+  disk, which then reads as interrupted (section 5).
 - A run whose file is gone once it has been written was forgotten, by a
   Clear, an Off or a prune in any instance. It is never written back: its
   next write stops recording it.
@@ -289,6 +290,13 @@ and of G16, cross-session staging ownership, unchanged.
   it anyway.
 - **Unreadable** (a sharing or permission refusal): skipped and counted,
   treated as a newer one for the same reason.
+- **A time past what a webview's date can hold:** malformed. This application
+  never wrote it, and the interface could not show it.
+- **A folder that cannot be listed** says nothing about what is in it, so it is
+  never answered as holding no runs or as having had them removed. A list answers
+  `unavailable` (`notListed`). Clear and Off answer `failed` (`notSwept`), remove
+  nothing and keep this session's runs. Off's marker stays, so the next start or
+  list that can see the folder finishes it.
 - **Schema discipline:** every record type refuses unknown fields, and a
   record of this schema version that does not parse is malformed and kept
   aside. So any change to a record's shape must raise `schemaVersion`: an
@@ -387,8 +395,11 @@ test holds to the wire:
 | `set_conversion_run_history_enabled` | `enabled` |
 
 - Answers are typed outcome enums with camelCase problem identifiers, not
-  boundary error codes, so no localized message is added.
+  boundary error codes. Each has its message under section 10.
 - A session with nowhere to keep runs answers `unavailable`.
+- The one boundary error all four share is the document check's,
+  `invalid_conversion_reservation`. Its own sentence is about a conversion
+  request, so the history says it in its own words: nothing changed, read again.
 
 ### 10. The interface of this slice
 
@@ -413,20 +424,31 @@ shows the queue.
 - **Reads only.** Nothing opens an output or runs anything from here (section 8)
   and no path reaches the document.
 - **Read again** re-lists on request, and the list is read again when the view
-  opens, when the queue changes state, and after any Clear or Off.
+  opens, when the queue changes state, and after any Clear or Off. The run on
+  screen stays there while it is read again, with the keyboard, the reader's
+  place and any open Details, whoever started the read.
+- **The rail** is its own scroll box at every length, so choosing a run low in it
+  never carries the run's detail out of a short window.
 - **Clear** and **Off** each ask first, with the keyboard on the answer that
   keeps the runs. Clear is refused, with its reason beside it, while there is
-  nothing to clear or the history could not be read. It says how many runs it
-  kept, and how many files it could not remove.
+  nothing to clear or the latest read of the history failed, whatever an earlier
+  read left on screen. Done, it says how many runs it kept. Where files could not
+  be removed it says how many, and the list read after it shows what remains. A
+  Clear or an Off that fails after its view has gone is said once by the next
+  view of that kind.
 - **Off** is a button in Settings, not one of the dialog's segmented controls:
   those choose as the arrow keys pass over them, and Off forgets. Settings reads
   the switch each time it opens and refuses the button with its reason while it
   reads, or when the store is unavailable.
 
 **Problem states.** `notWritten`, `ownerUnavailable`, the runs that could not be
-read or that a newer build wrote, an unusable or linked history directory, a
-read refused or gone and a refused request each say so in place, in English and
-Chinese, and a code this build does not know is shown as itself.
+read or that a newer build wrote, an unusable, linked or unlistable history
+directory, a read refused or gone and a refused request each say so in place, in
+English and Chinese, and a code this build does not know is shown as itself. The
+seven reasons sample completeness can go unestablished each have a sentence, with
+the stable identifier beside it. A set whose every member was published and that
+still could not be adopted whole says so in its own words here. The queue's own
+row says something else for that state, which is a separate, existing problem.
 
 ## Consequences
 

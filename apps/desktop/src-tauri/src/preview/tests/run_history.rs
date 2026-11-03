@@ -351,7 +351,7 @@ fn a_stopped_queue_is_recorded_as_stopped_and_an_unconfirmed_stop_as_stop_failed
         let wire: Vec<serde_json::Value> = terminal_queue(&update)
             .items
             .iter()
-            .map(|item| serde_json::to_value(&item.state).expect("serializes"))
+            .map(|item| serde_json::to_value(item.state).expect("serializes"))
             .collect();
         let stored: Vec<serde_json::Value> = items
             .iter()
