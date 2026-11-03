@@ -157,5 +157,5 @@ pub use structured::{
     IntegrityRoute, IntensityArray, LinearTolerance, Lowering, MAX_CHAIN_STEPS, Mz5Encoding,
     MzArray, MzMlEncoding, MzMlbEncoding, MzMlbIntensityArray, MzMlbMzArray, MzMlbPlainArray,
     MzXmlEncoding, OutputEncoding, Precision, Prediction, ProviderRequirement, SourceBlock,
-    StructuredIntent, StructuredIntentParts, Switch, Tier, Truncation,
+    StructuredIntent, StructuredIntentParts, Switch, Tier, Truncation, VERIFIED_MSCONVERT_SHA256,
 };

@@ -28,6 +28,7 @@ import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
+  ENVIRONMENT_DIAGNOSTICS,
   admittedIntents,
   availableBackend,
   chosenBackend,
@@ -372,6 +373,27 @@ function withBackend(verdict: unknown) {
 }
 
 const populated = (locale: Locale) => scenario("populated", locale);
+const withDiagnostics = (locale: Locale) => ({ ...populated(locale), read_environment_diagnostics: ENVIRONMENT_DIAGNOSTICS });
+
+/** Settings open, and Copy diagnostics pressed. */
+async function readDiagnostics() {
+  await browser.$("[data-settings-entry]").click();
+  await browser.$("[data-settings-dialog]").waitForDisplayed();
+  await browser.$("[data-diagnostics-read]").click();
+}
+
+/** The text read, a stand-in for the machine's clipboard answering, and Copy pressed. */
+async function copyDiagnostics(refuse: boolean) {
+  await readDiagnostics();
+  await browser.$("[data-diagnostics-preview]").waitForExist();
+  await browser.execute((refused: boolean) => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      configurable: true,
+      value: () => (refused ? Promise.reject(new DOMException("denied", "NotAllowedError")) : Promise.resolve()),
+    });
+  }, refuse);
+  await browser.$("[data-diagnostics-copy]").click();
+}
 
 const DECLARED_UNITS = { mzUnit: { state: "declared", accession: "MS:1000040" }, intensityUnit: { state: "declared", accession: "MS:1000131" } };
 
@@ -1101,6 +1123,38 @@ const STOPS: readonly Stop[] = [
       await frames();
     },
     anchor: '[data-layout-reset][aria-disabled="true"]:focus-visible',
+  },
+  // Copy diagnostics (ADR 0063, decision 10): its row is in the `settings` stop.
+  {
+    name: "diagnostics-reading",
+    table: withDiagnostics,
+    hold: ["read_environment_diagnostics"],
+    drive: readDiagnostics,
+    anchor: '[data-diagnostics-read][aria-disabled="true"]',
+  },
+  {
+    name: "diagnostics-read",
+    table: withDiagnostics,
+    drive: readDiagnostics,
+    anchor: "[data-diagnostics-preview]",
+  },
+  {
+    name: "diagnostics-read-failed",
+    table: (locale) => ({ ...populated(locale), read_environment_diagnostics: { __reject: { kind: "preview_worker_unavailable", summary: "", detail: null, retryable: true } } }),
+    drive: readDiagnostics,
+    anchor: "[data-diagnostics-failed]",
+  },
+  {
+    name: "diagnostics-copied",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(false),
+    anchor: "[data-diagnostics-copied]:not(:empty)",
+  },
+  {
+    name: "diagnostics-copy-refused",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(true),
+    anchor: "[data-diagnostics-copy-failed]",
   },
 ];
 

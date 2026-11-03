@@ -4088,10 +4088,9 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     //
     // The registered commands no caller names yet: ADR 0052's per-output
     // adoption, which lands in Rust before its contract and hook slice (the
-    // webview is rebuilt on its own branch), ADR 0060 slice 2's view
+    // webview is rebuilt on its own branch), and ADR 0060 slice 2's view
     // commands, which its slice 3, the interface, will call once the owner
-    // chooses its direction, and ADR 0063's environment summary, which has no
-    // caller until the interface lane adds Copy diagnostics. Declared rather
+    // chooses its direction. Declared rather
     // than skipped, so the list cannot grow silently, and the declaration
     // retires itself: once the frontend calls one, this list must lose it.
     let awaiting_a_caller = [
@@ -4102,7 +4101,6 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         "open_raw_view",
         "describe_view_cache",
         "clear_view_cache",
-        "read_environment_diagnostics",
     ];
     for name in &registered[1..] {
         if awaiting_a_caller.contains(name) {
@@ -31331,4 +31329,5 @@ mod native_reader;
 mod output_opening;
 mod per_output_adoption;
 mod raw_view;
+mod recent_error_ring;
 mod staging_recovery;

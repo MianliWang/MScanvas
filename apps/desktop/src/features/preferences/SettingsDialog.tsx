@@ -3,6 +3,9 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { SettingField } from "../../components/fields/SettingField";
 import { Button, Icon, SegmentedControl } from "../../components/ui";
+import { usePreviewApi } from "../mzml-preview/api";
+import { toPreviewError, type PreviewError } from "../mzml-preview/contracts";
+import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import { SESSION_DEFAULTS } from "./sessionPreferences";
 import { useSessionPreferences, useUiMessages } from "./SessionPreferencesProvider";
 import {
@@ -170,6 +173,8 @@ export function SettingsDialog() {
               <Button size="sm" data-layout-reset="" refused={layoutRefusal !== undefined} reasonId={`${layoutId}-help`}
                 onClick={panels.reset}>{message("layoutReset")}</Button>
             </SettingField>
+            <h3 className="settings-section-title">{message("supportSection")}</h3>
+            <CopyDiagnostics />
             {/* The shell's layout region is aria-hidden behind this modal, so
                 the dialog says it here. Mounted empty, so the change is heard. */}
             <p aria-live="polite" className="visually-hidden" data-live-region="settings-layout">
@@ -243,4 +248,78 @@ export function SettingsDialog() {
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;
+}
+
+type DiagnosticsRead =
+  | { readonly status: "idle" | "reading" }
+  | { readonly status: "read"; readonly text: string }
+  | { readonly status: "failed"; readonly error: PreviewError };
+
+/**
+ * Copy diagnostics (ADR 0063, decision 10). Copy takes the string the box shows,
+ * as Rust wrote it and never translated, so what is read is what is pasted.
+ * Mounted with the dialog's content, so closing Settings drops the text.
+ */
+function CopyDiagnostics() {
+  const api = usePreviewApi();
+  const message = useUiMessages();
+  const labelId = useId();
+  const opener = useRef<HTMLButtonElement>(null);
+  const preview = useRef<HTMLTextAreaElement>(null);
+  const [read, setRead] = useState<DiagnosticsRead>({ status: "idle" });
+  const [copied, setCopied] = useState<boolean | null>(null);
+  const reading = read.status === "reading";
+
+  useEffect(() => {
+    // Into the text, and all of it into view in a short window: focus alone only
+    // reveals the caret. Only from the button that asked: a reader who has since
+    // moved keeps their place.
+    if (read.status !== "read" || document.activeElement !== opener.current) return;
+    preview.current?.focus();
+    preview.current?.scrollIntoView?.({ block: "nearest" });
+  }, [read]);
+
+  const readSummary = () => {
+    setRead({ status: "reading" });
+    setCopied(null);
+    api.readEnvironmentDiagnostics().then(
+      (text) => setRead({ status: "read", text }),
+      (error: unknown) => setRead({ status: "failed", error: toPreviewError(error) }),
+    );
+  };
+  // Written from this click, through the platform's text clipboard: no Tauri
+  // capability, and nothing is read (ADR 0063, question 4).
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return <>
+    <SettingField labelId={labelId} label={message("diagnosticsField")} help={reading ? message("diagnosticsReading") : undefined}>
+      <Button size="sm" data-diagnostics-read="" ref={opener} refused={reading} reasonId={`${labelId}-help`} onClick={readSummary}>
+        {message(read.status === "read" || read.status === "failed" ? "diagnosticsReadAgain" : "diagnosticsShow")}
+      </Button>
+    </SettingField>
+    {read.status === "failed" ? <div className="settings-storage-problem" role="alert" data-diagnostics-failed="">
+      <p>{ownedErrorMessage(read.error, message)}</p>
+    </div> : null}
+    {read.status === "read" ? <>
+      {/* Above the text, so a short window that has scrolled to it still shows why. */}
+      {copied === false ? <div className="settings-storage-problem settings-diagnostics-problem" role="alert" data-diagnostics-copy-failed="">
+        <p>{message("diagnosticsCopyFailed")}</p>
+      </div> : null}
+      <div className="settings-diagnostics-preview">
+        <textarea ref={preview} data-diagnostics-preview="" aria-labelledby={labelId} lang="en" readOnly spellCheck={false} value={read.text} />
+        <div className="settings-diagnostics-actions">
+          <Button size="sm" data-diagnostics-copy="" onClick={() => void copy(read.text)}>{message("diagnosticsCopy")}</Button>
+          {/* Mounted empty, so the change is heard. */}
+          <p role="status" data-diagnostics-copied="">{copied === true ? message("diagnosticsCopied") : ""}</p>
+        </div>
+      </div>
+    </> : null}
+  </>;
 }

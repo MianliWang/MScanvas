@@ -67,6 +67,12 @@ export interface PreviewApi {
   openFinalizedOutput(outputId: string, action: OutputOpenAction): Promise<OutputOpenOutcome>;
   planWorkspaceClear(): Promise<WorkspaceClearPlanOutcome>;
   executeWorkspaceClear(planId: string, action: WorkspaceClearAction): Promise<WorkspaceClearOutcome>;
+  /**
+   * The redacted environment summary a user copies into a support request
+   * (ADR 0063). Rust writes every word and keeps the closed list of facts; it
+   * reads what the session holds, and writes, sends and launches nothing.
+   */
+  readEnvironmentDiagnostics(): Promise<string>;
   inspectBackend(): Promise<BackendAvailability>;
   /**
    * Shows the native folder picker, uses the chosen ProteoWizard for this
@@ -406,6 +412,7 @@ export const tauriPreviewApi: PreviewApi = {
   previewFigure: (request) => invoke<FigurePreviewOutcome>("preview_figure", { request }, {
     headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() },
   }),
+  readEnvironmentDiagnostics: () => invoke<string>("read_environment_diagnostics"),
   inspectBackend: () => invoke<BackendAvailability>("inspect_backend"),
   chooseInstallation: () => invoke<BackendAvailability | null>("choose_backend_installation"),
   useAutomaticDiscovery: () => invoke<BackendAvailability>("use_automatic_backend_discovery"),

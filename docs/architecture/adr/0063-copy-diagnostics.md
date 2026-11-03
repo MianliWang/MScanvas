@@ -7,8 +7,10 @@ answers questions 6 and 7.
 Proposed on 2026-10-30. The owner asked that day for every backend
 item that can be done now to start; this record states the recommendations that
 lane implemented, and each choice the owner has not made is listed
-[at the end](#open-questions-for-the-owner). The Rust side is implemented on
-branch `be/copy-diagnostics`. No interface calls it yet.
+[at the end](#open-questions-for-the-owner). The Rust side merged in PR #178. On
+2026-11-03, branch `ui/diagnostics-button` added the Settings button and its
+preview (question 4), the `Verified build` line (question 3) and a failed
+conversion's outcome in the ring (question 7).
 Related: [0005](0005-mzml-preview-boundary.md),
 [0017](0017-redacted-conversion-diagnostics-export.md),
 [0044](0044-conversion-configuration-authority.md),
@@ -53,6 +55,7 @@ revision).
 | ProteoWizard | `State`, `Origin`, `Failure` | the last reading's verdict, `automatic`/`chosen`, and its failure kind | code |
 | ProteoWizard | `Release`, `Build date`, `Source revision` | the reported build identity; the revision from the identity the last reading bound | digits and dots; `Jan 13 2026`; 6–40 hex digits |
 | ProteoWizard | `msconvert SHA-256` | the digest discovery bound to the executable the last reading described | 64 hex digits |
+| ProteoWizard | `Verified build` | whether that digest is ADR 0055's verified build, read from the adapter's `VERIFIED_MSCONVERT_SHA256`, never a copy of it | `yes`/`no`; `unknown` without a digest |
 | ProteoWizard | `Folder` | which known root the usable reading's folder sits under, never the folder (decision 4) | one of five placeholders |
 | ProteoWizard | `Remembered folder`, `… refused at startup`, `… not saved` | whether a folder is remembered, and the two owned codes beside it. Never the remembered path | `yes`/`no`; code |
 | View cache | `Usage` | `not in this build` until ADR 0060's slice 2 gives the session a cache; then the held cache's usage, never by opening one | fixed |
@@ -73,8 +76,8 @@ Every backend value describes one reading. A configuration read or a conversion
 can bind another build without taking a new reading, so the source revision and
 the `msconvert` digest are taken from the bound identity only while the binding
 the reading was taken under is still current, and are `unknown` after it
-changed, never the new build's facts beside the old reading's release and
-folder.
+changed, as `Verified build` then is, never the new build's facts beside the
+old reading's release and folder.
 
 ### 2. What never goes in
 
@@ -90,19 +93,18 @@ account name.
 
 The recent error codes of decision 5 do say something about the user's work: a
 code can name the input's vendor (`sciex_companion_missing`) or a feature that
-was used (`targeted_evidence_absent`), and its times say when. Once a failed
-conversion's outcome joins the ring (question 7, decided 2026-10-31,
-implemented after PR #161 merges), the ring also names conversion outcomes, and
-their times say when a conversion failed. An outcome is an owned id, so it adds
-no text.
+was used (`targeted_evidence_absent`), and its times say when. A failed
+conversion's outcome is in the ring too (question 7), so it also names
+conversion outcomes, and their times say when a conversion failed. An outcome
+is an owned id, so it adds no text.
 
 ### 3. Codes come from owned ids; every value passes its shape, or is withheld whole
 
 There is no free-text field. The first line of defence covers the code fields
 only: a *code* is a stable id the repository defines — a backend failure kind,
-a preference problem, a boundary error kind — never text a person or a file
-supplied. As of 2026-10-30 every source of a code field and every
-`PreviewErrorDto::new` kind is such an id. The version and the build commit are
+a preference problem, a boundary error kind, a conversion outcome — never text
+a person or a file supplied. As of 2026-10-30 every source of a code field and
+every `PreviewErrorDto::new` kind is such an id. The version and the build commit are
 compile-time values. The other values are not MSCanvas's own: the Windows facts
 come from the registry, the WebView2 version from the runtime, and the
 ProteoWizard release, build date and source revision from the installed tool's
@@ -170,30 +172,36 @@ that was used (`targeted_*`), and its times say when (decision 2).
 It says what the native boundary *produced* this session, which is close to,
 but not exactly, what the interface showed: an error built and then discarded
 is counted too. A search of the native sources on 2026-10-30 found no
-`ok_or`, `unwrap_or`, `map_or` or `or` that builds one eagerly.
+`ok_or`, `unwrap_or`, `map_or` or `or` that builds one eagerly. `file_identity`
+does build and discard one, through `.ok()`, so `file_not_resolvable` can also
+mean that a path was looked at and not found.
 
-Until the slice of question 7 lands, the ring holds `PreviewErrorDto` kinds
-only. These are not errors at the boundary, so they are not in it:
+A conversion that ran and ended in failure joins the ring too (question 7). It
+is a report and not a `PreviewErrorDto`, so what is recorded is the report's
+`detailedOutcome`, or its `outcome` when it has none: a set whose publication
+stopped partway is `partially_finalized`, and a set that published whole but
+cannot be adopted keeps `fully_finalized`, the one failure that reads like a
+success. It is recorded once per run, where the session builds its report from
+the run (`WorkspaceConversionReport::of`, `SciexAttemptSettlement::of`). It is
+not recorded where the report is serialized: a queue is read again and again,
+and two failed rows read in turn would push every other code out of the ring. A
+stop is not a failure and is not recorded.
 
-- a conversion that ran and failed, which is a report whose `outcome` and
-  `detailedOutcome` say why;
+These are not errors at the boundary or failed conversions, so they are not in
+it:
+
 - a refusal carried in an `Ok` outcome: opening an output, clearing the
   workspace, reclaiming staging, a spectrum domain and a conversion
   configuration;
 - a preference save that failed, whose `problem` is part of its `Ok` result.
 
-So `Held: 0` does not mean that no conversion failed this session. On
-2026-10-31 the owner decided that a failed conversion's outcome will join the
-ring (question 7): when a conversion that ran ends in failure, its report's
-`detailedOutcome`, or its `outcome` when it has none, is recorded where the
-report is projected. That projection is PR #161's code, so this is implemented
-after #161 merges; until then the ring holds only `PreviewErrorDto` kinds, as
-stated above. Nothing else in the list above joins it.
+So `Held: 0` does not mean that nothing was refused this session.
 
 ### 6. Format
 
 Plain text, so it pastes into an issue as it is. The first line is
-`MSCanvas diagnostics`, then `Format: 1` and `Created`. Sections are
+`MSCanvas diagnostics`, then `Format: 2` (1 had no `Verified build` line and
+reached no interface) and `Created`. Sections are
 `[Application]`, `[System]`, `[ProteoWizard]`, `[View cache]` and
 `[Recent errors]`, each a run of `Key: value` lines. Keys are English and
 stable, so support can read a summary whatever the interface language was.
@@ -232,7 +240,14 @@ ADR 0034, where the clipboard is reached from Rust only. `check_repo.py` checks
 that posture through the capabilities and `package.json`, so a
 `navigator.clipboard.writeText` call still passes it; the owner accepted this
 route on 2026-10-30 (question 4, A0063). The release guide's
-"For the environment, give" list then points at the button.
+"For the environment, give" list then points at the button, from the first
+release that has it; beta 1's guide describes beta 1, which does not.
+
+Built on 2026-11-03, with one departure: the sentence is left out, because the
+owner's rule of 2026-10-28 removes secondary explanations from the interface
+(question 8). The button reads when pressed, and again as **Read again**.
+Closing Settings drops the text. The clipboard's refusal is shown above the text,
+because the text stays selectable by hand.
 
 ## Alternatives
 
@@ -297,10 +312,11 @@ route on 2026-10-30 (question 4, A0063). The release guide's
   cost is a short critical section, and the lock never panics.
 - `project::format_rfc3339` and `BackendAuthority::bound_identity` are visible
   within the crate.
-- The registration test lists the command and exempts it from "the frontend
-  calls every command" until the interface lane adds its caller.
+- The registration test lists the command, and the frontend calls it.
+- `VERIFIED_MSCONVERT_SHA256` is public from the ProteoWizard adapter, so this
+  summary and ADR 0055's tier read one value.
 - When ADR 0060's slice 2 gives the session a view cache, the `[View cache]`
-  section reports its usage and `Format` stays `1` only if the keys do not
+  section reports its usage and `Format` stays `2` only if the keys do not
   change.
 
 ## Owner decision, 2026-10-30 (A0063)
@@ -315,12 +331,14 @@ questions 1–5, and each is answered as recommended:
 2. **The error ring's recording point (decision 5):** at `PreviewErrorDto::new`,
    accepting that an error built and then discarded counts.
 3. **The verified-build line:** add `Verified build: yes/no` once PR #161
-   merges, reading its constant rather than a copy. Not done yet: #161 is open.
+   merges, reading its constant rather than a copy. Done on 2026-11-03; it says
+   `unknown` when there is no digest to read.
 4. **The interface and the copy route (decision 10):** a Settings button, a
    read-only preview and the platform text clipboard written from that
    button's click. The departure from ADR 0030 and ADR 0034's "the clipboard is
    reached from Rust" is accepted for this button only; those records are not
-   amended. The interface lane builds the button after PR #164.
+   amended. The interface lane builds the button after PR #164. Done on
+   2026-11-03.
 5. **Workspace contents by family:** left out until a support case needs it.
    That a recent error code can name a vendor or a feature (decision 5) is
    accepted; no code allowlist or category is added to the ring.
@@ -341,9 +359,8 @@ recommended"). Both are answered as recommended:
    conversion that ran ends in failure, its report's `detailedOutcome`, or its
    `outcome` when it has none, joins the ring, recorded where the report is
    projected. That projection is PR #161's code, so this is implemented after
-   #161 merges, not on this branch. Decision 2 says that the ring will then
-   also hold conversion outcomes; until that slice lands it holds only
-   `PreviewErrorDto` kinds, as decision 5 states.
+   #161 merges, not on this branch. Done on 2026-11-03; decisions 2 and 5 say
+   what the ring now holds and where each is recorded.
 
 ## Open questions for the owner
 
@@ -372,3 +389,8 @@ recommended"). Both are answered as recommended:
    decision 2 now says that the ring will name conversion outcomes too. The
    alternatives were the `Ok`-carried refusals as well, or the ring as it is,
    with decision 5 saying what it leaves out.
+8. *Open, added 2026-11-03:* **The sentence of decision 10.** It said that nothing
+   was sent and that the user should read the text before sharing. Recommended:
+   leave it out, as built, under the owner's rule of 2026-10-28 against secondary
+   explanations. The alternative is one line beside the preview, which that rule
+   would have to admit as a privacy statement.

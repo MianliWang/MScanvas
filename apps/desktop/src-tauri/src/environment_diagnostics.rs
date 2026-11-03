@@ -8,7 +8,8 @@
 //! There is no free-text field. For a code, what keeps a file name, a path, a
 //! user name or an environment variable out is where it comes from: a stable
 //! id the repository defines (a backend failure kind, a preference problem, a
-//! boundary error kind), never text a person or a file supplied. The Windows
+//! boundary error kind, a conversion outcome), never text a person or a file
+//! supplied. The Windows
 //! facts come from the registry, WebView2's from the runtime, and the
 //! ProteoWizard release, build date and source revision from the installed
 //! tool's own help text: those are held by their shapes alone, so loosening
@@ -30,10 +31,14 @@
 //!
 //! [ADR 0063]: ../../../../docs/architecture/adr/0063-copy-diagnostics.md
 
+#[cfg(test)]
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use mscanvas_proteowizard::VERIFIED_MSCONVERT_SHA256;
 
 use crate::preferences::UiPreferenceStore;
 use crate::preferences::dto::UiPreferenceReadDto;
@@ -44,7 +49,7 @@ use crate::preview::service::PreviewService;
 mod tests;
 
 /// Changes when a heading or a key changes, so a reader can tell layouts apart.
-pub(crate) const FORMAT_VERSION: u32 = 1;
+pub(crate) const FORMAT_VERSION: u32 = 2;
 
 /// The most error codes the ring keeps. Older ones are counted, not kept.
 pub(crate) const RECENT_ERROR_CAPACITY: usize = 32;
@@ -118,19 +123,28 @@ impl RecentErrors {
 
 static RECENT_ERRORS: Mutex<RecentErrors> = Mutex::new(RecentErrors::new());
 
-/// Records one boundary error code. Called by `PreviewErrorDto::new`, which
-/// every `PreviewErrorDto` is built through, so "produced" here means built. A
-/// conversion that ran and failed is a report, and a refusal carried in an
-/// `Ok` outcome is not a `PreviewErrorDto`: neither is recorded (ADR 0063,
-/// decision 5).
+#[cfg(test)]
+thread_local! {
+    /// What this thread noted. The ring is process-wide and the suite runs in
+    /// parallel, so only this can say that a run noted nothing else.
+    pub(crate) static NOTED_ON_THIS_THREAD: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Records one code. Called by `PreviewErrorDto::new`, which every
+/// `PreviewErrorDto` is built through, so "produced" here means built, and
+/// once per run for a conversion that ran and failed, by its detailed outcome
+/// or else its outcome. A refusal carried in an `Ok` outcome is neither, and is
+/// not recorded (ADR 0063, decision 5).
 pub(crate) fn note_error(code: &str) {
+    #[cfg(test)]
+    NOTED_ON_THIS_THREAD.with_borrow_mut(|noted| noted.push(code.to_owned()));
     RECENT_ERRORS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .note(code, unix_now());
 }
 
-fn recent_errors() -> (Vec<RecentError>, u64) {
+pub(crate) fn recent_errors() -> (Vec<RecentError>, u64) {
     RECENT_ERRORS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -466,6 +480,15 @@ pub(crate) fn render(facts: &Facts, roots: &KnownRoots, accounts: &[String]) -> 
         format!(
             "msconvert SHA-256: {}",
             patterned(backend.msconvert_sha256.as_deref(), is_sha256)
+        ),
+        format!(
+            "Verified build: {}",
+            backend
+                .msconvert_sha256
+                .as_deref()
+                .map_or(UNKNOWN, |digest| yes_no(
+                    digest.eq_ignore_ascii_case(VERIFIED_MSCONVERT_SHA256)
+                ))
         ),
         format!("Folder: {folder}"),
         format!(

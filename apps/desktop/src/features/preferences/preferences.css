@@ -122,6 +122,28 @@
    a usable target instead of being squeezed out of one. */
 .settings-storage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* The diagnostics text, as Copy will take it, with Copy beside it. */
+.settings-diagnostics-preview { display: flex; align-items: flex-start; gap: 8px; }
+.settings-diagnostics-preview textarea {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 200px;
+  padding: 6px 8px;
+  resize: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-input);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.settings-diagnostics-preview textarea:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.settings-diagnostics-actions { display: flex; flex: none; flex-direction: column; align-items: flex-start; gap: 6px; }
+.settings-diagnostics-actions p { margin: 0; color: var(--color-text-secondary); font-size: 12px; }
+.settings-diagnostics-problem { margin: 0 0 8px; }
+
 @media (max-width: 520px) {
   .settings-fields { padding-inline: 16px; }
   .settings-fields > .setting-field { grid-template-columns: minmax(0, 1fr); gap: 8px; }
