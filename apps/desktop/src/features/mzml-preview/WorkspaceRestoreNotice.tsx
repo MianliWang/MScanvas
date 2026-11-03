@@ -85,8 +85,8 @@ export function problemIsRetryable(problem: RestoreProblem): boolean {
  * The sentences the restore live region says, mounted for the life of the page
  * and not hidden behind a modal, so Settings has no region of its own. A read
  * asked again says so first, so an answer in the same words is still heard.
- * `workspaceError` is what a refused put-back left, which the workspace's notice
- * shows above the offer.
+ * `workspaceError` is said after a put-back, whose refusal the workspace's notice
+ * shows above the offer; any other workspace failure is that notice's own.
  */
 export function announceRestore(session: WorkspaceRestoreSession, t: UiMessage, workspaceError: PreviewError | null = null): string {
   const { reading, work } = session;
@@ -96,7 +96,7 @@ export function announceRestore(session: WorkspaceRestoreSession, t: UiMessage, 
   if (work === "reading" || (work === null && session.slowRead)) return t("restoreLoading");
   if (work === "restoring" && offered > 0) return t("restoreWorking", { count: offered });
   if (session.slowWork) return t("restoreBusy");
-  if (workspaceError !== null && offered > 0) return `${t("workspaceFailed")} ${ownedErrorMessage(workspaceError, t)}`;
+  if (workspaceError !== null && session.putBackAsked) return `${t("workspaceFailed")} ${ownedErrorMessage(workspaceError, t)}`;
   const problem = session.failed.at(-1)?.problem ?? session.problem ?? session.stopped;
   if (problem !== null) {
     const { title, detail } = explainRestoreProblem(problem, t);

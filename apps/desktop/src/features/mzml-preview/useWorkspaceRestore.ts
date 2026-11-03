@@ -49,6 +49,8 @@ export interface WorkspaceRestoreSession {
   readonly slowWork: boolean;
   /** The user has acted on the record, so "nothing is waiting" is news rather than a first run. */
   readonly acted: boolean;
+  /** The last action was a put-back, so a workspace error is its answer to say. */
+  readonly putBackAsked: boolean;
   /** Why the last save did not record the session; the next save that does ends it. */
   readonly problem: RestoreProblem | null;
   /** Why this session records nothing more (question 6). */
@@ -149,6 +151,7 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   const [dismissFailed, setDismissFailed] = useState<RestoreFailure | null>(null);
   const [expiredDismissed, setExpiredDismissed] = useState(false);
   const [acted, setActed] = useState(false);
+  const [putBackAsked, setPutBackAsked] = useState(false);
   const slowRead = useSlowly(reading.status === "loading");
   const slowWork = useSlowly(work !== null);
   const mounted = useRef(true);
@@ -243,6 +246,7 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
     acting.current = true;
     setWork(kind);
     if (kind !== "reading") setActed(true);
+    setPutBackAsked(kind === "restoring");
     void run().then(read).finally(() => {
       acting.current = false;
       if (mounted.current) setWork(null);
@@ -299,7 +303,7 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   const dismissExpired = useCallback(() => setExpiredDismissed(true), []);
 
   const failed = [writeFailed, dismissFailed].filter(failure => failure !== null);
-  return { reading, work, slowRead, slowWork, acted, problem, stopped, failed, expiredDismissed, restore, dismissRow, startFresh, setEnabled, retry, retryRead, dismissExpired };
+  return { reading, work, slowRead, slowWork, acted, putBackAsked, problem, stopped, failed, expiredDismissed, restore, dismissRow, startFresh, setEnabled, retry, retryRead, dismissExpired };
 }
 
 /** The same problem, as the answer to a clear or a switch rather than to a save. */

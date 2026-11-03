@@ -10,14 +10,15 @@ import {
   selectedFile,
   type FakePreviewApi,
 } from "../../test/previewFixtures";
-import { UI_RESOURCES } from "../preferences/i18n";
+import { UI_RESOURCES, type UiMessage } from "../preferences/i18n";
 import { initialOrganization, organize, placeRestored, UNGROUPED } from "../workbench/organization";
 import { PreviewApiProvider } from "./api";
 import type { RestoredRow, RestoredRowState, WorkspaceRestorePutBack, WorkspaceRestoreRead, WorkspaceRestoreWrite, WorkspaceRoster } from "./contracts";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { PreviewWorkspace } from "./PreviewWorkspace";
 import { describeRestoreResult, initialRosterState, rosterReducer } from "./rosterSelection";
-import { buildArrangement } from "./useWorkspaceRestore";
+import { buildArrangement, type WorkspaceRestoreSession } from "./useWorkspaceRestore";
+import { announceRestore } from "./WorkspaceRestoreNotice";
 
 const en = UI_RESOURCES.en;
 
@@ -803,6 +804,14 @@ describe("what the restore live region says", () => {
     fireEvent.click(await restoreAction());
     await waitFor(() => expect(region()).toHaveTextContent(en.workspaceFailed));
     expect(offerNotice()).toHaveTextContent(en.restoreAction);
+  });
+
+  it("leaves a workspace failure a put-back did not cause to the workspace's own notice", () => {
+    const t = ((key: string) => key) as unknown as UiMessage;
+    const session = { reading: { status: "ready", read: offered([row("restored-0", "a.raw")]) }, work: null, slowRead: false, slowWork: false, acted: false, putBackAsked: false, problem: null, stopped: null, failed: [], expiredDismissed: false } as unknown as WorkspaceRestoreSession;
+    const failure = previewError({ kind: "unexpected_error" });
+    expect(announceRestore(session, t, failure)).toBe("restoreOffer");
+    expect(announceRestore({ ...session, putBackAsked: true }, t, failure)).toContain("workspaceFailed");
   });
 
   it("says a failure from Settings once, in the page's region, with no alert of its own", async () => {

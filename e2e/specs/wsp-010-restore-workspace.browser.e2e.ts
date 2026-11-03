@@ -565,10 +565,13 @@ describe("WSP-010 Restore workspace, rendered", () => {
     const shown = await browser.execute(() => {
       const list = document.querySelector(".restore-marked")?.getBoundingClientRect();
       const track = document.querySelector(".shell-notices")?.getBoundingClientRect();
-      const inside = (box: DOMRect | undefined) => box !== undefined && list !== undefined && track !== undefined && box.top >= Math.max(list.top, track.top) - 0.5 && box.bottom <= Math.min(list.bottom, track.bottom) + 0.5;
-      return { rows: [...document.querySelectorAll("[data-restored-row]")].filter(entry => inside(entry.getBoundingClientRect())).length, fresh: inside(document.querySelector("[data-restore-start-fresh]")?.getBoundingClientRect()) };
+      const inside = (box: DOMRect | undefined, within: DOMRect | undefined) => box !== undefined && within !== undefined && box.top >= within.top - 0.5 && box.bottom <= within.bottom + 0.5;
+      return {
+        rows: [...document.querySelectorAll("[data-restored-row]")].filter(entry => inside(entry.getBoundingClientRect(), list) && inside(entry.getBoundingClientRect(), track)).length,
+        fresh: inside(document.querySelector('[data-restore="offer"] [data-restore-start-fresh]')?.getBoundingClientRect(), track),
+      };
     });
-    expect(shown.rows).toBeGreaterThanOrEqual(4);
+    expect(shown).toEqual({ rows: 5, fresh: true });
     await expectCleanConsole();
   });
 
