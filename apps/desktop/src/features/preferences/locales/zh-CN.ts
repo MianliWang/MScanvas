@@ -1615,7 +1615,7 @@ export const zhCN = {
   restoreLoading: "正在检查上次会话的文件…",
   restoreOffer_other: "上次会话的 {{count}} 个文件可以重新添加。",
   restoreAttention_other: "上次会话的 {{count}} 个文件需要处理。",
-  restoreExpired_other: "更早会话的 {{count}} 个文件不再提供。如需使用，请重新添加。",
+  restoreExpired_other: "更早会话的 {{count}} 个文件不再提供。",
   restoreWorking_other: "正在重新添加 {{count}} 个文件…",
   restoreAction: "恢复工作区",
   restoreStartFresh: "重新开始",
