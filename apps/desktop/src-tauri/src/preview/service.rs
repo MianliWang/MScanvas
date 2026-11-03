@@ -3900,7 +3900,7 @@ impl PreviewService {
             .spectrum_export_slot()
             .claim_spectrum(reservation)
             .ok_or_else(spectrum_export_stale)?;
-        claimed.source_label = self.row_label(claimed.snapshot.owner());
+        claimed.source_label = self.row_label(claimed.snapshot.owner()).map(Box::new);
         Ok(claimed)
     }
 
@@ -4075,7 +4075,7 @@ impl PreviewService {
             .spectrum_export_slot()
             .claim_chromatogram(reservation)
             .ok_or_else(chromatogram_export_stale)?;
-        claimed.source_label = self.row_label(claimed.snapshot.owner());
+        claimed.source_label = self.row_label(claimed.snapshot.owner()).map(Box::new);
         Ok(claimed)
     }
 
@@ -4283,7 +4283,7 @@ impl PreviewService {
             .spectrum_export_slot()
             .claim_linked_figure(reservation)
             .ok_or_else(linked_figure_stale)?;
-        claimed.source_label = self.row_label(claimed.chromatogram.owner());
+        claimed.source_label = self.row_label(claimed.chromatogram.owner()).map(Box::new);
         Ok(claimed)
     }
 
@@ -4453,7 +4453,7 @@ impl PreviewService {
                 claimed.traces,
                 claimed.settings,
             ),
-            claimed.source_label.as_ref(),
+            claimed.source_label.as_deref(),
         )
         .map_err(|_| linked_figure_not_drawable())
     }

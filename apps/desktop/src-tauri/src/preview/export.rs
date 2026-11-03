@@ -635,7 +635,7 @@ pub struct ClaimedChromatogramExport {
     pub(super) dpi: Option<PngDpi>,
     /// The source row's label, read when the export is claimed: a row removed
     /// while the save dialog is open must not take the label off the figure.
-    pub(super) source_label: Option<NotVerifiedByMscanvas>,
+    pub(super) source_label: Option<Box<NotVerifiedByMscanvas>>,
 }
 
 impl ClaimedChromatogramExport {
@@ -659,7 +659,7 @@ impl ClaimedChromatogramExport {
                 self.traces,
                 self.figure_settings(),
             ),
-            self.source_label.as_ref(),
+            self.source_label.as_deref(),
         )
     }
 
@@ -698,7 +698,7 @@ pub struct ClaimedLinkedFigureExport {
     pub(super) settings: FigureRenderSettings,
     pub(super) dpi: Option<PngDpi>,
     /// As [`ClaimedChromatogramExport::source_label`].
-    pub(super) source_label: Option<NotVerifiedByMscanvas>,
+    pub(super) source_label: Option<Box<NotVerifiedByMscanvas>>,
 }
 
 impl ClaimedLinkedFigureExport {
@@ -994,7 +994,7 @@ pub struct ClaimedSpectrumExport {
     pub(super) settings: FigureRenderSettings,
     pub(super) dpi: Option<PngDpi>,
     /// As [`ClaimedChromatogramExport::source_label`].
-    pub(super) source_label: Option<NotVerifiedByMscanvas>,
+    pub(super) source_label: Option<Box<NotVerifiedByMscanvas>>,
 }
 
 impl ClaimedSpectrumExport {
@@ -1002,7 +1002,7 @@ impl ClaimedSpectrumExport {
     pub(super) fn figure(&self) -> Result<FigureSpec, SpecError> {
         labelled_figure(
             figure_spec(self.snapshot.spectrum(), self.settings, self.range),
-            self.source_label.as_ref(),
+            self.source_label.as_deref(),
         )
     }
 
