@@ -14,8 +14,9 @@ All notable changes will be documented here once versioned releases begin.
   hashing each file, previews nothing and says they were added again, not verified
   against the last session. **Start fresh** forgets them, one marked file can be
   dismissed, and Settings turns restore off, saying that kept-aside copies remain.
-  A file not taken is offered at the next start only; a marked file waits
-  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md)).
+  A file not taken is offered at the next start only, except one a press could
+  not place, as built and not an owner decision; a marked file waits
+  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md), decision 10).
 
 ### Changed
 

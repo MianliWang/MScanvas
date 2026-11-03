@@ -177,7 +177,7 @@ type CoreRosterAction =
   | {
       readonly type: "workspaceRestored";
       readonly result: WorkspaceRestorePutBack;
-      /** The stored groups, in stored order, so an empty one comes back too. */
+      /** The stored groups, in stored order: a placed row's `group` is its place here. */
       readonly groups: readonly (string | null)[];
     }
   | { readonly type: "folderImported"; readonly result: FolderIngestionResult }

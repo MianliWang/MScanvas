@@ -66,6 +66,10 @@ the Rust side, and question 5's wording and question 7 belong to the
 interface slice, so only the `MAX_OFFERS` doc comment changed on
 `be/restore-workspace` for these answers. With questions 1 to 4 and 10 answered, no question remains open.
 
+*2026-11-03, as built, not an owner decision:* PR #204 gives question 8 one
+exception, set out under [decision 10](#10-how-long-a-row-that-is-not-put-back-is-offered).
+The owner has not answered it.
+
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the workspace
 boundary, its *Persistence exclusion* and its collision-only relative context),
 [0057](0057-conversion-capacity-and-viewing-during-conversion.md) (capacity
@@ -271,7 +275,8 @@ eye:* "in place" above is not what shipped. Marked rows are listed in the
 restore notice above every surface, each under its stored group's name with its
 state, its reason and a dismiss, because the roster is a closed drawer at
 1,050 px and below, and an offer nobody sees is not an offer. The notice cannot
-be collapsed, and the track it sits in takes up to 152 px of a 960x640 window.
+be collapsed, and the track it sits in takes up to about 154 px of a 960x640
+window (`min(24vh, 180px)`).
 
 *Alternative:* put matching rows back automatically at every start. Rejected
 (by the owner on 2026-10-31) because of what admission costs, which the
@@ -325,11 +330,12 @@ What the interface slice needed, as built (2026-11-03):
   file name, so two `QC_01.raw` rows from different folders read alike. The
   live roster's collision-only relative context (ADR 0006, amended by M1.4.1)
   is a fragment below the folder the user chose and is never persisted; a
-  restored row has no chosen folder. *Decision (owner, 2026-10-31, question 7):*
-  a bounded number of the parent folders above the file, shown only on a
-  collision, never the drive, share or root;
-  [ADR 0006](0006-multi-dataset-workspace-boundary.md) is amended for it
-  (2026-11-03).
+  restored row has no chosen folder. Showing anything more needs an amendment
+  of ADR 0006. *Decision (owner, 2026-10-31, question 7):* a bounded number of
+  the parent folders above the file, shown only on a collision, never the
+  drive, share or root; the amendment is approved in principle and is written
+  with the interface slice. [ADR 0006](0006-multi-dataset-workspace-boundary.md)
+  was amended for it on 2026-11-03; that text has not been shown to the owner.
 
 ### 5. Bounds
 
@@ -448,13 +454,24 @@ Try again, only if no newer arrangement already followed it.
 Only an offer the user could take counts. Each stored row counts the sessions
 that declined it since it was last a Workbench row (`offered`; a live row is
 saved with 0): a session declines a row when one of its reads presented the
-row as `matching` and it then saved without putting the row back or asking to.
-A row a
+row as `matching` and it then saved without putting the row back. A row a
 read presented in any other state (changed, missing, unreachable, unreadable,
 unsafe) could not be put back as itself, so it is not counted; nor is a row in
-a session that saved without reading; nor is a row still waiting after the user
-pressed Restore workspace, because a full workspace, a conversion or a file
-another program holds refused it and the user declined nothing.
+a session that saved without reading.
+
+*As built (2026-11-03), not an owner decision, for the owner's eye:* the code on
+PR #204 departs from the rule above and from question 8 in one case. A row a
+press of Restore workspace handed to admission, because the press's re-check
+found it matching, is not counted if it is still waiting afterwards: a full
+workspace, a conversion or a file another program holds refused it, and the user
+had asked for it, so a refusal does not use up its one offer. "Only an offer the
+user could take counts" is the argument for this, and it can be argued either
+way. A row the re-check found marked is counted as usual if it matches again and
+the session saves without taking it. Two things go past that argument: a row
+refused once and left there after room was made is still not counted, although
+the user could then have taken it, and a row pressed and refused in every session
+never expires, so "offered at the next start only" does not hold for it. Such a
+row only stays longer; none leaves earlier. The owner has not answered this.
 
 Which rows are no longer offered is decided once per session, by its first
 read, from what that read finds, never at load: a row whose count has reached
@@ -503,9 +520,16 @@ answer is a one-line change.
 ## Consequences
 
 - A restart keeps the Workbench's rows, groups, order and checked state, and a
-  file that moved or changed is visible as such rather than gone. A group with
-  nothing in it does not come back: a save carries only a stored group something
-  still waits in, so a group the user dissolved or renamed stays gone.
+  file that moved or changed is visible as such rather than gone.
+- *As built (2026-11-03), not an owner decision, for the owner's eye:* on PR #204
+  a group with nothing in it does not come back, so "groups" above and in
+  decision 1 does not hold for one. A group the user made and left empty is
+  written to the document, is not made again after a restart (`placeRestored`
+  makes only a group a row lands in) and is dropped by that session's first save
+  (`buildArrangement` carries only a stored group something still waits in). The
+  same two lines keep a group the user dissolved or renamed from returning, and
+  the document holds no history that could tell the two apart. `ae14765e` brought
+  an empty stored group back. The owner has not answered this.
 - The webview must save after every roster answer and organization change; a
   crash between a change and its save restores the previous arrangement. A
   row removed just before a crash can therefore come back as a restored row,
@@ -534,7 +558,8 @@ answer is a one-line change.
   timeout per unreachable root plus one slow open per member.
 - A restored row is offered at the next start only: if that session presents
   it as matching and saves without taking it, the start after reports it as no
-  longer offered when it finds it matching (decision 10); a user who wants it
+  longer offered when it finds it matching (decision 10, and its as-built note
+  for a row a press could not place); a user who wants it
   back adds the file again. A marked row is never aged out, so marked rows
   wait until put back, dismissed or cleared, and can build up toward
   `tooManyRows` (decision 5).
