@@ -119,6 +119,10 @@ export interface ConversionPanelProps {
   readonly liveDatasetHandles?: ReadonlySet<string>;
   /** Takes the reader to one roster row (ADR 0052 decision 7). */
   readonly onShowInWorkbench?: (handle: string) => void;
+  /** Kept mounted while the conversion history has the surface, so nothing here is lost. */
+  readonly hidden?: boolean;
+  /** Opens the conversion history (ADR 0065), named in the rail's foot. */
+  readonly onOpenHistory?: () => void;
 }
 
 /**
@@ -137,6 +141,8 @@ export function ConversionPanel({
   buildRelease = null,
   liveDatasetHandles,
   onShowInWorkbench,
+  hidden = false,
+  onOpenHistory,
 }: ConversionPanelProps): ReactElement | null {
   const t = useUiMessages();
   const { state } = conversion;
@@ -409,6 +415,7 @@ export function ConversionPanel({
       aria-labelledby="conversion-panel-heading"
       className="conversion-panel"
       data-phase={conversion.busy ? "running" : terminal ? "finished" : "plan"}
+      hidden={hidden}
     >
       <div className="conversion-main">
         {conversion.failure === null ? null : (
@@ -523,6 +530,9 @@ export function ConversionPanel({
               convertButton={convertButton}
               onCustomStart={() => { restoreAfterPicker.current = true; }}
             />
+          )}
+          {onOpenHistory === undefined ? null : (
+            <Button size="sm" icon={<Icon name="clock" />} data-run-history-entry="" onClick={onOpenHistory}>{t("runHistoryTitle")}</Button>
           )}
         </div>
       </div>
@@ -1963,7 +1973,7 @@ function RunList({ items, renderRow, follow = null }: {
 }
 
 /** What each item state shows in its circle (rebuild spec 5.2). */
-const ITEM_STATE_SYMBOL: Record<ConversionQueueItem["state"], string> = {
+export const ITEM_STATE_SYMBOL: Record<ConversionQueueItem["state"], string> = {
   finalized: "✓",
   running: "●",
   pending: "○",
@@ -2064,7 +2074,7 @@ function itemStateLabel(item: ConversionQueueItem, t: UiMessage): string {
 }
 
 /** What each item state says, in words rather than in colour. */
-const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], StaticMessageKey> = {
+export const ITEM_STATE_LABEL: Record<ConversionQueueItem["state"], StaticMessageKey> = {
   cancelled: "m74CnvStateCancelled",
   cancellationFailed: "m74CnvStateUnconfirmed",
   notRun: "m74CnvStateNotRun",
@@ -2218,7 +2228,7 @@ const SET_REFUSAL_SENTENCE: Record<string, StaticMessageKey> = {
 };
 
 /** What a failed output set says. */
-function setFailureSentence(report: ConversionOutputSetReport, t: UiMessage): string {
+export function setFailureSentence(report: Pick<ConversionOutputSetReport, "detailedOutcome"> & { readonly partial: object | null }, t: UiMessage): string {
   // A partial publication is explained in full beside this, and must not be
   // preceded by a sentence saying nothing was written.
   if (report.partial !== null) {
@@ -2242,7 +2252,7 @@ function setFailureSentence(report: ConversionOutputSetReport, t: UiMessage): st
  * no sentence for is still a failure, and inventing prose for it would be
  * inventing a diagnosis.
  */
-function failureSentence(report: ConversionReport, t: UiMessage): string {
+export function failureSentence(report: Pick<ConversionReport, "outcome" | "detailedOutcome">, t: UiMessage): string {
   // Grouped by `outcome` first, because that is what groups. An integrity
   // rejection's `detailedOutcome` is the specific property that failed --
   // `partial_output`, `missing_output` and the rest -- so matching on it here

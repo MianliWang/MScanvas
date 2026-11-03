@@ -4,6 +4,7 @@
 @import "./app/app.css";
 @import "./features/preferences/preferences.css";
 @import "./features/project/project.css";
+@import "./features/run-history/runHistory.css";
 @import "./features/workbench/workbench.css";
 
 * {
