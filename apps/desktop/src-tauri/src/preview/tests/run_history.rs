@@ -3,8 +3,8 @@
 use super::*;
 use crate::project::tests::Scratch;
 use crate::run_history::{
-    ConversionHistory, RunHistoryListDto, RunHistoryReadDto, RunHistoryWriteDto, RunState,
-    SetCompleteness,
+    ConversionHistory, ItemProgress, RunHistoryListDto, RunHistoryReadDto, RunHistoryWriteDto,
+    RunState, SetCompleteness,
 };
 
 #[test]
@@ -63,6 +63,18 @@ fn a_finished_queue_is_recorded_with_its_sources_and_outputs_and_the_wire_names_
     )
     .expect("the run's document");
     assert!(stored.contains(&escaped(&source)));
+    let document: serde_json::Value = serde_json::from_str(&stored).expect("a document");
+    let recorded_source = &document["items"][0]["source"];
+    assert_members(&recorded_source["members"], &[source.clone()]);
+    assert_eq!(
+        recorded_source["destination"].as_str().map(plain_path),
+        Some(plain_path(
+            fs::canonicalize(&destination)
+                .expect("the folder resolves")
+                .to_str()
+                .expect("a UTF-8 fixture path")
+        ))
+    );
     let wire = format!(
         "{}{}",
         serde_json::to_string(&history.list()).expect("serializes"),
@@ -72,6 +84,250 @@ fn a_finished_queue_is_recorded_with_its_sources_and_outputs_and_the_wire_names_
     assert!(!wire.contains(&escaped(&destination)));
     // Nor a drive path of any spelling.
     assert!(!wire.contains(":\\\\"), "{wire}");
+}
+
+/// A path without the verbatim prefix admission may spell it with.
+fn plain_path(path: &str) -> String {
+    path.trim_start_matches(r"\\?\").to_owned()
+}
+
+/// Every member, primary first, with the identity the file itself answers.
+fn assert_members(members: &serde_json::Value, files: &[PathBuf]) {
+    let members = members.as_array().expect("members");
+    assert_eq!(members.len(), files.len());
+    for (member, file) in members.iter().zip(files) {
+        let canonical = fs::canonicalize(file).expect("the file resolves");
+        assert_eq!(
+            member["path"].as_str().map(plain_path),
+            canonical.to_str().map(plain_path)
+        );
+        assert_eq!(
+            member["byteLength"],
+            fs::metadata(file).expect("the file").len()
+        );
+        let (volume, id) = crate::local_document::object_identity(file).expect("its identity");
+        assert_eq!(member["volumeSerial"], volume);
+        let id: String = id.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(member["fileId"], id);
+    }
+}
+
+/// What the run's document holds, which the wire never carries.
+fn stored_document(profile: &Scratch, run_id: &str) -> serde_json::Value {
+    let file = profile
+        .join("app")
+        .join("conversion-history")
+        .join(format!("run-{run_id}.json"));
+    serde_json::from_slice(&fs::read(file).expect("the run's document")).expect("a document")
+}
+
+/// The record says what the queue's own label says (ADR 0055), for a row on the
+/// measured build and for a row on a build MSCanvas did not measure.
+#[test]
+fn a_row_records_whether_its_settings_and_its_build_were_verified() {
+    const UNMEASURED: &str = "3.0.26204";
+    for (capabilities, release, build_verified) in [
+        (evidenced_capabilities(), EVIDENCED_RELEASE, true),
+        (
+            conversion_capabilities(UNMEASURED, Some("a09eea9"), EVIDENCED_EXECUTABLE_SHA256),
+            UNMEASURED,
+            false,
+        ),
+    ] {
+        let fixture = TestFile::new("run-history-row-label");
+        let destination = destination_root(&fixture, "out");
+        let profile = Scratch::new("run-history-row-label-profile");
+        let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+        let service = PreviewService::new(Box::new(ConvertingProvider::new(
+            capabilities,
+            FakeConversionRunner::new(BackendAct::Convert),
+        )));
+        service.attach_run_history(Arc::clone(&history));
+        let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+        let update = queue_and_run(&service, &[handle], &destination);
+        let label = terminal_queue(&update).items[0]
+            .not_verified_by_mscanvas
+            .clone();
+        let settings_verified = label
+            .as_ref()
+            .is_none_or(|label| !label.unverified_settings);
+
+        let runs = recorded(&profile, &history);
+        let RunHistoryReadDto::Found { run, items } = history.read(&runs[0].run_id) else {
+            panic!("the run reads back");
+        };
+        for summary in [&runs[0], &run] {
+            assert_eq!(
+                summary.settings_row,
+                Some(ConversionIntent::SHIPPED.stable_id())
+            );
+            assert_eq!(summary.settings_verified, settings_verified, "{release}");
+            assert_eq!(summary.build_verified, build_verified, "{release}");
+            assert_eq!(summary.build_release.as_deref(), Some(release));
+        }
+        assert_eq!(items[0].settings_verified, settings_verified, "{release}");
+        assert_eq!(items[0].build_verified, build_verified, "{release}");
+        assert_eq!(
+            label.is_none(),
+            settings_verified && build_verified,
+            "{release}"
+        );
+        if build_verified {
+            assert!(settings_verified, "the measured row on its measured build");
+        }
+    }
+}
+
+/// Advanced settings are no row, and are labelled at the run and at each file.
+#[test]
+fn an_advanced_intent_records_no_row_and_unverified_settings() {
+    let fixture = TestFile::new("run-history-advanced");
+    let profile = Scratch::new("run-history-advanced-profile");
+    let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+    let service = PreviewService::new(Box::new(ConvertingProvider::offering_every_admitted_row()));
+    service.attach_run_history(Arc::clone(&history));
+    let handle = service
+        .add_dataset(&fixture.readable_mzml("run.mzML"))
+        .expect("add an mzML row")
+        .handle;
+    let document = current_document(&service);
+    let request = ConversionBeginRequestDto {
+        handles: vec![handle],
+        intent_id: None,
+        intent: Some(crate::preview::dto::ConversionIntentWireDto(
+            serde_json::json!({
+                "output": {
+                    "format": "mzml",
+                    "mz": { "encoding": "plain", "bits": 64 },
+                    "intensity": { "encoding": "plain", "bits": 32 },
+                    "zlib": true,
+                    "index": true
+                },
+                "spectrumFilters": [{ "kind": "ms_level", "levels": [{ "start": 1, "end": 1 }] }],
+                "chromatogramFilters": [],
+                "switches": []
+            }),
+        )),
+        conflict_policy: ConversionConflictPolicyDto::Fail,
+        expected_receipt: service.readied_receipt(),
+        destination_policy: None,
+    };
+    let reservation = match service
+        .begin_conversion_queue_under(&request, document, DestinationPolicy::SourceSibling)
+        .outcome
+    {
+        ConversionBeginOutcomeDto::Reserved { reservation } => reservation,
+        ConversionBeginOutcomeDto::Refused { error } => panic!("refused: {error:?}"),
+    };
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    service.resolve_claimed_conversion(operation);
+
+    let runs = recorded(&profile, &history);
+    let RunHistoryReadDto::Found { run, items } = history.read(&runs[0].run_id) else {
+        panic!("the run reads back");
+    };
+    for summary in [&runs[0], &run] {
+        assert_eq!(summary.settings_row, None);
+        assert!(!summary.settings_verified);
+        assert!(summary.build_release.is_some());
+    }
+    assert!(!items[0].settings_verified);
+    assert!(
+        crate::preview::service::read_structured_intent(
+            &stored_document(&profile, &runs[0].run_id)["settings"]["intent"]
+        )
+        .is_ok()
+    );
+}
+
+/// A retry's attempt is not its earlier attempt. Until it settles the record holds
+/// none of that one's result, so a session that ends here leaves an outcome
+/// unknown with no code beside it. The item this pass has not reached keeps its
+/// failure, which is what it reads back as (ADR 0065 section 5).
+#[test]
+fn an_item_retrying_when_the_session_ends_keeps_nothing_of_its_earlier_attempt() {
+    let fixture = TestFile::new("run-history-mid-retry");
+    let destination = destination_root(&fixture, "out");
+    let profile = Scratch::new("run-history-mid-retry-profile");
+    let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+    let (runner, started, release) = FakeConversionRunner::new(BackendAct::Convert).blocking();
+    let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        runner,
+    ))));
+    service.attach_run_history(Arc::clone(&history));
+    let files = [fixture.thermo_raw("one.raw"), fixture.thermo_raw("two.raw")];
+    let handles = [
+        add_one_acquisition(&service, &files[0]),
+        add_one_acquisition(&service, &files[1]),
+    ];
+    let writers = [hold_for_writing(&files[0]), hold_for_writing(&files[1])];
+    queue_and_run(&service, &handles, &destination);
+    drop(writers);
+    let runs = recorded(&profile, &history);
+    let run_id = runs[0].run_id.clone();
+    let read_items = |history: &ConversionHistory| {
+        let RunHistoryReadDto::Found { items, .. } = history.read(&run_id) else {
+            panic!("the run reads back");
+        };
+        items
+    };
+    let earlier = read_items(&history)[0].progress.failure.clone();
+    assert!(earlier.is_some(), "the first pass failed by its code");
+
+    let retry = std::thread::spawn({
+        let service = Arc::clone(&service);
+        let document = current_document(&service);
+        move || service.retry_conversion_queue(document)
+    });
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the retry reaches its process");
+
+    let running = read_items(&history);
+    let blank = |state: &str, attempts: u64| ItemProgress {
+        state: state.to_owned(),
+        attempts,
+        outcome: None,
+        failure: None,
+        outputs: Vec::new(),
+        completeness: None,
+        set_adoptable: None,
+    };
+    assert_eq!(running[0].progress, blank("running", 2));
+    assert_eq!(
+        (
+            running[1].progress.state.as_str(),
+            &running[1].progress.failure
+        ),
+        ("pending", &earlier)
+    );
+
+    // What the disk says at this moment is what a session ending here leaves.
+    let name = format!("run-{run_id}.json");
+    let ended = Scratch::new("run-history-mid-retry-ended");
+    let ended_directory = ended.join("app").join("conversion-history");
+    fs::create_dir_all(&ended_directory).expect("the ended session's history");
+    fs::copy(
+        profile.join("app").join("conversion-history").join(&name),
+        ended_directory.join(&name),
+    )
+    .expect("copy the run as it stood");
+    release.send(()).expect("release the parked conversion");
+    retry
+        .join()
+        .expect("the retry finishes")
+        .expect("the retry answers");
+
+    let next = ConversionHistory::open(Ok(ended.join("app")));
+    let items = read_items(&next);
+    assert_eq!(items[0].progress, blank("interrupted", 2));
+    assert_eq!(
+        (items[1].progress.state.as_str(), &items[1].progress.failure),
+        ("failed", &earlier)
+    );
 }
 
 /// The item converting is on disk as `running` before its process starts, so
@@ -152,7 +408,7 @@ fn an_item_converting_when_the_session_ends_is_interrupted_not_never_run() {
 /// adopted whole, by stable identifiers, beside its members.
 #[test]
 fn a_set_records_its_completeness_and_whether_it_was_adoptable() {
-    let (_fixture, service, handle, destination) = private_sciex_queue(
+    let (fixture, service, handle, destination) = private_sciex_queue(
         "run-history-set",
         FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]).also_converting(),
     );
@@ -174,6 +430,15 @@ fn a_set_records_its_completeness_and_whether_it_was_adoptable() {
     let RunHistoryReadDto::Found { items, .. } = history.read(&runs[0].run_id) else {
         panic!("the run reads back");
     };
+    let document = stored_document(&profile, &runs[0].run_id);
+    assert_members(
+        &document["items"][0]["source"]["members"],
+        &[
+            fixture.directory.join("acquisition.wiff"),
+            fixture.companion_of("acquisition"),
+        ],
+    );
+    assert!(document["items"][0]["source"]["destination"].is_string());
     let progress = &items[0].progress;
     assert_eq!(progress.outputs.len(), 2);
     assert_eq!(progress.set_adoptable, Some(report.complete_set_adoptable));

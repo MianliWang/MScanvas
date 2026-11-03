@@ -13,9 +13,9 @@ use super::super::conversion::{
     conversion_source_kind, settings_unverified, unverified_build_release,
 };
 use super::super::dto::{
-    ConversionAttemptResultDto, ConversionQueueItemDto, ConversionQueueTerminalReasonDto,
-    ConversionSampleCompletenessDto, ConversionValidationDto, WorkspaceConversionStateDto,
-    WorkspaceConversionUpdateDto,
+    ConversionAttemptResultDto, ConversionQueueItemDto, ConversionQueueItemStateDto,
+    ConversionQueueTerminalReasonDto, ConversionSampleCompletenessDto, ConversionValidationDto,
+    WorkspaceConversionStateDto, WorkspaceConversionUpdateDto,
 };
 use super::super::selection::source_kind_dto;
 use super::PreviewService;
@@ -64,20 +64,22 @@ impl PreviewService {
                         .get(item.dataset())
                         .map(|dataset| {
                             let file = dataset.file();
-                            std::iter::once(member(
-                                file.path(),
-                                file.byte_length(),
-                                file.identity().as_pair(),
-                            ))
-                            .chain(file.companions().iter().map(|companion| {
-                                member(
-                                    companion.path(),
-                                    companion.byte_length(),
-                                    companion.identity().as_pair(),
-                                )
-                            }))
-                            .collect::<Option<Vec<_>>>()
-                            .unwrap_or_default()
+                            whole_set(
+                                std::iter::once(member(
+                                    file.path(),
+                                    file.byte_length(),
+                                    file.identity().as_pair(),
+                                ))
+                                .chain(
+                                    file.companions().iter().map(|companion| {
+                                        member(
+                                            companion.path(),
+                                            companion.byte_length(),
+                                            companion.identity().as_pair(),
+                                        )
+                                    }),
+                                ),
+                            )
                         })
                         .unwrap_or_default();
                     ItemSource {
@@ -141,6 +143,11 @@ fn member(
     })
 }
 
+/// A set is recorded whole or not at all (ADR 0065 section 1).
+fn whole_set(members: impl Iterator<Item = Option<SourceMember>>) -> Vec<SourceMember> {
+    members.collect::<Option<Vec<_>>>().unwrap_or_default()
+}
+
 /// A closed enumeration's own wire spelling, so a record and the interface
 /// never disagree about a name.
 fn wire_id(value: &impl serde::Serialize) -> String {
@@ -191,16 +198,24 @@ fn run_progress(operation: u64, update: &WorkspaceConversionUpdateDto) -> Option
 
 /// Stable identifiers and measurements only: an error's `kind` and never its
 /// sentences, and nothing a backend wrote.
+///
+/// A retry's item keeps its earlier attempt's result until this attempt settles,
+/// and a running item's outcome is not that one. A pending item's still is: ADR
+/// 0065 section 5 reads it back as failed if this pass never reaches it.
 fn item_progress(item: &ConversionQueueItemDto) -> ItemProgress {
     let mut progress = ItemProgress {
         state: wire_id(&item.state),
         attempts: item.attempts,
         outcome: None,
-        failure: item.error.as_ref().map(|error| error.kind.clone()),
+        failure: None,
         outputs: Vec::new(),
         completeness: None,
         set_adoptable: None,
     };
+    if item.state == ConversionQueueItemStateDto::Running {
+        return progress;
+    }
+    progress.failure = item.error.as_ref().map(|error| error.kind.clone());
     match &item.result {
         Some(ConversionAttemptResultDto::Single { report }) => {
             progress.outcome = Some(report.outcome.clone());
@@ -268,5 +283,38 @@ fn checks(validation: &ConversionValidationDto) -> OutputChecks {
         unverified: validation.unverified.clone(),
         inapplicable: validation.inapplicable.clone(),
         advisory: validation.advisory.clone(),
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use std::path::Path;
+
+    use super::{member, whole_set};
+
+    #[test]
+    fn a_set_with_a_path_that_is_not_unicode_is_not_recorded_at_all() {
+        let identity = (7, [0xab; 16]);
+        let plain = member(Path::new("C:/lab/a.wiff"), 3, identity);
+        let spelled = plain.clone().expect("a Unicode path is written down");
+        assert_eq!(
+            (
+                spelled.path.as_str(),
+                spelled.byte_length,
+                spelled.volume_serial
+            ),
+            ("C:/lab/a.wiff", 3, 7)
+        );
+        assert_eq!(spelled.file_id, "ab".repeat(16));
+
+        // An unpaired surrogate: Windows allows it in a name and UTF-8 cannot
+        // spell it.
+        let unspellable = OsString::from_wide(&[0x0061, 0xD800]);
+        let odd = member(Path::new(&unspellable), 3, identity);
+        assert!(odd.is_none());
+        assert!(whole_set([plain.clone(), odd].into_iter()).is_empty());
+        assert_eq!(whole_set([plain.clone(), plain].into_iter()).len(), 2);
     }
 }
