@@ -6666,8 +6666,9 @@ fn the_schema_version_records_the_extended_shape() {
     // exactly what a version 1 reader cannot decode, and the version is what
     // says so. Three since M9.2 added sample marks and intervals, which a
     // version 2 reader cannot decode either; four since a figure may be printed
-    // and carry its own axis titles, which a version 3 reader cannot.
-    assert_eq!(SCHEMA_VERSION, 4);
+    // and carry its own axis titles, which a version 3 reader cannot; five since
+    // it may carry a source note, which a version 4 reader cannot.
+    assert_eq!(SCHEMA_VERSION, 5);
 
     let json = FigureSpec::new(
         FigureTheme::Light,
@@ -6695,7 +6696,7 @@ fn the_schema_version_records_the_extended_shape() {
     .to_json()
     .expect("a figure serializes");
 
-    assert!(json.contains("\"schema_version\":4"));
+    assert!(json.contains("\"schema_version\":5"));
     assert!(json.contains("secondary_measurement"));
     assert!(json.contains("visible_value_domain"));
 
@@ -6980,6 +6981,78 @@ fn a_figure_without_marks_or_intervals_writes_nothing_new() {
     assert!(!document.contains("fill-opacity"));
     assert!(!description_of(&document).contains("Intervals"));
     assert!(!description_of(&document).contains("marked as well as joined"));
+}
+
+// ------------------------------------------------------- the source note
+
+/// ADR 0055: what a figure says about its source survives every artifact, so
+/// it is drawn as well as described, and a figure without one is untouched.
+#[test]
+fn a_source_note_is_drawn_and_described_and_absent_otherwise() {
+    const NOTE: &str = "Not verified by MSCanvas: ProteoWizard 3.0.26204";
+    let plain = figure_of(chromatogram_panel(vec![chromatogram_series(
+        "TIC",
+        StyleRole::Measurement,
+        vec![1.0, 2.0, 3.0],
+        vec![5.0, 9.0, 4.0],
+    )]));
+    let noted = plain
+        .clone()
+        .with_source_note(Label::new(NOTE).expect("a label"));
+
+    let plain_text = svg::render_with_text(&plain);
+    assert!(!plain_text.svg.contains("Not verified"));
+
+    let noted_text = svg::render_with_text(&noted);
+    assert_eq!(noted_text.title, plain_text.title);
+    assert!(
+        noted_text.description.starts_with(NOTE),
+        "first in the description"
+    );
+    let (_, y, _, _) = drawn_texts(&noted_text.svg)
+        .into_iter()
+        .find(|(_, _, _, words)| words == NOTE)
+        .expect("drawn, for the artifact whose only text is its pixels");
+    let lowest_other = drawn_texts(&noted_text.svg)
+        .into_iter()
+        .filter(|(_, _, _, words)| words != NOTE)
+        .map(|(_, y, _, _)| y)
+        .fold(f64::MIN, f64::max);
+    assert!(
+        y > lowest_other,
+        "under everything else: {y} > {lowest_other}"
+    );
+
+    // Part of the contract: it round-trips, and a title does not displace it.
+    let decoded = FigureSpec::from_json(&noted.to_json().expect("serializes")).expect("readable");
+    assert_eq!(decoded.source_note().map(Label::as_str), Some(NOTE));
+    let retitled = noted.with_title(Label::new("Mine").expect("a label"));
+    assert_eq!(retitled.source_note().map(Label::as_str), Some(NOTE));
+
+    // The narrowest and shortest figure still has room for it and for a panel.
+    let cramped = FigureSpec::new(
+        FigureTheme::Light,
+        FigureSize::new(
+            MIN_FIGURE_WIDTH,
+            MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
+        )
+        .expect("the smallest size"),
+        vec![chromatogram_panel(vec![chromatogram_series(
+            "TIC",
+            StyleRole::Measurement,
+            vec![1.0, 2.0],
+            vec![5.0, 9.0],
+        )])],
+    )
+    .expect("a figure")
+    .with_title(Label::new("Chromatogram").expect("a label"))
+    .with_source_note(Label::new(NOTE).expect("a label"));
+    assert!(
+        drawn_texts(&svg::render(&cramped))
+            .iter()
+            .any(|(_, _, _, words)| words == NOTE),
+        "still drawn at the smallest figure"
+    );
 }
 
 // ------------------------------------------------- the publication figure

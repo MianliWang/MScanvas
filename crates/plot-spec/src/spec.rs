@@ -45,7 +45,12 @@ use std::fmt;
 /// may now carry a printed size -- millimetres and the point sizes its text and
 /// lines are set in -- and a title for each axis that replaces the label the
 /// source gave it. A version 3 reader refuses both fields.
-pub const SCHEMA_VERSION: u32 = 4;
+///
+/// **Five since the source note** (ADR 0055; owner decision A0055 (a),
+/// 2026-10-31): a figure may name a limit on its source, drawn on its own line
+/// and carried in the description. A version 4 reader refuses the field. A
+/// figure without one renders exactly as it did.
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// The longest a label may be.
 ///
@@ -1969,6 +1974,9 @@ pub struct FigureSpec {
     pub(crate) x_axis_title: Option<Label>,
     /// The words drawn for the value axis, as [`Self::x_axis_title`].
     pub(crate) y_axis_title: Option<Label>,
+    /// What a reader must know about the source, drawn on its own line under
+    /// the panels. Apart from the title, so an edited title cannot remove it.
+    pub(crate) source_note: Option<Label>,
     /// Ordered. One panel today; the order is in the contract because a second
     /// panel must not have to change the shape to be placed.
     pub(crate) panels: Vec<PanelSpec>,
@@ -2012,6 +2020,12 @@ impl FigureSpec {
         self.y_axis_title.as_ref()
     }
 
+    /// What the figure says about its source, when there is something to say.
+    #[must_use]
+    pub const fn source_note(&self) -> Option<&Label> {
+        self.source_note.as_ref()
+    }
+
     #[must_use]
     pub fn panels(&self) -> &[PanelSpec] {
         &self.panels
@@ -2035,6 +2049,7 @@ impl FigureSpec {
             caption: None,
             x_axis_title: None,
             y_axis_title: None,
+            source_note: None,
             panels,
         };
         figure.validate()?;
@@ -2086,7 +2101,7 @@ impl FigureSpec {
         {
             return Err(SpecError::AxisTitleAmbiguous);
         }
-        for title in [&self.x_axis_title, &self.y_axis_title]
+        for title in [&self.x_axis_title, &self.y_axis_title, &self.source_note]
             .into_iter()
             .flatten()
         {
@@ -2098,6 +2113,13 @@ impl FigureSpec {
     #[must_use]
     pub fn with_title(mut self, title: Label) -> Self {
         self.title = Some(title);
+        self
+    }
+
+    /// Names a limit on the figure's source; see [`Self::source_note`].
+    #[must_use]
+    pub fn with_source_note(mut self, note: Label) -> Self {
+        self.source_note = Some(note);
         self
     }
 
@@ -2194,6 +2216,8 @@ struct WireFigure {
     x_axis_title: Option<Label>,
     #[serde(default)]
     y_axis_title: Option<Label>,
+    #[serde(default)]
+    source_note: Option<Label>,
     panels: Vec<WirePanel>,
 }
 
@@ -2207,6 +2231,7 @@ impl From<WireFigure> for FigureSpec {
             caption: wire.caption,
             x_axis_title: wire.x_axis_title,
             y_axis_title: wire.y_axis_title,
+            source_note: wire.source_note,
             panels: wire.panels.into_iter().map(Into::into).collect(),
         }
     }

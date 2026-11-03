@@ -359,6 +359,16 @@ impl NotVerifiedByMscanvas {
                 .or(other.unverified_build_release),
         }
     }
+
+    /// The label in a figure's own words, which are English in every locale:
+    /// the webview's `m74CnvNotVerified` and `m74CnvNotVerifiedBuild`.
+    #[must_use]
+    pub fn figure_note(&self) -> String {
+        self.unverified_build_release.as_ref().map_or_else(
+            || "Not verified by MSCanvas".to_owned(),
+            |release| format!("Not verified by MSCanvas: ProteoWizard {release}"),
+        )
+    }
 }
 
 /// What one member's bytes actually were when an operation looked.

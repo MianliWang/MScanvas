@@ -1033,12 +1033,13 @@ pub(super) fn linked_figure_spec(
     )
 }
 
-/// Renders one chromatogram as the SVG document a user receives.
+/// Renders one unlabelled chromatogram as the SVG document a user receives.
 ///
 /// # Errors
 ///
 /// Answers with the contract's refusal where the chromatogram cannot be
 /// specified as a figure.
+#[cfg(test)]
 pub(super) fn svg_document(
     source: &ChromatogramSource,
     resolved: ResolvedRange,
@@ -2301,7 +2302,7 @@ mod tests {
             figure.schema_version(),
             mscanvas_plot_spec::spec::SCHEMA_VERSION
         );
-        assert_eq!(figure.schema_version(), 4);
+        assert_eq!(figure.schema_version(), 5);
         assert!(figure.size().print().is_none() && figure.x_axis_title().is_none());
         assert!(figure.panels().iter().all(|panel| {
             panel.intervals().is_empty()

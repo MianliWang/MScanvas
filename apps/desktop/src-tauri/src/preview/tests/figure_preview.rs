@@ -218,6 +218,136 @@ fn figure_preview_uses_the_canonical_chromatogram_and_linked_paths() {
     assert!(linked.contains("Panel 2 of 2"));
 }
 
+/// ADR 0055, owner decision A0055 (a) of 2026-10-31: a labelled row's figure
+/// says so wherever it goes, and an unlabelled one is exactly what it was. The
+/// clipboard paths need an app handle and are left to the native specs.
+#[test]
+fn a_labelled_row_s_figures_say_so_in_the_preview_and_in_every_saved_document() {
+    const RELEASE: &str = "3.0.26204";
+    const NOTE: &str = "Not verified by MSCanvas: ProteoWizard 3.0.26204";
+    // The webview's own words for the same label, in the same language.
+    let en = include_str!("../../../../src/features/preferences/locales/en.ts");
+    assert!(en.contains(
+        "m74CnvNotVerifiedBuild: \"Not verified by MSCanvas: ProteoWizard {{release}}\""
+    ));
+    assert!(en.contains("m74CnvNotVerified: \"Not verified by MSCanvas\""));
+
+    let file = TestFile::new("m74-labelled-figures");
+    let service = PreviewService::new(Box::new(FakeProvider::available(linked_responses())));
+    let pair = linked_ready(&file, &service);
+    let spectrum = || FigurePreviewSourceDto::Spectrum {
+        token: pair.spectrum.clone(),
+        range: full_spectrum_range(),
+    };
+    let chromatogram = || FigurePreviewSourceDto::Chromatogram {
+        token: pair.chromatogram.clone(),
+        range: full_run_range(),
+        traces: both_traces(),
+    };
+    let linked = || FigurePreviewSourceDto::Linked {
+        chromatogram_token: pair.chromatogram.clone(),
+        spectrum_token: pair.spectrum.clone(),
+        range: full_run_range(),
+        traces: both_traces(),
+    };
+    for source in [spectrum(), chromatogram(), linked()] {
+        let (svg, _) = render(&service, source, default_figure_settings());
+        assert!(!svg.contains("Not verified"), "{svg}");
+    }
+
+    service.label_admitted_row(
+        &mut crate::preview::dto::WorkspaceAddResultDto {
+            roster: service.roster(),
+            outcomes: Vec::new(),
+        },
+        &pair.handle,
+        crate::project::record::NotVerifiedByMscanvas::of(false, Some(RELEASE.to_owned()))
+            .expect("a label"),
+    );
+
+    for (name, source) in [
+        ("spectrum", spectrum()),
+        ("chromatogram", chromatogram()),
+        ("linked", linked()),
+    ] {
+        let (svg, _) = render(&service, source, default_figure_settings());
+        assert!(svg.contains(&format!(">{NOTE}<")), "{name} draws it: {svg}");
+        assert!(
+            svg.contains(&format!("<desc>{NOTE}. ")),
+            "{name} describes it: {svg}"
+        );
+    }
+
+    // The saved documents are the preview's, and a PNG's text is the SVG's.
+    let saved_spectrum = |format: &str, name: &str| {
+        let destination = file.directory.join(name);
+        let reservation = service
+            .begin_spectrum_export(
+                &pair.spectrum,
+                format,
+                &full_spectrum_range(),
+                &default_figure_settings(),
+            )
+            .expect("reserve");
+        let claimed = service.claim_spectrum_export(&reservation).expect("claim");
+        service
+            .write_spectrum_export(&claimed, &destination)
+            .expect("write");
+        fs::read(destination).expect("saved")
+    };
+    let (preview, _) = render(&service, spectrum(), default_figure_settings());
+    assert_eq!(saved_spectrum("svg", "spectrum.svg"), preview.into_bytes());
+    assert!(String::from_utf8_lossy(&saved_spectrum("png", "spectrum.png")).contains(NOTE));
+
+    let reservation = service
+        .begin_chromatogram_export(
+            &pair.chromatogram,
+            "png",
+            &full_run_range(),
+            both_traces(),
+            &default_figure_settings(),
+        )
+        .expect("reserve");
+    let claimed = service
+        .claim_chromatogram_export(&reservation)
+        .expect("claim");
+    let chromatogram_png = file.directory.join("chromatogram.png");
+    service
+        .write_chromatogram_export(&claimed, &chromatogram_png)
+        .expect("write");
+    assert!(String::from_utf8_lossy(&fs::read(chromatogram_png).expect("saved")).contains(NOTE));
+
+    let linked_png = file.directory.join("linked.png");
+    linked_saved_as(
+        &service,
+        &pair.chromatogram,
+        &pair.spectrum,
+        "png",
+        &linked_png,
+    )
+    .expect("write");
+    assert!(String::from_utf8_lossy(&fs::read(linked_png).expect("saved")).contains(NOTE));
+
+    // The label is read when the export is claimed: a row removed while the
+    // save dialog is open does not take it off the figure.
+    let reservation = service
+        .begin_spectrum_export(
+            &pair.spectrum,
+            "svg",
+            &full_spectrum_range(),
+            &default_figure_settings(),
+        )
+        .expect("reserve");
+    let claimed = service.claim_spectrum_export(&reservation).expect("claim");
+    service.remove_datasets_now(std::slice::from_ref(&pair.handle));
+    let figure = claimed.figure().expect("still the figure");
+    assert_eq!(
+        figure.source_note().map(|note| note.as_str().to_owned()),
+        Some(NOTE.to_owned())
+    );
+    service.cancel_spectrum_export(&reservation);
+}
+
 #[test]
 fn figure_preview_rejects_unknown_tokens_and_old_documents_while_invalid_dpi_remains_png_only() {
     let (_file, service, token) = one_loaded_spectrum();

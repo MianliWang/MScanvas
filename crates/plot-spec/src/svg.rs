@@ -145,6 +145,8 @@ const MARGIN_TOP_BARE: f64 = 12.0;
 /// title: a publication figure is placed by its edges, and empty paper inside
 /// them is paper a layout cannot use.
 const MARGIN_BOTTOM: f64 = 8.0;
+/// The line a source note takes under the last panel, only where there is one.
+const SOURCE_NOTE_BAND: f64 = 16.0;
 
 /// The narrowest the left gutter is.
 const MIN_MARGIN_LEFT: f64 = 40.0;
@@ -1639,6 +1641,11 @@ pub fn render_with_text(figure: &FigureSpec) -> Rendered {
              as a heading; it is carried in the document's title element.",
         );
     }
+    // First, because a reader that stops early should still have read it. The
+    // only words here a clipboard image cannot lose are the ones drawn below.
+    if let Some(note) = &figure.source_note {
+        description = format!("{}. {description}", note.as_str());
+    }
     let _ = writeln!(out, "<desc>{}</desc>", escape(&description));
 
     let _ = writeln!(
@@ -1672,6 +1679,26 @@ pub fn render_with_text(figure: &FigureSpec) -> Rendered {
     }
 
     out.push_str(&body);
+    let note_room = width - heading_left - MARGIN_RIGHT;
+    if let Some((note, size)) = figure.source_note.as_ref().and_then(|note| {
+        readable_size(note.as_str(), MARKER_LABEL_SIZE, note_room, false).map(|size| (note, size))
+    }) {
+        write_line(
+            &mut out,
+            &Line {
+                x: heading_left,
+                y: height - MARGIN_BOTTOM,
+                size,
+                anchor: Anchor::Start,
+                bold: false,
+                rotated: false,
+                fill: colours.text,
+                room: note_room,
+            },
+            note.as_str(),
+            precision,
+        );
+    }
     out.push_str("</svg>\n");
     Rendered {
         svg: out,
@@ -1698,7 +1725,12 @@ fn panel_frames(figure: &FigureSpec, width: f64, height: f64) -> Vec<Frame> {
     } else {
         MARGIN_TOP_BARE
     };
-    let usable = height - margin_top - MARGIN_BOTTOM;
+    let note_band = if figure.source_note.is_some() {
+        SOURCE_NOTE_BAND
+    } else {
+        0.0
+    };
+    let usable = height - margin_top - MARGIN_BOTTOM - note_band;
     let panel_height = usable / panel_count as f64;
     // The most width a value-axis tick label may take, so the gutter that holds
     // it can never squeeze the plotting area out of a narrow figure.

@@ -31,7 +31,7 @@ use mscanvas_proteowizard::{
 use super::chromatogram::{
     ChromatogramExportFormat, ChromatogramSource, LinkedFigureFormat, MixedRetentionTimeUnits,
     RangeRequest, TraceSet, data_document as chromatogram_data, figure_spec as chromatogram_figure,
-    linked_figure_spec, shared_retention_time_unit, svg_document as chromatogram_svg,
+    linked_figure_spec, shared_retention_time_unit,
 };
 use super::conversion::conversion_source_kind;
 #[cfg(test)]
@@ -157,7 +157,7 @@ use super::export::{
     BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
     ClaimedSpectrumExport, FigureFailure, LinkedTokens, ScientificExportSlots,
     SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest, data_document,
-    exported_point_count, figure_raster, png_document, png_of, raster_of, svg_document,
+    exported_point_count, figure_spec as spectrum_figure, labelled_figure, png_of, raster_of,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -3858,8 +3858,12 @@ impl PreviewService {
         // Rendered from the snapshot the claim took, off the locks. The
         // spectrum on screen may be replaced while this runs; what is copied is
         // the one the user asked for, over the range they asked for.
-        let raster =
-            figure_raster(snapshot.spectrum(), settings, resolved).map_err(Self::figure_failure)?;
+        let figure = labelled_figure(
+            spectrum_figure(snapshot.spectrum(), settings, resolved),
+            self.row_label(snapshot.owner()).as_ref(),
+        )
+        .map_err(|_| Self::figure_failure(FigureFailure::Unspecifiable))?;
+        let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
 
@@ -3892,9 +3896,12 @@ impl PreviewService {
         // *without* the lane having been claimed for it -- see
         // `claim_matching`. The webview holds both identifiers and they come
         // from one counter, so this is a state a reloaded document can reach.
-        self.spectrum_export_slot()
+        let mut claimed = self
+            .spectrum_export_slot()
             .claim_spectrum(reservation)
-            .ok_or_else(spectrum_export_stale)
+            .ok_or_else(spectrum_export_stale)?;
+        claimed.source_label = self.row_label(claimed.snapshot.owner());
+        Ok(claimed)
     }
 
     /// Returns one reservation to idle without writing anything.
@@ -3932,16 +3939,19 @@ impl PreviewService {
         // they asked for.
         let range = claimed.range;
         let bytes = match claimed.format {
-            SpectrumExportFormat::Svg => svg_document(spectrum, claimed.settings, range)
-                .map_err(|_| spectrum_export_refused())?
-                .into_bytes(),
+            SpectrumExportFormat::Svg => {
+                let figure = claimed.figure().map_err(|_| spectrum_export_refused())?;
+                mscanvas_plot_spec::svg::render(&figure).into_bytes()
+            }
             SpectrumExportFormat::Png => {
                 // The resolution validated when the export began, carried here
                 // rather than read again: the settings the user is about to
                 // save with are the ones they were shown in the dialog.
                 let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
-                png_document(spectrum, claimed.settings, dpi, range)
-                    .map_err(Self::figure_failure)?
+                let figure = claimed
+                    .figure()
+                    .map_err(|_| Self::figure_failure(FigureFailure::Unspecifiable))?;
+                png_of(&figure, claimed.settings, dpi).map_err(Self::figure_failure)?
             }
             // The data documents, which no figure setting reaches. The same
             // bytes come out of here whatever the figure is being drawn at,
@@ -4061,9 +4071,12 @@ impl PreviewService {
         &self,
         reservation: &str,
     ) -> Result<ClaimedChromatogramExport, PreviewErrorDto> {
-        self.spectrum_export_slot()
+        let mut claimed = self
+            .spectrum_export_slot()
             .claim_chromatogram(reservation)
-            .ok_or_else(chromatogram_export_stale)
+            .ok_or_else(chromatogram_export_stale)?;
+        claimed.source_label = self.row_label(claimed.snapshot.owner());
+        Ok(claimed)
     }
 
     /// Returns one chromatogram reservation to idle without writing anything.
@@ -4095,17 +4108,17 @@ impl PreviewService {
         let mut row_count = None;
         let bytes = match claimed.format {
             ChromatogramExportFormat::Svg => {
-                let settings = claimed.figure_settings();
-                chromatogram_svg(source, claimed.range, claimed.traces, settings)
-                    .map_err(|_| chromatogram_export_refused())?
-                    .into_bytes()
+                let figure = claimed
+                    .figure()
+                    .map_err(|_| chromatogram_export_refused())?;
+                mscanvas_plot_spec::svg::render(&figure).into_bytes()
             }
             ChromatogramExportFormat::Png => {
                 let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
-                let settings = claimed.figure_settings();
-                let figure = chromatogram_figure(source, claimed.range, claimed.traces, settings)
+                let figure = claimed
+                    .figure()
                     .map_err(|_| chromatogram_export_refused())?;
-                png_of(&figure, settings, dpi).map_err(Self::figure_failure)?
+                png_of(&figure, claimed.figure_settings(), dpi).map_err(Self::figure_failure)?
             }
             // The data documents, which no figure setting and no trace toggle
             // reaches. Both measured columns are written whatever is on screen.
@@ -4176,8 +4189,11 @@ impl PreviewService {
             .map_err(Self::chromatogram_refusal)?;
         let _in_flight = SpectrumExportInFlight(self);
 
-        let figure = chromatogram_figure(snapshot.source(), resolved, traces, settings)
-            .map_err(|_| chromatogram_export_refused())?;
+        let figure = labelled_figure(
+            chromatogram_figure(snapshot.source(), resolved, traces, settings),
+            self.row_label(snapshot.owner()).as_ref(),
+        )
+        .map_err(|_| chromatogram_export_refused())?;
         let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
@@ -4263,9 +4279,12 @@ impl PreviewService {
         &self,
         reservation: &str,
     ) -> Result<ClaimedLinkedFigureExport, PreviewErrorDto> {
-        self.spectrum_export_slot()
+        let mut claimed = self
+            .spectrum_export_slot()
             .claim_linked_figure(reservation)
-            .ok_or_else(linked_figure_stale)
+            .ok_or_else(linked_figure_stale)?;
+        claimed.source_label = self.row_label(claimed.chromatogram.owner());
+        Ok(claimed)
     }
 
     /// Returns one linked reservation to idle without writing anything.
@@ -4377,13 +4396,16 @@ impl PreviewService {
             .source()
             .row_for_spectrum(pair.spectrum().spectrum())
             .ok_or_else(linked_figure_source_mismatch)?;
-        let figure = linked_figure_spec(
-            pair.chromatogram().source(),
-            pair.spectrum().spectrum(),
-            row,
-            pair.range(),
-            traces,
-            settings,
+        let figure = labelled_figure(
+            linked_figure_spec(
+                pair.chromatogram().source(),
+                pair.spectrum().spectrum(),
+                row,
+                pair.range(),
+                traces,
+                settings,
+            ),
+            self.row_label(pair.chromatogram().owner()).as_ref(),
         )
         .map_err(|_| linked_figure_not_drawable())?;
         let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
@@ -4422,13 +4444,16 @@ impl PreviewService {
             .source()
             .row_for_spectrum(claimed.spectrum.spectrum())
             .ok_or_else(linked_figure_source_mismatch)?;
-        linked_figure_spec(
-            claimed.chromatogram.source(),
-            claimed.spectrum.spectrum(),
-            row,
-            claimed.range,
-            claimed.traces,
-            claimed.settings,
+        labelled_figure(
+            linked_figure_spec(
+                claimed.chromatogram.source(),
+                claimed.spectrum.spectrum(),
+                row,
+                claimed.range,
+                claimed.traces,
+                claimed.settings,
+            ),
+            claimed.source_label.as_ref(),
         )
         .map_err(|_| linked_figure_not_drawable())
     }
