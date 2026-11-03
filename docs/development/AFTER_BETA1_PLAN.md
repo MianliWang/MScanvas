@@ -663,22 +663,31 @@ writer and Rust's ownership of files.
     so the root is still recognized and the next uninstall finishes it. A test in
     `view_cache/tests.rs` pins its names to Rust's constants;
     `.github/workflows/uninstall-view-cache.yml`, not a required check, installs
-    and uninstalls for real on a GitHub-hosted runner. It cannot drive the
-    interactive pages, so the box checked or not was not observed.
+    and uninstalls a debug build for real on a GitHub-hosted runner, and drives
+    the interactive pages by window messages. With the box not checked the cache
+    goes and the rest stays. With it checked, the local folder, the roaming folder
+    and the registry key go, which answers "not observed" above for those three.
+    No person has looked at those pages with the hook in place.
   - *2026-11-03, run against scratch folders with NSIS 3.11, not an owner
     decision:* `RMDir /r` follows a junction, as the folder named or inside it,
     and deletes what the target holds. The hook never uses it. The template's
     checked path does (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not
-    changed: with the box checked, a junction under that folder loses its target's
-    contents.
-  - *2026-11-03, read (not run) from `PageReinstall` of the same template, not an
-    owner decision:* an installer passes `/UPDATE` on to the old uninstaller only
-    when it was given `/UPDATE` itself. A person who runs a newer installer and
-    keeps the page's first choice, Uninstall before installing, therefore runs
-    the old uninstaller without it, and once that uninstaller carries the hook the
-    cache goes; each file's next View converts again. Presets and preferences
-    stay. Installing over an install with `/S` or `/UPDATE` runs no uninstaller.
-    The hook cannot tell these apart by its switches.
+    changed; read with that run, not run itself: with the box checked, a junction
+    under that folder loses its target's contents.
+  - *2026-11-03, read from `PageReinstall` and run on that runner (the same build,
+    with the recorded version set to 0.0.1), not an owner decision:* an installer
+    passes `/UPDATE` on to the old uninstaller only when it was given `/UPDATE`
+    itself. A person who runs a newer installer and keeps the page's first choice,
+    Uninstall before installing, therefore runs the old uninstaller without it,
+    and once that uninstaller carries the hook the cache goes; each file's next
+    View converts again. Presets and preferences stay. Installing over an install
+    with `/S` or `/S /UPDATE` runs no uninstaller and keeps the cache. The hook
+    cannot tell these apart by its switches.
+  - *2026-11-03, run on that runner, not an owner decision:* a `/P` uninstall after
+    a silent install stops at the template's language dialog, because a silent
+    install records no language, and waits there until someone answers. It was
+    still waiting when the job stopped it after five minutes. With a language
+    recorded, `/P` runs to its end.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
