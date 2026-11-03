@@ -7053,6 +7053,27 @@ fn a_source_note_is_drawn_and_described_and_absent_otherwise() {
             .any(|(_, _, _, words)| words == NOTE),
         "still drawn at the smallest figure"
     );
+
+    // Too long to read at the floor on that figure is condensed, never left
+    // out, up to the longest note a label holds.
+    for length in [81, 109, MAX_LABEL_CHARS] {
+        let long = "n".repeat(length);
+        let document = svg::render(
+            &cramped
+                .clone()
+                .with_source_note(Label::new(long.as_str()).expect("a label")),
+        );
+        assert!(
+            drawn_texts(&document)
+                .iter()
+                .any(|(_, _, _, words)| *words == long),
+            "{length} characters are drawn"
+        );
+        assert!(
+            document.contains("lengthAdjust=\"spacingAndGlyphs\""),
+            "{length} characters are condensed into the room"
+        );
+    }
 }
 
 // ------------------------------------------------- the publication figure

@@ -1680,15 +1680,16 @@ pub fn render_with_text(figure: &FigureSpec) -> Rendered {
 
     out.push_str(&body);
     let note_room = width - heading_left - MARGIN_RIGHT;
-    if let Some((note, size)) = figure.source_note.as_ref().and_then(|note| {
-        readable_size(note.as_str(), MARKER_LABEL_SIZE, note_room, false).map(|size| (note, size))
-    }) {
+    // Condensed at the floor rather than left out, unlike a heading, which keeps
+    // its title element: a clipboard image has no words but the ones drawn.
+    if let Some(note) = &figure.source_note {
         write_line(
             &mut out,
             &Line {
                 x: heading_left,
                 y: height - MARGIN_BOTTOM,
-                size,
+                size: readable_size(note.as_str(), MARKER_LABEL_SIZE, note_room, false)
+                    .unwrap_or(MIN_TEXT_SIZE),
                 anchor: Anchor::Start,
                 bold: false,
                 rotated: false,
