@@ -433,10 +433,13 @@ uses its value, and elsewhere v5.11's final value:
 - **Rows.** v5.11's 44 px row and `#edf1f5` hairline, with names at the roster's
   13 px and 500. v5.11's `.data-name` is 600.
 - **Notices.** The shell's `.notice` values, which are v5.11's `.note`. A busy
-  notice takes `.note.blue`. A notice is not counted as a card in a card.
-- **Results table.** The Workbench scan table's size and head: 28 px rows under a
-  sticky 30 px head at 12 px. v5.11's 44 px feature rows would leave about six
-  rows in the 320 px box. The selected row is v5.11's fill and 3 px edge.
+  notice takes `.note.blue`. A notice is not counted as a card in a card. A
+  refusal's notice rides the surface's top edge while the page scrolls, so a
+  refused row far down keeps its reason in view, and focus lands below it.
+- **Results table.** The Workbench scan table's size and head: 28 px rows at
+  12 px under a sticky 30 px head at 11 px, the head every table on the page
+  shares. v5.11's 44 px feature rows would leave about six rows in the 320 px
+  box. The selected row is v5.11's fill and 3 px edge.
 - **Run and batch blocks.** A region under a hairline, like the review above
   them, in place of a tinted well. The acquisitions field is hairline rows in
   place of a box, and the result's figure has no border.
