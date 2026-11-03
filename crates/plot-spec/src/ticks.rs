@@ -194,6 +194,106 @@ fn scientific(integer: i64, exponent: i32) -> String {
     format!("{sign}{mantissa}e{power}")
 }
 
+/// The table the screen's `niceTicks` is held to: `plotAxes.test.ts` reads the
+/// same file and expects the same ticks, under a `fits` that always says yes
+/// because the screen has no collision check.
+///
+/// `MSCANVAS_WRITE_TICK_TABLE=1 cargo test -p mscanvas-plot-spec shared_table`
+/// rewrites the file; otherwise a difference fails, and a missing file with it.
+#[cfg(test)]
+mod shared_table {
+    use super::*;
+
+    const RANGES: &[(f64, f64)] = &[
+        // Ordinary spans, this module's tests' and the screen's.
+        (0.0, 94.5),
+        (100.5, 500.0),
+        (0.0, 1.0),
+        (9.0, 13.0),
+        (3.0, 47.0),
+        (0.0, 7.3),
+        (0.0, 0.3),
+        (0.0, 0.0625),
+        (300.0, 302.5),
+        (300.5, 302.0),
+        (0.0, 30.1),
+        (0.3, 17.9),
+        (100.0, 2000.0),
+        (0.0, 525.0),
+        (0.0, 2625.0),
+        (0.0, 9450.0),
+        (200.0, 300.0),
+        // Signs.
+        (-10.0, 10.0),
+        (-45.0, 63.0),
+        (-945.0, 0.0),
+        (-0.5, 0.5),
+        // A tie the coarser step takes, and the smaller step used to.
+        (0.0, 1.2),
+        (1.0, 7.0),
+        // Spans that are exact powers of ten, where two log10s could disagree.
+        (0.0, 0.001),
+        (0.0, 0.1),
+        (0.0, 10.0),
+        (0.0, 100.0),
+        (0.0, 1000.0),
+        (5.0, 1005.0),
+        // Exponents: by magnitude, and by a fixed label past twelve characters.
+        (0.0, 2.1e6),
+        (0.0, 5.25e6),
+        (0.0, 9.45e6),
+        (-2.1e6, 0.0),
+        (0.0, 0.00042),
+        (1e-20, 4e-20),
+        (1e307, 2e307),
+        (1000.0000001, 1000.0000004),
+        (1000.00000001, 1000.00000004),
+        // A coarse exact set, where a finer step is not exact.
+        (3e14, 3e14 + 5.0),
+        // No ticks to offer: no width, or no exact integers.
+        (5.0, 5.0),
+        (250.0, 250.0),
+        (0.0, 0.0),
+        (1e-20, 1e-20),
+        (1e20, 1e20 + 65_536.0),
+    ];
+
+    #[derive(serde::Serialize)]
+    struct Row {
+        low: f64,
+        high: f64,
+        ticks: Option<Vec<(f64, String)>>,
+    }
+
+    /// One row a line, so a moved tick is a one-line difference.
+    fn table() -> String {
+        let rows: Vec<String> = RANGES
+            .iter()
+            .map(|&(low, high)| {
+                let ticks = nice_ticks(Domain::new(low, high).expect("a table range"), |_| true)
+                    .map(|ticks| ticks.into_iter().map(|tick| (tick.at, tick.label)).collect());
+                serde_json::to_string(&Row { low, high, ticks }).expect("a row")
+            })
+            .collect();
+        format!("[\n{}\n]\n", rows.join(",\n"))
+    }
+
+    #[test]
+    fn the_file_is_what_the_rule_gives() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/plot-ticks/nice-ticks.json"
+        );
+        if std::env::var_os("MSCANVAS_WRITE_TICK_TABLE").is_some() {
+            std::fs::write(path, table()).expect("the table is written");
+        }
+        assert_eq!(
+            std::fs::read_to_string(path).expect("the table is read"),
+            table()
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

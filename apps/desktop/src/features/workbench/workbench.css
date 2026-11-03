@@ -294,7 +294,7 @@
 .plot-axis-title-x { flex: none; max-width: 50%; }
 .plot-x-ticks, .plot-y-ticks { position: relative; min-width: 0; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none; }
 .plot-x-ticks { grid-column: 2; grid-row: 3; }
-/* A fixed width, wide enough for the longest label the ticks write ("-1.5e+6"):
+/* A fixed width, wide enough for the longest ordinary label the ticks write ("-800000"):
    sized from the labels, the drawing would move when a gesture redraws them,
    and a plot whose box moves abandons the gesture. */
 .plot-y-ticks { grid-column: 1; grid-row: 2; width: calc(7ch + 8px); }

@@ -207,6 +207,7 @@ and the axis changes are the renderer's alone.
 | --- | --- |
 | Ticks | 1-2-5 steps, aiming for five and taking four to six where the span allows; fewer where labels would collide or leave the page, never overlapping ones. Every tick is `k × m × 10^e` parsed from its decimal string, so `0.3` is the `f64` nearest three tenths and no label prints a binary artefact or a negative zero |
 | Tick labels | the step's own decimals (`0.0, 0.5, 1.0`); exponents (`2e6`, `1e-20`) from 10^6 up, below 10^-3, or past twelve characters. Where no exact tick exists -- a zero span, or a span narrow beside its magnitude -- the axis falls back to the end labels it always had |
+| Ticks on screen | the same rule in `plotAxes.ts` `niceTicks`, with both sides held to `fixtures/plot-ticks/nice-ticks.json`, and the same end labels where no tick exists. It has no collision check, so a figure can keep fewer ticks than the screen where its labels would collide |
 | Value axis | labels outside the plotting area, right-aligned against outward ticks; light gridlines at the ticks, in the axis colour at 18% opacity; 5% headroom past the data, never across zero. A range that excludes zero labels its floor, so it cannot read as zero-based |
 | Domain axis | labels centred under outward ticks; the data's own ends are not labelled |
 | Axis titles | `label (unit)` for a reported unit, `label (unit not reported)` for an unreported one, the bare label for a dimensionless one. No unit is ever inferred |

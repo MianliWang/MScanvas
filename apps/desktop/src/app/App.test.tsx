@@ -764,7 +764,7 @@ describe("mzML preview workspace", () => {
     // The furthest-from-zero value sets the scale, and the value axis runs
     // below zero to reach it.
     expect(document.querySelector("svg.spectrum-plot")).toHaveAttribute("data-value-low", "-900.00");
-    expect([...document.querySelectorAll(".spectrum-frame .plot-y-ticks .plot-tick")].map(tick => tick.textContent)).toContain("-800");
+    expect([...document.querySelectorAll(".spectrum-frame .plot-y-ticks .plot-tick")].map(tick => tick.textContent)).toContain("-500");
     expect(screen.queryByText("no intensity above zero")).not.toBeInTheDocument();
   });
 
