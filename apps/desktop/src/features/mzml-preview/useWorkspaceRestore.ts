@@ -49,7 +49,7 @@ export interface WorkspaceRestoreSession {
   readonly slowWork: boolean;
   /** The user has acted on the record, so "nothing is waiting" is news rather than a first run. */
   readonly acted: boolean;
-  /** The last action was a put-back, so a workspace error is its answer to say. */
+  /** The last workspace change was a put-back, so a workspace error is its answer to say. */
   readonly putBackAsked: boolean;
   /** Why the last save did not record the session; the next save that does ends it. */
   readonly problem: RestoreProblem | null;
@@ -253,6 +253,11 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
     });
   }, [read]);
 
+  // A later workspace change is the last action now: its failure is its own to say.
+  useEffect(() => {
+    if (mutationBusy && !acting.current) setPutBackAsked(false);
+  }, [mutationBusy]);
+
   const restore = useCallback(() => {
     if (offerable === null) return;
     const groups = offerable.groups.map(group => group.name);
@@ -277,10 +282,7 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
         setProblem(null);
         setDismissFailed(null);
       }
-      if (answer.outcome === "saved") {
-        recorded.current = null;
-        setExpiredDismissed(false);
-      }
+      if (answer.outcome === "saved") recorded.current = null;
       answered(actionProblem(answer));
     }, (cause: unknown) => {
       if (mounted.current) answered({ kind: "error", error: toPreviewError(cause), action: true });

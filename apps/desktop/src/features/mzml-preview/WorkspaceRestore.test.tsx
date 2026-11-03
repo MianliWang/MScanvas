@@ -10,6 +10,7 @@ import {
   selectedFile,
   type FakePreviewApi,
 } from "../../test/previewFixtures";
+import { chooseRosterAction } from "../../test/rosterActions";
 import { UI_RESOURCES, type UiMessage } from "../preferences/i18n";
 import { initialOrganization, organize, placeRestored, UNGROUPED } from "../workbench/organization";
 import { PreviewApiProvider } from "./api";
@@ -333,6 +334,65 @@ describe("the restore notice", () => {
     expect(document.querySelector('[data-live-region="restore"]')).toHaveTextContent(en.restoreProblemChangedElsewhere);
   });
 
+  it.each<[string, () => HTMLElement | null, WorkspaceRestoreWrite]>([
+    ["a later window's", stoppedNotice, { outcome: "refused", problem: "changedElsewhere" }],
+    ["a failed save's", problemNotice, { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false }],
+  ])("ends %s refusal when Start fresh turns restore off, since its record is gone", async (_who, notice, answer) => {
+    let off = false;
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      workspaceRestore: {
+        readWorkspaceRestore: () => Promise.resolve(off ? { outcome: "off", leftoverCopies: 0 } : offered([row("restored-0", "a.raw", "missing")])),
+        saveWorkspaceRestore: () => Promise.resolve(answer),
+        clearWorkspaceRestore: () => { off = true; return Promise.resolve({ outcome: "turnedOff", problem: "changedElsewhere" }); },
+      },
+    });
+    mount(api);
+    const row1 = await checkbox();
+    await waitFor(() => expect(offerNotice()).not.toBeNull());
+    fireEvent.click(row1);
+    await waitFor(() => expect(notice()).not.toBeNull());
+    fireEvent.click(within(offerNotice()!).getByRole("button", { name: en.restoreStartFresh }));
+    await waitFor(() => expect(actionNotice()).not.toBeNull());
+    expect(notice()).toBeNull();
+  });
+
+  it("ends a failed dismiss's refusal when Start fresh empties the record", async () => {
+    let cleared = false;
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered(cleared ? [] : [row("restored-0", "a.raw", "missing")])),
+      dismissRestoredRow: () => Promise.reject(previewError({ kind: "unexpected_error" })),
+      clearWorkspaceRestore: () => { cleared = true; return Promise.resolve({ outcome: "saved" }); },
+    } });
+    mount(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss a.raw" }));
+    await waitFor(() => expect(actionNotice()).not.toBeNull());
+    fireEvent.click(within(offerNotice()!).getByRole("button", { name: en.restoreStartFresh }));
+    await waitFor(() => expect(offerNotice()).toBeNull());
+    expect(actionNotice()).toBeNull();
+  });
+
+  it("refuses every other dismiss while one runs, and asks once however quickly it is pressed", async () => {
+    const dismissing = deferred<undefined>();
+    const dismiss = vi.fn(() => dismissing.promise);
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw", "missing"), row("restored-1", "b.raw", "missing")])),
+      dismissRestoredRow: dismiss,
+    } });
+    mount(api);
+    const first = await screen.findByRole("button", { name: "Dismiss a.raw" });
+    const second = screen.getByRole("button", { name: "Dismiss b.raw" });
+    // Both before React can refuse anything: only the one-action guard stands here.
+    act(() => { first.click(); first.click(); });
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(second).toHaveAttribute("aria-disabled", "true"));
+    expect(second).toHaveAccessibleDescription(expect.stringContaining(en.restoreBusy));
+    fireEvent.click(second);
+    expect(dismiss).toHaveBeenCalledTimes(1);
+    await act(async () => { dismissing.resolve(undefined); await dismissing.promise; });
+    await waitFor(() => expect(second).not.toHaveAttribute("aria-disabled"));
+  });
+
   it.each([
     ["changedElsewhere", en.restoreTurnedOffChangedElsewhere],
     ["identityUnknown", en.restoreTurnedOffIdentityUnknown],
@@ -631,6 +691,26 @@ describe("where the keyboard goes when a restore button leaves", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Dismiss d.raw" })));
   });
 
+  it("leaves the keyboard where it moved while a press was held", async () => {
+    const dismissing = deferred<undefined>();
+    let rows: readonly RestoredRow[] = [row("restored-0", "a.raw", "missing"), row("restored-1", "b.raw", "missing")];
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered(rows)),
+      dismissRestoredRow: () => dismissing.promise,
+    } });
+    mount(api);
+    const dismiss = await screen.findByRole("button", { name: "Dismiss a.raw" });
+    dismiss.focus();
+    fireEvent.click(dismiss);
+    const fresh = within(offerNotice()!).getByRole("button", { name: en.restoreStartFresh });
+    await waitFor(() => expect(fresh).toHaveAttribute("aria-disabled", "true"));
+    fresh.focus();
+    rows = rows.slice(1);
+    await act(async () => { dismissing.resolve(undefined); await dismissing.promise; });
+    await waitFor(() => expect(fresh).not.toHaveAttribute("aria-disabled"));
+    expect(document.activeElement).toBe(fresh);
+  });
+
   it("moves no focus when the failure arrives, and brings the row back into view", async () => {
     const scrolled = vi.fn();
     const scrollIntoView = Element.prototype.scrollIntoView;
@@ -675,6 +755,28 @@ describe("where the keyboard goes when a restore button leaves", () => {
     fireEvent.click(again);
     await waitFor(() => expect(dialog.querySelector('[data-restore-settings="read-failed"]')).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole("radio", { name: en.restoreSwitchOn })));
+  });
+
+  it("leaves the keyboard in Settings where it moved while a read's Try again was held", async () => {
+    let attempts = 0;
+    const reading = deferred<WorkspaceRestoreRead>();
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => {
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(previewError({ kind: "unexpected_error" })) : reading.promise;
+      },
+    } });
+    mount(api);
+    fireEvent.click(await screen.findByRole("button", { name: en.settingsEntry }));
+    const dialog = await screen.findByRole("dialog");
+    const again = await within(dialog).findByRole("button", { name: en.restoreTryAgain });
+    again.focus();
+    fireEvent.click(again);
+    const fresh = within(dialog).getByRole("button", { name: en.restoreStartFresh });
+    fresh.focus();
+    await act(async () => { reading.resolve(offered([])); await reading.promise; });
+    await waitFor(() => expect(dialog.querySelector('[data-restore-settings="read-failed"]')).toBeNull());
+    expect(document.activeElement).toBe(fresh);
   });
 
   it("lands on the note in Settings when the whole section becomes unavailable", async () => {
@@ -804,6 +906,26 @@ describe("what the restore live region says", () => {
     fireEvent.click(await restoreAction());
     await waitFor(() => expect(region()).toHaveTextContent(en.workspaceFailed));
     expect(offerNotice()).toHaveTextContent(en.restoreAction);
+  });
+
+  it("leaves a workspace failure after a finished put-back to the workspace's own notice", async () => {
+    let rows: readonly RestoredRow[] = [row("restored-0", "a.raw")];
+    const api = createFakePreviewApi({
+      clearWorkspace: () => Promise.reject(previewError({ kind: "unexpected_error" })),
+      workspaceRestore: {
+        readWorkspaceRestore: () => Promise.resolve(offered(rows)),
+        restoreWorkspace: () => {
+          rows = [];
+          return Promise.resolve({ workspace: { roster: { datasets: [selectedFile], capacity: 1024 }, outcomes: [{ outcome: "added", dataset: selectedFile }] }, placed: [{ handle: selectedFile.handle, group: 0, checked: false, added: true }] });
+        },
+      },
+    });
+    mount(api);
+    fireEvent.click(await restoreAction());
+    await waitFor(() => expect(screen.queryByRole("button", { name: en.restoreAction })).toBeNull());
+    await chooseRosterAction("clearList");
+    await waitFor(() => expect(document.querySelector(".shell-notices > .notice-danger")).toHaveTextContent(en.workspaceFailed));
+    expect(region()).not.toHaveTextContent(en.workspaceFailed);
   });
 
   it("leaves a workspace failure a put-back did not cause to the workspace's own notice", () => {
