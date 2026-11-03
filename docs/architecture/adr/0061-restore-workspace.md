@@ -4,11 +4,11 @@ Status: **Accepted (2026-10-31)**, by the owner's answers to all ten questions
 (A0061 on 2026-10-30, and the two notes of 2026-10-31 below); proposed on
 2026-10-30. The owner asked for every backend item that
 can be done now to start in parallel and for open details to follow the
-recommendations; this record states them. The Rust side is implemented on
-branch `be/restore-workspace` (`apps/desktop/src-tauri/src/workspace_restore.rs`).
-No interface calls it yet, and the interface slice has prerequisites
-(decision 4). The questions put to the owner, all answered, are listed
-[at the end](#open-questions-for-the-owner).
+recommendations; this record states them. It is implemented: the Rust side in
+`apps/desktop/src-tauri/src/workspace_restore.rs`, the interface in
+`apps/desktop/src/features/mzml-preview/useWorkspaceRestore.ts` and its notice
+and Settings section (2026-11-03). The questions put to the owner, all
+answered, are listed [at the end](#open-questions-for-the-owner).
 
 *2026-10-30, owner answers:* the
 [owner decision record](../../development/OWNER_DECISIONS_V511.md#a0061-restore-workspace-177),
@@ -136,14 +136,11 @@ private sibling is filled and given the name by handle, so the name always
 holds the previous document or the new one. The writer replaces only this
 file.
 
-A QA build (`e2e` feature) binds no directory for now, so a rendered campaign
-never reads or writes the real profile's workspace, and the commands answer
-`unavailable`. Once the preference store exposes the directory it is bound to
-(`UiPreferenceStore::sibling_directory`, which the conversion preset store adds
-on its own branch), the restore store binds that instead, so a QA build uses its
-own QA root. That change must land before the interface slice's rendered QA;
-whichever of the two branches reaches main second makes it, so the preset
-store's "one path policy and one QA root" stays true.
+The store binds the directory the preference store is bound to
+(`UiPreferenceStore::sibling_directory`), so there is one path policy and a QA
+build (`e2e` feature) uses its own QA root: a rendered campaign never reads or
+writes the real profile's workspace, and without a QA root the commands answer
+`unavailable`.
 
 ### 3. When it is written
 
@@ -263,7 +260,10 @@ explicit **Restore workspace** action the user starts puts the matching rows
 back through ordinary admission (the same rule, duplicate check and capacity as
 Add files), in their restored groups and checked state; nothing is put back at
 start-up, nothing is previewed and no conversion starts. Marked rows are
-shown in place with their state and a Remove action. Putting a marked row back
+listed in the restore notice above every surface, each under its stored group's
+name with its state, its reason and a dismiss: above the surfaces, not in the
+roster, because the roster is a closed drawer at 1,050 px and below, and an offer
+nobody sees is not an offer. Putting a marked row back
 is the user adding the file again. This is not adoption in the sense of
 [ADR 0016](0016-explicit-converted-output-adoption.md), which takes a
 conversion's outputs into the Workbench and stays explicit: a restored row is
@@ -290,30 +290,40 @@ a new baseline, not a check against anything recorded. Its own cost is that
 an offer the user does not take has to end somewhere, or the document grows
 into a history of every session; decision 10 bounds it.
 
-Prerequisites of the interface slice:
+What the interface slice needed, as built (2026-11-03):
 
-- **Stable per-row slots.** Restored rows are numbered by position and only
-  ever forgotten together (clear, off). Putting one back or dismissing one
-  needs a slot that survives the others leaving.
-- **A put-back command.** `add_files` is a Rust service method, not a webview
-  command. The webview commands that admit files are the picker, the folder
-  import, a drop, conversion-output adoption and `add_project_input_to_workspace`
-  (PRJ-004); none of them takes a restored row. PRJ-004 is the pattern for the
-  command's shape: the webview names the row, and Rust resolves the stored
-  paths, admits them through the ordinary admission boundary (which hashes the
-  file as a new baseline; there is no recorded digest to compare it with), and
-  retires the row's restored slot under the same lock.
-- **A dismiss command**, so one marked row can be removed without clearing
-  every other.
+- **Stable per-row slots.** A row that leaves keeps its place in the stored
+  rows and is marked gone, so `restored-N` never changes meaning within a
+  session; a clear or off ends them all.
+- **A put-back command.** `restore_workspace` takes no row: it is the one action,
+  over every row a read of this session offered. Under the lock saves take, it
+  re-checks each row now, so a file changed since the read stays marked, and
+  hands the rows still matching to `add_files` in one batch, which admits them
+  by their stored paths through the ordinary admission boundary (hashing each
+  file as a new baseline; there is no recorded digest to compare it with).
+  A slot retires only if the row admission answered with is the recorded objects
+  (volume serial and file ID of every member). A file replaced after the re-check
+  stays in the Workbench, as any file added there does, without the stored group
+  or checked state, and its restored row reads `changed` at the next read. Rows
+  admission refused (a full workspace, say) stay waiting; a conversion's refusal
+  leaves every row waiting. The stored group and checked state come back with the
+  row, as an arrangement the webview applies with no undo step; a row that was
+  already live keeps its own. Nothing is written here: the save that follows
+  records it. The webview says the rows were added again, not verified against
+  the last session (question 10). Before the session's first read it is refused
+  (`workspace_restore_not_read`).
+- **A dismiss command.** `dismiss_restored_row(handle)` retires one row a read
+  reported (`restored_row_not_offered` otherwise), so one marked row can be
+  removed without clearing every other. The next save records it.
 - **A context for same-named rows.** A restored row carries only its final
   file name, so two `QC_01.raw` rows from different folders read alike. The
   live roster's collision-only relative context (ADR 0006, amended by M1.4.1)
   is a fragment below the folder the user chose and is never persisted; a
-  restored row has no chosen folder. Showing anything more needs an amendment
-  of ADR 0006. *Decision (owner, 2026-10-31, question 7):* a bounded number of
-  the parent folders above the file, shown only on a collision, never the
-  drive, share or root; the amendment is approved in principle and is written
-  with the interface slice.
+  restored row has no chosen folder. *Decision (owner, 2026-10-31, question 7):*
+  a bounded number of the parent folders above the file, shown only on a
+  collision, never the drive, share or root;
+  [ADR 0006](0006-multi-dataset-workspace-boundary.md) is amended for it
+  (2026-11-03).
 
 ### 5. Bounds
 
@@ -323,7 +333,7 @@ Prerequisites of the interface slice:
   so this refusal is reachable whenever the waiting restored rows and the live
   rows together pass 1,024. Putting a row back does not lower the count (the
   row is written once, as the live row); only clearing, or dismissing a
-  restored row once that command exists (decision 4), does. Decision 10 ages
+  restored row (decision 4), does. Decision 10 ages
   out untaken matching offers, but a marked row stays until it is put back,
   dismissed or cleared, so marked rows can build up across sessions toward
   this refusal. *Decision (owner, 2026-10-31, question 9):* fail closed, as
@@ -371,8 +381,9 @@ start reads the name again.
 
 Paths stay local. The document lives in the per-user directory and holds
 absolute paths; no transfer object carries one. The webview receives handles,
-display names (the final file name), family, checked state and row state. The
-stored member's `Debug` output omits its path. The redacted diagnostics export
+display names (the final file name), family, checked state and row state, and
+on a name collision the bounded folders of decision 4, never a drive, share or
+root. The stored member's `Debug` output omits its path. The redacted diagnostics export
 does not read this document.
 
 Other files in the same directory can also hold paths: a document kept aside
@@ -408,7 +419,7 @@ document from a downgrade.
 
 ### 9. The Tauri boundary
 
-Four commands, each bound to the calling document like the preference
+Six commands, each bound to the calling document like the preference
 commands, none taking or returning a path:
 
 | Command | Does |
@@ -417,9 +428,14 @@ commands, none taking or returning a path:
 | `save_workspace_restore(arrangement)` | Records the session as arranged; refused unless every row is placed once, refused `changedElsewhere` over another process's write, and `identityUnknown` while the document cannot be identified. |
 | `clear_workspace_restore` | Forgets every stored row; keeps the switch (`saved`), or writes off and answers `turnedOff` when the document is not what this process last saw. |
 | `set_workspace_restore_enabled(enabled)` | The off switch; on is refused `changedElsewhere` or `identityUnknown` as a save is. |
+| `restore_workspace` | Restore workspace: admits the rows still matching, as decision 4 says, answering the ordinary add result and where each row belongs. |
+| `dismiss_restored_row(handle)` | Forgets one row a read reported; the next save records it. |
 
-They are registered ahead of their interface; the command-surface test lists
-them in `AHEAD_OF_THEIR_INTERFACE` until a webview caller exists.
+The webview reads once its roster is known, before its first save, and what that
+read found is the baseline: a session that changes nothing writes nothing.
+Every later change of the arrangement is saved, one save at a time and none while
+a roster change is unanswered. A save refused `staleArrangement` is said, with
+Try again, only if no newer arrangement already followed it.
 
 ### 10. How long a row that is not put back is offered
 
@@ -515,8 +531,6 @@ answer is a one-line change.
   same content: a rewrite in place at the same length comes back with its
   group and checked state, and put-back admits what is there then (decision 4,
   question 10, decided 2026-10-31).
-- The interface slice cannot start before stable per-row slots and the
-  put-back and dismiss commands exist (decision 4).
 
 ## Open questions for the owner
 

@@ -155,18 +155,21 @@ export function WorkspaceRestoreNotice({ session, canRestore, reason }: {
       {expired > 0 ? <span data-restore-expired="">{t("restoreExpired", { count: expired })}</span> : null}
       {offered.length > 0 ? <Button variant="secondary" size="sm" data-restore-action="" refused={restoreRefused} reasonId={restoreReasonShown ? "restore-reason" : STATUS_BUSY_ID}
         aria-busy={work === "restoring"} onClick={(event) => { owePlace(event); session.restore(); }}>{t("restoreAction")}</Button> : null}
-      {offered.length > 0 && restoreReasonShown ? <span id="restore-reason" className="restore-reason">{reason}</span> : null}
       {offerShown ? <Button variant="secondary" size="sm" data-restore-start-fresh="" refused={startFreshRefused} reasonId={STATUS_BUSY_ID}
         onClick={(event) => { owePlace(event); session.startFresh(); }}>{t("restoreStartFresh")}</Button> : null}
+      {offered.length > 0 && restoreReasonShown ? <span id="restore-reason" className="restore-reason">{reason}</span> : null}
       {!offerShown ? <IconButton className="notice-dismiss" size="sm" icon={<Icon name="close" />} label={t("dismiss")} onClick={(event) => { owePlace(event); session.dismissExpired(); }} /> : null}
       {marked.length === 0 ? null : <ul className="restore-marked">
-        {marked.map(row => <li key={row.handle} data-restored-row={row.handle} data-state={row.state}>
-          <span className="restore-marked-name">{row.context === null ? row.displayName : `${row.displayName}, ${row.context}`}</span>
-          {row.group === null ? null : <span className="restore-marked-group">{row.group}</span>}
-          <span className="restore-marked-reason">{t(ROW_REASON[row.state])}</span>
-          <IconButton size="sm" icon={<Icon name="close" />} label={t("restoreDismissNamed", { name: row.displayName })} refused={work !== null} reasonId={STATUS_BUSY_ID}
-            onClick={(event) => { owePlace(event); session.dismissRow(row.handle); }} data-restore-dismiss="" />
-        </li>)}
+        {marked.map(row => {
+          const name = row.context === null ? row.displayName : `${row.displayName}, ${row.context}`;
+          return <li key={row.handle} data-restored-row={row.handle} data-state={row.state}>
+            <IconButton size="sm" icon={<Icon name="close" size={13} />} label={t("restoreDismissNamed", { name })} refused={work !== null} reasonId={STATUS_BUSY_ID}
+              onClick={(event) => { owePlace(event); session.dismissRow(row.handle); }} data-restore-dismiss="" />
+            <span className="restore-marked-name">{name}</span>
+            {row.group === null ? null : <span className="restore-marked-group">{row.group}</span>}
+            <span className="restore-marked-reason">{t(ROW_REASON[row.state])}</span>
+          </li>;
+        })}
       </ul>}
     </div>}
   </>;

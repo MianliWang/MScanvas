@@ -1316,7 +1316,11 @@ fn restore_admits_the_matching_rows_and_leaves_the_marked_ones_waiting() {
     let service = workspace();
     let answer = store.put_back(&service).expect("the batch runs");
 
-    assert_eq!(service.workspace_restore_rows().len(), 1, "only the matching row");
+    assert_eq!(
+        service.workspace_restore_rows().len(),
+        1,
+        "only the matching row"
+    );
     let [placed] = answer.placed.as_slice() else {
         panic!("one row placed: {:?}", answer.placed);
     };
@@ -1365,7 +1369,11 @@ fn restore_re_checks_a_row_the_read_offered_and_refuses_what_changed_since() {
     let service = workspace();
     let answer = store.put_back(&service).expect("the batch runs");
 
-    assert_eq!(service.workspace_restore_rows().len(), 1, "only b is still as recorded");
+    assert_eq!(
+        service.workspace_restore_rows().len(),
+        1,
+        "only b is still as recorded"
+    );
     assert_eq!(answer.placed.len(), 1);
     assert_eq!(
         states(&restored(&store)),
@@ -1392,7 +1400,11 @@ fn a_file_replaced_after_the_re_check_stays_a_marked_row_beside_what_was_admitte
         })
         .expect("the batch runs");
 
-    assert_eq!(service.workspace_restore_rows().len(), 1, "admitted, as Add files would");
+    assert_eq!(
+        service.workspace_restore_rows().len(),
+        1,
+        "admitted, as Add files would"
+    );
     assert!(answer.placed.is_empty(), "not the recorded object");
     assert_eq!(
         states(&restored(&store)),
@@ -1448,7 +1460,11 @@ fn restore_admits_a_sciex_bundle_through_its_primary_as_one_row() {
     let _ = restored(&store);
     let answer = store.put_back(&service).expect("the batch runs");
 
-    assert_eq!(service.workspace_restore_rows().len(), 1, "one acquisition is one row");
+    assert_eq!(
+        service.workspace_restore_rows().len(),
+        1,
+        "one acquisition is one row"
+    );
     assert_eq!(answer.placed.len(), 1, "both members are the recorded ones");
     assert!(states(&restored(&store)).is_empty());
 }

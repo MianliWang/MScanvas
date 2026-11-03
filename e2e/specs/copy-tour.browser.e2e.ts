@@ -393,8 +393,8 @@ const RESTORE_MARKED = {
     {
       name: "Plasma batch 08",
       rows: [
-        restoredRow(2, "QC_03.raw", "changed", "batch-1\QC"),
-        restoredRow(3, "QC_03.raw", "missing", "batch-2\QC"),
+        restoredRow(2, "QC_03.raw", "changed", "batch-1"),
+        restoredRow(3, "QC_03.raw", "missing", "batch-2"),
         restoredRow(4, "blank_01.raw", "unreachable"),
         restoredRow(5, "blank_02.raw", "unreadable"),
         restoredRow(6, "blank_03.raw", "unsafe"),

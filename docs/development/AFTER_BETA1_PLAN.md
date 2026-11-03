@@ -780,8 +780,8 @@ None can be delivered by engineering alone; each waits for one input.
     bounded collision-only parent-folder context (the ADR 0006 amendment is
     approved in principle and written with the interface slice), an untaken
     matching offer lasts one start while a marked row never expires, and a
-    save over 1,024 rows is refused with Start fresh offered. PR #177 stays a
-    draft and merges together with its interface slice.
+    save over 1,024 rows is refused with Start fresh offered. PR #177 carries
+    its interface slice too (2026-11-03) and merges as one.
 
 ## 8. Dates and external dependencies
 

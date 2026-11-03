@@ -274,6 +274,47 @@ describe("the restore notice", () => {
     expect(offerNotice()).toBeNull();
   });
 
+  it("records a change made while the first read was still out, rather than taking it for the baseline", async () => {
+    const reading = deferred<WorkspaceRestoreRead>();
+    const save = vi.fn<() => Promise<WorkspaceRestoreWrite>>(() => Promise.resolve({ outcome: "saved" }));
+    const api = createFakePreviewApi({
+      pickedFiles: [selectedFile],
+      workspaceRestore: { readWorkspaceRestore: () => reading.promise, saveWorkspaceRestore: save },
+    });
+    mount(api);
+    const add = document.querySelector<HTMLElement>("[data-add-files]") ?? await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-add-files]");
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
+    fireEvent.click(add);
+    await waitFor(() => expect(document.querySelector(`[data-handle="${selectedFile.handle}"]`)).not.toBeNull());
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => { reading.resolve(offered([])); await reading.promise; });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  });
+
+  it("asks the list again for a stale refusal nothing newer followed, and then saves", async () => {
+    const saves: WorkspaceRestoreWrite[] = [{ outcome: "refused", problem: "staleArrangement" }, { outcome: "saved" }];
+    const save = vi.fn(() => Promise.resolve(saves.shift() as WorkspaceRestoreWrite));
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], workspaceRestore: { saveWorkspaceRestore: save } });
+    mount(api);
+    const row1 = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>(`[data-handle="${selectedFile.handle}"] input[type="checkbox"]`);
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(row1);
+    await waitFor(() => expect(problemNotice()).toHaveTextContent(en.restoreProblemStaleArrangement));
+    const before = api.calls().filter(call => call === "getRoster").length;
+    fireEvent.click(within(problemNotice()!).getByRole("button", { name: en.restoreTryAgain }));
+    await waitFor(() => expect(api.calls().filter(call => call === "getRoster").length).toBe(before + 1));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(problemNotice()).toBeNull());
+  });
+
   it("offers Try again for a read that failed, and reads again", async () => {
     let attempts = 0;
     const api = createFakePreviewApi({ workspaceRestore: {
