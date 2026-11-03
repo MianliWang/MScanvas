@@ -278,11 +278,17 @@ state, its reason and a dismiss, because the roster is a closed drawer at
 be collapsed, and the track it sits in takes up to about 154 px of a 960x640
 window (`min(24vh, 180px)`), and up to 256 px (`min(40vh, 320px)`) while a restore
 refusal, or any warning or failure beside the offer, stands: the workspace's own
-answer to a press of Restore workspace is one of those. Only the list of marked
-rows gives up height, so the refusal with its reason, Restore workspace and Start
-fresh stay on screen while the rows scroll. Refusals can pass even that bound, as
-three at once do at 960x640; the track then scrolls too and keeps what the
-keyboard is on in view, which can take the top of the first refusal out of it.
+answer to a press of Restore workspace is one of those. The list of marked rows
+gives up height first, down to 36 px, so the refusal with its reason, Restore
+workspace and Start fresh stay on screen while the rows scroll. What stands above
+the list can still pass the bound; the track then scrolls too and keeps what the
+keyboard is on in view. Three refusals at once do that at 960x640 even with the
+bound relaxed, which can take the top of the first refusal out of it. So does a
+neutral notice with no refusal standing, because it does not relax the bound: a
+file added, or a put-back that went wholly through, above a two-line offer in en
+at 960x640 leaves the track scrolling and no row whole (measured 2026-11-03; in
+zh-CN the offer takes one line and one row shows whole). Restore workspace and
+Start fresh stay whole there, and the rows are reached from the keyboard.
 
 *Alternative:* put matching rows back automatically at every start. Rejected
 (by the owner on 2026-10-31) because of what admission costs, which the
@@ -484,8 +490,9 @@ does not protect it: if a read of the session presented it as matching and the
 session saves without taking it, it is counted, whether or not it ever matches
 again. That is the rule above to the letter, and this PR changed it: at `88facc6a`
 the press protected every waiting row. Such a row uses its one offer although the
-user pressed Restore workspace; its source file is untouched and the next start
-reports it as no longer offered. The owner has not answered this.
+user pressed Restore workspace; its source file is untouched, and the next start
+whose first read finds it matching reports it as no longer offered. The owner has
+not answered this.
 
 Which rows are no longer offered is decided once per session, by its first
 read, from what that read finds, never at load: a row whose count has reached
@@ -544,6 +551,14 @@ answer is a one-line change.
   same two lines keep a group the user dissolved or renamed from returning, and
   the document holds no history that could tell the two apart. `ae14765e` brought
   an empty stored group back. The owner has not answered this.
+- *As built (2026-11-03), not an owner decision, for the owner's eye:* "order"
+  above and "of rows within them" in decision 1 do not hold for a group Restore
+  workspace took only part of. A row still waiting follows the group's live rows,
+  so stored a, b, c with b missing are saved as a, c, b, and b stays last when it
+  is put back later: a row's stored place among its neighbours is not kept once
+  they are live. Nothing is lost. `ae14765e` and `main` do the same, so a revert
+  does not change this. The order of groups does hold. The owner has not answered
+  this.
 - The webview must save after every roster answer and organization change; a
   crash between a change and its save restores the previous arrangement. A
   row removed just before a crash can therefore come back as a restored row,
