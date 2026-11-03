@@ -17,6 +17,7 @@ import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "..
 import { MZML_ROW } from "../support/fixtures";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
 import { NO_PROJECT, scenario, type Locale } from "../support/pm9Scenarios";
+import { ENDED, ENDED_ITEMS, found, listed } from "../support/runHistory";
 import { readBackSavedPreferences, revealRosterRow, selectTheSpectrum } from "../support/viewer";
 import {
   availableBackend,
@@ -245,6 +246,41 @@ describe("A0055 and ADR 0052, rendered", () => {
       await browser.$(`${scope} ${OUTPUT_ADD}`).click();
       await browser.waitUntil(async () => (await line.getText()) === BUNDLES[locale].outputAlreadyInWorkspace, { timeout: 15_000 });
       expect(await browser.$(`${scope} button:nth-of-type(4)`).isExisting()).toBe(true);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  }
+
+  for (const [locale, width, height] of EVERY_SIZE) {
+    it(`keeps an output's line and Show through the conversion history, ${locale} ${String(width)}x${String(height)}`, async () => {
+      const table = conversionWorld(locale, [RAW], LABELLED_FINISHED);
+      table.adopt_workspace_conversion_output = {
+        operationId: OPERATION,
+        retryRound: 0,
+        roster: { datasets: [RAW, ADDED_ROW], capacity: 1024 },
+        outcomes: [{ kind: "added", itemIndex: 0, memberIndex: 0, sourceHandle: RAW.handle, outputFileName: OUTPUT_NAME, dataset: ADDED_ROW }],
+      };
+      table.list_conversion_runs = listed([ENDED]);
+      table.read_conversion_run = found(ENDED, ENDED_ITEMS);
+      await open(table, locale, width, height);
+      await showConversion();
+      const scope = `${CONVERSION_SURFACE} ${group(locale, OUTPUT_NAME)}`;
+      const line = browser.$(`${scope} [role="status"]`);
+      await browser.$(`${scope} ${OUTPUT_ADD}`).waitForExist({ timeout: 30_000 });
+      await browser.$(`${scope} ${OUTPUT_ADD}`).click();
+      await browser.waitUntil(async () => (await line.getText()) === BUNDLES[locale].outputAdded, { timeout: 15_000 });
+      await shot(`output-added-before-history-${locale}-${String(width)}`);
+
+      await browser.$("[data-run-history-entry]").click();
+      await browser.$("[data-run-history]").waitForDisplayed({ timeout: 15_000 });
+      expect(await browser.$(scope).isDisplayed()).toBe(false);
+      await shot(`history-over-output-${locale}-${String(width)}`);
+
+      await browser.$("[data-run-history-back]").click();
+      await browser.$("[data-run-history]").waitForExist({ reverse: true, timeout: 15_000 });
+      await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-run-history-entry]") === true), { timeoutMsg: "the keyboard never came back to the history entry" });
+      expect(await line.getText()).toBe(BUNDLES[locale].outputAdded);
+      expect(await browser.$(`${scope} button:nth-of-type(4)`).isDisplayed()).toBe(true);
+      await shot(`output-added-after-history-${locale}-${String(width)}`);
       expect(await unexpectedConsole()).toEqual([]);
     });
   }
