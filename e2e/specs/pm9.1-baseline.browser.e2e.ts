@@ -516,7 +516,7 @@ async function observe(label: string) {
   }
   // The context line is the status bar since the rebuild (spec 2.3). Retired
   // with the 32 px pill line it replaced: the compact-control height of each
-  // item (they are small buttons in the 28 px bar), and the rank order in
+  // item (they are small buttons in the 30 px bar), and the rank order in
   // which items gave way, with the viewing, inspecting and scope items that
   // took part in it (the identity row, Details and the Conversion page say
   // those now). What stays (L14–L16): only the project name gives way.
@@ -1976,11 +1976,100 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           evidence.push({ label: `ui-rework-edges-${locale}-${String(width)}`, ...edges });
           expect(edges.notice).not.toBe(null);
           expect(Math.abs((edges.notice ?? 0) - edges.header)).toBeLessThanOrEqual(1);
-          // Flat since direction A (2.7): the regions run edge to edge, divided
-          // by hairlines, with no outer card inset from the header's edge.
-          expect(edges.content ?? -1).toBeGreaterThanOrEqual(0);
-          expect(edges.content ?? 99).toBeLessThanOrEqual(1);
+          // v5.11's frame since FE-2: the workspace card is inset by the
+          // header's own edge, 24 px and 16 px at 1050 px and below, and its
+          // first column starts inside the card's 1 px border.
+          expect(edges.header).toBe(width > 1050 ? 24 : 16);
+          expect(Math.abs((edges.content ?? -99) - edges.header)).toBeLessThanOrEqual(1);
         }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: v5.11's frame, a refusal with its reason and room for five page tabs, in ${locale}`, async () => {
+        await metrics(1366, 768);
+        await openTable(scenario("populated", locale));
+        await readBackSavedPreferences();
+        const setPanel = async (panel: "roster" | "inspector", open: boolean) => {
+          const toggle = browser.$(`.workbench-header [aria-controls="workbench-${panel}"]`);
+          if (((await toggle.getAttribute("aria-expanded")) === "true") !== open) await toggle.click();
+          await frames();
+        };
+        // The frame as v5.11 measures it: a 56 px header, a 30 px status bar
+        // and one card inset like the header's edge, holding a 240 px roster,
+        // the main column and a 245 px Details column. G4 asks for room for
+        // two more page tabs at 960 px: what is free between the last tab and
+        // the global actions, less the header's gap, two tabs' padding and the
+        // tab row's gaps, holds two labels of DESIGN_SYSTEM's 80 px budget.
+        const frame = () =>
+          browser.execute(() => {
+            const width = (css: string) => {
+              const node = document.querySelector(css);
+              return node === null || node.getClientRects().length === 0 ? null : Math.round(node.getBoundingClientRect().width);
+            };
+            const header = document.querySelector<HTMLElement>(".workbench-header")!;
+            const card = document.querySelector(".workspace-layout")!.getBoundingClientRect();
+            const tabs = [...document.querySelectorAll<HTMLElement>(".workbench-navigation > button")];
+            const tab = getComputedStyle(tabs[0]!);
+            const free = document.querySelector(".workbench-global-actions")!.getBoundingClientRect().left - tabs.at(-1)!.getBoundingClientRect().right;
+            return {
+              header: Math.round(header.getBoundingClientRect().height),
+              status: Math.round(document.querySelector(".workbench-status")!.getBoundingClientRect().height),
+              insets: [Math.round(card.left), Math.round(innerWidth - card.right)],
+              roster: width("#workbench-roster"),
+              main: width("#workbench-evidence"),
+              inspector: width("#workbench-inspector"),
+              documentOverflowX: document.documentElement.scrollWidth - innerWidth,
+              tabRoom: Math.floor(
+                free -
+                  parseFloat(getComputedStyle(header).columnGap) -
+                  2 * (parseFloat(tab.paddingLeft) + parseFloat(tab.paddingRight)) -
+                  2 * parseFloat(getComputedStyle(tabs[0]!.parentElement!).columnGap),
+              ),
+            };
+          });
+        // A refused action keeps its reason on screen and as its description:
+        // Remove highlighted, with nothing highlighted, at both sizes.
+        for (const [width, height] of [
+          [1366, 768],
+          [960, 640],
+        ] as const) {
+          await metrics(width, height);
+          await frames();
+          await setPanel("roster", true);
+          await browser.$("[data-roster-list-menu]").click();
+          await browser.$("[data-roster-remove]").waitForDisplayed();
+          const refusal = await browser.execute(() => {
+            const item = document.querySelector("[data-roster-remove]")!;
+            const reason = document.getElementById(item.getAttribute("aria-describedby") ?? "");
+            const box = reason?.getBoundingClientRect();
+            return {
+              refused: item.getAttribute("aria-disabled"),
+              reason: reason === null ? null : (reason.textContent ?? "").trim(),
+              shown: box !== undefined && box.width > 0 && box.height > 0,
+            };
+          });
+          evidence.push({ label: `fe2-refusal-${locale}-${String(width)}`, ...refusal });
+          expect(refusal).toEqual({ refused: "true", reason: words(locale).rosterNothingHighlighted, shown: true });
+          await browser.keys("Escape");
+          await browser.$("[data-roster-remove]").waitForDisplayed({ reverse: true });
+          await setPanel("roster", width > 1050);
+        }
+        // 960x640, both drawers closed.
+        const { tabRoom: narrowRoom, ...narrow } = await frame();
+        evidence.push({ label: `fe2-frame-${locale}-960`, tabRoom: narrowRoom, ...narrow });
+        expect(narrow).toEqual({ header: 56, status: 30, insets: [16, 16], roster: null, main: 926, inspector: null, documentOverflowX: 0 });
+        expect(narrowRoom).toBeGreaterThanOrEqual(2 * 80);
+        // 1366x768 with a file viewed and both columns open.
+        await metrics(1366, 768);
+        await frames();
+        await viewTheRow();
+        await setPanel("inspector", true);
+        await browser.$("#workbench-inspector .inspector-panel").waitForDisplayed();
+        await frames();
+        const { tabRoom: wideRoom, ...wide } = await frame();
+        evidence.push({ label: `fe2-frame-${locale}-1366`, tabRoom: wideRoom, ...wide });
+        expect(wide).toEqual({ header: 56, status: 30, insets: [24, 24], roster: 240, main: 831, inspector: 245, documentOverflowX: 0 });
+        expect(wideRoom).toBeGreaterThanOrEqual(2 * 80);
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
@@ -2219,8 +2308,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         }
         // Control minimums, radii and row density, for the record (UI-45).
         // The reference is v5.11 since the rebuild: a 30 px small button
-        // (spec 1.4), 6/5 px radii, 44/32 px rows. Every control under 30 px
-        // is recorded; a small button under it outside the 28 px status bar
+        // (spec 1.4), 6 px radii, 44/32 px rows. Every control under 30 px
+        // is recorded; a small button under it outside the 30 px status bar
         // (spec 2.1) is a failure. The TIC/BPC toggles are drawn as one
         // segmented pair (spec 3.4), so the pair's track is the control measured.
         const shown = (node: Element) => node.getClientRects().length > 0;
@@ -2246,8 +2335,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(seen.undeclared).toEqual([]);
       // No small button below v5.11's 30 px (spec 1.4).
       expect(seen.shortButtons).toEqual({});
-      // v5.11's blue, the rebuild's one focus colour (spec 1.3).
-      expect(seen.focus).toBe("#1769e0");
+      // v5.11's final blue, the one focus colour (FE-2).
+      expect(seen.focus).toBe("#1769d1");
       // One focus colour: Settings no longer declares its own (UI-46).
       await browser.$(".settings-entry").click();
       await browser.$(".settings-dialog").waitForDisplayed();

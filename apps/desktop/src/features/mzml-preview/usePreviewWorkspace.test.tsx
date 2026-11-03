@@ -547,7 +547,7 @@ describe("discarding what a replaced installation read", () => {
     });
     await act(async () => {
       spectrum.reject(
-        previewError({ kind: "installation_changed_since_preview", retryable: false }),
+        previewError({ kind: "backend_changed_after_check", retryable: false }),
       );
       await Promise.resolve();
     });

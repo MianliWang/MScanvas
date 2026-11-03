@@ -119,6 +119,14 @@ It waits for one of:
 
 The roster mutations ADR 0012 refuses during a conversion stay refused.
 
+*2026-10-30 ([ADR 0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+slice 2):* a one-click view conversion is a conversion for decisions 1 and 2
+and for the safety argument below. It holds the conversion slot, so opens and
+spectrum loads are refused while it runs, with `raw_view_busy`. Under
+"Staging ownership", "A native read opens only a roster row's own file" gains
+one exception: the pinned entry of a ready view operation, which is published
+and verified, never a staging directory.
+
 ### 3. Queue capacity rises from 16 to 1,024
 
 `MAX_CONVERSION_QUEUE_ITEMS` becomes 1,024, equal to `MAX_WORKSPACE_DATASETS`,

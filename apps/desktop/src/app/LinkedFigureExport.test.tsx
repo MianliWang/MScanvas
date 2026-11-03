@@ -22,6 +22,8 @@ import {
   selectedFile,
 } from "../test/previewFixtures";
 import { App } from "./App";
+import { LinkedFigureResult } from "../features/mzml-preview/ChromatogramExportPanel";
+import { renderWithPreferences } from "../test/renderWithPreferences";
 
 const en = UI_RESOURCES.en;
 const SCAN_COUNT = 200;
@@ -255,6 +257,14 @@ describe("what a finished linked export says", () => {
     await waitFor(() => expect(linkedStatus()).toContain("Saved"));
     expect(linkedStatus()).toContain("at retention time 0.1 ");
     expect(linkedStatus()).not.toContain("at retention time 0.1000");
+  });
+
+  it("says the marked scan's retention time in the unit the run declares", () => {
+    renderWithPreferences(<LinkedFigureResult onDismiss={() => undefined} rtUnit="minute" state={{ status: "saved", format: "svg",
+      fileName: "linked.svg", figure: { width: 1200, height: 640, dpi: null, theme: "light" }, rangeScope: "full", rangeLow: 0, rangeHigh: 2.5,
+      sourceScanCount: 24, selectedIndex: 0, selectedRetentionTime: 0.1 }} />);
+
+    expect(screen.getByText(/at retention time 0\.1 min in a run/u)).toBeVisible();
   });
 });
 

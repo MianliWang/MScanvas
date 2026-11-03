@@ -514,6 +514,20 @@ pub fn accept_mzml_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
 /// object cannot be replaced between the two, and the identities are compared
 /// afterwards so that promise is checked rather than assumed.
 pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, PreviewErrorDto> {
+    // The admission that decides. Its source is dropped here: what this function
+    // returns is a registry row, and the source a run needs is opened again at
+    // the moment of the run, against this same held object.
+    admit_thermo_raw_file(path, &mut |_, _| true).map(|(file, _)| file)
+}
+
+/// [`accept_thermo_raw_file`], keeping the crate's source, with its digest read
+/// in chunks and `keep_going(bytes_read, bytes_total)` asked before each one.
+/// A stopped read is refused as an unhashed source; the caller that stopped it
+/// tells the two apart.
+fn admit_thermo_raw_file(
+    path: &Path,
+    keep_going: &mut dyn FnMut(u64, u64) -> bool,
+) -> Result<(AcceptedFile, ConversionSource), PreviewErrorDto> {
     let inspected = inspect_selected_file(path)?;
     let canonical = std::fs::canonicalize(path).map_err(|_| unresolvable())?;
     let file_name = canonical
@@ -523,16 +537,20 @@ pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, Previe
             PreviewErrorDto::new("file_has_no_name", "That path has no file name.", false)
         })?;
 
-    // The admission that decides. Its result is dropped here: what this function
-    // returns is a registry row, and the source a run needs is opened again at
-    // the moment of the run, against this same held object.
-    drop(bound_source(
-        DatasetSourceKind::ThermoRaw,
+    let source = ConversionSource::open_thermo_raw_file_reporting(
         &canonical,
-        inspected.identity,
-    )?);
+        MzmlScanLimits::default(),
+        keep_going,
+    )
+    .map_err(source_not_admitted)?;
+    let Some((volume_serial, file_id)) = source.object_identity() else {
+        return Err(source_identity_unavailable());
+    };
+    if FileIdentity::new(volume_serial, file_id) != inspected.identity {
+        return Err(source_identity_changed());
+    }
 
-    Ok(AcceptedFile {
+    let file = AcceptedFile {
         path: canonical,
         file_name,
         kind: DatasetSourceKind::ThermoRaw,
@@ -541,7 +559,8 @@ pub(super) fn accept_thermo_raw_file(path: &Path) -> Result<AcceptedFile, Previe
         lease: inspected.lease,
         companions: Vec::new(),
         primary_sha256: None,
-    })
+    };
+    Ok((file, source))
 }
 
 /// Accepts a Shimadzu LabSolutions LCD acquisition.
@@ -2005,6 +2024,29 @@ pub(super) fn revalidate(remembered: &AcceptedFile) -> Result<AcceptedFile, Prev
         DatasetSourceKind::ShimadzuLcd => accept_shimadzu_lcd_file(remembered.path())?,
         DatasetSourceKind::SciexWiff => accept_sciex_wiff_bundle(remembered.path())?,
     };
+    unchanged(remembered, current)
+}
+
+/// [`revalidate`] for a Thermo RAW row, keeping the crate's source, with its
+/// digest read in chunks and `keep_going(bytes_read, bytes_total)` asked before
+/// each one: the view cache's Checking file and Checking output (ADR 0060
+/// decision 7). The row is re-accepted and hashed in one read, not two. A
+/// stopped read is refused as an unhashed source; the caller that stopped it
+/// tells the two apart.
+pub(super) fn revalidate_thermo_raw_reporting(
+    remembered: &AcceptedFile,
+    keep_going: &mut dyn FnMut(u64, u64) -> bool,
+) -> Result<(AcceptedFile, ConversionSource), PreviewErrorDto> {
+    let (current, source) = admit_thermo_raw_file(remembered.path(), keep_going)?;
+    Ok((unchanged(remembered, current)?, source))
+}
+
+/// What [`revalidate`] asks of a re-admission: that it is the acquisition the
+/// row was accepted as.
+fn unchanged(
+    remembered: &AcceptedFile,
+    current: AcceptedFile,
+) -> Result<AcceptedFile, PreviewErrorDto> {
     // Both, because a name can come to point elsewhere and a different file can
     // also take the same name.
     if current.path() != remembered.path() || current.identity != remembered.identity {

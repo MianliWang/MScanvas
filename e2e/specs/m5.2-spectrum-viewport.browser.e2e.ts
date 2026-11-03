@@ -1289,6 +1289,8 @@ describe("the visible m/z viewport", () => {
         intensity: [120_000, 4_200_000, 900_000, 310_000],
         sourcePoints: RETAINED_OBSERVATIONS,
         reduced: true,
+        outsideLow: null,
+        outsideHigh: null,
       });
 
       await press("Zoom in m/z");
