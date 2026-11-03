@@ -203,11 +203,11 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 Not implemented yet: vendor RAW preview; XIC — refused on measured evidence for
 the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
-anything other than filename, and grouping it; a workspace that outlives the
-session -- a saved project records references and history, but reopening one
-restores no Workbench session -- which includes remembering a search, a sort, a selection, a range or
-the folder you chose for ProteoWizard -- the preferences that do survive a
-restart are the five listed above and the conversion history's off switch; a dark theme, or any
+anything other than filename, and grouping it; reopening a saved project as a
+Workbench session -- a saved project records references and history, but
+reopening one restores none; remembering a search, a sort, a selection or a
+range -- what does survive a restart is the five preferences listed above, the
+folder you chose for ProteoWizard, the rows of workspace restore and the conversion history, and the off switch of each; a dark theme, or any
 appearance setting beyond language and row spacing; a remembered panel *size*,
 which the workspace has no way to set; conversion progress as a
 percentage; resuming a stopped queue; removing a row from a queue that is

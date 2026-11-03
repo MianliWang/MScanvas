@@ -149,6 +149,13 @@ A refusal that ends a running queue is terminal too, with its code.
   run has begun. Once the switch can be read it decides: on writes, off forgets.
   Only a session that ends while it still owes one leaves the earlier state on
   disk, which then reads as interrupted (section 5).
+- This session's list and read also show its own run from memory while a holder
+  keeps its file from being read, and a Clear or an Off forgets a run only once
+  its file is gone. One a holder keeps stays, with its end owed: its next write
+  lands that end, or removes the file while Off holds.
+- A running item records its state and attempts only. The result an earlier
+  attempt of a retry left is not this attempt's; a pending item keeps it, for the
+  reason section 5 gives.
 - A run whose file is gone once it has been written was forgotten, by a
   Clear, an Off or a prune in any instance. It is never written back: its
   next write stops recording it.
@@ -269,7 +276,8 @@ its end was recorded.
   would mark an item that never started as interrupted after every crash
   between binding a build and the first launch.
 - There is no end time, because when it actually stopped is not known.
-  `interruptedAtMs` is the time of detection.
+  `interruptedAtMs` is the time of detection: until a start writes it down, that
+  is the time of the list or read that asked.
 
 Nothing is resumed, retried or relinked (plan section 7.6). Staging residue
 left by a crashed session stays the business of M7.4's guarded staging
@@ -289,7 +297,8 @@ and of G16, cross-session staging ownership, unchanged.
   writing. Off removes it, since any build that honours the switch forgets
   it anyway.
 - **Unreadable** (a sharing or permission refusal): skipped and counted,
-  treated as a newer one for the same reason.
+  treated as a newer one for the same reason, unless it is this session's own
+  run (section 2).
 - **A time past what a webview's date can hold:** malformed. This application
   never wrote it, and the interface could not show it.
 - **A folder that cannot be listed** says nothing about what is in it, so it is
@@ -420,7 +429,8 @@ shows the queue.
   ended the queue. A file shows its state, attempts, failure in the queue's own
   sentence beside its stable code, and on Details its outputs and checks. An
   interrupted file says its outcome is unknown; an oversized run says its files
-  were not kept.
+  were not kept. A code appears only beside its sentence. What ended the queue is
+  said as what happened, since the queue's own sentence is about that moment.
 - **Reads only.** Nothing opens an output or runs anything from here (section 8)
   and no path reaches the document.
 - **Read again** re-lists on request, and the list is read again when the view
