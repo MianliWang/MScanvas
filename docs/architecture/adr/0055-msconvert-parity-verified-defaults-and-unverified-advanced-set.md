@@ -257,9 +257,12 @@ default.
 >   under the panels and first in the `<desc>`, in a figure's own English. The
 >   preview, the saved SVG and PNG and the clipboard build through it, and the
 >   clipboard has no text, so only the drawn line reaches it. The figure dialog
->   also carries the tag beside its source line. A figure without a label is
->   byte for byte what it was. A stored targeted result's figure and a reopened
->   `.msfigure` carry no note yet.
+>   also carries the tag beside its source line. A stored targeted result's
+>   figure reads the label from its reference in the document. A figure without
+>   a label is byte for byte what it was. A release too long for a note to name
+>   (over 81 characters) refuses the figure, and a row that has left by the claim
+>   or during a copy refuses it as stale, rather than drawing it unlabelled. A
+>   reopened `.msfigure`, which no command reaches yet, carries no note.
 > - (b) The session keeps the label of every labelled output it finalized, by
 >   volume serial and file ID, for the life of the process. Every add route
 >   consults it: Add files…, Add mzML folder…, a drop and a reference carried

@@ -217,8 +217,8 @@ and the axis changes are the renderer's alone.
 | Raster | `RasterPlan::new(size, dpi)` is the one place a pixel count is made, and it asks the raster budget: a pixel figure keeps its pixels (M4.2), a printed one is `round(mm / 25.4 × dpi)` each way. `png_at` and `tiff_at` render through it |
 | TIFF | `tiff` 0.11.3, already in the lock through `image`, added as a direct dependency with only `lzw`; the lock gains no package. RGB8 (the figure is opaque), LZW, `XResolution`/`YResolution` in pixels per inch |
 | Text | `font-family="Arial, 'Liberation Sans', Helvetica, sans-serif"`, measured with Arial 7.060's `hmtx` advances, which Liberation Sans and Helvetica share by design. Text is drawn at its natural width with no `textLength`; only text that cannot fit its room at the floor size is condensed with `spacingAndGlyphs`, so no glyph is stretched |
-| Margins | the left gutter is as wide as the widest value label needs (40 units to 40% of the width), shared by every panel so stacked plots align; 40 units above the first panel when there is a heading and 12 when there is not; 8 below the last |
-| Schema | 4: `size.print`, `x_axis_title` and `y_axis_title`, each defaulting when absent, so a schema 3 shape still decodes as a pixel figure. A decoded printed size whose units disagree with its paper is refused |
+| Margins | the left gutter is as wide as the widest value label needs (40 units to 40% of the width), shared by every panel so stacked plots align; 40 units above the first panel when there is a heading and 12 when there is not; 8 below the last, and 16 more where there is a source note |
+| Schema | 4: `size.print`, `x_axis_title` and `y_axis_title`, each defaulting when absent, so a schema 3 shape still decodes as a pixel figure. A decoded printed size whose units disagree with its paper is refused. 5: `source_note`; see below |
 
 Known ceilings: no kerning and no shaping, so a viewer that falls through to a
 wider generic sans-serif draws text a few percent wider than laid out; per-panel
@@ -228,6 +228,31 @@ axis titles for a multi-panel figure are not representable; tick labels use
 The three golden documents were regenerated for this change: they are the old
 figures with the new axes, titles and text, and their descriptions are
 byte-identical.
+
+## The source note — schema 5
+
+`FigureSpec::source_note` is what a reader must know about the source. Today it
+holds one thing: ADR 0055's "Not verified by MSCanvas", naming the release where
+the build is why, for a labelled output (owner decision A0055 (a), 2026-10-31).
+It is apart from the title, so an edited title cannot remove it.
+
+- It is drawn on its own line under the last panel, in a band of 16 units the
+  panels give up, and it is the first sentence of `<desc>`, so also of a PNG's
+  `Description`. A clipboard image has no text, so only the drawn line reaches
+  it, and a note too long to read at the floor size is condensed like a caption
+  and never left out.
+- A figure without a note renders byte for byte as it did, and no golden document
+  changed. A schema 4 reader refuses the field.
+- `export::labelled_figure` adds it to a spectrum, a chromatogram and a linked
+  figure, from the source row's label, and
+  `ProjectStore::targeted_evidence_figure` adds it to a stored targeted result,
+  from the reference in the document, so a reopened result says it with no row.
+  The words are 39 characters of the 120 a `Label` holds, so a release over 81
+  characters refuses the figure rather than exporting it without the note.
+- A row is asked when an export is claimed and again for each copy. A row that
+  has left by then refuses the figure as stale, since "no row" is not "no label".
+  One removed after the claim does not take the label off.
+- Not covered: a reopened `.msfigure`, which no command reaches yet.
 
 ## The saved figure — FIG-007, Rust side
 
