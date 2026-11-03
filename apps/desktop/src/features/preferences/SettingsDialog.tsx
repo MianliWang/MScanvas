@@ -39,6 +39,8 @@ export function SettingsDialog({ restore }: {
   const opener = useRef<HTMLButtonElement>(null);
   const content = useRef<HTMLDivElement | null>(null);
   const composing = useRef(false);
+  /** A Tab is on its way to moving focus, so where it lands comes into view. */
+  const tabbing = useRef(false);
   const returnPending = useRef(false);
   const returnSuperseded = useRef(false);
   const mounted = useRef(true);
@@ -142,12 +144,17 @@ export function SettingsDialog({ restore }: {
         onPointerDownOutside={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
         // Radix wraps Tab past Close with preventScroll, which would leave the
-        // first choice focused out of sight in a scrolled body. Keyboard focus
-        // only: a pointer press must not move what is under the pointer.
-        onFocus={(event) => { if (event.target.matches(":focus-visible")) event.target.scrollIntoView?.({ block: "nearest" }); }}
+        // first choice focused out of sight in a scrolled body. Tab only: a press
+        // must not move what is under the pointer, as `:focus-visible` would for
+        // the diagnostics text.
+        onFocus={(event) => {
+          if (tabbing.current) event.target.scrollIntoView?.({ block: "nearest" });
+          tabbing.current = false;
+        }}
         onCompositionStartCapture={() => { composing.current = true; }}
         onCompositionEndCapture={() => { composing.current = false; }}
         onKeyDownCapture={(event) => {
+          tabbing.current = event.key === "Tab";
           if ((composing.current || event.nativeEvent.isComposing || event.keyCode === 229) && event.key === "Enter") {
             event.preventDefault(); event.stopPropagation();
           }

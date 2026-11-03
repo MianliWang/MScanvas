@@ -226,16 +226,18 @@ describe("Copy diagnostics, rendered", () => {
     });
 
     // Radix wraps Tab with preventScroll, and the text has scrolled the body down.
-    it(`Tab past Close brings the first choice back into view, ${String(width)}x${String(height)}`, async () => {
-      await open("en", width, height);
-      await browser.$(READ).click();
-      await browser.$(PREVIEW).waitForExist();
-      await browser.execute(() => document.querySelector<HTMLElement>("[data-settings-close]")?.focus());
-      await browser.keys("Tab");
-      const first = `${DIALOG} [role="radio"][aria-checked="true"]`;
-      expect(await activeMatches(first)).toBe(true);
-      await inTheBody(first);
-    });
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`Tab past Close brings the first choice back into view, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await browser.$(READ).click();
+        await browser.$(PREVIEW).waitForExist();
+        await browser.execute(() => document.querySelector<HTMLElement>("[data-settings-close]")?.focus());
+        await browser.keys("Tab");
+        const first = `${DIALOG} [role="radio"][aria-checked="true"]`;
+        expect(await activeMatches(first)).toBe(true);
+        await inTheBody(first);
+      });
+    }
   }
 
   for (const [locale, words] of [["en", en], ["zh-CN", zh]] as const) {
@@ -272,8 +274,16 @@ describe("Copy diagnostics, rendered", () => {
       expect(contains(await boxOf(".settings-dialog-body"), await boxOf(COPY_FAILED))).toBe(true);
       expect(await browser.$(COPIED).getText()).toBe("");
       expect(await value()).toBe(TEXT);
-      // A person can still select all of it and take it themselves.
-      await browser.$(PREVIEW).click();
+      // A person can still select all of it and take it themselves. The press
+      // moves nothing: the reason stays in sight, and a drag would keep its text.
+      // A pointer action at a visible point: an element click scrolls it into view first.
+      const scrolled = () => browser.execute(() => document.querySelector(".settings-dialog-body")?.scrollTop ?? null);
+      const before = await scrolled();
+      const text = await boxOf(PREVIEW);
+      await browser.action("pointer").move({ x: Math.round((text.left + text.right) / 2), y: Math.round(text.top + 20) }).down().up().perform();
+      expect(await activeMatches(PREVIEW)).toBe(true);
+      expect(await scrolled()).toBe(before);
+      expect(contains(await boxOf(".settings-dialog-body"), await boxOf(COPY_FAILED))).toBe(true);
       await browser.keys(["Control", "a"]);
       expect(await browser.execute((css: string) => {
         const box = document.querySelector<HTMLTextAreaElement>(css)!;
