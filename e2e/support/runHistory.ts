@@ -109,7 +109,7 @@ export const SET_ITEM = item("Sciex_batch.wiff", {
   completeness: { kind: "notEstablished", reason: "sample_count_unavailable" },
   setAdoptable: false,
   outputs: [
-    { fileName: "Sciex_batch-Sample1.mzML", state: "finalized", byteLength: 1_048_576, sha256: "aa".repeat(32), checks: { mode: "output_only", fullyVerified: false, verified: ["well_formed"], unverified: ["spectrum_count"], inapplicable: [], advisory: ["scan_window_rounded"] } },
+    { fileName: "Sciex_batch-Sample1.mzML", state: "validated_not_published", byteLength: 1_048_576, sha256: "aa".repeat(32), checks: { mode: "output_only", fullyVerified: false, verified: ["well_formed"], unverified: ["spectrum_count"], inapplicable: [], advisory: ["scan_window_rounded"] } },
     { fileName: "Sciex_batch-Sample2.mzML", state: "rejected", byteLength: null, sha256: null, checks: null },
   ],
 }, { family: "sciex_wiff" });

@@ -36,10 +36,11 @@ async function metrics(width: number, height: number, dpr: number) {
 /**
  * Calls other than preference saves. Since M7.5, Apply and each panel toggle
  * commit through `save_ui_preferences` (docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
- * "Startup, Settings and layout semantics"); organization and pending reads
- * must still ask the backend for nothing.
+ * "Startup, Settings and layout semantics"), and Settings reads the history's
+ * off switch each time it opens (ADR 0065); organization and pending reads must
+ * still ask the backend for nothing.
  */
-const besidesPreferenceSaves = <T extends { readonly command: string }>(calls: readonly T[]) => calls.filter(call => call.command !== "save_ui_preferences");
+const besidesPreferenceSaves = <T extends { readonly command: string }>(calls: readonly T[]) => calls.filter(call => call.command !== "save_ui_preferences" && call.command !== "list_conversion_runs");
 async function capture(label: string) {
   const measured = await browser.execute(() => {
     const rect = (element: Element) => { const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; };
