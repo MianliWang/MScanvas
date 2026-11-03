@@ -4,7 +4,7 @@
 .run-history > .conversion-main { grid-area: 1 / 1; }
 .run-history > .conversion-side { grid-area: 1 / 2; }
 .run-history h2 { outline: none; }
-.run-history .conversion-main > .notice:first-child { margin-top: 12px; }
+.run-history .conversion-main > :is(.notice, .conversion-side-note):first-child { margin-top: 12px; }
 .run-history-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .run-history-list {
