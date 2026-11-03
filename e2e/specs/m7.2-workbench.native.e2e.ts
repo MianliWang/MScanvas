@@ -21,7 +21,8 @@ function metrics(): Metrics {
   return JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolve(HERE, "../native/m7.1-window-metrics.ps1"), "-ApplicationProcessId", String(processId)], { encoding: "utf8", windowsHide: true })) as Metrics;
 }
 function saveEvidence() { if (output) writeFileSync(join(output, "evidence.json"), JSON.stringify(evidence, null, 2)); }
-async function calls() { return browser.execute(() => Reflect.get(window, "__mscanvasIpcCalls__") as { command: string; args: Record<string, unknown> }[]); }
+// Highlighting a Thermo RAW row asks for the view's state by design (ADR 0060 decision 12), and reads no file.
+async function calls() { return browser.execute(() => (Reflect.get(window, "__mscanvasIpcCalls__") as { command: string; args: Record<string, unknown> }[]).filter(call => call.command !== "get_raw_view_state")); }
 async function previewReads() {
   return browser.execute(() => performance.getEntriesByType("resource")
     .filter(entry => new URL(entry.name).origin === "http://ipc.localhost" && new URL(entry.name).pathname === "/open_mzml_preview")
