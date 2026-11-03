@@ -519,6 +519,11 @@ export function PreviewWorkspace() {
   const rawViewFinished = workspace.rawView.state.state === "ready" && workspace.rawView.state.openable ? workspace.rawView.state : null;
   const rawViewReadyName = rawViewFinished === null || rawViewFinished.handle === rawPaneRow?.handle || rawViewFinished.handle === previewedHandle
     ? null : nameOfRow(rawViewFinished.handle);
+  const foldDrawerForRawPane = () => {
+    if (surface !== "workbench" || !constrained || !rosterOpen) return;
+    pendingRevealFocus.current = true;
+    panels.navigate();
+  };
   /** Shows a RAW row's pane. Where the list is a drawer it stays folded, or it would cover the pane. */
   const showRawRow = (handle: string) => { revealInWorkbench(handle, !constrained); };
   /** The bar's line: what runs, from every surface, or what became ready out of sight. */
@@ -927,12 +932,9 @@ export function PreviewWorkspace() {
             }}
             // Where the roster is a drawer it would cover the row's pane, so the
             // drawer folds and the keyboard moves to the pane (ADR 0060 decision 1).
-            onRawHighlighted={() => {
-              if (surface !== "workbench" || !constrained || !rosterOpen) return;
-              pendingRevealFocus.current = true;
-              panels.navigate();
-            }}
+            onRawHighlighted={foldDrawerForRawPane}
             onRawEnter={handle => {
+              foldDrawerForRawPane();
               if (rawPaneRow?.handle !== handle) return;
               const action = rawViewLocalReason !== null ? null : rawViewFirstAction(workspace.rawView, handle);
               if (action === "view" || action === "retry") workspace.rawView.begin(handle);

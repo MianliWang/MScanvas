@@ -72,8 +72,9 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
       apply(snapshot.state);
       setAvailability(handle === highlightedRef.current ? snapshot.availability : null);
     }).catch(() => {
-      // Nothing is known about the row, so View stays refused until a read answers.
-      if (mounted.current && ticket === reads.current) setAvailability(null);
+      // Nothing is known about the row, so View stays refused, and says so, until
+      // a read answers.
+      if (mounted.current && ticket === reads.current) setAvailability(handle === null ? null : { available: false, code: "unexpected_error" });
     }).finally(() => {
       if (mounted.current && ticket === reads.current) setReadCount((count) => count + 1);
     });

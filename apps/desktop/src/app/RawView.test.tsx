@@ -276,7 +276,8 @@ describe("viewing a Thermo RAW row", () => {
     await waitFor(() => expect(viewButton()).not.toHaveAttribute("aria-disabled"));
     await act(async () => { fireEvent.click(viewButton()); });
     await waitFor(() => expect(document.querySelector("[data-raw-view-refusal='view_cache_unavailable']")).toHaveTextContent(words.errViewCacheUnavailable));
-    expect(viewButton()).toHaveAttribute("aria-disabled", "true");
+    // It holds nothing: the next answer is the authority, and this one says View can run.
+    expect(viewButton()).not.toHaveAttribute("aria-disabled");
   });
 
   it("keeps View refused while the installation is being checked, and until Rust has answered", async () => {

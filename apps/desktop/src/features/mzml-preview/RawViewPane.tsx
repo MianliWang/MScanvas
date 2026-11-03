@@ -176,11 +176,14 @@ export function RawViewPane({ row, view, localReason, runningName, canOpen, open
       {convert}
     </div>} />;
   } else {
-    const refusedCode = view.refusal?.handle === row.handle ? view.refusal.error.kind
-      : view.availability?.available === false ? view.availability.code : null;
+    // Rust's answer decides whether View can be pressed. A press it refused after
+    // the last read is said here too, and holds nothing: it was about a moment,
+    // and the next answer is the authority.
+    const availabilityCode = view.availability?.available === false ? view.availability.code : null;
+    const refusedCode = availabilityCode ?? (view.refusal?.handle === row.handle ? view.refusal.error.kind : null);
     const refusedHere = localReason ?? (refusedCode === null ? null : rawViewRefusalText(refusedCode, runningName, t));
-    // Not asked yet, or a read that failed: nothing is known, so nothing is offered.
-    const refused = localReason !== null || refusedCode !== null || view.availability === null || view.busy;
+    // Not asked yet: nothing is known, so nothing is offered.
+    const refused = localReason !== null || availabilityCode !== null || view.availability === null || view.busy;
     const label = view.availability?.available === true && view.availability.unverifiedBuildRelease !== null
       ? { unverifiedSettings: false, unverifiedBuildRelease: view.availability.unverifiedBuildRelease } : null;
     const cancelled = own?.state === "cancelled" ? own : null;
