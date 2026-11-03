@@ -48,8 +48,9 @@ const MAX_FIXED_CHARS = 12;
  * the ends as its caller labels them. `fixtures/plot-ticks/nice-ticks.json` holds
  * both sides to one table.
  *
- * ponytail: no label-collision check, the figure's `fits`: a narrow plot can
- * overlap labels the figure would thin out. Measure them here if that shows up.
+ * ponytail: no label-collision check, the figure's `fits`: long labels on a
+ * narrow plot can overlap, or be cut at the panel's edge, where the figure would
+ * thin them out. Measure them here if that matters in real data.
  */
 export function niceTicks(low: number, high: number): readonly AxisTick[] {
   if (!Number.isFinite(low) || !Number.isFinite(high)) return [];
