@@ -264,11 +264,11 @@
 }
 
 /* The open setup is the task in hand, not one more project section (PM9.5
-   O3): the 2 px accent bar a viewed row carries, along its top edge. Still an h3
+   O3): the 3 px accent bar a selected row carries, along its top edge. Still an h3
    under the surface's h2, on the one section-title size (V2). */
 .targeted-setup {
   padding-top: 8px;
-  box-shadow: inset 0 2px 0 var(--color-accent);
+  box-shadow: inset 0 3px 0 var(--color-accent);
 }
 
 /* Rows: hairlines, not boxes, at v5.11's 44 px row. A row is its name and

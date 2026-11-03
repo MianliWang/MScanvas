@@ -418,7 +418,7 @@ interim defaults the owner may still change:
 
 ### Project in the v5.11 look (2026-11-03): interim, not owner decisions
 
-A draft ports Project's own stylesheet. The owner has not seen it and none of
+Draft PR #208 ports Project's own stylesheet. The owner has not seen it and none of
 these is an owner decision. They are the answers the draft ships with, for the
 owner to change. Where the accepted Workbench draws the same thing the draft
 uses its value, and elsewhere v5.11's final value:
