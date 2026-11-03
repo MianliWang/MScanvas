@@ -271,6 +271,11 @@ default.
 >   reissued; the worst that does is label a file that needed no label. A move
 >   across volumes is a copy and carries none.
 > - (c) `Describe again` is offered only after a failure Rust calls retryable.
+>
+> **Owner decision, 2026-11-03:** asked whether to draw "Not verified by MSCanvas"
+> on exported figures (P201), the owner replied "全部按推荐" ("all as recommended"):
+> draw it. The drawn line of (a) above stays, as built in PR #201, and the revert
+> recipe in that PR's body is withdrawn.
 
 ### 4. An ordered filter chain replaces the nine fixed rows
 
