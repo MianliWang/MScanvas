@@ -47,7 +47,7 @@ const failed = (code: string, retryable: boolean, extra: Partial<RawViewState> =
 } as RawViewState);
 
 /** A session whose view the test moves by hand. */
-function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"] } = {}) {
+function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"] } = {}) {
   const world = { state: initial.state ?? ({ state: "idle" } as RawViewState), availability: initial.availability ?? ({ available: true, unverifiedBuildRelease: null } as RawViewAvailability) };
   const begun: string[] = [];
   const cancelled: number[] = [];
@@ -61,6 +61,7 @@ function session(initial: { state?: RawViewState; availability?: RawViewAvailabi
     initialDatasets: initial.datasets ?? [RAW, OTHER, selectedFile],
     ...(initial.planWorkspaceClear === undefined ? {} : { planWorkspaceClear: initial.planWorkspaceClear }),
     ...(initial.preview === undefined ? {} : { preview: initial.preview }),
+    ...(initial.spectrum === undefined ? {} : { spectrum: initial.spectrum }),
     getRawViewState: read,
     beginRawView: (handle) => { begun.push(handle); world.state = running("checkingSource"); return Promise.resolve(world.state); },
     cancelRawView: (operation) => { cancelled.push(operation); world.state = { state: "cancelled", operation, handle: RAW.handle, stored: false }; return Promise.resolve(world.state); },
@@ -436,6 +437,27 @@ describe("viewing a Thermo RAW row", () => {
       expect(within(evidence()).getByRole("button", { name: words.rawViewConvert })).toBeVisible();
     });
 
+    it("re-reads an open view from its Reopen in the pane, and Cancel brings the preview back", async () => {
+      const { begun } = session({
+        state: ready(),
+        spectrum: () => Promise.reject({ kind: "spectrum_not_as_recorded", summary: "x", detail: null, retryable: false }),
+      });
+      await highlight();
+      await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.rawViewOpen })); });
+      const grid = await screen.findByRole("grid", { name: "Scans" });
+      await act(async () => { fireEvent.click(within(grid).getAllByRole("row")[1]!); });
+      const reopen = await within(evidence()).findByRole("button", { name: words.viewerReopenFile });
+      reopen.focus();
+
+      await act(async () => { fireEvent.click(reopen); });
+      expect(begun).toEqual([RAW.handle]);
+      await waitFor(() => expect(within(evidence()).getByRole("button", { name: words.cancel })).toHaveFocus());
+
+      await act(async () => { fireEvent.click(within(evidence()).getByRole("button", { name: words.cancel })); });
+      await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "loaded"));
+      expect(within(evidence()).getByRole("heading", { level: 1 })).toHaveTextContent(RAW.fileName);
+    });
+
     it("reaches a Ready that became ready while the row's own failed read was left", async () => {
       const { world, api, opened } = session({ state: ready() });
       const open = api.openRawView;
@@ -539,7 +561,7 @@ describe("viewing a Thermo RAW row", () => {
       await chooseRosterAction("clearList");
       const dialog = await screen.findByRole("dialog");
       expect(within(dialog).getByRole("heading")).toHaveTextContent(words.clearActiveTitleView);
-      await waitFor(() => expect(dialog).toHaveTextContent("2 of 3 rows can be removed now; 1 are protected by this view."));
+      await waitFor(() => expect(dialog).toHaveTextContent("2 of 3 rows can be removed now; 1 protected by this view."));
     });
 
     it("refuses the queue's Convert for the view, by the view's name, and Show goes back to it", async () => {
@@ -552,6 +574,19 @@ describe("viewing a Thermo RAW row", () => {
       const panel = document.getElementById("workbench-conversion")!;
       await act(async () => { fireEvent.click(within(panel).getByRole("button", { name: `Show ${RAW.fileName}` })); });
       await waitFor(() => expect(document.querySelector("[data-raw-view-phase='converting']")).not.toBeNull());
+    });
+
+    it("says what the settings wait for, reads nothing meanwhile, and reads them as the view ends", async () => {
+      const { world, api } = session({ state: running("converting") });
+      await waitFor(() => expect(statusBar()).not.toBeNull());
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: words.conversionTask })); });
+      const settings = () => document.querySelector("#workbench-conversion [data-settings-state]");
+      await waitFor(() => expect(settings()).toHaveTextContent(words.rawViewBusyUnnamed));
+      expect(settings()).not.toHaveTextContent(words.cnvSettingsLoading);
+      const reads = vi.spyOn(api, "readConversionConfiguration");
+      expect(reads).not.toHaveBeenCalled();
+      world.state = { state: "cancelled", operation: 1, handle: RAW.handle, stored: false };
+      await waitFor(() => expect(reads).toHaveBeenCalled(), { timeout: 2_000 });
     });
 
     it("says what a pressed mzML row waits for, and goes to the view", async () => {

@@ -105,6 +105,7 @@ describe("what admission deliberately does not consult", () => {
       "backendChanging",
       "laneClaimed",
       "reclaimingStaging",
+      "rawViewRunning",
       "previewReading",
       "probeInFlight",
     ]);

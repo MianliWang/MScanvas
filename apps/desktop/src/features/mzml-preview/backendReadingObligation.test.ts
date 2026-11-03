@@ -93,7 +93,7 @@ describe("whether a remedial check may be dispatched", () => {
     // `backendUsable` is not a member of these facts at all. The verdict a
     // stale reading carries is exactly what this check exists to repair.
     expect(Object.keys(FREE)).not.toContain("backendUsable");
-    expect(Object.keys(FREE)).toHaveLength(5);
+    expect(Object.keys(FREE)).toHaveLength(6);
     expect(FREE).toHaveProperty("reclaimingStaging", false);
   });
 

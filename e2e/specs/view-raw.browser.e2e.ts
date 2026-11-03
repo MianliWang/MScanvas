@@ -11,7 +11,7 @@
 import { metrics } from "../support/cdp";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
 import { NO_PROJECT, scenario, type Locale } from "../support/pm9Scenarios";
-import { revealRosterRow } from "../support/viewer";
+import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
 import { availableBackend, completeCatalog, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
 import type { SelectedFile } from "../../apps/desktop/src/features/mzml-preview/contracts";
 
@@ -382,6 +382,22 @@ for (const locale of ["en", "zh-CN"] as const) {
         expect(facts.clipped).toBe(false);
         expect(facts.convert.left).toBeGreaterThanOrEqual(facts.tabs.right);
         expect(facts.convert.right).toBeLessThanOrEqual(facts.row.right);
+
+        // The tightest the row gets: both side panels beside it. The label gives
+        // way before Convert or the tabs do, and stays on its line.
+        if (viewport[0] > 1050) {
+          await metrics(1060, viewport[1]);
+          await readBackSavedPreferences();
+          await browser.$('[aria-controls="workbench-inspector"]').click();
+          await browser.$("#workbench-inspector:not([hidden])").waitForExist({ timeout: 10_000 });
+          const tight = await browser.execute(() => {
+            const box = (css: string) => document.querySelector(css)!.getBoundingClientRect();
+            return { tag: box(".viewer-file-actions .not-verified-tag").height, convertRight: box("[data-raw-view-convert]").right, convertLeft: box("[data-raw-view-convert]").left, tabsRight: box(".viewer-tabs > .ui-tablist").right, rowRight: box(".viewer-file").right };
+          });
+          expect(tight.tag).toBeLessThanOrEqual(24);
+          expect(tight.convertRight).toBeLessThanOrEqual(tight.rowRight);
+          expect(tight.convertLeft).toBeGreaterThanOrEqual(tight.tabsRight);
+        }
         await clean();
       });
 

@@ -876,7 +876,7 @@ export const en = {
   clearActiveTitle: "Clear during conversion",
   clearActiveTitleView: "Clear while a view is being prepared",
   clearActiveHelpView: "Removes rows from the list only; files on disk are not changed. The row being prepared stays until the view stops.",
-  clearCountsView: "{{count}} of {{total}} rows can be removed now; {{protected}} are protected by this view.",
+  clearCountsView: "{{count}} of {{total}} rows can be removed now; {{protected}} protected by this view.",
   clearActiveHelp: "Removes rows from the list only; files on disk are not changed. Rows in the running conversion stay until it stops.",
   clearReading: "Checking which rows can be removed…",
   clearStopping: "Waiting for confirmed stop and rechecking the captured rows…",
