@@ -1,9 +1,12 @@
 /** Real production composition. Synthetic roster metadata and controlled IPC are browser evidence only. */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { installIpcBoundary, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult } from "../support/harness";
+import { installIpcBoundary, ipcCalls as allIpcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
 import { cdp } from "../support/cdp";
+
+/** Everything but the record of the arrangement, the one call organizing a list now makes (ADR 0061). */
+const ipcCalls = async () => (await allIpcCalls()).filter(call => call.command !== "save_workspace_restore");
 import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
 import { selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 
@@ -36,10 +39,11 @@ async function metrics(width: number, height: number, dpr: number) {
 /**
  * Calls other than preference saves. Since M7.5, Apply and each panel toggle
  * commit through `save_ui_preferences` (docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
- * "Startup, Settings and layout semantics"); organization and pending reads
- * must still ask the backend for nothing.
+ * "Startup, Settings and layout semantics"), and Settings reads the history's
+ * off switch each time it opens (ADR 0065); organization and pending reads must
+ * still ask the backend for nothing.
  */
-const besidesPreferenceSaves = <T extends { readonly command: string }>(calls: readonly T[]) => calls.filter(call => call.command !== "save_ui_preferences");
+const besidesPreferenceSaves = <T extends { readonly command: string }>(calls: readonly T[]) => calls.filter(call => call.command !== "save_ui_preferences" && call.command !== "list_conversion_runs");
 async function capture(label: string) {
   const measured = await browser.execute(() => {
     const rect = (element: Element) => { const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; };

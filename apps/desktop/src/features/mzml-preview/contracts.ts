@@ -378,6 +378,64 @@ export interface WorkspaceAddResult {
   readonly outcomes: readonly WorkspaceAddOutcome[];
 }
 
+/**
+ * What the object at a restored row's recorded path is now (ADR 0061, decision
+ * 4). `matching` is the same object at the same length, never a content claim.
+ */
+export type RestoredRowState = "matching" | "changed" | "missing" | "unreachable" | "unreadable" | "unsafe";
+
+export interface RestoredRow {
+  readonly handle: string;
+  readonly sourceKind: DatasetSourceKind;
+  readonly displayName: string;
+  /** Folders above the file, only while another shown row has the same name. */
+  readonly context: string | null;
+  readonly checked: boolean;
+  readonly state: RestoredRowState;
+}
+
+export interface RestoredGroup {
+  /** `null` is Ungrouped. */
+  readonly name: string | null;
+  readonly rows: readonly RestoredRow[];
+}
+
+/** What a read of the restore document found. It puts nothing back. */
+export type WorkspaceRestoreRead =
+  | { readonly outcome: "restored"; readonly groups: readonly RestoredGroup[]; readonly expired: number; readonly leftoverCopies: number }
+  | { readonly outcome: "off"; readonly leftoverCopies: number }
+  | { readonly outcome: "refused"; readonly problem: string; readonly leftoverCopies: number }
+  | { readonly outcome: "unavailable"; readonly problem: string };
+
+/** What a save, a clear or the switch did. */
+export type WorkspaceRestoreWrite =
+  | { readonly outcome: "saved" }
+  | { readonly outcome: "turnedOff"; readonly problem: string }
+  | { readonly outcome: "off" }
+  | { readonly outcome: "refused"; readonly problem: string }
+  | { readonly outcome: "unavailable"; readonly problem: string }
+  | { readonly outcome: "failed"; readonly problem: string; readonly retryable: boolean; readonly temporaryLeftBehind: boolean };
+
+/** The session as the webview arranges it, by handle. Rust supplies every path. */
+export interface WorkspaceArrangement {
+  readonly groups: readonly { readonly name: string | null; readonly handles: readonly string[] }[];
+  readonly checked: readonly string[];
+}
+
+/** One row Restore workspace left in the Workbench, and where it belongs. */
+export interface PlacedRow {
+  readonly handle: string;
+  readonly group: string | null;
+  readonly checked: boolean;
+  /** `false`: the object was already a row, which keeps its arrangement. */
+  readonly added: boolean;
+}
+
+export interface WorkspaceRestorePutBack {
+  readonly workspace: WorkspaceAddResult;
+  readonly placed: readonly PlacedRow[];
+}
+
 /** Which named traversal limit a folder scan reached. */
 export type FolderScanLimit = "depth" | "entries" | "directories" | "candidates";
 

@@ -436,7 +436,8 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(saved.byteLength).toBeLessThanOrEqual(16 * 1024);
     // No residue: the private sibling this write created is gone.
     expect(saved.temporaries).toEqual([]);
-    expect(saved.entries).toEqual([basename(preferenceFile(root))]);
+    // Beside the conversion history's folder, which every start opens (ADR 0065).
+    expect(saved.entries).toEqual(["conversion-history", basename(preferenceFile(root))].sort());
 
     // And the request carried the appearance group only -- no path, no name, no
     // dataset, no selection.

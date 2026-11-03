@@ -1125,6 +1125,12 @@ export interface FakePreviewApiOptions {
    */
   readonly acknowledgeFolderReservation?: (onReserved: () => void) => void;
   readonly capacity?: number;
+  /**
+   * The workspace restore commands. By default a first run: nothing stored, and
+   * every save answered `saved`. Outside the call ledger: they are recording,
+   * not backend work, and a negative claim about an interaction is not about them.
+   */
+  readonly workspaceRestore?: Partial<Pick<PreviewApi, "readWorkspaceRestore" | "saveWorkspaceRestore" | "clearWorkspaceRestore" | "setWorkspaceRestoreEnabled" | "restoreWorkspace" | "dismissRestoredRow">>;
   /** Replaces the removal entirely, for the cases where it fails. */
   readonly removeDatasets?: (handles: readonly string[]) => Promise<WorkspaceRemoveResult>;
   /** Replaces the clear entirely, for the cases where it fails. */
@@ -2028,6 +2034,13 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     openFinalizedOutput: (outputId, action) => options.openFinalizedOutput?.(outputId, action) ?? Promise.resolve({ status: "refused", reason: "unknownOutput" }),
     planWorkspaceClear: () => options.planWorkspaceClear?.() ?? Promise.resolve({ Err: "actionInFlight" }),
     executeWorkspaceClear: (planId, action) => options.executeWorkspaceClear?.(planId, action) ?? Promise.resolve({ status: "refused", reason: "stalePlan" }),
+    readWorkspaceRestore: () => Promise.resolve({ outcome: "restored", groups: [{ name: null, rows: [] }], expired: 0, leftoverCopies: 0 }),
+    saveWorkspaceRestore: () => Promise.resolve({ outcome: "saved" }),
+    clearWorkspaceRestore: () => Promise.resolve({ outcome: "saved" }),
+    setWorkspaceRestoreEnabled: () => Promise.resolve({ outcome: "saved" }),
+    restoreWorkspace: () => Promise.resolve({ workspace: { roster: snapshot(), outcomes: [] }, placed: [] }),
+    dismissRestoredRow: () => Promise.resolve(),
+    ...options.workspaceRestore,
     clearWorkspace: () => {
       if (options.clearWorkspace !== undefined) {
         return options.clearWorkspace();

@@ -18,8 +18,11 @@ import { presentBackend } from "./backendPresentation";
 import { Chromatogram } from "./Chromatogram";
 import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportTools, LinkedFigureResult, describeUnavailable } from "./ChromatogramExportPanel";
 import { resolveConversionScope } from "./conversionScope";
+import { ConversionHistory } from "../run-history/ConversionHistory";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
+import { WorkspaceRestoreNotice, announceRestore } from "./WorkspaceRestoreNotice";
+import { useWorkspaceRestore } from "./useWorkspaceRestore";
 import { InspectorClose, PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
@@ -42,7 +45,11 @@ export function PreviewWorkspace() {
   const openFigure = (kind: FigurePreviewKind, returnTo: HTMLElement | null = document.activeElement instanceof HTMLElement ? document.activeElement : null) => setFigureDialog({ kind, returnTo });
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
-  const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
+  const [surface, setSurfaceOnly] = useState<WorkbenchSurface>("workbench");
+  /** The conversion history has the Conversion surface (ADR 0065). */
+  const [runHistoryOpen, setRunHistoryOpen] = useState(false);
+  /** Whatever sends the reader to a surface sends them to what it holds now, the queue included. */
+  const setSurface = useCallback((next: WorkbenchSurface) => { setSurfaceOnly(next); setRunHistoryOpen(false); }, []);
   /** The open file's tab (direction A): kept across files and surfaces, so switching loses nothing. */
   const [viewerView, setViewerView] = useState<"spectra" | "scans" | "metadata">("spectra");
   /** The two side panels, so focus can follow a drawer that opens. */
@@ -156,6 +163,14 @@ export function PreviewWorkspace() {
     [workspace.roster.datasets],
   );
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
+  const restore = useWorkspaceRestore({
+    roster,
+    rosterReady: workspace.rosterLoad.status === "ready",
+    rosterSettlementToken: workspace.rosterSettlementToken,
+    mutationBusy: workspace.pickerBusy || workspace.folderBusy || workspace.dropBusy || workspace.workspaceBusy || project.busy === "admitting",
+    putBack: workspace.restoreWorkspace,
+    reloadRoster: workspace.reloadRoster,
+  });
   /**
    * The preview on screen, as a QC capture needs it: which row, its opaque
    * run-summary token, and whether its build can be identified. Only a loaded
@@ -542,7 +557,8 @@ export function PreviewWorkspace() {
       <WorkbenchHeader surface={surface} onNavigate={setSurface}
         conversionBusy={workspace.conversion.busy}
         conversionRetained={workspace.conversion.state.status === "terminal"}
-        projectBusy={project.busy !== "idle"} />
+        projectBusy={project.busy !== "idle"}
+        restore={restore} />
 
       {workspace.dropPresentation.status === "idle" ? null : (
         <div
@@ -731,6 +747,9 @@ export function PreviewWorkspace() {
           </div>
         )}
 
+        <WorkspaceRestoreNotice session={restore} canRestore={canAcquire}
+          reason={busyReason === "conversion" ? t("shellConversionRunning") : busyReason} />
+
         {workspace.rosterLoad.status === "failed" && roster.datasets.length > 0 ? (
           <div className="notice notice-danger" role="status">
             <strong>{t("rosterFailed")}</strong>
@@ -812,6 +831,9 @@ export function PreviewWorkspace() {
           inside a region, not a region arriving with its text. */}
       <p aria-live="polite" className="visually-hidden" data-live-region="conversion">
         {announceConversion(workspace.conversion, t)}
+      </p>
+      <p aria-live="polite" className="visually-hidden" data-live-region="restore">
+        {announceRestore(restore, t)}
       </p>
 
       {activeClear !== null ? <ActiveClearDialog returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onEmptyRosterClosed={claim => {
@@ -946,7 +968,20 @@ export function PreviewWorkspace() {
             onScopeChange={workspace.setConversionScope}
             onSortChange={(sort) => workspace.dispatchRoster({ type: "sortChanged", sort })}
             buildRelease={backendView.names?.release ?? null}
+            hidden={runHistoryOpen}
+            onOpenHistory={() => setRunHistoryOpen(true)}
           />
+          {runHistoryOpen ? (
+            <ConversionHistory
+              catalog={workspace.conversionConfiguration.catalog}
+              queueState={workspace.conversion.state.status}
+              onClose={() => {
+                setRunHistoryOpen(false);
+                // The entry is back on screen only once the panel is unhidden.
+                requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-run-history-entry]")?.focus());
+              }}
+            />
+          ) : null}
         </section>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench"}
           inert={drawer !== null || undefined} data-evidence={evidenceState} aria-labelledby="surface-title-workbench">
