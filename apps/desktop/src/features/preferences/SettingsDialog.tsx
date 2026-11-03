@@ -5,6 +5,7 @@ import { SettingField } from "../../components/fields/SettingField";
 import { Button, Icon, SegmentedControl } from "../../components/ui";
 import type { WorkspaceRestoreSession } from "../mzml-preview/useWorkspaceRestore";
 import { WorkspaceRestoreSettings } from "../mzml-preview/WorkspaceRestoreSettings";
+import { RunHistorySetting } from "../run-history/RunHistorySetting";
 import { SESSION_DEFAULTS } from "./sessionPreferences";
 import { useSessionPreferences, useUiMessages } from "./SessionPreferencesProvider";
 import {
@@ -176,6 +177,8 @@ export function SettingsDialog({ restore }: {
                 onClick={panels.reset}>{message("layoutReset")}</Button>
             </SettingField>
             {restore === undefined ? null : <WorkspaceRestoreSettings session={restore} />}
+            <h3 className="settings-section-title">{message("runHistoryTitle")}</h3>
+            <RunHistorySetting />
             {/* The shell's layout region is aria-hidden behind this modal, so
                 the dialog says it here. Mounted empty, so the change is heard. */}
             <p aria-live="polite" className="visually-hidden" data-live-region="settings-layout">

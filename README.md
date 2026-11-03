@@ -23,7 +23,8 @@ recovers from a stored record it cannot read or cannot write, explains offline
 what ProteoWizard is yours to install and how long a folder you choose lasts,
 and reads in English or Simplified Chinese throughout, including the
 installed-backend banner and the inspector panel. These preferences hold nothing
-about a dataset, a path, a selection, a range or a conversion. See
+about a dataset, a selection, a range or a conversion; once you choose one, they
+also hold the folder for ProteoWizard. See
 [the implementation record](docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md).
 Since then, Restore workspace keeps the Workbench's files (their absolute paths),
 groups, order and checked rows in one local document, on by default, off in
@@ -185,9 +186,9 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 
 - Set the interface language, the roster's row spacing and which of the two
   workspace panels you want, and find them the way you left them the next time
-  MSCanvas starts. That record holds those five things and nothing else: no
-  path, no file list, no selection, no range, no conversion and no backend
-  choice. A window that gets too narrow folds a panel away for space without
+  MSCanvas starts. That record holds those five things and, once you choose one,
+  the folder for ProteoWizard, and nothing else: no file list, no selection, no
+  range and no conversion. A window that gets too narrow folds a panel away for space without
   changing what you asked for, so widening it again brings the panel back.
 - Be told the truth when those preferences cannot be read or cannot be written.
   A stored record MSCanvas does not understand is left exactly as it found it,
@@ -207,12 +208,13 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 Not implemented yet: vendor RAW preview; XIC — refused on measured evidence for
 the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
-anything other than filename, and grouping it; remembering a search, a sort, a
-highlighted selection, a range or the folder you chose for ProteoWizard -- what
-survives a restart is the five preferences listed above and, through Restore
-workspace, the Workbench's files, groups, order and checked rows, while a saved
-project records references and history and reopening one restores no Workbench
-session; a dark theme, or any
+anything other than filename, and grouping it; reopening a saved project as a
+Workbench session -- a saved project records references and history, but
+reopening one restores none; remembering a search, a sort, a highlighted
+selection or a range -- what does survive a restart is the five preferences
+listed above, the folder you chose for ProteoWizard, through Restore workspace
+the Workbench's files, groups, order and checked rows, the conversion history,
+and the off switch of each of those two; a dark theme, or any
 appearance setting beyond language and row spacing; a remembered panel *size*,
 which the workspace has no way to set; conversion progress as a
 percentage; resuming a stopped queue; removing a row from a queue that is
@@ -382,6 +384,14 @@ acquisition, so it may still carry acquisition metadata, and MSCanvas says so
 beside the action and again inside the file. Nothing is uploaded, nothing is sent
 anywhere, and a file of that name that already exists is never replaced. The file
 is yours to read before you decide who sees it.
+
+`Conversion history`, at the foot of the conversion rail, lists every recorded run
+after a restart: when it started and ended, or that it was cut short, and each
+file's state, codes, outputs and checks. It reads only and shows no path. The
+record stays in your per-user folder and holds each source's path, on this
+computer only. `Clear history…` forgets ended runs and `Turn off…` in Settings
+forgets every run and records none; neither touches an acquisition or a converted
+file.
 
 ## Product scope
 

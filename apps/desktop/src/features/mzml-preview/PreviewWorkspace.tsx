@@ -18,6 +18,7 @@ import { presentBackend } from "./backendPresentation";
 import { Chromatogram } from "./Chromatogram";
 import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportTools, LinkedFigureResult, describeUnavailable } from "./ChromatogramExportPanel";
 import { resolveConversionScope } from "./conversionScope";
+import { ConversionHistory } from "../run-history/ConversionHistory";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { WorkspaceRestoreNotice, announceRestore } from "./WorkspaceRestoreNotice";
@@ -44,7 +45,11 @@ export function PreviewWorkspace() {
   const openFigure = (kind: FigurePreviewKind, returnTo: HTMLElement | null = document.activeElement instanceof HTMLElement ? document.activeElement : null) => setFigureDialog({ kind, returnTo });
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
-  const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
+  const [surface, setSurfaceOnly] = useState<WorkbenchSurface>("workbench");
+  /** The conversion history has the Conversion surface (ADR 0065). */
+  const [runHistoryOpen, setRunHistoryOpen] = useState(false);
+  /** Whatever sends the reader to a surface sends them to what it holds now, the queue included. */
+  const setSurface = useCallback((next: WorkbenchSurface) => { setSurfaceOnly(next); setRunHistoryOpen(false); }, []);
   /** The open file's tab (direction A): kept across files and surfaces, so switching loses nothing. */
   const [viewerView, setViewerView] = useState<"spectra" | "scans" | "metadata">("spectra");
   /** The two side panels, so focus can follow a drawer that opens. */
@@ -963,7 +968,20 @@ export function PreviewWorkspace() {
             onScopeChange={workspace.setConversionScope}
             onSortChange={(sort) => workspace.dispatchRoster({ type: "sortChanged", sort })}
             buildRelease={backendView.names?.release ?? null}
+            hidden={runHistoryOpen}
+            onOpenHistory={() => setRunHistoryOpen(true)}
           />
+          {runHistoryOpen ? (
+            <ConversionHistory
+              catalog={workspace.conversionConfiguration.catalog}
+              queueState={workspace.conversion.state.status}
+              onClose={() => {
+                setRunHistoryOpen(false);
+                // The entry is back on screen only once the panel is unhidden.
+                requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-run-history-entry]")?.focus());
+              }}
+            />
+          ) : null}
         </section>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench"}
           inert={drawer !== null || undefined} data-evidence={evidenceState} aria-labelledby="surface-title-workbench">
