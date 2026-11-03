@@ -1146,6 +1146,8 @@ describe("a stored result reused (M9.2)", () => {
       }),
     );
     await chooseDetected();
+    const figureExports = screen.getByRole("button", { name: en.targetedFigureExports });
+    await press(figureExports);
     const release = api.holdOnce("exportTargetedMs1Figure");
     await press(button("svg"));
     const reason = "Choose where to save the SVG file.";
@@ -1155,6 +1157,13 @@ describe("a stored result reused (M9.2)", () => {
     for (const operation of ["csv", "tsv", "spreadsheetCsv", "png"]) {
       expect(button(operation), operation).toHaveAccessibleDescription(reason);
     }
+
+    // Collapsed, that line is out of sight, so the table's says it instead.
+    await press(figureExports);
+    expect(status("table").textContent).toBe(reason);
+    expect(button("csv")).toHaveAccessibleDescription(reason);
+    await press(figureExports);
+    expect(status("table").textContent).toBe("");
 
     // A row with no points shows no figure and no figure line, and the table's
     // refusals still say why. No sentence is put under a target it was not for.
@@ -1199,6 +1208,21 @@ describe("a stored result reused (M9.2)", () => {
     }
     // The pressed control's own "Exporting" stays with the target it was for.
     expect(button("svg").textContent).toBe("Export SVG…");
+
+    // Its own target chosen again, its evidence being read: no figure line yet,
+    // still a reason. Once drawn, the figure's line says it again.
+    await press(screen.getByRole("button", { name: en.targetedFigureExports, expanded: false }));
+    const evidence = api.holdOnce("readTargetedMs1Evidence");
+    await press(query(`[data-targeted-choose="${DETECTED}"]`));
+    expect(document.querySelector("[data-targeted-figure-export]")).toBeNull();
+    expect(status("table").textContent).toBe(reason);
+    expect(button("csv")).toHaveAccessibleDescription(reason);
+    await act(async () => {
+      evidence();
+    });
+    await screen.findByRole("img");
+    expect(status("figure").textContent).toBe(reason);
+    expect(status("table").textContent).toBe("");
     await act(async () => {
       release();
     });

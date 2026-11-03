@@ -1223,15 +1223,29 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
           expect(ended.buttons.map((button) => button.refused)).toEqual([null, null, null]);
         }
 
-        // A figure's picker out and another row chosen: that row's figure says
-        // nothing, and the table's line is the reason for every refused button.
+        // A figure's picker out and that figure's export collapsed: its line is
+        // out of sight, so the table's says it until the export is opened again.
         const pickerOut = copy.viewerExportChoose.replace("{{name}}", "SVG");
+        const toggleFigureExport = () =>
+          browser.execute(() => {
+            const region = document.querySelector<HTMLElement>("[data-targeted-figure-export]");
+            document.querySelector<HTMLElement>(`[aria-controls="${region?.id ?? ""}"]`)?.click();
+          });
         await browser.$(`[data-targeted-choose="${CAFFEINE}"]`).click();
         await browser.$("[data-targeted-figure-export]").waitForExist();
         await openDisclosure("[data-targeted-figure-export]");
         await holdInvoke("export_targeted_ms1_figure");
         await browser.$('[data-targeted-figure-export] [data-targeted-export="svg"]').click();
         await browser.waitUntil(async () => (await heldCallers("export_targeted_ms1_figure")) >= 1);
+        await says("idle", "");
+        await toggleFigureExport();
+        await says("running", pickerOut);
+        await shot("6-figure-out-collapsed");
+        await toggleFigureExport();
+        await says("idle", "");
+
+        // And another row chosen: that row's figure says nothing, and the
+        // table's line is the reason for every refused button.
         await browser.$(`[data-targeted-choose="${ABSENT}"]`).click();
         await says("running", pickerOut);
         await browser.$('[data-targeted-figure-export] [data-targeted-output="idle"]').waitForExist();

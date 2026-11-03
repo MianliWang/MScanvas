@@ -1856,10 +1856,13 @@ export function TargetedMs1Report({
   const running = output.state.status === "running";
   /**
    * The line that says what is running, which every refused output points at:
-   * a figure's own while its target is shown, else the table's, which is there
-   * whichever row is chosen and says nothing about that row.
+   * a figure's own while it is on the page, under its own target and open,
+   * else the table's, which is always there and says nothing about a row.
    */
-  const runningLine = output.region === "figure" && output.target === chosen ? "figure" : "table";
+  const runningLine =
+    output.region === "figure" && output.target === chosen && shown.status === "ready" && figureExportOpen
+      ? "figure"
+      : "table";
   /** Whether this control started the output that is running. */
   const initiated = (operation: Operation, target: string | null) =>
     output.state.status === "running" && output.state.operation === operation && output.target === target;
