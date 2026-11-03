@@ -283,6 +283,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: (a), as recommended (section 1b).*
 
+*2026-10-31:* after viewing the draft (#197, the Workbench in the v5.11 look), the owner wrote, verbatim: "我感觉你外观改得挺好" ("I think you changed the look quite well"). (a) is confirmed for this screen and the look goes ahead. The draft's open layout questions take the answers it shipped with, as interim defaults the owner may still change ([DESIGN_SYSTEM's record](../ux/DESIGN_SYSTEM.md#fe-2-accepted-2026-10-31)).
+
 - **Question.** The owner rejected every option shown:
   - the three demo directions of 2026-10-29 led to direction A;
   - its redesign, A2, offered three themes (Cobalt, Almanac, Console) on one composition, so the rejection reaches the composition, not only a palette.

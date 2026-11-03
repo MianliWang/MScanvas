@@ -512,7 +512,7 @@ describe("narrow desktop layout markup", () => {
     // row the query excludes, and the match count is the only thing that says
     // how much of the session is hidden. The tertiary text colour is #7f8a9c on
     // white, about 3.5:1, which is under AA for text this size; the secondary
-    // one is #5b677a, about 6.2:1. Quiet is a reason to use the quieter of two
+    // one is #4b5b70, about 6.9:1. Quiet is a reason to use the quieter of two
     // readable colours, not a reason to use an unreadable one.
     const app = mountStyles(appStyles);
 
