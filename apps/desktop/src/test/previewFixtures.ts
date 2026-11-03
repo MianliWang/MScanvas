@@ -493,6 +493,7 @@ export function buildPreview(rowCount = 6, truncated = false, receipt = 1): Prev
     // one that can be identified.
     qcSnapshotToken: "run-summary-token",
     qcProducerIdentified: true,
+    viewSource: null,
     file: selectedFile,
     metadata: {
       sections: [
@@ -1086,6 +1087,11 @@ export interface FakePreviewApiOptions {
   readonly clearWorkspace?: () => Promise<WorkspaceRoster>;
   readonly preview?: Preview | (() => Promise<Preview>);
   readonly spectrum?: (index: number) => Promise<SelectedSpectrumOutcome>;
+  /** The one-click view's commands. By default nothing runs and View is available. */
+  readonly beginRawView?: PreviewApi["beginRawView"];
+  readonly getRawViewState?: PreviewApi["getRawViewState"];
+  readonly cancelRawView?: PreviewApi["cancelRawView"];
+  readonly openRawView?: PreviewApi["openRawView"];
 }
 
 export interface FakePreviewApi extends PreviewApi {
@@ -1835,6 +1841,13 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   };
 
   const fake: FakePreviewApi = {
+    beginRawView: options.beginRawView ?? (() => Promise.reject(new Error("this fake has no view to begin"))),
+    getRawViewState: options.getRawViewState ?? ((handle) => Promise.resolve({
+      state: { state: "idle" },
+      availability: handle === null ? null : { available: true, unverifiedBuildRelease: null },
+    })),
+    cancelRawView: options.cancelRawView ?? (() => Promise.resolve({ state: "idle" })),
+    openRawView: options.openRawView ?? (() => Promise.reject(new Error("this fake has no view to open"))),
     previewFigure: options.previewFigure ?? (async (request) => ({ status: "rendered", requestId: request.requestId,
       specId: `mock-${JSON.stringify(request.source)}-${JSON.stringify(request.settings)}`, empty: false,
       width: request.settings.widthPx, height: request.settings.heightPx,

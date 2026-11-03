@@ -864,6 +864,11 @@ pub(super) struct ScientificExportSlots {
     /// another is the same race with an extra step.
     next_preview_open: u64,
     latest_preview_open: PreviewOpenTicket,
+    /// The latest committed open read a cached view (ADR 0060). Its spectrum
+    /// and chromatogram stay readable for the screen; every export of them is
+    /// refused until decision 11's provenance is built (slice 4). The next
+    /// open's start clears it, and takes both away.
+    viewed_open: bool,
     /// The run summary the latest committed open established, which a QC
     /// summary snapshot may copy.
     ///
@@ -1007,6 +1012,7 @@ impl Default for ScientificExportSlots {
             // and no open can ever be mistaken for the session's initial state.
             next_preview_open: 1,
             latest_preview_open: PreviewOpenTicket(0),
+            viewed_open: false,
             run_summary: None,
             lane: ExportState::Idle,
         }
@@ -1072,6 +1078,7 @@ impl ScientificExportSlots {
         self.latest_preview_open = ticket;
         self.chromatogram = None;
         self.run_summary = None;
+        self.viewed_open = false;
         ticket
     }
 
@@ -1171,8 +1178,21 @@ impl ScientificExportSlots {
         owner: DatasetId,
         source: Option<ChromatogramSource>,
     ) -> Option<Option<ChromatogramSnapshot>> {
-        (ticket == self.latest_preview_open)
-            .then(|| self.reconcile_preview_chromatogram(ticket, owner, source))
+        (ticket == self.latest_preview_open).then(|| {
+            self.viewed_open = true;
+            self.reconcile_preview_chromatogram(ticket, owner, source)
+        })
+    }
+
+    /// Asked first by every export of a retained source: the one gate a viewed
+    /// preview's exports meet (slice 2 note 6). The viewport's projection is
+    /// not an export and does not ask.
+    fn refuse_viewed_export(&self) -> Result<(), BeginExportRefusal> {
+        if self.viewed_open {
+            Err(BeginExportRefusal::ViewedThroughCache)
+        } else {
+            Ok(())
+        }
     }
 
     /// Retains one chromatogram as the one a new export may name.
@@ -1425,6 +1445,7 @@ impl ScientificExportSlots {
         settings: FigureRenderSettings,
         dpi: Option<PngDpi>,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
+        self.refuse_viewed_export()?;
         let snapshot = self.spectrum_for(token)?;
         let range = snapshot
             .resolve(request)
@@ -1453,6 +1474,7 @@ impl ScientificExportSlots {
         settings: Option<FigureRenderSettings>,
         dpi: Option<PngDpi>,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
+        self.refuse_viewed_export()?;
         let snapshot = self.chromatogram_for(token)?;
         let range = snapshot
             .source()
@@ -1568,6 +1590,7 @@ impl ScientificExportSlots {
         traces: TraceSet,
         settings: FigureRenderSettings,
     ) -> Result<LinkedPair, BeginExportRefusal> {
+        self.refuse_viewed_export()?;
         let chromatogram = self.chromatogram_for(tokens.chromatogram)?;
         let spectrum = self.spectrum_for(tokens.spectrum)?;
 
@@ -1732,6 +1755,7 @@ impl ScientificExportSlots {
         token: &str,
         request: SpectrumRangeRequest,
     ) -> Result<(SpectrumSnapshot, ResolvedSpectrumRange), BeginExportRefusal> {
+        self.refuse_viewed_export()?;
         let snapshot = self.spectrum_for(token)?;
         // Resolved before the lane is taken, for the reason every refusal
         // ordering here follows: a copy that could not have been drawn should
@@ -1753,6 +1777,7 @@ impl ScientificExportSlots {
         request: RangeRequest,
         traces: TraceSet,
     ) -> Result<(ChromatogramSnapshot, ResolvedRange), BeginExportRefusal> {
+        self.refuse_viewed_export()?;
         let snapshot = self.chromatogram_for(token)?;
         let range = snapshot
             .source()
@@ -1788,6 +1813,9 @@ impl ScientificExportSlots {
 /// Why one export could not be started.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BeginExportRefusal {
+    /// The source is a viewed RAW row's cached copy, and an export cannot yet
+    /// name the RAW and the conversion (ADR 0060 decision 11, slice 4).
+    ViewedThroughCache,
     /// Another export of this session has not finished.
     AlreadyExporting,
     /// The named science is not what this session holds.
@@ -3392,6 +3420,41 @@ mod tests {
         let reader = decoded.read_info().expect("the PNG parses");
         assert_eq!(reader.info().width, defaults().width());
         assert_eq!(reader.info().height, defaults().height());
+    }
+
+    #[test]
+    fn a_viewed_preview_refuses_every_copy_until_the_next_open_and_stays_drawable() {
+        let mut slot = ScientificExportSlots::default();
+        let viewed = slot.begin_preview_open();
+        slot.reconcile_viewed_preview(viewed, owner(1), None)
+            .expect("the latest open commits");
+        let token = slot
+            .install(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let full = || SpectrumRangeRequest::from_wire("full", None, None).expect("a full request");
+        let refused = Err(BeginExportRefusal::ViewedThroughCache);
+        assert_eq!(slot.begin_copy(&token, full()).map(|_| ()), refused);
+        assert_eq!(
+            slot.begin_chromatogram_copy(&token, full_range(), tic_only())
+                .map(|_| ()),
+            refused
+        );
+        assert!(
+            slot.retained_spectrum_for(&token).is_ok(),
+            "the viewport is not an export"
+        );
+        // A stale open commits nothing and clears nothing.
+        let next = slot.begin_preview_open();
+        assert_eq!(
+            slot.reconcile_viewed_preview(viewed, owner(1), None)
+                .map(|_| ()),
+            None
+        );
+        assert_eq!(slot.begin_copy(&token, full()).map(|_| ()), Ok(()));
+        assert!(slot.release_write());
+        assert!(slot.reconcile_viewed_preview(next, owner(1), None).is_some());
+        assert_eq!(slot.begin_copy(&token, full()).map(|_| ()), refused);
     }
 
     #[test]

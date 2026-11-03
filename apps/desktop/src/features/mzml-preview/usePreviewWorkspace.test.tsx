@@ -219,6 +219,10 @@ function harness(
     previewFigure: async (request) => ({ status: "refused", requestId: request.requestId, error: { kind: "spectrum_export_stale", summary: "Select a spectrum.", detail: null, retryable: false } }),
     inspectBackend: () => service.inspectBackend(),
     chooseInstallation: () => service.chooseInstallation(options.dismissPicker ?? false),
+    beginRawView: () => Promise.reject(new Error("this test never views a RAW file")),
+    getRawViewState: () => Promise.resolve({ state: { state: "idle" }, availability: null }),
+    cancelRawView: () => Promise.reject(new Error("this test never views a RAW file")),
+    openRawView: () => Promise.reject(new Error("this test never views a RAW file")),
     useAutomaticDiscovery: () => service.useAutomaticDiscovery(),
     readConversionConfiguration: () =>
       Promise.reject(new Error("this test never reads the conversion settings")),

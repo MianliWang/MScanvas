@@ -15,9 +15,13 @@ use std::sync::PoisonError;
 
 use mscanvas_proteowizard::{ConflictPolicy, ConversionIntent, ConversionRunOutcome};
 
+use super::super::authority::BackendAuthorityState;
+use super::super::backend::backend_label;
+use super::super::configuration::intent_dto;
 use super::super::raw_view::{
-    Ended, MAX_RAW_BYTES, Progress, RawView, RawViewBeginRequestDto, RawViewOperationRequestDto,
-    RawViewPhaseDto, RawViewStateDto, ViewCacheClearOutcomeDto, ViewCacheSummaryDto,
+    Ended, MAX_RAW_BYTES, Progress, RawView, RawViewAvailabilityDto, RawViewBeginRequestDto,
+    RawViewOperationRequestDto, RawViewPhaseDto, RawViewSnapshotDto, RawViewStateDto,
+    RawViewStateRequestDto, ViewCacheClearOutcomeDto, ViewCacheSummaryDto, ViewSourceDto,
     bytes_needed_for, raw_view_busy, raw_view_not_ready, raw_view_source_changed,
     raw_view_unsupported_source, run_failure_error, view_cache_entry_lost,
     view_cache_entry_too_large, view_cache_entry_unavailable, view_cache_entry_unrecognized,
@@ -223,6 +227,88 @@ impl PreviewService {
                     .is_some_and(|(pinned, _)| *pinned == *operation);
         }
         state
+    }
+
+    /// `get_raw_view_state`: the operation, and whether View can be pressed for
+    /// the row named. Polled, so it hashes nothing and launches nothing.
+    pub fn raw_view_snapshot(&self, request: &RawViewStateRequestDto) -> RawViewSnapshotDto {
+        RawViewSnapshotDto {
+            state: self.raw_view_state(),
+            availability: request
+                .handle
+                .as_deref()
+                .map(|handle| self.raw_view_availability(handle)),
+        }
+    }
+
+    /// Decision 4's table, in its order, from what the session already holds:
+    /// the backend as last observed, never a fresh probe. A catalog not read
+    /// yet says nothing about the build, so the press is still open and its
+    /// worker's own binding answers.
+    fn raw_view_availability(&self, handle: &str) -> RawViewAvailabilityDto {
+        let refused = |code: &str| RawViewAvailabilityDto::Refused {
+            available: false,
+            code: code.to_owned(),
+        };
+        let row = DatasetId::parse(handle).and_then(|id| {
+            let workspace = self.workspace();
+            let file = workspace.registry.get(id)?.file();
+            Some((file.source_kind(), file.byte_length()))
+        });
+        let Some((kind, byte_length)) = row else {
+            return refused(&unknown_dataset().kind);
+        };
+        let capabilities = {
+            let mut observed = self
+                .resolved
+                .lock()
+                .expect("the installation lock is never poisoned by user code");
+            match observed.authority.projection().state {
+                BackendAuthorityState::Settled {
+                    binding,
+                    preview_availability: PreviewAvailability::Usable,
+                } if binding.is_installed() => Some(observed.configurations.capabilities(binding)),
+                _ => None,
+            }
+        };
+        let Some(capabilities) = capabilities else {
+            return refused("backend_not_found");
+        };
+        if self.backend_is_quarantined() {
+            return refused(&backend_quarantined().kind);
+        }
+        if let Some(capabilities) = &capabilities
+            && refuse_unevidenced_build(capabilities, ConversionSourceKind::ThermoRawFile).is_err()
+        {
+            return refused("provider_build_not_evidenced");
+        }
+        {
+            let slot = self.conversion_slot();
+            if slot.is_busy() {
+                return refused(&slot.busy_refusal().kind);
+            }
+        }
+        if kind != DatasetSourceKind::ThermoRaw {
+            return refused(&raw_view_unsupported_source().kind);
+        }
+        let parent = self.raw_view_settings().parent.clone();
+        match ViewCache::inspect(parent.as_deref()) {
+            Err(RootRefusal::Unavailable) => return refused(&view_cache_unavailable().kind),
+            Err(RootRefusal::Unrecognized) => {
+                return refused(&view_cache_root_unrecognized().kind);
+            }
+            // Retryable: the press answers it, with Try again.
+            Err(RootRefusal::Unreadable) | Ok(()) => {}
+        }
+        if byte_length > MAX_RAW_BYTES {
+            return refused(&view_cache_entry_too_large().kind);
+        }
+        RawViewAvailabilityDto::Available {
+            available: true,
+            unverified_build_release: capabilities.as_ref().and_then(|capabilities| {
+                unverified_build_release(capabilities, ConversionSourceKind::ThermoRawFile)
+            }),
+        }
     }
 
     /// `begin_raw_view`: the refusals of decision 4 that need no process, in
@@ -446,6 +532,13 @@ impl PreviewService {
         let backend = resolution.bound?;
         refuse_unevidenced_build(&backend.capabilities, ConversionSourceKind::ThermoRawFile)?;
         drop(running);
+        // ADR 0055: the label travels with the view from here on (decision 4).
+        if let Some(view) = self.conversion_slot().view_mut(operation) {
+            view.unverified_build_release = unverified_build_release(
+                &backend.capabilities,
+                ConversionSourceKind::ThermoRawFile,
+            );
+        }
         let provider_release = backend.capabilities.provider_build().map_or_else(
             || "unreported".to_owned(),
             |build| build.release().to_owned(),
@@ -755,7 +848,7 @@ impl PreviewService {
         &self,
         request: RawViewOperationRequestDto,
     ) -> Result<PreviewDto, PreviewErrorDto> {
-        let dataset = {
+        let (dataset, file_name, unverified) = {
             let mut slot = self.conversion_slot();
             let view = slot
                 .view_mut(request.operation)
@@ -763,7 +856,11 @@ impl PreviewService {
             match &mut view.progress {
                 Progress::Ready { opened, .. } if !*opened => {
                     *opened = true;
-                    view.dataset
+                    (
+                        view.dataset,
+                        view.file_name.clone(),
+                        view.unverified_build_release.clone(),
+                    )
                 }
                 _ => return Err(raw_view_not_ready()),
             }
@@ -789,7 +886,22 @@ impl PreviewService {
             .ok_or_else(raw_view_not_ready)?;
         // Advisory: the eviction order holds no data (decision 9).
         let _ = entry.mark_opened();
-        self.open_preview_of(&dataset.handle(), Some(Arc::new(entry)))
+        let manifest = entry.manifest();
+        let view_source = ViewSourceDto {
+            kind: "viewCache",
+            source_file_name: file_name,
+            source_kind: "thermo_raw",
+            source_sha256: manifest.source_sha256.clone(),
+            provider_release: backend_label(&manifest.provider_release),
+            provider_sha256: manifest.provider_sha256.clone(),
+            intent: intent_dto(&ConversionIntent::SHIPPED),
+            verified: unverified.is_none(),
+            unverified_build_release: unverified,
+            converted_at: backend_label(&manifest.created_at),
+        };
+        let mut preview = self.open_preview_of(&dataset.handle(), Some(Arc::new(entry)))?;
+        preview.view_source = Some(view_source);
+        Ok(preview)
     }
 
     /// `describe_view_cache`: the Settings row's summary.

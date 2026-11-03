@@ -30,6 +30,17 @@ export interface StatusBackend {
   readonly onToggle: () => void;
 }
 
+/** A one-click view in the bar's busy slot, from every surface (ADR 0060 decision 3). */
+export interface StatusRawView {
+  readonly text: string;
+  /** The whole name, where the text shortened it. */
+  readonly title: string;
+  /** The busy reason this is the bar's answer for, or `null` when it holds nothing. */
+  readonly reason: string | null;
+  readonly showLabel: string;
+  readonly onShow: () => void;
+}
+
 export interface BusyFlags {
   readonly backendBusy: boolean;
   readonly pickerBusy: boolean;
@@ -37,6 +48,8 @@ export interface BusyFlags {
   readonly dropBusy: boolean;
   readonly workspaceBusy: boolean;
   readonly projectAdmitting: boolean;
+  /** The sentence a running one-click view holds the workspace with (ADR 0060 decision 5). */
+  readonly rawViewBusy?: string | null;
   readonly conversionBusy: boolean;
   readonly rosterLoad: "loading" | "ready" | "failed";
 }
@@ -53,6 +66,7 @@ export function statusBusyReason(flags: BusyFlags, t: UiMessage): string | "conv
   if (flags.dropBusy) return t("dropAdding");
   if (flags.workspaceBusy) return t("statusBusyWorkspace");
   if (flags.projectAdmitting) return t("statusBusyProject");
+  if (flags.rawViewBusy != null) return flags.rawViewBusy;
   if (flags.conversionBusy) return "conversion";
   if (flags.rosterLoad === "loading") return t("rosterLoading");
   if (flags.rosterLoad === "failed") return t("rosterFailed");
@@ -65,10 +79,12 @@ export function statusBusyReason(flags: BusyFlags, t: UiMessage): string | "conv
  * then the layout's save state and a file drop that stopped working. Built
  * from existing state only; it starts no work.
  */
-export function WorkbenchStatusBar({ backend, items, busy, dropStatus, dropProblem = null, onReconnectDrop, onNavigate, inert = false }: {
+export function WorkbenchStatusBar({ backend, items, busy, rawView = null, dropStatus, dropProblem = null, onReconnectDrop, onNavigate, inert = false }: {
   readonly backend: StatusBackend;
   readonly items: readonly ShellContextItem[];
   readonly busy: string | "conversion" | null;
+  /** A one-click view under way, or ready while its row is not on screen. */
+  readonly rawView?: StatusRawView | null;
   readonly dropStatus: "available" | "connecting" | "unavailable";
   /** What went wrong connecting file drop, while it is unavailable. */
   readonly dropProblem?: string | null;
@@ -93,7 +109,7 @@ export function WorkbenchStatusBar({ backend, items, busy, dropStatus, dropProbl
    * flickers; again whenever the bar resizes or what it says changes.
    */
   const barRef = useRef<HTMLDivElement>(null);
-  const said = [backend.text, busy, unsaved, panels.save.problem, panels.save.retryable, dropStatus, ...items.map(item => `${item.text}${item.unsaved === true ? "*" : ""}`)].join("|");
+  const said = [backend.text, busy, rawView?.text, unsaved, panels.save.problem, panels.save.retryable, dropStatus, ...items.map(item => `${item.text}${item.unsaved === true ? "*" : ""}`)].join("|");
   useLayoutEffect(() => {
     const bar = barRef.current;
     const hint = bar?.querySelector<HTMLElement>(".workspace-drop-hint");
@@ -122,10 +138,16 @@ export function WorkbenchStatusBar({ backend, items, busy, dropStatus, dropProbl
       <span className="status-item-text">{item.text}</span>
       {item.unsaved === true ? <>{" "}<span className="status-tag">{t("statusUnsaved")}</span></> : null}
     </Button>)}
-    {busy === null || conversionItem ? null
+    {busy === null || conversionItem || busy === rawView?.reason ? null
       : <span id={STATUS_BUSY_ID} className="status-busy" data-status-busy="">
         {t("statusBusy", { reason: busy === "conversion" ? t("workActive") : busy })}
       </span>}
+    {rawView === null ? null : <span className="status-raw-view" data-status-raw-view=""
+      // The reason a refused workspace action points at, while this is it.
+      id={busy !== null && busy === rawView.reason ? STATUS_BUSY_ID : undefined} title={rawView.title}>
+      <span className="status-item-text">{rawView.text}</span>
+      <Button variant="secondary" size="sm" aria-label={rawView.showLabel} onClick={rawView.onShow}>{t("rawViewShowShort")}</Button>
+    </span>}
   </>;
   const end = <>
     {/* The arrangement is on screen either way; this says it will not survive

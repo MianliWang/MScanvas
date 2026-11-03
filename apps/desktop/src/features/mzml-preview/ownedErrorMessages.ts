@@ -87,6 +87,8 @@ const MESSAGE = {
   view_cache_entry_lost: "errViewCacheEntryLost",
   view_cache_entry_unavailable: "errViewCacheEntryUnavailable",
   view_cache_unreadable: "errViewCacheUnreadable",
+  view_export_withheld: "errViewExportWithheld",
+  viewed_through_cache: "errViewedThroughCache",
   source_requires_bundle_handoff: "errSourceRequiresBundle",
   source_identity_unavailable: "errSourceIdentityUnavailable",
   source_not_inspectable: "errSourceNotInspectable",
@@ -149,6 +151,9 @@ const MESSAGE = {
   targeted_table_field_not_representable: "m92ErrorTsvField",
   targeted_table_not_exportable: "m92ErrorTableNotExportable",
 } as const;
+
+/** Whether this build has a sentence of its own for a code. */
+export const hasOwnedMessage = (kind: string) => Object.hasOwn(MESSAGE, kind);
 
 /** Parameters come from the Rust decision; no translated-string parsing. */
 export function ownedErrorMessage(error: PreviewError, t: UiMessage): string {

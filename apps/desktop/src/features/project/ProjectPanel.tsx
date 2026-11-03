@@ -170,6 +170,7 @@ const BUSY = {
 const QC_REASONS = {
   qcNeedsWorkbench: "projectQcNeedsWorkbench",
   qcNeedsPreview: "projectQcNeedsPreview",
+  qcViewedThroughCache: "errViewedThroughCache",
   qcProducerUnidentified: "projectQcProducerUnidentified",
 } as const;
 

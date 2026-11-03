@@ -9,10 +9,14 @@ use super::*;
 use crate::presets::{
     PresetDeleteRequest, PresetListDto, PresetRenameRequest, PresetSaveRequest, PresetWriteDto,
 };
-use crate::preview::dto::{ConversionIntentWireDto, PreviewDto};
+use crate::preview::dto::{
+    ConversionIntentWireDto, FigurePreviewOutcomeDto, FigurePreviewRequestDto,
+    FigurePreviewSourceDto, PreviewDto,
+};
+use crate::preview::service::RetainedSummaryRefusal;
 use crate::preview::raw_view::{
-    MAX_RAW_BYTES, RawViewBeginRequestDto, RawViewOperationRequestDto, RawViewPhaseDto,
-    RawViewStateDto, ViewCacheSummaryDto,
+    MAX_RAW_BYTES, RawViewAvailabilityDto, RawViewBeginRequestDto, RawViewOperationRequestDto,
+    RawViewPhaseDto, RawViewStateDto, RawViewStateRequestDto, ViewCacheSummaryDto,
 };
 
 /// An advanced intent (ADR 0055): MS1 only at 64/32, which no row holds.
@@ -100,11 +104,27 @@ fn viewing_with<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
     arguments: Arc<Mutex<Vec<Vec<String>>>>,
     responses: Vec<Response>,
 ) -> Viewing {
+    viewing_on(
+        evidenced_capabilities(),
+        label,
+        runner,
+        arguments,
+        responses,
+    )
+}
+
+fn viewing_on<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
+    capabilities: InstalledHelpCapabilities,
+    label: &str,
+    runner: R,
+    arguments: Arc<Mutex<Vec<Vec<String>>>>,
+    responses: Vec<Response>,
+) -> Viewing {
     let raws = TestFile::new(label);
     let app_data = TestFile::new(&format!("{label}-appdata"));
     let raw = raws.thermo_raw(RAW_NAME);
     let launches = runner.launch_count();
-    let mut inner = ConvertingProvider::new(evidenced_capabilities(), runner);
+    let mut inner = ConvertingProvider::new(capabilities, runner);
     inner.inner = FakeProvider::available(responses);
     let sources = Arc::new(Mutex::new(Vec::new()));
     let park = Park::default();
@@ -1827,4 +1847,306 @@ fn operation_of(state: &RawViewStateDto) -> u64 {
         | RawViewStateDto::Cancelled { operation, .. } => *operation,
         RawViewStateDto::Idle => panic!("no operation"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Slice 3: what the interface reads
+// ---------------------------------------------------------------------------
+
+fn availability(session: &Viewing, handle: &str) -> RawViewAvailabilityDto {
+    session
+        .service
+        .raw_view_snapshot(&RawViewStateRequestDto {
+            handle: Some(handle.to_owned()),
+        })
+        .availability
+        .expect("a row was named")
+}
+
+fn refusal(session: &Viewing, handle: &str) -> String {
+    match availability(session, handle) {
+        RawViewAvailabilityDto::Refused { available, code } => {
+            assert!(!available);
+            code
+        }
+        other => panic!("expected a refusal; got {other:?}"),
+    }
+}
+
+/// The session as the webview meets it: the backend observed, its catalog read.
+fn observed(session: &Viewing) {
+    session.service.inspect_backend();
+    session
+        .service
+        .read_conversion_configuration()
+        .expect("the catalog is read");
+}
+
+#[test]
+fn the_availability_answer_follows_decision_4s_table_and_touches_nothing() {
+    let session = viewing("raw-view-availability");
+    let before = session.raw_facts();
+    assert_eq!(
+        session
+            .service
+            .raw_view_snapshot(&RawViewStateRequestDto { handle: None })
+            .availability,
+        None
+    );
+    // Nothing observed yet says nothing usable.
+    assert_eq!(refusal(&session, &session.handle), "backend_not_found");
+    observed(&session);
+    assert_eq!(
+        availability(&session, &session.handle),
+        RawViewAvailabilityDto::Available {
+            available: true,
+            unverified_build_release: None,
+        }
+    );
+    // Asking made no folder, launched nothing and read nothing of the RAW.
+    assert!(!session.cache().exists());
+    assert_eq!(session.launches.load(Ordering::SeqCst), 0);
+    assert_eq!(session.raw_facts(), before);
+
+    assert_eq!(refusal(&session, "not-a-handle"), "unknown_file_handle");
+    let mzml = session.raws.directory.join("run.mzML");
+    fs::write(&mzml, b"<mzML/>").expect("an mzML row's file");
+    assert_eq!(
+        refusal(&session, &add_one_acquisition(&session.service, &mzml)),
+        "raw_view_unsupported_source"
+    );
+
+    let large = session.raws.thermo_raw("large.raw");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&large)
+        .and_then(|file| file.set_len(MAX_RAW_BYTES + 1))
+        .expect("a RAW one byte over the limit");
+    let large = add_one_acquisition(&session.service, &large);
+    assert_eq!(refusal(&session, &large), "view_cache_entry_too_large");
+
+    session.service.bind_view_cache(None);
+    assert_eq!(refusal(&session, &large), "view_cache_unavailable");
+    session
+        .service
+        .bind_view_cache(Some(session.app_data.directory.clone()));
+
+    // A folder MSCanvas did not make is refused, read no further and left.
+    fs::create_dir_all(session.cache()).expect("a foreign folder");
+    let foreign = session.cache().join("theirs.txt");
+    fs::write(&foreign, b"theirs").expect("a foreign file");
+    assert_eq!(refusal(&session, &large), "view_cache_root_unrecognized");
+    assert_eq!(fs::read(&foreign).expect("left alone"), b"theirs");
+    fs::remove_dir_all(session.cache()).expect("the foreign folder goes");
+
+    // A queue, in the table's order: before the row's own facts.
+    let answered = session.service.begin_conversion_queue(
+        &begin_request(
+            std::slice::from_ref(&session.handle),
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            current_receipt(&session.service),
+        ),
+        current_document(&session.service),
+    );
+    assert!(matches!(
+        answered.outcome,
+        ConversionBeginOutcomeDto::Reserved { .. }
+    ));
+    assert_eq!(refusal(&session, &large), "conversion_busy");
+}
+
+#[test]
+fn a_running_view_and_a_quarantine_are_refused_by_their_own_codes() {
+    let (runner, started, release) = StopAwareRunner::parked(StopEnding::Unterminated);
+    let session = viewing_with(
+        "raw-view-availability-busy",
+        runner,
+        Arc::default(),
+        open_responses(),
+    );
+    observed(&session);
+    let operation = session.begin().expect("View begins");
+    let worker = {
+        let service = Arc::clone(&session.service);
+        std::thread::spawn(move || service.run_raw_view(operation))
+    };
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("msconvert starts");
+    assert_eq!(refusal(&session, &session.handle), "raw_view_busy");
+    session
+        .service
+        .cancel_raw_view(RawViewOperationRequestDto { operation });
+    release.send(()).expect("release msconvert");
+    worker.join().expect("the worker ends");
+    // That cancel could not be confirmed: the quarantine comes first now.
+    assert_eq!(refusal(&session, &session.handle), "backend_quarantined");
+}
+
+#[test]
+fn an_unmeasured_build_views_with_its_release_named_and_an_unreported_one_is_refused() {
+    let unmeasured = conversion_capabilities("3.0.26204", None, &"e".repeat(64));
+    let runner = FakeConversionRunner::new(BackendAct::ConvertViewable);
+    let arguments = runner.arguments();
+    let session = viewing_on(
+        unmeasured,
+        "raw-view-unmeasured",
+        runner,
+        arguments,
+        open_responses(),
+    );
+    observed(&session);
+    let named = || Some("3.0.26204".to_owned());
+    assert_eq!(
+        availability(&session, &session.handle),
+        RawViewAvailabilityDto::Available {
+            available: true,
+            unverified_build_release: named(),
+        }
+    );
+    let state = session.view();
+    let RawViewStateDto::Ready {
+        operation,
+        unverified_build_release,
+        ..
+    } = state
+    else {
+        panic!("expected ready; got {state:?}");
+    };
+    assert_eq!(unverified_build_release, named());
+    let source = session
+        .open(operation)
+        .expect("the view opens")
+        .view_source
+        .expect("a viewed preview says what it was made from");
+    assert!(!source.verified);
+    assert_eq!(source.unverified_build_release, named());
+    assert_eq!(source.provider_release, "3.0.26204");
+}
+
+#[test]
+fn a_viewed_preview_says_what_it_was_made_from_and_names_no_path() {
+    let session = viewing("raw-view-source");
+    let (operation, _) = ready(&session.view());
+    let preview = session.open(operation).expect("the view opens");
+    let source = preview.view_source.as_ref().expect("the view's source");
+    assert_eq!(source.kind, "viewCache");
+    assert_eq!(source.source_file_name, RAW_NAME);
+    assert_eq!(source.source_kind, "thermo_raw");
+    assert_eq!(
+        source.source_sha256,
+        Sha256Digest::calculate_file(&session.raw)
+            .expect("hash the RAW")
+            .to_string()
+            .to_lowercase()
+    );
+    assert_eq!(source.provider_release, EVIDENCED_RELEASE);
+    assert_eq!(
+        source.provider_sha256,
+        EVIDENCED_EXECUTABLE_SHA256.to_lowercase()
+    );
+    assert_eq!(source.intent.id, ConversionIntent::SHIPPED.stable_id());
+    assert!(source.verified);
+    assert_eq!(source.unverified_build_release, None);
+    // No cache path, key or entry name crosses.
+    let wire = serde_json::to_string(source).expect("the source serializes");
+    let key = session.entries().remove(0);
+    assert!(!wire.contains(&key), "{wire}");
+    assert!(!wire.contains("view.mzML"), "{wire}");
+    assert!(!wire.contains("view-cache"), "{wire}");
+    assert_eq!(
+        serde_json::to_value(&preview).expect("the preview serializes")["viewSource"]["kind"],
+        "viewCache"
+    );
+}
+
+#[test]
+fn a_viewed_preview_exports_nothing_and_its_spectrum_stays_drawable() {
+    let session = viewing("raw-view-exports");
+    let service = &session.service;
+    let (operation, _) = ready(&session.view());
+    let preview = session.open(operation).expect("the view opens");
+    let chromatogram = preview
+        .chromatogram_export_token
+        .expect("the chromatogram on screen");
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = service
+        .load_spectrum(&session.handle, 0)
+        .expect("a spectrum of the view")
+        .outcome
+    else {
+        panic!("the view has a spectrum");
+    };
+    let (low, high) = (spectrum.mz[0], spectrum.mz[spectrum.mz.len() - 1]);
+    let spectrum = spectrum.export_token;
+    let settings = default_figure_settings();
+    let traces = ChromatogramTracesDto {
+        tic: true,
+        bpc: true,
+    };
+    let withheld = |error: PreviewErrorDto| assert_eq!(error.kind, "view_export_withheld");
+    withheld(
+        service
+            .begin_spectrum_export(&spectrum, "csv", &full_spectrum_range(), &settings)
+            .expect_err("no spectrum document"),
+    );
+    withheld(
+        service
+            .begin_spectrum_export(&spectrum, "svg", &full_spectrum_range(), &settings)
+            .expect_err("no spectrum figure"),
+    );
+    withheld(
+        service
+            .begin_chromatogram_export(&chromatogram, "csv", &full_run_range(), traces, &settings)
+            .expect_err("no chromatogram document"),
+    );
+    withheld(
+        service
+            .begin_linked_figure_export(
+                &chromatogram,
+                &spectrum,
+                "svg",
+                &full_run_range(),
+                traces,
+                &settings,
+            )
+            .expect_err("no linked figure"),
+    );
+    let outcome = service.preview_figure(
+        &FigurePreviewRequestDto {
+            request_id: 7,
+            source: FigurePreviewSourceDto::Spectrum {
+                token: spectrum.clone(),
+                range: full_spectrum_range(),
+            },
+            settings,
+        },
+        service.workspace_drop_document_epoch(),
+    );
+    assert!(
+        matches!(
+            &outcome,
+            FigurePreviewOutcomeDto::Refused { error, .. } if error.kind == "view_export_withheld"
+        ),
+        "{outcome:?}"
+    );
+    // Not an export: the viewport still draws the spectrum it names.
+    service
+        .project_selected_spectrum(&spectrum, low, high)
+        .expect("the viewed spectrum is drawn");
+}
+
+#[test]
+fn a_qc_capture_of_a_viewed_preview_is_refused_by_its_own_name() {
+    let session = viewing("raw-view-qc");
+    let (operation, _) = ready(&session.view());
+    session.open(operation).expect("the view opens");
+    assert_eq!(
+        session
+            .service
+            .retained_run_summary(&session.handle, "any-token")
+            .map(|_| ())
+            .expect_err("a viewed preview has no summary to copy"),
+        RetainedSummaryRefusal::ViewedThroughCache
+    );
 }

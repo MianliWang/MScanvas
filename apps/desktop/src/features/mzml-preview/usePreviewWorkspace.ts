@@ -13,6 +13,7 @@ import {
 
 import type { WorkspaceClearAction, WorkspaceClearOutcome } from "./contracts";
 import { usePreviewApi } from "./api";
+import { useRawView, type RawViewControl } from "./useRawView";
 import type { ConversionOperation } from "./useConversionOperation";
 import { useConversionOperation } from "./useConversionOperation";
 import type { ConversionPlanView } from "./useConversionPlan";
@@ -757,6 +758,10 @@ export interface PreviewWorkspace {
   readonly activateDataset: (handle: string) => boolean;
   /** Reads the active dataset again, after a failure or a backend change. */
   readonly previewActiveAgain: () => void;
+  /** The one-click view of a Thermo RAW row (ADR 0060): the operation, and its polling. */
+  readonly rawView: RawViewControl;
+  /** Opens a ready view operation's cached copy as its row's preview. */
+  readonly openRawView: (operation: number, handle: string) => void;
   /** A bounded account of the last workspace action, for display and for a live region. */
   readonly workspaceNotice: WorkspaceNotice | null;
   readonly dismissWorkspaceNotice: () => void;
@@ -1288,6 +1293,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     };
   }, []);
 
+  // The one-click view asks about the highlighted Thermo RAW row, and opens an
+  // operation that became ready only while that row is still the highlighted
+  // one: the open never takes the screen from what the reader is looking at
+  // (ADR 0060 decision 3).
+  const highlightedRaw = roster.focused !== null && roster.selected.has(roster.focused)
+    && roster.datasets.some((row) => row.handle === roster.focused && row.sourceKind === "thermo_raw")
+    ? roster.focused : null;
+  const openRawViewRef = useRef<(operation: number, handle: string) => void>(() => undefined);
+  const rawView = useRawView(api, highlightedRaw, (operation, handle) => {
+    if (handle === highlightedRaw) openRawViewRef.current(operation, handle);
+  });
+  const { busyRef: rawViewBusyRef, refresh: refreshRawView } = rawView;
+
   const recordMeasurement = useCallback(
     (name: PreviewMeasurementName, milliseconds: number, detail: PreviewMeasurementDetail) => {
       setMeasurements((current) => appendMeasurement(current, { name, milliseconds, detail }));
@@ -1687,8 +1705,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     applyInstallationChange(() => api.useAutomaticDiscovery(), true);
   }, [api, applyInstallationChange]);
 
+  // `open` is the one thing a viewed RAW row's open does differently: the
+  // tokens, the authority and the viewer's lifecycle stay this one path.
   const loadPreview = useCallback(
-    (handle: string, startedAt: number) => {
+    (handle: string, startedAt: number, open: () => Promise<Preview> = () => api.openPreview(handle)) => {
       previewToken.current += 1;
       const token = previewToken.current;
       // A new read invalidates any spectrum still in flight, including the
@@ -1717,8 +1737,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       // generation of its own, so this is the only way to tell an answer about
       // the backend in use from an answer about one that has been replaced.
       const revisionAtRequest = renderedAuthority.current?.revision ?? -1;
-      void api
-        .openPreview(handle)
+      void open()
         .then((loaded) => {
           // Landed, so it is no longer a reply to protect. Cleared before any
           // state is set rather than in a `finally`, which runs a microtask
@@ -2074,12 +2093,30 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     [loadPreview],
   );
 
+  const openRawView = useCallback(
+    (operation: number, handle: string) => {
+      // One viewer read at a time. It stays ready, and the row's pane offers Open.
+      if (backendBusyRef.current || viewerRequests.current > 0) {
+        refreshRawView();
+        return;
+      }
+      loadPreview(handle, now(), () => api.openRawView(operation).finally(refreshRawView));
+    },
+    [api, loadPreview, refreshRawView],
+  );
+  openRawViewRef.current = openRawView;
+
   const previewActiveAgain = useCallback(() => {
     const handle = rosterRef.current.active;
-    if (handle !== null) {
+    if (handle === null) return;
+    // A viewed row is read only through a view. A failed open left its entry in
+    // the cache, so this is a hit (ADR 0060 decision 10).
+    if (rosterRef.current.datasets.some((row) => row.handle === handle && row.sourceKind === "thermo_raw")) {
+      rawView.begin(handle);
+    } else {
       activateDataset(handle);
     }
-  }, [activateDataset]);
+  }, [activateDataset, rawView.begin]);
 
   const admitProjectInput = useCallback(
     (result: WorkspaceAddResult) => {
@@ -2565,7 +2602,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
           hasLoadedPreview: handle !== null,
           backendUsable: backendUsableRef.current,
           backendBusy: backendBusyRef.current,
-          conversionBusy: conversionBusyRef.current,
+          conversionBusy: conversionBusyRef.current || rawViewBusyRef.current,
         })
       ) {
         return;
@@ -3666,6 +3703,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
    * start?*, which stays `ConversionConfigurationProbeAdmission`'s.
    */
   const configurationProbe = useConversionProbeLane();
+  // A running view holds the conversion slot, and Rust refuses what a running
+  // queue refuses (ADR 0060 decision 5). These gates are what stop the interface
+  // asking, as they do for a read.
+  const previewLaneBusy = previewBackendBusy || rawView.busy;
   /**
    * The conversion lane's facts that this hook owns, as a render sees them.
    *
@@ -3678,7 +3719,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     () => ({
       backendUsable,
       backendChanging: backendBusy,
-      previewReading: previewBackendBusy,
+      previewReading: previewLaneBusy,
       configurationProbing: configurationProbe.probing,
       workspaceSettling,
     }),
@@ -3686,7 +3727,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendBusy,
       backendUsable,
       configurationProbe.probing,
-      previewBackendBusy,
+      previewLaneBusy,
       workspaceSettling,
     ],
   );
@@ -3706,7 +3747,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendChanging: backendBusyRef.current,
       // A count rather than a flag, so a stale read settling never clears the
       // marker a newer one is relying on.
-      previewReading: viewerRequests.current > 0,
+      previewReading: viewerRequests.current > 0 || rawViewBusyRef.current,
       // The probe's own synchronous half, written beside its rendered twin in
       // `useConversionProbeLane`. A conversion dispatched in the same commit
       // that issued a configuration read has to see the claim the read raised,
@@ -3719,7 +3760,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         dropBusyRef.current ||
         folderReservationPendingRef.current,
     }),
-    [configurationProbe.probingRef],
+    [configurationProbe.probingRef, rawViewBusyRef],
   );
   const conversion = useConversionOperation(
     acceptDeliveredAuthority,
@@ -3744,9 +3785,9 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendChanging: backendBusy,
       laneClaimed: conversion.lane.laneClaimed,
       reclaimingStaging: conversion.reclaimingStaging,
-      previewReading: previewBackendBusy,
+      previewReading: previewLaneBusy,
     }),
-    [backendBusy, backendQuarantined, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewBackendBusy],
+    [backendBusy, backendQuarantined, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewLaneBusy],
   );
   /**
    * The same four facts, from the refs each of them is written beside.
@@ -3767,9 +3808,9 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendChanging: backendBusyRef.current,
       laneClaimed: conversion.laneClaimedRef.current,
       reclaimingStaging: conversion.reclaimingStagingRef.current,
-      previewReading: viewerRequests.current > 0,
+      previewReading: viewerRequests.current > 0 || rawViewBusyRef.current,
     }),
-    [conversion.laneClaimedRef, conversion.reclaimingStagingRef],
+    [conversion.laneClaimedRef, conversion.reclaimingStagingRef, rawViewBusyRef],
   );
   /**
    * The projection the banner's reading was taken at, where one is rendered.
@@ -3800,10 +3841,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       backendChanging: backendBusy,
       laneClaimed: conversion.lane.laneClaimed,
       reclaimingStaging: conversion.reclaimingStaging,
-      previewReading: previewBackendBusy,
+      previewReading: previewLaneBusy,
       probeInFlight: configurationProbe.probing,
     }),
-    [backendBusy, configurationProbe.probing, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewBackendBusy],
+    [backendBusy, configurationProbe.probing, conversion.lane.laneClaimed, conversion.reclaimingStaging, previewLaneBusy],
   );
   // **Before the configuration read, and that ordering is the decision.** A
   // `BEGIN` that resolves a replacement and refuses leaves a check and a read
@@ -3837,6 +3878,13 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     readPlanAuthority,
     acceptDeliveredAuthority,
   );
+  // Decision 12: the highlighted row's availability is read again whenever the
+  // backend, the queue or the build's catalog moves.
+  const conversionStatus = conversion.state.status;
+  const configurationStatus = conversionConfiguration.configuration?.configuration;
+  useEffect(() => {
+    if (highlightedRaw !== null) refreshRawView();
+  }, [backendBusy, backendQuarantined, configurationStatus, conversionStatus, highlightedRaw, projection, refreshRawView]);
   const { readCurrent: readCurrentConversionPlan } = conversionPlan;
   const { convert: dispatchConversion } = conversion;
   const convertCurrentPlan = useCallback((identity: ConversionPlanIdentity) => {
@@ -3940,9 +3988,9 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         // there would take away a selection the operation would have made, and
         // would say a conversion was running while a text file finished being
         // written.
-        conversionBusy: conversion.lane.laneClaimed,
+        conversionBusy: conversion.lane.laneClaimed || rawView.busy,
       }),
-    [backendBusy, backendUsable, conversion.lane.laneClaimed, hasLoadedPreview],
+    [backendBusy, backendUsable, conversion.lane.laneClaimed, hasLoadedPreview, rawView.busy],
   );
   const spectrumSelectionAvailable = spectrumSelection.status === "available";
 
@@ -4348,6 +4396,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     clearList,
     activateDataset,
     previewActiveAgain,
+    rawView,
+    openRawView,
     workspaceNotice,
     dismissWorkspaceNotice,
     focusAddFilesToken,

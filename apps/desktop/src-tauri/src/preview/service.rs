@@ -498,6 +498,9 @@ fn describe_outcomes(
 /// Why a retained run summary cannot be handed to a QC capture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RetainedSummaryRefusal {
+    /// The row's preview is a cached view, whose summary would be the converted
+    /// copy's and not the RAW's (ADR 0060 decision 11).
+    ViewedThroughCache,
     /// The token names no summary this session still retains, or the one it
     /// names is of a different row.
     NotCurrent,
@@ -1715,6 +1718,15 @@ impl PreviewService {
         token: &str,
     ) -> Result<(Arc<RunSummaryResult>, PreviewProducerFacts), RetainedSummaryRefusal> {
         let row = DatasetId::parse(handle).ok_or(RetainedSummaryRefusal::RowGone)?;
+        if self
+            .workspace()
+            .runtime
+            .get(&row)
+            .and_then(|state| state.preview.as_ref())
+            .is_some_and(|preview| preview.view.is_some())
+        {
+            return Err(RetainedSummaryRefusal::ViewedThroughCache);
+        }
         // The slot is a leaf: copied out of and let go of before the workspace
         // is asked anything.
         let snapshot = self
@@ -3584,6 +3596,7 @@ impl PreviewService {
     /// chose an m/z window would send them to the wrong control.
     fn spectrum_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
         match refusal {
+            BeginExportRefusal::ViewedThroughCache => super::raw_view::view_export_withheld(),
             BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
             BeginExportRefusal::Stale => spectrum_export_stale(),
             BeginExportRefusal::RangeOutsideSource => spectrum_range_outside_source(),
@@ -3602,6 +3615,7 @@ impl PreviewService {
     /// How a lane refusal reads for the linked two-panel surface.
     fn linked_figure_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
         match refusal {
+            BeginExportRefusal::ViewedThroughCache => super::raw_view::view_export_withheld(),
             BeginExportRefusal::AlreadyExporting => scientific_export_in_progress(),
             // One sentence for either token, because a reader cannot act on
             // which of the two moved: both mean "what this was about is not
@@ -3626,6 +3640,7 @@ impl PreviewService {
     /// How a lane refusal reads for the chromatogram surface.
     fn chromatogram_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
         match refusal {
+            BeginExportRefusal::ViewedThroughCache => super::raw_view::view_export_withheld(),
             BeginExportRefusal::AlreadyExporting => scientific_export_in_progress(),
             BeginExportRefusal::Stale => chromatogram_export_stale(),
             BeginExportRefusal::RangeOutsideSource => chromatogram_range_outside_source(),
@@ -7639,6 +7654,7 @@ impl PreviewService {
             spectrum_table,
             qc_snapshot_token: qc_snapshot_token.map(|token| token.as_wire()),
             qc_producer_identified,
+            view_source: None,
         })
     }
 

@@ -3,7 +3,8 @@ import { memo, useMemo } from "react";
 import { Disclosure, Icon, IconButton } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { UiMessage } from "../preferences/i18n";
-import type { Metadata, RunSummary, SelectedFile, SelectedSpectrum } from "./contracts";
+import { SOURCE_KIND_LABEL, type Metadata, type RunSummary, type SelectedFile, type SelectedSpectrum, type ViewSource } from "./contracts";
+import { viewSourceSettings } from "./RawViewPane";
 import {
   formatByteLength,
   formatCount,
@@ -114,13 +115,15 @@ export interface PreviewMetadataProps {
   readonly metadata: Metadata;
   /** The spectrum list's own total, which is produced by a separate read. */
   readonly spectrumListTotal: number;
+  /** What a viewed Thermo RAW file was converted with (ADR 0060 decision 11). */
+  readonly viewSource?: ViewSource | null;
 }
 
 /**
  * The Metadata tab: what the loaded acquisition is, as the run summary reports
  * it, and the file's own metadata sections in the file's own words.
  */
-export const PreviewMetadata = memo(function PreviewMetadata({ file, runSummary, metadata, spectrumListTotal }: PreviewMetadataProps) {
+export const PreviewMetadata = memo(function PreviewMetadata({ file, runSummary, metadata, spectrumListTotal, viewSource = null }: PreviewMetadataProps) {
   const t = useUiMessages();
   // The run summary and the spectrum list are two separate reads of the same
   // file. When they disagree, showing one number here and a different one over
@@ -128,6 +131,18 @@ export const PreviewMetadata = memo(function PreviewMetadata({ file, runSummary,
   const countsDisagree = runSummary.totalSpectrumCount !== spectrumListTotal;
   return (
     <section aria-labelledby="preview-metadata-heading" className="preview-metadata">
+      {viewSource === null ? null : <div className="inspector-section" data-view-source="">
+        <h2>{t("rawViewMetadataTitle")}</h2>
+        <dl className="metadata-list">
+          <div><dt>{t("rawViewMetadataSource")}</dt><dd>{viewSource.sourceFileName} · {SOURCE_KIND_LABEL[viewSource.sourceKind]}</dd></div>
+          <div><dt>{t("rawViewMetadataSourceSha")}</dt><dd className="metadata-digest">{viewSource.sourceSha256}</dd></div>
+          <div><dt>{t("rawViewMetadataConvertedBy")}</dt><dd>ProteoWizard {viewSource.providerRelease}</dd></div>
+          <div><dt>{t("rawViewMetadataConverterSha")}</dt><dd className="metadata-digest">{viewSource.providerSha256}</dd></div>
+          <div><dt>{t("rawViewMetadataSettings")}</dt><dd>{viewSourceSettings(viewSource, t)}</dd></div>
+          <div><dt>{t("rawViewMetadataConvertedAt")}</dt><dd>{viewSource.convertedAt}</dd></div>
+        </dl>
+        {viewSource.verified ? null : <NotVerifiedTag label={{ unverifiedSettings: false, unverifiedBuildRelease: viewSource.unverifiedBuildRelease }} />}
+      </div>}
       <div className="inspector-section">
         <h2 id="preview-metadata-heading">{t("summaryRun")}</h2>
         {countsDisagree ? (

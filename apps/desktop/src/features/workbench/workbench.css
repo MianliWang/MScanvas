@@ -73,6 +73,9 @@
 .status-icon[data-tone="attention"] { color: var(--color-warning); }
 .status-icon[data-tone="danger"] { color: var(--color-danger); }
 .status-busy { flex: none; overflow: hidden; padding: 0 4px; color: var(--color-text-primary); text-overflow: ellipsis; white-space: nowrap; }
+/* A view under way: its sentence gives way before its one button does. */
+.status-raw-view { display: flex; flex: 0 1 auto; min-width: 0; align-items: center; gap: 6px; padding: 0 4px; color: var(--color-text-primary); }
+.status-raw-view .ui-button { flex: none; }
 .status-layout { display: flex; min-width: 0; align-items: center; gap: 6px; margin: 0; }
 .workbench-status .workspace-drop-hint { flex: 0 1000 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The notice gives way; its one recovery does not. */
@@ -454,6 +457,26 @@
 .viewer-skeleton > [aria-hidden="true"] { animation: viewer-skeleton-in 120ms linear 300ms both; }
 @keyframes viewer-skeleton-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .viewer-skeleton > [aria-hidden="true"] { animation-duration: 1ms; } }
+/* A Thermo RAW row's pane (ADR 0060). Running is the viewer's frame, empty, with
+   the phase over it; its line waits 300 ms like the frames, and Cancel does not. */
+.raw-view-pane { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; }
+.raw-view-reason { color: var(--color-warning); font-weight: 600; }
+.raw-view-progress { grid-template-rows: auto minmax(0, 2fr) minmax(0, 3fr); }
+.raw-view-progress:has(.raw-view-note) { grid-template-rows: auto auto minmax(0, 2fr) minmax(0, 3fr); }
+.raw-view-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; min-height: 36px; }
+.raw-view-head .viewer-skeleton-name { flex: 0 1 auto; min-width: 0; padding: 0; }
+.raw-view-phase { display: flex; flex: 1 1 240px; align-items: center; gap: 8px; min-width: 0; color: var(--color-text-secondary); font-size: 12px; animation: viewer-skeleton-in 120ms linear 300ms both; }
+.raw-view-elapsed { color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+.raw-view-bar { flex: 1 1 120px; min-width: 60px; height: 6px; accent-color: var(--color-accent); }
+.raw-view-note { margin: 0; color: var(--color-warning); font-size: 12px; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .raw-view-phase { animation-duration: 1ms; } }
+/* A viewed RAW file's file row: the one line that says why exports are refused. */
+.viewer-file[data-viewed] { grid-template-rows: 36px auto minmax(0, 1fr); }
+.viewer-file[data-viewed] .viewer-tabs > .ui-tabpanel { grid-row: 3; }
+.viewer-file-actions { display: flex; grid-row: 1; grid-column: 3; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; padding: 0 12px; }
+.viewer-file-actions .ui-button { flex: none; }
+.viewer-file-note { grid-row: 2; grid-column: 1 / -1; margin: 0; padding: 2px 12px 4px; color: var(--color-warning); font-size: 12px; font-weight: 600; }
+.metadata-digest { font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
 /* Evidence states (spec 3.6), centred in the card: an icon, one heading, a
    row of buttons. */
 .evidence-state { flex: 1 1 auto; min-height: 0; }

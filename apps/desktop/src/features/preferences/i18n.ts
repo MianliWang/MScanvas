@@ -271,6 +271,14 @@ export interface MessageParameters {
   readonly shellContextProject: { readonly name: string };
   readonly shellContextActivity: { readonly activity: string };
   readonly statusBusy: { readonly reason: string };
+  readonly rawViewShow: { readonly name: string };
+  readonly rawViewPhaseAnnounce: { readonly name: string; readonly phase: string };
+  readonly rawViewReady: { readonly name: string };
+  readonly rawViewOpened: { readonly name: string };
+  readonly rawViewStatus: { readonly name: string; readonly elapsed: string };
+  readonly rawViewBusy: { readonly name: string };
+  readonly rawViewNoSpace: { readonly needed: string; readonly free: string };
+  readonly rawViewFreeNow: { readonly free: string };
 }
 export type MessageArguments<K extends MessageKey> = K extends keyof MessageParameters
   ? [parameters: MessageParameters[K]] : [];

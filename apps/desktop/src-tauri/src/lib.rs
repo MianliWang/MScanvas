@@ -209,6 +209,9 @@ fn project_error(error: project::ProjectError) -> PreviewErrorDto {
         Refusal::PreviewNotCurrent => {
             "The preview on screen is no longer this layer's source. View the source again."
         }
+        Refusal::ViewedThroughCache => {
+            "A viewed RAW file's summary would be its converted copy's. Convert this file, add the output, and capture from that."
+        }
         Refusal::ProducerUnidentified => {
             "MSCanvas cannot identify the ProteoWizard build that produced this preview."
         }
@@ -1372,8 +1375,8 @@ use preview::dto::{
     invalid_workspace_drop_subscription, spectrum_picker_unavailable,
 };
 use preview::raw_view::{
-    RawViewBeginRequestDto, RawViewOperationRequestDto, RawViewStateDto, ViewCacheClearOutcomeDto,
-    ViewCacheSummaryDto,
+    RawViewBeginRequestDto, RawViewOperationRequestDto, RawViewSnapshotDto, RawViewStateDto,
+    RawViewStateRequestDto, ViewCacheClearOutcomeDto, ViewCacheSummaryDto,
 };
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
@@ -2631,13 +2634,15 @@ async fn begin_raw_view(
     Ok(state)
 }
 
-/// The latest view operation, or `idle`. Polled while one runs.
+/// The latest view operation, or `idle`, and whether View can be pressed for
+/// the row named. Polled while one runs; reads none of the file's content.
 #[tauri::command]
 async fn get_raw_view_state(
+    request: RawViewStateRequestDto,
     service: State<'_, SharedService>,
-) -> Result<RawViewStateDto, PreviewErrorDto> {
+) -> Result<RawViewSnapshotDto, PreviewErrorDto> {
     let service = Arc::clone(&service);
-    off_the_async_runtime(move || service.raw_view_state()).await
+    off_the_async_runtime(move || service.raw_view_snapshot(&request)).await
 }
 
 /// Cancels the exact view operation named. A late press answers the state.
