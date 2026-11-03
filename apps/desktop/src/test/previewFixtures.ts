@@ -60,6 +60,7 @@ import type {
   WorkspaceConversionState,
   WorkspaceConversionUpdate,
   WorkspaceRemoveResult,
+  WorkspaceOutputAdoptionOutcome,
   WorkspaceOutputAdoptionResult,
   WorkspaceRoster,
 } from "../features/mzml-preview/contracts";
@@ -1021,6 +1022,12 @@ export interface FakePreviewApiOptions {
     operationId: string,
     roster: () => WorkspaceRoster,
   ) => Promise<WorkspaceOutputAdoptionResult>;
+  /** What adopting one output settles to, as {@link FakePreviewApiOptions.adoption}. */
+  readonly outputAdoption?: (
+    operationId: string,
+    outputId: string,
+    roster: () => WorkspaceRoster,
+  ) => Promise<WorkspaceOutputAdoptionResult>;
   /**
    * What one diagnostics export does.
    *
@@ -1157,6 +1164,8 @@ export interface FakePreviewApi extends PreviewApi {
   readonly diagnosticsExportRequests: readonly string[];
   /** Every operation identifier an adoption was asked for, in order. */
   readonly adoptionRequests: readonly string[];
+  /** Every per-output adoption this fake was asked for, in order. */
+  readonly outputAdoptionRequests: readonly { readonly operationId: string; readonly outputId: string }[];
   /** Every conversion this fake was asked to start, in order. */
   readonly conversionRequests: readonly ConversionRequest[];
   /**
@@ -1573,6 +1582,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
   const itemCancelRequests: { operationId: string; itemIndex: number; attempt: number }[] = [];
   const itemSkipRequests: { operationId: string; itemIndex: number }[] = [];
   const adoptionRequests: string[] = [];
+  const outputAdoptionRequests: { operationId: string; outputId: string }[] = [];
   const diagnosticsExportRequests: string[] = [];
   const spectrumExportRequests: SpectrumExportRequest[] = [];
   const spectrumCopyRequests: SpectrumCopyRequest[] = [];
@@ -1860,6 +1870,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
     itemSkipRequests,
     diagnosticsExportRequests,
     adoptionRequests,
+    outputAdoptionRequests,
     conversionRequests,
     planRequests: () => [...planRequests],
     beginRequests: () => [...beginRequests],
@@ -2271,6 +2282,60 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         roster: snapshot(),
         outcomes,
       };
+    },
+    // Modelled as Rust behaves (ADR 0052): one offered output, recorded on its
+    // item in place of what the item held, or the refusal an output that is
+    // not offered gets.
+    adoptConversionOutput: async (operationId, outputId) => {
+      outputAdoptionRequests.push({ operationId, outputId });
+      if (options.outputAdoption !== undefined) {
+        return await options.outputAdoption(operationId, outputId, snapshot);
+      }
+      const items = conversion.status === "terminal" ? conversion.queue.items : [];
+      const itemIndex = items.findIndex((item) => item.state === "finalized" && outputFileNamesOf(item).length > 0 &&
+        item.finalizedOutputs.some((output) => output.outputId === outputId));
+      const item = items[itemIndex];
+      if (conversion.status !== "terminal" || item === undefined) {
+        throw previewError({ kind: "outputs_not_adoptable", summary: "This queue has no complete finalized output eligible to add.", retryable: false });
+      }
+      const memberIndex = item.finalizedOutputs.findIndex((output) => output.outputId === outputId);
+      const outputFileName = item.finalizedOutputs[memberIndex]?.fileName ?? "";
+      const existing = held.find((entry) => entry.file.fileName === outputFileName);
+      const facts = { itemIndex, memberIndex, sourceHandle: item.datasetHandle, outputFileName };
+      let outcome: WorkspaceOutputAdoptionOutcome;
+      if (existing !== undefined) {
+        outcome = { kind: "alreadyInWorkspace", ...facts, dataset: existing.file };
+      } else if (held.length >= capacity) {
+        outcome = { kind: "refused", ...facts, reason: "workspace_full" };
+      } else {
+        const file: SelectedFile = {
+          handle: `converted-${outputFileName}`,
+          fileName: outputFileName,
+          byteLength: 1_024,
+          sourceKind: "mzml",
+          relativeContext: null,
+          notVerifiedByMscanvas: item.notVerifiedByMscanvas ?? null,
+        };
+        held = [...held, hold(file, null)];
+        outcome = { kind: "added", ...facts, dataset: file };
+      }
+      publishConversion({
+        ...conversion,
+        queue: {
+          ...conversion.queue,
+          items: items.map((other, index) => index !== itemIndex ? other : {
+            ...other,
+            adoption: {
+              kind: "settled" as const,
+              added: outcome.kind === "added" ? 1 : 0,
+              alreadyInWorkspace: outcome.kind === "alreadyInWorkspace" ? 1 : 0,
+              refused: outcome.kind === "refused" ? 1 : 0,
+              refusals: outcome.kind === "refused" ? [outcome.reason] : [],
+            },
+          }),
+        },
+      });
+      return { operationId, retryRound: conversion.queue.retryRound, roster: snapshot(), outcomes: [outcome] };
     },
     // Modelled as Rust behaves: the exact attempt is recorded and the
     // authoritative state is answered with. A test that wants the item to

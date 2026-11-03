@@ -73,7 +73,7 @@ const RETRY_TRANSITION_POLL_MS = 100;
  * finishes between two polls moves the queue from terminal to terminal.
  */
 function describes(
-  adoption: WorkspaceOutputAdoptionResult,
+  adoption: Pick<WorkspaceOutputAdoptionResult, "operationId" | "retryRound">,
   update: WorkspaceConversionUpdate,
 ): boolean {
   return (
@@ -86,6 +86,27 @@ function describes(
 export interface ConversionPlanOptions {
   readonly conflictPolicy: ConversionConflictPolicy;
   readonly destinationPolicy: DestinationPolicy;
+}
+
+/** What the latest Add of one output did (ADR 0052). */
+export type OutputAdoptionAnswer =
+  | { readonly kind: "added" | "alreadyInWorkspace"; readonly handle: string }
+  | { readonly kind: "refused"; readonly reason: string };
+
+/** The per-output answers of one settling of one queue. */
+interface OutputAnswers {
+  readonly operationId: string;
+  readonly retryRound: number;
+  readonly byOutput: ReadonlyMap<string, OutputAdoptionAnswer>;
+}
+
+const NO_OUTPUT_ANSWERS: ReadonlyMap<string, OutputAdoptionAnswer> = new Map();
+
+function outputAnswerOf(result: WorkspaceOutputAdoptionResult): OutputAdoptionAnswer {
+  const [outcome] = result.outcomes;
+  return outcome === undefined ? { kind: "refused", reason: "" }
+    : outcome.kind === "refused" ? { kind: "refused", reason: outcome.reason }
+    : { kind: outcome.kind, handle: outcome.dataset.handle };
 }
 
 export interface ConversionOperation {
@@ -253,8 +274,10 @@ export interface ConversionOperation {
    * reason, so a reload recovers it with everything else.
    */
   readonly backendQuarantined: boolean;
-  /** Adds this terminal queue's finalized outputs to the workspace. */
-  readonly adopt: () => void;
+  /** Adds this terminal queue's finalized outputs, or the one named, to the workspace. */
+  readonly adopt: (outputId?: string) => void;
+  /** What the latest Add of each output did, until the queue-wide Add or a new settling. */
+  readonly outputAnswers: ReadonlyMap<string, OutputAdoptionAnswer>;
   /** Whether there are finalized outputs of this terminal queue to add. */
   readonly canAdopt: boolean;
   /** Whether an adoption this document asked for has not been answered. */
@@ -605,6 +628,7 @@ export function useConversionOperation(
   const reclaimingStagingRef = useRef(false);
   const [reclaimingStaging, setReclaimingStaging] = useState(false);
   const [adoption, setAdoption] = useState<WorkspaceOutputAdoptionResult | null>(null);
+  const [outputAnswers, setOutputAnswers] = useState<OutputAnswers | null>(null);
   // What Rust says about diagnostics for the queue it is reporting. Held whole
   // rather than spread across three pieces of state, because the three arrive
   // together and disagreeing about them is the only way they can be wrong.
@@ -665,6 +689,7 @@ export function useConversionOperation(
     // which can finish fast enough that no running state is ever polled, so
     // "not terminal any more" is not a test that catches it.
     setAdoption((previous) => (previous === null || describes(previous, update) ? previous : null));
+    setOutputAnswers((previous) => (previous === null || describes(previous, update) ? previous : null));
     installedSequence.current = update.sequence;
     // **Raises the claim, and never lowers one this document is holding.**
     //
@@ -1391,7 +1416,7 @@ export function useConversionOperation(
     // adopted rows are missing from.
     !environment.workspaceSettling;
 
-  const adopt = useCallback(() => {
+  const adopt = useCallback((outputId?: string) => {
     // The ref, not the rendered flag. Two activations inside one render both
     // see `adopting` false, and the second would advance the workspace decision
     // count for a request Rust is about to refuse -- which would then make the
@@ -1422,18 +1447,34 @@ export function useConversionOperation(
     setAdopting(true);
     setFailure(null);
     const { operationId } = state;
-    const count = state.queue.adoptableOutputCount;
+    const { retryRound } = state.queue;
+    const count = outputId === undefined ? state.queue.adoptableOutputCount : 1;
+    // One answer per output, and the two kinds of answer never stand together:
+    // a queue-wide summary and a per-output line about the same rows could
+    // disagree (ADR 0052 decision 5).
+    const rememberOutput = (id: string, answer: OutputAdoptionAnswer) => {
+      setAdoption(null);
+      setOutputAnswers((previous) => ({
+        operationId,
+        retryRound,
+        byOutput: new Map(previous?.operationId === operationId && previous.retryRound === retryRound ? previous.byOutput : []).set(id, answer),
+      }));
+    };
     // Taken at dispatch. A drop or an import accepted after Rust commits this
     // and before the reply is applied would otherwise install its newer roster
     // first and have this one installed over it.
     const startedAt = onOutputsAdopted.begin();
-    api
-      .adoptConversionOutputs(operationId)
+    (outputId === undefined ? api.adoptConversionOutputs(operationId) : api.adoptConversionOutput(operationId, outputId))
       .then((result) => {
         adoptingRef.current = false;
         if (mounted.current) {
           setAdopting(false);
-          setAdoption(result);
+          if (outputId === undefined) {
+            setOutputAnswers(null);
+            setAdoption(result);
+          } else {
+            rememberOutput(outputId, outputAnswerOf(result));
+          }
           // The queue is re-read, because the adoption's answer is recorded on
           // it. Rust writes what each item's outputs did onto the row they
           // belong to -- that is what makes the fifth judgement survive a
@@ -1458,7 +1499,14 @@ export function useConversionOperation(
           return;
         }
         setAdopting(false);
-        setFailure({ request: "adopt", count, error: toPreviewError(cause) });
+        const error = toPreviewError(cause);
+        // This refusal's own copy speaks of the whole queue, which is wrong for
+        // one output of a queue that still offers others (ADR 0052 decision 3).
+        if (outputId !== undefined && error.kind === "outputs_not_adoptable") {
+          rememberOutput(outputId, { kind: "refused", reason: error.kind });
+        } else {
+          setFailure({ request: "adopt", count, error });
+        }
       });
   }, [api, onOutputsAdopted, readState, state]);
 
@@ -1556,6 +1604,7 @@ export function useConversionOperation(
     skippingItem,
     backendQuarantined,
     adopt,
+    outputAnswers: outputAnswers?.byOutput ?? NO_OUTPUT_ANSWERS,
     canAdopt,
     adopting,
     eligibleOutputCount,

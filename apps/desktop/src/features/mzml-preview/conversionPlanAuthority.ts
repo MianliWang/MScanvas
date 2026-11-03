@@ -309,12 +309,16 @@ export function planStep(
  * over a transient error. An explicit request re-asks the same question at the
  * next ordinal; nothing automatic does, because an automatic retry keyed on the
  * failure would be this document reacting to its own bookkeeping for ever.
+ *
+ * Only for a failure Rust calls retryable (owner decision A0055 (c), 2026-10-31).
+ * A name collision or a row of the wrong family answers the same question the
+ * same way, so asking it again is not a way out; changing the rows is.
  */
 export function retryStep(
   current: ConversionPlanState,
   nextOrdinal: number,
 ): ConversionPlanStep {
-  return current.status === "failed"
+  return current.status === "failed" && current.error.retryable
     ? { kind: "issue", identity: current.identity, ordinal: nextOrdinal }
     : { kind: "hold" };
 }

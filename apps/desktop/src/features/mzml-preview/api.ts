@@ -242,6 +242,14 @@ export interface PreviewApi {
    */
   adoptConversionOutputs(operationId: string): Promise<WorkspaceOutputAdoptionResult>;
   /**
+   * Adds one finalized output of a terminal queue to the workspace (ADR 0052).
+   *
+   * The same adoption, narrowed to the output named, so the reply holds one
+   * outcome. An output this queue does not offer is refused with
+   * `outputs_not_adoptable`, and nothing is claimed.
+   */
+  adoptConversionOutput(operationId: string, outputId: string): Promise<WorkspaceOutputAdoptionResult>;
+  /**
    * Saves one local, redacted JSON diagnostics file for the terminal queue.
    *
    * Takes the operation identifier the caller is looking at and nothing else.
@@ -496,6 +504,12 @@ export const tauriPreviewApi: PreviewApi = {
     invoke<WorkspaceOutputAdoptionResult>(
       "adopt_workspace_conversion_outputs",
       { operationId },
+      { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
+    ),
+  adoptConversionOutput: (operationId, outputId) =>
+    invoke<WorkspaceOutputAdoptionResult>(
+      "adopt_workspace_conversion_output",
+      { operationId, outputId },
       { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
     ),
   exportConversionDiagnostics: (operationId, onReserved) => {

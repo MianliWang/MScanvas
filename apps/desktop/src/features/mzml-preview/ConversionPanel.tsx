@@ -22,7 +22,7 @@ import { conversionAvailability, conversionNoticeId } from "./conversionAvailabi
 import { OutputOpenActions } from "./OutputOpenActions";
 import { NotVerifiedTag, notVerifiedOf } from "./NotVerifiedTag";
 import { STAGING_STATUS_ID, StagingRecoveryActions } from "./StagingRecoveryActions";
-import { ADOPTION_REFUSAL_LABEL, ConversionItemJudgements } from "./ConversionItemJudgements";
+import { ConversionItemJudgements, notAddedSentence } from "./ConversionItemJudgements";
 import type { ConversionRefusal } from "./conversionNoticeRegistry";
 import { conversionNotices, conversionRefusalNoticeId } from "./conversionNoticeRegistry";
 import { formatByteLength, formatCount, formatDuration } from "./format";
@@ -114,6 +114,10 @@ export interface ConversionPanelProps {
   readonly onSortChange: (sort: SortMode) => void;
   /** The release the bound ProteoWizard build reports, for the plan rail (C11). */
   readonly buildRelease?: string | null;
+  /** The rows the workspace holds, so an added output offers only a live one. */
+  readonly liveDatasetHandles?: ReadonlySet<string>;
+  /** Takes the reader to one roster row (ADR 0052 decision 7). */
+  readonly onShowInWorkbench?: (handle: string) => void;
 }
 
 /**
@@ -130,6 +134,8 @@ export function ConversionPanel({
   onScopeChange,
   onSortChange,
   buildRelease = null,
+  liveDatasetHandles,
+  onShowInWorkbench,
 }: ConversionPanelProps): ReactElement | null {
   const t = useUiMessages();
   const { state } = conversion;
@@ -431,6 +437,8 @@ export function ConversionPanel({
               plan.invalidate();
               startAnother();
             }}
+            liveDatasetHandles={liveDatasetHandles}
+            onShowInWorkbench={onShowInWorkbench}
             conversion={conversion}
             retryAvailability={retryAvailability}
             retryOffered={retryOffered}
@@ -621,7 +629,7 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
   // Every refused output and why, windowed (ADR 0057 decision 3).
   const refusedNames = useMemo(() => (adoption?.outcomes ?? []).flatMap((outcome) => outcome.kind !== "refused" ? [] : [{
     key: `${String(outcome.itemIndex)}-${String(outcome.memberIndex)}`,
-    text: t("m74CnvNotAdded", { name: outcome.outputFileName, reason: t(ADOPTION_REFUSAL_LABEL[outcome.reason as keyof typeof ADOPTION_REFUSAL_LABEL] ?? "m74CnvAdoptUnverified") }),
+    text: notAddedSentence(outcome.outputFileName, outcome.reason, t),
   }]), [adoption, t]);
   // Labelled outputs keep their label in the roster and the project (ADR 0055
   // decision 2), so the action that adds them says so first. A SCIEX set is
@@ -1024,7 +1032,8 @@ function PlanStart(props: PlanProps & {
       {/* An explicit re-ask of the same question, and nothing automatic. A
           plan can fail for a reason the reader cannot act on, and a machine
           whose only exit were a new question would pin `Convert` as refused
-          for the session over one lost reply. */}
+          for the session over one lost reply. A refusal Rust calls final is
+          not offered it: the same question gets the same answer. */}
       {plan.retryOffered ? (
         <Button variant="secondary" size="sm" icon={<Icon name="refresh" />} onClick={plan.retry}>{t("m74CnvDescribeAgain")}</Button>
       ) : null}
@@ -1301,6 +1310,8 @@ function PlanPending({ plan, noBackend }: { readonly plan: ConversionPlanView; r
 function QueueState({
   part,
   onReviewNewPlan,
+  liveDatasetHandles,
+  onShowInWorkbench,
   conversion,
   retryAvailability,
   retryOffered,
@@ -1310,6 +1321,8 @@ function QueueState({
 }: {
   readonly part: "rows" | "summary";
   readonly onReviewNewPlan?: () => void;
+  readonly liveDatasetHandles?: ReadonlySet<string> | undefined;
+  readonly onShowInWorkbench?: ((handle: string) => void) | undefined;
   /** Whether Add is the one primary: not once the next conversion is open. */
   readonly addPrimary?: boolean;
   /** The control that opens the next conversion, under Add (rebuild review 6). */
@@ -1578,7 +1591,24 @@ function QueueState({
                   {item.stagingRecovery !== null && (item.stagingRecovery.status !== "cleaned" || (single?.stagingResidue ?? set?.stagingResidue ?? item.cancellation?.stagingResidue) != null) ? (
                     <StagingRecoveryActions key={item.stagingRecovery.recoveryId} recovery={item.stagingRecovery} enabled={state.status === "terminal" && !conversion.busy && !conversion.backendQuarantined} refusedBy={refusedBy.cleanup} reclaim={conversion.reclaimStaging} onReview={onReviewNewPlan ?? (() => {})} />
                   ) : null}
-                  {item.finalizedOutputs.map(output => <OutputOpenActions key={output.outputId} output={output} />)}
+                  {item.finalizedOutputs.map(output => {
+                    // Rust's answer and nothing else (ADR 0052 decision 3): the
+                    // outputs an item lists for opening include ones that must
+                    // not be adopted one by one, and the item's signals do not
+                    // look at the queue, so only the count says it has settled.
+                    const offered = conversion.eligibleOutputCount > 0 && !conversion.retrying &&
+                      item.state === "finalized" && item.adoption.kind !== "nothingToAdopt";
+                    const answer = conversion.outputAnswers.get(output.outputId) ?? null;
+                    const live = answer !== null && answer.kind !== "refused" && liveDatasetHandles?.has(answer.handle) === true;
+                    return <OutputOpenActions key={output.outputId} output={output} add={offered ? {
+                      onAdd: () => conversion.adopt(output.outputId),
+                      refused: !conversion.canAdopt,
+                      refusedBy: refusedBy.adopt,
+                      answer,
+                      notVerified: itemNotVerified(item),
+                      onShow: live ? onShowInWorkbench ?? null : null,
+                    } : null} />;
+                  })}
                   {/* Where the row's one word stops being the whole answer. The
                       label is a projection and is lossy on purpose; the five
                       judgements it projects from stay inspectable here rather

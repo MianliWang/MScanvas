@@ -1595,6 +1595,10 @@ button:disabled,
   text-align: right;
 }
 
+.metadata-list dd > .not-verified-tag {
+  margin-left: 8px;
+}
+
 .metadata-lines {
   display: grid;
   gap: 5px;

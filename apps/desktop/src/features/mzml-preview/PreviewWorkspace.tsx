@@ -20,6 +20,7 @@ import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportT
 import { resolveConversionScope } from "./conversionScope";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
+import { NotVerifiedTag } from "./NotVerifiedTag";
 import { InspectorClose, PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
@@ -312,12 +313,14 @@ export function PreviewWorkspace() {
   const backendView = presentBackend(workspace.backend, workspace.backendReadingStale, t, workspace.conversion.backendQuarantined);
 
   // Curating the workspace is not backend work, so it stays available when no
-  // ProteoWizard is installed. What it waits for is a picker already on screen,
-  // an installation request whose own modal dialog is open, a folder import
-  // that has not settled, and a workspace change that has not been answered yet
-  // -- the last three because two mutations in flight at once let an older
-  // reply's roster snapshot overwrite a newer one's, and Rust serialises them
-  // anyway, so waiting costs a moment and no more.
+  // ProteoWizard is installed. What it waits for is the start-up installation
+  // check, refused with its visible reason "Checking the installation…" (owner
+  // decision INST-1, 2026-10-31), a picker already on screen, an installation
+  // request whose own modal dialog is open, a folder import that has not
+  // settled, and a workspace change that has not been answered yet -- the last
+  // three because two mutations in flight at once let an older reply's roster
+  // snapshot overwrite a newer one's, and Rust serialises them anyway, so
+  // waiting costs a moment and no more.
   //
   // One expression for both acquisition actions, so they cannot come to mean
   // different things: they are mutually exclusive by construction, and each is
@@ -821,6 +824,7 @@ export function PreviewWorkspace() {
         kind={figureDialog.kind}
         sourceLabel={figureSourceLabel(figureDialog.kind, previewFile?.fileName ?? (preview.status === "loaded" ? preview.preview.file.fileName : null),
           spectrum.status === "loaded" ? spectrum.spectrum : null, t)}
+        notVerified={previewFile?.notVerifiedByMscanvas}
         question={workspace.figurePreviewQuestion(figureDialog.kind)} preview={workspace.previewFigure} onExport={workspace.exportPreviewedFigure}
         onCopy={workspace.copyPreviewedFigure}
         returnTo={figureDialog.returnTo} onClose={() => setFigureDialog(null)} busy={workspace.scientificExportBusy}
@@ -946,6 +950,8 @@ export function PreviewWorkspace() {
             onScopeChange={workspace.setConversionScope}
             onSortChange={(sort) => workspace.dispatchRoster({ type: "sortChanged", sort })}
             buildRelease={backendView.names?.release ?? null}
+            liveDatasetHandles={liveDatasetHandles}
+            onShowInWorkbench={revealInWorkbench}
           />
         </section>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench"}
@@ -955,9 +961,14 @@ export function PreviewWorkspace() {
           // read, then its three views as tabs. One view is mounted at a time;
           // what it shows lives in the workspace, so a switch loses nothing.
           <div className="viewer-file">
-            <h1 id="surface-title-workbench" className="viewer-file-name" title={formatDatasetLabel(previewFile ?? preview.preview.file)}>
-              {formatDatasetLabel(previewFile ?? preview.preview.file)}
-            </h1>
+            <div className="viewer-file-title">
+              <h1 id="surface-title-workbench" className="viewer-file-name" title={formatDatasetLabel(previewFile ?? preview.preview.file)}>
+                {formatDatasetLabel(previewFile ?? preview.preview.file)}
+              </h1>
+              {/* Beside the heading, so the file's name stays the heading's
+                  name (ADR 0055; owner decision A0055 (a)). */}
+              <NotVerifiedTag label={(previewFile ?? preview.preview.file).notVerifiedByMscanvas} />
+            </div>
             <Tabs className="viewer-tabs" label={t("viewerViews")} value={viewerView} onChange={setViewerView} items={[
               { value: "spectra", label: t("viewerTabSpectra") },
               { value: "scans", label: t("viewerTabScans") },

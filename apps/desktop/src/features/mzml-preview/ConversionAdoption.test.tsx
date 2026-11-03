@@ -9,6 +9,10 @@ import {
   availableBackend,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
+  deferred,
+  finalizedAttemptFacts,
+  outputSetReport,
+  previewError,
   quarantinedBackend,
   queueItem,
   queueOf,
@@ -527,5 +531,170 @@ describe("adding converted outputs to the workspace", () => {
       await within(panel).findByRole("button", { name: "Add converted outputs to workspace" }),
     ).not.toHaveAttribute("aria-disabled");
     expect(api.adoptionRequests).toEqual([]);
+  });
+});
+
+/** ADR 0052: one Add per output, offered only where Rust says it is adoptable. */
+describe("adding one converted output", () => {
+  const LABEL = { unverifiedSettings: true, unverifiedBuildRelease: null };
+
+  /** A finalized item whose one output carries the id Rust would mint. */
+  function offered(handle: string, name: string): ConversionQueueItem {
+    return {
+      ...converted(handle, name),
+      ...finalizedAttemptFacts(),
+      finalizedOutputs: [{ outputId: `out-${handle}`, fileName: name.replace(/\.raw$/i, ".mzML") }],
+    };
+  }
+
+  function terminalOf(items: readonly ConversionQueueItem[]): WorkspaceConversionState {
+    return { status: "terminal", operationId: "1", reason: "completed", queue: queueOf([...items]) };
+  }
+
+  const group = (panel: HTMLElement, name: string): HTMLElement =>
+    within(panel).getByRole("group", { name: `Locate ${name}` });
+  const addIn = (panel: HTMLElement, name: string): HTMLElement =>
+    within(group(panel, name)).getByRole("button", { name: UI_RESOURCES.en.outputAdd });
+
+  it("adds exactly that output, says so on its own line and takes back the queue's summary", async () => {
+    const api = apiWith(terminalOf([offered("file-1", "run-1.raw"), offered("file-2", "run-2.raw")]));
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => { expect(rows()).toHaveLength(2); });
+
+    // The queue-wide action first, so there is a summary to take back.
+    fireEvent.click(within(panel).getByRole("button", { name: "Add converted outputs to workspace" }));
+    await within(panel).findByText("2 added, 0 already in the workspace, 0 not added.");
+    await waitFor(() => { expect(rows()).toHaveLength(4); });
+
+    fireEvent.click(addIn(panel, "run-1.mzML"));
+    await waitFor(() => { expect(api.outputAdoptionRequests).toEqual([{ operationId: "1", outputId: "out-file-1" }]); });
+    await within(group(panel, "run-1.mzML")).findByText(UI_RESOURCES.en.outputAlreadyInWorkspace);
+    expect(within(group(panel, "run-2.mzML")).queryByText(UI_RESOURCES.en.outputAlreadyInWorkspace)).toBeNull();
+    expect(panel.querySelector(".conversion-adoption-summary")?.textContent).toBe("");
+    expect(api.adoptionRequests).toEqual(["1"]);
+
+    // Still offered: a row the reader removes tomorrow can be added again.
+    expect(addIn(panel, "run-1.mzML")).not.toHaveAttribute("aria-disabled");
+
+    // And the queue-wide answer takes the per-output one back.
+    fireEvent.click(within(panel).getByRole("button", { name: "Add converted outputs to workspace" }));
+    await within(panel).findByText("0 added, 2 already in the workspace, 0 not added.");
+    expect(within(group(panel, "run-1.mzML")).queryByText(UI_RESOURCES.en.outputAlreadyInWorkspace)).toBeNull();
+  });
+
+  it("offers the added row in the Workbench, by name, only while it is live", async () => {
+    const api = apiWith(terminalOf([offered("file-1", "run-1.raw")]));
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => { expect(rows()).toHaveLength(2); });
+    const showName = "Show in Workbench: run-1.mzML";
+    expect(within(panel).queryByRole("button", { name: showName })).toBeNull();
+
+    fireEvent.click(addIn(panel, "run-1.mzML"));
+    await within(group(panel, "run-1.mzML")).findByText(UI_RESOURCES.en.outputAdded);
+    await waitFor(() => { expect(rows()).toHaveLength(3); });
+
+    fireEvent.click(await within(group(panel, "run-1.mzML")).findByRole("button", { name: showName }));
+    await waitFor(() => { expect(document.getElementById("workbench-evidence")).not.toHaveAttribute("hidden"); });
+  });
+
+  it("shows the label beside Add for a labelled output, and none otherwise", async () => {
+    const api = apiWith(terminalOf([{ ...offered("file-1", "run-1.raw"), notVerifiedByMscanvas: LABEL }, offered("file-2", "run-2.raw")]));
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await within(panel).findByRole("group", { name: "Locate run-1.mzML" });
+    expect(group(panel, "run-1.mzML").querySelector("[data-not-verified]")?.textContent).toBe(UI_RESOURCES.en.m74CnvNotVerified);
+    expect(group(panel, "run-2.mzML").querySelector("[data-not-verified]")).toBeNull();
+  });
+
+  it("keeps the opening actions but offers no Add where Rust offers none", async () => {
+    const cases: readonly [string, WorkspaceConversionState][] = [
+      // A finalized item already reads `notRequested` while its queue runs;
+      // only the queue's count tells a settled queue from one under way.
+      ["a queue still running", { status: "running", operationId: "1", queue: queueOf([offered("file-1", "run-1.raw"), queueItem("file-2", "run-2.raw", { state: "running", attempts: 1 })]) }],
+      // The finalized prefix of a partial set is listed for opening and is
+      // never adopted one by one (ADR 0027).
+      ["a partial set's prefix", terminalOf([queueItem("file-1", "run-1.wiff", {
+        state: "finalized",
+        attempts: 1,
+        ...finalizedAttemptFacts(),
+        adoption: { kind: "nothingToAdopt" },
+        finalizedOutputs: [{ outputId: "out-prefix", fileName: "run-1.mzML" }],
+        result: { kind: "outputSet", report: outputSetReport("file-1", ["run-1.mzML"], { completeSetAdoptable: false }) },
+      })])],
+      ["an item that did not finalize", terminalOf([{ ...offered("file-1", "run-1.raw"), state: "failed", adoption: { kind: "nothingToAdopt" } }])],
+    ];
+    for (const [name, state] of cases) {
+      const view = render(
+        <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+          <PreviewApiProvider value={createFakePreviewApi({ initialDatasets: DATASETS, availability: availableBackend, initialConversion: state })}>
+            <App />
+          </PreviewApiProvider>
+        </WorkspaceDropTransportProvider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
+      const panel = await screen.findByRole("region", { name: "Convert" });
+      await waitFor(() => { expect(panel.querySelector(".conversion-run-list"), name).not.toBeNull(); });
+      expect(within(panel).queryByRole("button", { name: UI_RESOURCES.en.outputAdd }), name).toBeNull();
+      if (name === "a partial set's prefix") {
+        const locate = await within(panel).findByRole("group", { name: "Locate run-1.mzML" });
+        expect(within(locate).getByRole("button", { name: UI_RESOURCES.en.outputOpenFile })).toBeVisible();
+      }
+      view.unmount();
+    }
+  });
+
+  it("says a refused output on its own line, not in the queue's words", async () => {
+    const api = apiWith(terminalOf([offered("file-1", "run-1.raw")]), {
+      outputAdoption: () => Promise.reject(previewError({ kind: "outputs_not_adoptable", summary: "whole queue words", retryable: false })),
+    });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(await waitFor(() => addIn(panel, "run-1.mzML")));
+
+    await within(group(panel, "run-1.mzML")).findByText("run-1.mzML was not added: it could not be verified.");
+    expect(within(panel).queryByText(/whole queue words/u)).toBeNull();
+    expect(within(panel).queryByText(UI_RESOURCES.en.m74ErrorNotAdoptable)).toBeNull();
+  });
+
+  it("says why when the workspace is full, and any other refusal goes where the queue-wide one does", async () => {
+    const full: WorkspaceOutputAdoptionResult = {
+      operationId: "1", retryRound: 0, roster: { datasets: DATASETS, capacity: 2 },
+      outcomes: [{ kind: "refused", itemIndex: 0, memberIndex: 0, sourceHandle: "file-1", outputFileName: "run-1.mzML", reason: "workspace_full" }],
+    };
+    let answer: () => Promise<WorkspaceOutputAdoptionResult> = () => Promise.resolve(full);
+    const api = apiWith(terminalOf([offered("file-1", "run-1.raw")]), { outputAdoption: () => answer() });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(await waitFor(() => addIn(panel, "run-1.mzML")));
+    await within(group(panel, "run-1.mzML")).findByText(/^run-1\.mzML was not added: /u);
+
+    answer = () => Promise.reject(previewError({ kind: "adoption_superseded", summary: "moved", retryable: true }));
+    fireEvent.click(addIn(panel, "run-1.mzML"));
+    await within(panel).findByText(new RegExp(UI_RESOURCES.en.m74ErrorAdoptionChanged.replace(/[.]/gu, "\\."), "u"));
+  });
+
+  it("refuses every Add while one is out, keeps it a Tab stop and points at the visible reason", async () => {
+    const pending = deferred<WorkspaceOutputAdoptionResult>();
+    const api = apiWith(terminalOf([offered("file-1", "run-1.raw"), offered("file-2", "run-2.raw")]), { outputAdoption: () => pending.promise });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    const first = await waitFor(() => addIn(panel, "run-1.mzML"));
+    first.focus();
+    fireEvent.click(first);
+    fireEvent.click(first);
+    expect(first).toHaveFocus();
+    await waitFor(() => { expect(first).toHaveAttribute("aria-disabled", "true"); });
+    const second = addIn(panel, "run-2.mzML");
+    expect(second).toHaveAttribute("aria-disabled", "true");
+    expect(second).toHaveAccessibleDescription(UI_RESOURCES.en.m74CnvAdoptInFlight);
+    fireEvent.click(second);
+    expect(api.outputAdoptionRequests).toHaveLength(1);
+
+    pending.resolve({ operationId: "1", retryRound: 0, roster: { datasets: DATASETS, capacity: 1_024 },
+      outcomes: [{ kind: "alreadyInWorkspace", itemIndex: 0, memberIndex: 0, sourceHandle: "file-1", outputFileName: "run-1.mzML", dataset: DATASETS[0] as SelectedFile }] });
+    await within(group(panel, "run-1.mzML")).findByText(UI_RESOURCES.en.outputAlreadyInWorkspace);
+    await waitFor(() => { expect(first).not.toHaveAttribute("aria-disabled"); });
   });
 });
