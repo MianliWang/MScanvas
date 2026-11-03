@@ -4064,6 +4064,14 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // takes the same token, shares the same one figure-operation lane,
             // and answers whether the clipboard was written.
             "copy_selected_spectrum_plot",
+            // The ADR 0061 workspace restore store, on its own boundary like
+            // the preference store.
+            "read_workspace_restore",
+            "save_workspace_restore",
+            "clear_workspace_restore",
+            "set_workspace_restore_enabled",
+            "restore_workspace",
+            "dismiss_restored_row",
         ]
     );
     // The picker command is named for the workspace it fills rather than for
@@ -4102,21 +4110,19 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         "read_environment_diagnostics",
     ];
     for name in &registered[1..] {
+        let called = api.contains(&format!("\"{name}\""))
+            || drop_transport.contains(&format!("\"{name}\""))
+            || preferences.contains(&format!("\"{name}\""))
+            || projects.contains(&format!("\"{name}\""))
+            || presets.contains(&format!("\"{name}\""));
         if awaiting_a_caller.contains(name) {
             assert!(
-                !api.contains(&format!("\"{name}\"")),
+                !called,
                 "the frontend calls {name} now; remove it from awaiting_a_caller"
             );
             continue;
         }
-        assert!(
-            api.contains(&format!("\"{name}\""))
-                || drop_transport.contains(&format!("\"{name}\""))
-                || preferences.contains(&format!("\"{name}\""))
-                || projects.contains(&format!("\"{name}\""))
-                || presets.contains(&format!("\"{name}\"")),
-            "the frontend never calls {name}"
-        );
+        assert!(called, "the frontend never calls {name}");
     }
     assert!(
         !api.contains("\"choose_mzml_file\""),

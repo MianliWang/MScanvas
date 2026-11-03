@@ -492,3 +492,15 @@
      line inside the head's 36 px, whole; a third stays hidden. */
   .spectrum-head-facts { height: auto; max-height: 36px; }
 }
+
+/* The restore notice: the offer, then the marked rows, which scroll in their own
+   short list so Restore workspace and Start fresh stay on screen. */
+.restore-notice .ui-button { flex: none; }
+.restore-marked { display: flex; flex-basis: 100%; flex-direction: column; gap: 2px; max-height: 84px; margin: 2px 0 0; padding: 0; overflow: auto; list-style: none; font-size: 12px; }
+.restore-marked li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.restore-marked .ui-icon-button { width: 26px; height: 26px; min-width: 26px; min-height: 26px; padding: 0; }
+.restore-marked-name { min-width: 0; overflow-wrap: anywhere; color: var(--color-text-primary); font-weight: 600; }
+.restore-marked-group { flex: none; }
+.restore-marked-group::before { content: "· "; }
+.restore-marked-reason { min-width: 0; overflow-wrap: anywhere; }
+.restore-reason { font-size: 12px; }

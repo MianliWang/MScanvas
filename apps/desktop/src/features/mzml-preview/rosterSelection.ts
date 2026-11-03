@@ -16,10 +16,11 @@ import type {
   WorkspaceAddResult,
   WorkspaceOutputAdoptionResult,
   WorkspaceRemoveResult,
+  WorkspaceRestorePutBack,
   WorkspaceRoster,
 } from "./contracts";
 import { formatDatasetLabel } from "./format";
-import { initialOrganization, organize, reconcileOrganization, type OrganizationAction, type OrganizationState } from "../workbench/organization";
+import { initialOrganization, organize, placeRestored, reconcileOrganization, type OrganizationAction, type OrganizationState } from "../workbench/organization";
 import {
   matchesQuery,
   projectRoster,
@@ -115,6 +116,17 @@ export function describeAddResult(result: WorkspaceAddResult): WorkspaceNotice {
     details: details.slice(0, MAX_NOTICE_DETAILS), more: Math.max(0, details.length - MAX_NOTICE_DETAILS), sequence: 0 };
 }
 
+/**
+ * What Restore workspace did, in the sentence that says what it is not: the
+ * rows were added again, not checked against the last session (ADR 0061,
+ * question 10).
+ */
+export function describeRestoreResult(result: WorkspaceRestorePutBack): WorkspaceNotice {
+  const notice = describeAddResult(result.workspace);
+  const added = result.placed.filter(row => row.added).length;
+  return added === 0 ? notice : { ...notice, message: [["noticeRestored", { count: added }], ...notice.message.slice(1)] };
+}
+
 export function describeRemoveResult(result: WorkspaceRemoveResult): WorkspaceNotice {
   const removed = result.removedHandles.length;
   const message: WorkspaceNoticePart[] = [removed === 0 ? ["noticeNoneRemoved"] : ["noticeRemoved", { count: removed }]];
@@ -156,6 +168,12 @@ type CoreRosterAction =
   | {
       readonly type: "outputsAdopted";
       readonly result: WorkspaceOutputAdoptionResult;
+    }
+  | {
+      readonly type: "workspaceRestored";
+      readonly result: WorkspaceRestorePutBack;
+      /** The stored groups, in stored order, so an empty one comes back too. */
+      readonly groups: readonly (string | null)[];
     }
   | { readonly type: "folderImported"; readonly result: FolderIngestionResult }
   | { readonly type: "dropImported"; readonly result: DropIngestionResult }
@@ -450,10 +468,16 @@ export function rosterReducer(state: RosterState, action: RosterAction): RosterS
     for (const outcome of action.result.outcomes) if (outcome.outcome === "added") conversionMembership.add(outcome.dataset.handle);
   } else if (action.type === "outputsAdopted") {
     for (const outcome of action.result.outcomes) if (outcome.kind === "added") conversionMembership.add(outcome.dataset.handle);
+  } else if (action.type === "workspaceRestored") {
+    // The stored checked state, beside whatever this session already checked.
+    for (const row of action.result.placed) if (row.added && row.checked) conversionMembership.add(row.handle);
   }
   const sameMembership = conversionMembership.size === state.conversionMembership.size && [...conversionMembership].every(id => state.conversionMembership.has(id));
+  const organization = reconcileOrganization(state.organization, next.datasets.map(row => row.handle));
   return reconciled({ ...next,
-    organization: reconcileOrganization(state.organization, next.datasets.map(row => row.handle)),
+    organization: action.type === "workspaceRestored"
+      ? placeRestored(organization, action.groups, action.result.placed.filter(row => row.added))
+      : organization,
     conversionMembership: sameMembership ? state.conversionMembership : conversionMembership,
   }, state, preferenceFor(action));
 }
@@ -595,6 +619,27 @@ function transition(state: RosterState, action: CoreRosterAction): Omit<RosterSt
         // looking for these files; they asked for the results of work they had
         // already set up, and a selection they built before that is still the
         // selection they built.
+        selected: new Set([...keptIn(state.selected, live), ...added]),
+      };
+    }
+
+    case "workspaceRestored": {
+      // Like an adoption: the user is keeping what they have, so what they
+      // highlighted stays highlighted and the first row that arrived takes the
+      // tab stop. Reading one is still a thing they ask for.
+      const { roster } = action.result.workspace;
+      const live = handlesOf(roster.datasets);
+      const added = action.result.placed.flatMap(row => row.added ? [row.handle] : []);
+      const first = added[0] ?? survivingHandle(state.focused, live);
+      return {
+        datasets: roster.datasets,
+        capacity: roster.capacity,
+        query: state.query,
+        sort: state.sort,
+        rowState: prunedRowState(state.rowState, live),
+        active: survivingHandle(state.active, live),
+        focused: first,
+        anchor: added[0] ?? survivingHandle(state.anchor, live),
         selected: new Set([...keptIn(state.selected, live), ...added]),
       };
     }

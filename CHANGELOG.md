@@ -4,6 +4,19 @@ All notable changes will be documented here once versioned releases begin.
 
 ## Unreleased
 
+### Added
+
+- **Restore workspace.** MSCanvas remembers the Workbench's files, groups, order
+  and checked rows for the next start, in one document in its own per-user folder.
+  At the next start nothing comes back by itself: a notice says how many files can
+  be added again and lists any that changed, went missing or cannot be reached,
+  with the reason. **Restore workspace** puts them back as adding them would,
+  hashing each file, previews nothing and says they were added again, not verified
+  against the last session. **Start fresh** forgets them, one marked file can be
+  dismissed, and Settings turns restore off, saying that kept-aside copies remain.
+  A file not taken is offered at the next start only; a marked file waits
+  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md)).
+
 ### Changed
 
 - **"Not verified by MSCanvas" follows a labelled output further.** The viewer's

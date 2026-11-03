@@ -442,6 +442,61 @@ function withBackend(verdict: unknown) {
 
 const populated = (locale: Locale) => scenario("populated", locale);
 
+// ---------------------------------------------------------- workspace restore
+
+function restored(rows: readonly unknown[], expired = 0, leftoverCopies = 0, name: string | null = null) {
+  return { outcome: "restored", groups: [{ name, rows }], expired, leftoverCopies };
+}
+
+const restoredRow = (index: number, displayName: string, state: string, context: string | null = null) =>
+  ({ handle: `restored-${String(index)}`, sourceKind: "thermo_raw", displayName, context, checked: true, state });
+
+const RESTORE_OFFER = restored(Array.from({ length: 12 }, (_, index) => restoredRow(index, `QC_${String(index + 1).padStart(2, "0")}.raw`, "matching")), 2);
+
+const RESTORE_MARKED = {
+  outcome: "restored",
+  expired: 0,
+  leftoverCopies: 0,
+  groups: [
+    { name: null, rows: [restoredRow(0, "QC_01.raw", "matching"), restoredRow(1, "QC_02.raw", "matching")] },
+    {
+      name: "Plasma batch 08",
+      rows: [
+        restoredRow(2, "QC_03.raw", "changed", "batch-1"),
+        restoredRow(3, "QC_03.raw", "missing", "batch-2"),
+        restoredRow(4, "blank_01.raw", "unreachable"),
+        restoredRow(5, "blank_02.raw", "unreadable"),
+        restoredRow(6, "blank_03.raw", "unsafe"),
+      ],
+    },
+  ],
+};
+
+const RESTORE_ANSWER = {
+  workspace: { roster: { datasets: [MZML_ROW], capacity: 1024 }, outcomes: [{ outcome: "added", dataset: MZML_ROW }] },
+  placed: [{ handle: MZML_ROW.handle, group: null, checked: true, added: true }],
+};
+
+/** A first run whose start-up read answers `read`. */
+function restoreTable(read: unknown) {
+  return (locale: Locale) => ({ ...emptyTable(locale), read_workspace_restore: read });
+}
+
+/** A change after the start-up read, which is what the first save is. */
+async function toggleTheFirstRow() {
+  await revealRosterRow(MZML_ROW.handle);
+  await frames();
+  await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"] input[type="checkbox"]`).click();
+  await foldNarrowRoster();
+}
+
+async function openRestoreSettings(section: string) {
+  await browser.$("[data-settings-entry]").click();
+  await browser.$("[data-settings-dialog]").waitForDisplayed();
+  await browser.$(section).waitForExist();
+  await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "center" }), section);
+}
+
 const DECLARED_UNITS = { mzUnit: { state: "declared", accession: "MS:1000040" }, intensityUnit: { state: "declared", accession: "MS:1000131" } };
 
 /** The populated world, its selected spectrum declaring `declared` (ADR 0056). */
@@ -1336,6 +1391,71 @@ const STOPS: readonly Stop[] = [
       await frames();
     },
     anchor: '[data-layout-reset][aria-disabled="true"]:focus-visible',
+  },
+  // Workspace restore (ADR 0061): what the start-up read found, over a first run.
+  { name: "restore-loading", table: emptyTable, hold: ["read_workspace_restore"], anchor: '[data-restore="loading"]' },
+  { name: "restore-offer", table: restoreTable(RESTORE_OFFER), anchor: "[data-restore-action]" },
+  { name: "restore-marked", table: restoreTable(RESTORE_MARKED), anchor: "[data-restored-row]" },
+  { name: "restore-expired", table: restoreTable(restored([], 3)), anchor: "[data-restore-expired]" },
+  {
+    // Refused like Add files, and for the same visible reason.
+    name: "restore-refused-busy",
+    table: restoreTable(RESTORE_OFFER),
+    hold: ["inspect_backend"],
+    anchor: '[data-restore-action][aria-disabled="true"]',
+  },
+  {
+    name: "restore-put-back",
+    table: (locale) => ({ ...restoreTable(RESTORE_OFFER)(locale), restore_workspace: RESTORE_ANSWER }),
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await setInvokeResult("read_workspace_restore", restored([]));
+      await browser.$("[data-restore-action]").click();
+      await browser.$(`[data-handle="${MZML_ROW.handle}"]`).waitForExist();
+    },
+    anchor: ".shell-notices .workspace-notice-details, .shell-notices > .notice-neutral",
+  },
+  {
+    name: "restore-read-failed",
+    table: restoreTable({ __reject: { kind: "unexpected_error", summary: "The record could not be read.", detail: null, retryable: true } }),
+    anchor: '[data-restore="read-failed"]',
+  },
+  { name: "restore-document-refused", table: restoreTable({ outcome: "refused", problem: "newerVersion", leftoverCopies: 1 }), anchor: '[data-restore="refused"]' },
+  {
+    name: "restore-later-writer",
+    table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"]',
+  },
+  {
+    name: "restore-too-many",
+    table: (locale) => ({ ...populated(locale), read_workspace_restore: RESTORE_MARKED, save_workspace_restore: { outcome: "refused", problem: "tooManyRows" } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"]',
+  },
+  {
+    name: "settings-restore",
+    table: restoreTable(restored([], 0, 2)),
+    drive: () => openRestoreSettings('[data-restore-settings="leftovers"]'),
+    anchor: '[data-restore-settings="leftovers"]',
+  },
+  {
+    name: "settings-restore-document-refused",
+    table: restoreTable({ outcome: "refused", problem: "malformed", leftoverCopies: 1 }),
+    drive: () => openRestoreSettings('[data-restore-settings="refused"]'),
+    anchor: '[data-restore-settings="refused"]',
+  },
+  {
+    name: "settings-restore-kept",
+    table: restoreTable({ outcome: "refused", problem: "unreadable", leftoverCopies: 0 }),
+    drive: () => openRestoreSettings('[data-restore-settings="refused"]'),
+    anchor: '[data-restore-settings="refused"]',
+  },
+  {
+    name: "settings-restore-unavailable",
+    table: restoreTable({ outcome: "unavailable", problem: "rootUnresolved" }),
+    drive: () => openRestoreSettings('[data-restore-settings="unavailable"]'),
+    anchor: '[data-restore-settings="unavailable"]',
   },
 ];
 

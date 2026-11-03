@@ -21,6 +21,8 @@ import { resolveConversionScope } from "./conversionScope";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
 import { NotVerifiedTag } from "./NotVerifiedTag";
+import { WorkspaceRestoreNotice, announceRestore } from "./WorkspaceRestoreNotice";
+import { useWorkspaceRestore } from "./useWorkspaceRestore";
 import { InspectorClose, PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
@@ -157,6 +159,14 @@ export function PreviewWorkspace() {
     [workspace.roster.datasets],
   );
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
+  const restore = useWorkspaceRestore({
+    roster,
+    rosterReady: workspace.rosterLoad.status === "ready",
+    rosterSettlementToken: workspace.rosterSettlementToken,
+    mutationBusy: workspace.pickerBusy || workspace.folderBusy || workspace.dropBusy || workspace.workspaceBusy || project.busy === "admitting",
+    putBack: workspace.restoreWorkspace,
+    reloadRoster: workspace.reloadRoster,
+  });
   /**
    * The preview on screen, as a QC capture needs it: which row, its opaque
    * run-summary token, and whether its build can be identified. Only a loaded
@@ -546,7 +556,8 @@ export function PreviewWorkspace() {
       <WorkbenchHeader surface={surface} onNavigate={setSurface}
         conversionBusy={workspace.conversion.busy}
         conversionRetained={workspace.conversion.state.status === "terminal"}
-        projectBusy={project.busy !== "idle"} />
+        projectBusy={project.busy !== "idle"}
+        restore={restore} />
 
       {workspace.dropPresentation.status === "idle" ? null : (
         <div
@@ -735,6 +746,9 @@ export function PreviewWorkspace() {
           </div>
         )}
 
+        <WorkspaceRestoreNotice session={restore} canRestore={canAcquire}
+          reason={busyReason === "conversion" ? t("shellConversionRunning") : busyReason} />
+
         {workspace.rosterLoad.status === "failed" && roster.datasets.length > 0 ? (
           <div className="notice notice-danger" role="status">
             <strong>{t("rosterFailed")}</strong>
@@ -816,6 +830,9 @@ export function PreviewWorkspace() {
           inside a region, not a region arriving with its text. */}
       <p aria-live="polite" className="visually-hidden" data-live-region="conversion">
         {announceConversion(workspace.conversion, t)}
+      </p>
+      <p aria-live="polite" className="visually-hidden" data-live-region="restore">
+        {announceRestore(restore, t)}
       </p>
 
       {activeClear !== null ? <ActiveClearDialog returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onEmptyRosterClosed={claim => {

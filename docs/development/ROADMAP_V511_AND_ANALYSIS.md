@@ -649,7 +649,7 @@ The 119 rows the gap table counts as missing (every status except implemented on
 | RO-23 | Row subtitle 'role · batch' | refused-or-deferred | N-A3 |
 | RO-25 | 全选 / 清空: check all, uncheck all | partial | N-S1 |
 | RO-26 | '?' modal explaining the selection gestures | refused-or-deferred | Section 8 (refused) |
-| RO-28 | Roster rows, order and folders are kept and come back | in-open-PR | N-S4 |
+| RO-28 | Roster rows, order and folders are kept and come back | in-open-PR (#177 carries the interface too, 2026-11-03) | N-S4 |
 | SET-01 | Text size standard/large (body, parameters, chart ticks) | not-planned | N-S2 |
 | SET-03 | Text contrast normal/high | not-planned | N-S2 |
 | SET-04 | Motion: follow the system, or reduce | partial | N-S2 |
