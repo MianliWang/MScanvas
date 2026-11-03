@@ -248,6 +248,12 @@ export function ipcTable(
       datasets: [MZML_ROW, VENDOR_ROW],
       capacity: FAKE_WORKSPACE_CAPACITY,
     },
+    // The workspace restore store (ADR 0061): a first run, nothing stored, and
+    // every change recorded. A spec about restore replaces these for itself.
+    read_workspace_restore: { outcome: "restored", groups: [{ name: null, rows: [] }], expired: 0, leftoverCopies: 0 },
+    save_workspace_restore: { outcome: "saved" },
+    clear_workspace_restore: { outcome: "saved" },
+    set_workspace_restore_enabled: { outcome: "saved" },
     subscribe_workspace_drop_updates: null,
     // The conversion slot, and the authority it is answered under. Every
     // response in this shape carries the projection -- the poll included, which

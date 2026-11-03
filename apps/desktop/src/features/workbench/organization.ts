@@ -83,6 +83,32 @@ export function reconcileOrganization(state: OrganizationState, authoritative: r
   return changed ? { ...state, groups, revision: state.revision + 1 } : state;
 }
 
+/**
+ * Puts the rows Restore workspace admitted in the groups they were stored in,
+ * making any named group this session lacks, in stored order. A put-back is not
+ * an organization move, so it records no undo step.
+ */
+export function placeRestored(state: OrganizationState, groupNames: readonly (string | null)[], placed: readonly { readonly handle: string; readonly group: string | null }[]): OrganizationState {
+  let nextId = state.nextId;
+  const groups = [...state.groups];
+  const named = (name: string) => groups.find(group => group.id !== UNGROUPED && group.name === name);
+  for (const name of groupNames) {
+    if (name !== null && named(name) === undefined) {
+      groups.push({ id: `group-${nextId}`, name, collapsed: false, handles: [] });
+      nextId += 1;
+    }
+  }
+  const moving = new Set(placed.map(row => row.handle));
+  const arranged = groups.map(group => ({
+    ...group,
+    handles: [
+      ...group.handles.filter(handle => !moving.has(handle)),
+      ...placed.filter(row => row.group === null ? group.id === UNGROUPED : named(row.group) === group).map(row => row.handle),
+    ],
+  }));
+  return { ...state, groups: arranged, nextId, revision: state.revision + 1 };
+}
+
 /** Captured in data order, including selected rows hidden by search, collapse or windowing. */
 export function captureOrganizationPayload(state: OrganizationState, source: string, highlighted: ReadonlySet<string>): OrganizationPayload | null {
   const membership = arrangedHandles(state);
