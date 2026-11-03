@@ -1854,6 +1854,12 @@ export function TargetedMs1Report({
   const validation = validateFigureDraft(draft);
   const figurePrefix = `targeted-${ids}`;
   const running = output.state.status === "running";
+  /**
+   * The line that says what is running, which every refused output points at:
+   * a figure's own while its target is shown, else the table's, which is there
+   * whichever row is chosen and says nothing about that row.
+   */
+  const runningLine = output.region === "figure" && output.target === chosen ? "figure" : "table";
   /** Whether this control started the output that is running. */
   const initiated = (operation: Operation, target: string | null) =>
     output.state.status === "running" && output.state.operation === operation && output.target === target;
@@ -1916,10 +1922,12 @@ export function TargetedMs1Report({
   }
 
   // Each output is said where it was asked for: a figure's only under the
-  // target it was for.
+  // target it was for. One still running is also said on `runningLine`.
   const status = (region: "figure" | "table", target: string | null) => {
     const state =
-      output.region === region && output.target === target ? output.state : ({ status: "idle" } as const);
+      (output.region === region && output.target === target) || (running && runningLine === region)
+        ? output.state
+        : ({ status: "idle" } as const);
     const detail = state.status === "failed" ? ownedErrorDetail(state.error, t) : null;
     return (
       <p className="targeted-output" role="status" data-targeted-output={state.status} id={`${ids}-${region}-output`}>
@@ -2045,7 +2053,7 @@ export function TargetedMs1Report({
                   // `start` refuses a repeat, keyboard or pointer. Refused, not
                   // native-disabled, and the output line says what is running.
                   refused={running}
-                  reasonId={running ? `${ids}-${output.region}-output` : undefined}
+                  reasonId={running ? `${ids}-${runningLine}-output` : undefined}
                   data-targeted-export={format}
                   onClick={() => exportTable(format)}
                 >
@@ -2213,7 +2221,7 @@ export function TargetedMs1Report({
                               refused={running || problemId !== null}
                               // Refused while another output's picker is out,
                               // pointing at the line that says so.
-                              reasonId={problemId ?? (running ? `${ids}-${output.region}-output` : undefined)}
+                              reasonId={problemId ?? (running ? `${ids}-${runningLine}-output` : undefined)}
                               data-targeted-export={operation}
                               onClick={() => exportFigure(selectedRow.targetId, operation)}
                             >

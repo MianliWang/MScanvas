@@ -1172,22 +1172,24 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
         await releaseInvokeHold("export_targeted_ms1_table");
         await says(
           "savedTable",
-          copy.targetedTableSavedSpreadsheet.replace("{{name}}", fileName).replace("{{count, number}}", "2"),
+          copy.targetedTableSavedSpreadsheet_other.replace("{{name}}", fileName).replace("{{count, number}}", "2"),
         );
         await shot("3-saved");
 
-        // The picker takes any name: a long one stays inside the surface.
+        // The picker takes any name: a long one stays inside the surface. One row reads as one.
         const typedName = `${"plasma_qc_batch_08_replicate_04_".repeat(6)}.csv`;
         await setInvokeResult("export_targeted_ms1_table", {
           status: "saved",
           format: "spreadsheetCsv",
           fileName: typedName,
-          rowCount: 2,
+          rowCount: 1,
         });
         await browser.$(chooser).click();
         await says(
           "savedTable",
-          copy.targetedTableSavedSpreadsheet.replace("{{name}}", typedName).replace("{{count, number}}", "2"),
+          (locale === "en" ? en.targetedTableSavedSpreadsheet_one : zh.targetedTableSavedSpreadsheet_other)
+            .replace("{{name}}", typedName)
+            .replace("{{count, number}}", "1"),
         );
         await shot("3-saved-long-name");
 
@@ -1220,6 +1222,32 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
           const ended = await shot(state);
           expect(ended.buttons.map((button) => button.refused)).toEqual([null, null, null]);
         }
+
+        // A figure's picker out and another row chosen: that row's figure says
+        // nothing, and the table's line is the reason for every refused button.
+        const pickerOut = copy.viewerExportChoose.replace("{{name}}", "SVG");
+        await browser.$(`[data-targeted-choose="${CAFFEINE}"]`).click();
+        await browser.$("[data-targeted-figure-export]").waitForExist();
+        await openDisclosure("[data-targeted-figure-export]");
+        await holdInvoke("export_targeted_ms1_figure");
+        await browser.$('[data-targeted-figure-export] [data-targeted-export="svg"]').click();
+        await browser.waitUntil(async () => (await heldCallers("export_targeted_ms1_figure")) >= 1);
+        await browser.$(`[data-targeted-choose="${ABSENT}"]`).click();
+        await says("running", pickerOut);
+        await browser.$('[data-targeted-figure-export] [data-targeted-output="idle"]').waitForExist();
+        const otherRow = await shot("6-figure-out-other-row");
+        expect(otherRow.buttons.map(({ refused, reason }) => [refused, reason])).toEqual(
+          Array.from({ length: 3 }, () => ["true", pickerOut]),
+        );
+        expect(
+          await browser.execute(() =>
+            [...document.querySelectorAll("[data-targeted-figure-export] [data-targeted-export]")].map(
+              (control) => document.getElementById(control.getAttribute("aria-describedby") ?? "")?.textContent ?? null,
+            ),
+          ),
+        ).toEqual([pickerOut, pickerOut]);
+        await releaseInvokeHold("export_targeted_ms1_figure");
+        await says("idle", "");
 
         // The narrowest the row gets: both panels open beside the report. It
         // stays whole, inside the surface, however it wraps.

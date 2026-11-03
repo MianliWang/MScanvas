@@ -1544,7 +1544,7 @@ export const zhCN = {
   targetedFigureExports: "导出此图",
   targetedTableExports: "导出结果表",
   targetedTableSaved: "已保存 {{name}}，共 {{count, number}} 个目标行。",
-  targetedTableSavedSpreadsheet: "已保存 {{name}}（电子表格 CSV），共 {{count, number}} 个目标行。",
+  targetedTableSavedSpreadsheet_other: "已保存 {{name}}（电子表格 CSV），共 {{count, number}} 个目标行。",
   targetedTableSpreadsheetChoose: "选择电子表格 CSV 文件的保存位置。",
   targetedTableSpreadsheetExport: "导出电子表格 CSV…",
   targetedTableSpreadsheetExporting: "正在导出电子表格 CSV…",
