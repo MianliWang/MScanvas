@@ -380,9 +380,10 @@ async fn save_project_as(
 ///
 /// Registering a file records where it is and what it currently contains. It
 /// asserts nothing about the file being a supported acquisition, and it admits
-/// nothing to the workspace roster. Where the object hashed is a row this
-/// session adopted from a conversion not verified by MSCanvas, its label is
-/// recorded with it (ADR 0055; owner decision 2 of 2026-10-29).
+/// nothing to the workspace roster. Where the object hashed is one this
+/// session finalized from a conversion not verified by MSCanvas, with or
+/// without a row, its label is recorded with it (ADR 0055; owner decisions of
+/// 2026-10-29 and 2026-10-31).
 #[tauri::command]
 async fn add_project_input(
     app: tauri::AppHandle,

@@ -1642,8 +1642,8 @@ impl PreviewService {
     }
 
     /// The "not verified by MSCanvas" label of the row whose primary is the
-    /// object `identity` names, where this session adopted it from a labelled
-    /// conversion (ADR 0055; owner decision 2 of 2026-10-29).
+    /// object `identity` names, where this session finalized it from a labelled
+    /// conversion (ADR 0055; owner decisions of 2026-10-29 and 2026-10-31).
     ///
     /// Asked by a project registration about the object it just hashed, so
     /// the label follows the object whatever route the user registers it by.

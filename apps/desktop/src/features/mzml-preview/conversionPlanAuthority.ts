@@ -445,7 +445,7 @@ export type ConversionStartPlan =
   /** A request is in flight, or one is about to replace an answer that is not
    * about this question. The reader can only wait. */
   | "reading"
-  /** The request for this question failed. The reader can ask again. */
+  /** The request for this question failed. The reader can ask again where Rust calls the failure retryable. */
   | "failed"
   /**
    * No question can be posed, because this binding's settings are not known.

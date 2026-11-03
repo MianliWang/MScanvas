@@ -830,7 +830,10 @@ Each later in its own slice:
   >   field is required on every input, and `unverifiedBuildRelease` is
   >   explicit `null` on a measured build, like every optional value in the
   >   document: an omitted one is `malformed`. A label with neither half set
-  >   is refused as inconsistent.
+  >   is refused as inconsistent. *Decided by the owner on 2026-10-31: a row
+  >   from those routes carries the label, and a reference with no row asks the
+  >   same table, so neither records `null` for a labelled output (decision 3;
+  >   implemented in PR #201).*
   > - ~~**A schema-4 document is refused as `unsupportedVersion`**, like every
   >   other version, and nothing migrates. Beta 1's projects therefore do not
   >   open in this build.~~ Replaced the same day by the read-and-upgrade

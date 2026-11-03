@@ -324,7 +324,8 @@ export interface SelectedFile {
   readonly relativeContext: string | null;
   /**
    * The "not verified by MSCanvas" label of the conversion this session
-   * adopted the row's object from (ADR 0055; owner decision 2 of 2026-10-29).
+   * finalized the row's object from, by whatever route the row came (ADR 0055;
+   * owner decisions of 2026-10-29 and 2026-10-31).
    * `null` is never a claim of verification. Optional only until fixtures
    * carry it; Rust always sends it.
    */

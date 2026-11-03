@@ -312,11 +312,11 @@ pub struct InputRecord {
     pub locator: Locator,
     pub members: Vec<MemberRecord>,
     /// The label of the conversion that produced this input's primary, when
-    /// this session converted and adopted that object and the conversion was
-    /// not verified by MSCanvas. `null` means nothing is recorded, never that
-    /// the input was verified. Explicit like every optional value here: the
-    /// field must be present, so an omitted one is refused rather than read as
-    /// nothing recorded. History, like the baseline: written once, at
+    /// this session finalized that object, by whatever route it was registered,
+    /// and the conversion was not verified by MSCanvas. `null` means nothing is
+    /// recorded, never that the input was verified. Explicit like every optional
+    /// value here: the field must be present, so an omitted one is refused rather
+    /// than read as nothing recorded. History, like the baseline: written once, at
     /// registration.
     #[serde(deserialize_with = "Option::deserialize")]
     pub not_verified_by_mscanvas: Option<NotVerifiedByMscanvas>,
