@@ -336,8 +336,11 @@ What the interface slice needed, as built (2026-11-03):
   of ADR 0006. *Decision (owner, 2026-10-31, question 7):* a bounded number of
   the parent folders above the file, shown only on a collision, never the
   drive, share or root; the amendment is approved in principle and is written
-  with the interface slice. [ADR 0006](0006-multi-dataset-workspace-boundary.md)
-  was amended for it on 2026-11-03; that text has not been shown to the owner.
+  with the interface slice.
+
+  *As built (2026-11-03), not an owner decision, for the owner's eye:*
+  [ADR 0006](0006-multi-dataset-workspace-boundary.md) was amended for it; that
+  text has not been shown to the owner.
 
 ### 5. Bounds
 
