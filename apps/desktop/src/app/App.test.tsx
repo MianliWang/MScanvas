@@ -1945,7 +1945,7 @@ describe("the session workspace roster", () => {
     // whole census exists to catch. The roster's selection count is not among
     // them: it lives in the roster footer, which an empty list does not show.
     const applicationRegions = regions();
-    expect(applicationRegions).toHaveLength(12);
+    expect(applicationRegions).toHaveLength(13);
 
     await pressAddFiles();
 
@@ -2331,7 +2331,7 @@ describe("the session workspace roster", () => {
     renderApp(api);
     await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
     const regions = () => [...document.querySelectorAll("[aria-live='polite']")];
-    expect(regions()).toHaveLength(13);
+    expect(regions()).toHaveLength(14);
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
       target: { value: "QC" },
@@ -2344,7 +2344,7 @@ describe("the session workspace roster", () => {
     // A search that found nothing is not an empty workspace, and the two must
     // not sound alike.
     expect(spoken).not.toContain("The workspace is empty.");
-    expect(regions()).toHaveLength(13);
+    expect(regions()).toHaveLength(14);
   });
 
   it("says the search was cleared rather than falling silent", async () => {

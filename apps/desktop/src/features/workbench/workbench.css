@@ -489,3 +489,14 @@
      line inside the head's 36 px, whole; a third stays hidden. */
   .spectrum-head-facts { height: auto; max-height: 36px; }
 }
+
+/* The restore notice: the offer on one line, then the marked rows, bounded so a
+   long list scrolls inside the notice stack rather than taking the workspace. */
+.restore-notice .ui-button { flex: none; }
+.restore-marked { display: flex; flex-basis: 100%; flex-direction: column; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.restore-marked li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.restore-marked-name { min-width: 0; overflow-wrap: anywhere; color: var(--color-text-primary); font-weight: 600; }
+.restore-marked-group { flex: none; color: var(--color-text-secondary); }
+.restore-marked-group::before { content: "· "; }
+.restore-marked-reason { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.restore-reason { font-size: 12px; }

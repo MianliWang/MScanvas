@@ -256,6 +256,12 @@ function harness(
     openFinalizedOutput: () => Promise.resolve({ status: "refused", reason: "unknownOutput" }),
     planWorkspaceClear: () => Promise.resolve({ Err: "actionInFlight" }),
     executeWorkspaceClear: () => Promise.resolve({ status: "refused", reason: "stalePlan" }),
+    readWorkspaceRestore: () => Promise.reject(new Error("this hook does not read the restore document")),
+    saveWorkspaceRestore: () => Promise.reject(new Error("this hook does not save the restore document")),
+    clearWorkspaceRestore: () => Promise.reject(new Error("this hook does not clear the restore document")),
+    setWorkspaceRestoreEnabled: () => Promise.reject(new Error("this hook does not switch restore")),
+    restoreWorkspace: () => Promise.reject(new Error("this test never restores")),
+    dismissRestoredRow: () => Promise.reject(new Error("this test never dismisses")),
     clearWorkspace: () => Promise.resolve(empty),
     openPreview:
       options.preview ?? (() => Promise.resolve(buildPreview(3, false, options.openGeneration ?? 0))),
