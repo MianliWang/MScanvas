@@ -4923,6 +4923,67 @@ fn a_stored_target_png_carries_its_title_and_description() {
     }
 }
 
+/// A stored result of a labelled reference says so in its SVG and its PNG (owner
+/// decision A0055 (a)), from the document alone, through the one call the
+/// preview and the export both make. One the note cannot name is not drawn.
+#[test]
+fn a_labelled_reference_s_stored_figure_says_so_and_an_unlabelled_one_does_not() {
+    const NOTE: &str = "Not verified by MSCanvas: ProteoWizard 3.0.26204";
+    let scratch = Scratch::new("a0055-targeted");
+    let (store, document, artifact) = saved_with_result(&scratch);
+    let target = store
+        .stored_targeted_result(artifact)
+        .expect("whole")
+        .plan
+        .targets[0]
+        .target_id;
+    let figure = |store: &ProjectStore| {
+        store
+            .targeted_evidence_figure(artifact, target, size(), FigureTheme::Light)
+            .map(|(figure, _)| figure)
+    };
+    let unlabelled = figure(&store).expect("drawn");
+    assert_eq!(unlabelled.source_note(), None);
+    assert!(!mscanvas_plot_spec::svg::render(&unlabelled).contains("Not verified"));
+    drop(store);
+
+    let labelled_as = |release: &str| {
+        let mut value = document_json(&document);
+        value["inputs"][0]["notVerifiedByMscanvas"] = serde_json::json!({
+            "unverifiedSettings": false,
+            "unverifiedBuildRelease": release,
+        });
+        fs::write(&document, serde_json::to_vec(&value).expect("bytes")).expect("write");
+        let reopened = ProjectStore::new();
+        reopened.open_document(&document, false).expect("open");
+        reopened
+    };
+
+    let store = labelled_as("3.0.26204");
+    let labelled = figure(&store).expect("drawn");
+    let svg = mscanvas_plot_spec::svg::render(&labelled);
+    assert!(svg.contains(&format!(">{NOTE}<")), "{svg}");
+    assert!(svg.contains(&format!("<desc>{NOTE}. ")), "{svg}");
+    let settings = crate::preview::dto::FigureSettingsDto {
+        width_px: 1_200,
+        height_px: 640,
+        png_dpi: 300,
+        theme: "light".to_owned(),
+    };
+    let output =
+        crate::preview::scientific_output::FigureOutput::from_wire(&settings).expect("settings");
+    let resolution = output.png_resolution(&settings).expect("a PNG resolution");
+    let png = output.png(&labelled, resolution).expect("a PNG");
+    assert!(String::from_utf8_lossy(&png).contains(NOTE));
+    drop(store);
+
+    let store = labelled_as(&"r".repeat(82));
+    assert_eq!(
+        figure(&store).err(),
+        Some(crate::project::TargetedFigureRefusal::NotDrawable)
+    );
+}
+
 const RTS: [f64; 5] = [100.0, 110.0, 120.0, 130.0, 140.0];
 const M0: [f64; 5] = [0.0, 500.0, 2_000.0, 400.0, 0.0];
 
