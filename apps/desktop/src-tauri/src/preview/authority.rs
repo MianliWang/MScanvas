@@ -228,6 +228,11 @@ pub(crate) struct BackendAuthority {
 }
 
 impl BackendAuthority {
+    /// The identity the current binding was minted from, if it names one.
+    pub(crate) const fn bound_identity(&self) -> Option<&InstallationIdentity> {
+        self.bound_identity.as_ref()
+    }
+
     /// The projection as it stands, for an operation that observed nothing.
     pub(crate) fn projection(&self) -> BackendAuthorityProjection {
         BackendAuthorityProjection {
