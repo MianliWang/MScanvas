@@ -121,9 +121,12 @@ describe("WSP-010 on real Windows", function () {
   });
 
   it("marks a deleted file rather than dropping it, and a dismiss forgets it in the document", async () => {
-    await browser.reloadSession();
+    await relaunch();
+    await browser.$("[data-restore-action]").waitForDisplayed();
+    // After the offer, when no process holds it: a restored row has no lease.
+    // Restore workspace re-checks each row now, and the read after it marks this one.
     rmSync(second);
-    await browser.$("[data-settings-entry]").waitForDisplayed({ timeout: 90_000 });
+    await browser.$("[data-restore-action]").click();
     const missing = browser.$('[data-restored-row][data-state="missing"]');
     await missing.waitForDisplayed();
     await browser.$('[data-restored-row][data-state="missing"] [data-restore-dismiss]').click();
