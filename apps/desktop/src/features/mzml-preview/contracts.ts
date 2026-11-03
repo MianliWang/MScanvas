@@ -425,7 +425,8 @@ export interface WorkspaceArrangement {
 /** One row Restore workspace left in the Workbench, and where it belongs. */
 export interface PlacedRow {
   readonly handle: string;
-  readonly group: string | null;
+  /** The stored group's place among a read's groups: two groups can share a name. */
+  readonly group: number;
   readonly checked: boolean;
   /** `false`: the object was already a row, which keeps its arrangement. */
   readonly added: boolean;

@@ -490,14 +490,18 @@
   .spectrum-head-facts { height: auto; max-height: 36px; }
 }
 
-/* The restore notice: the offer, then the marked rows, which scroll in their own
-   short list so Restore workspace and Start fresh stay on screen. */
+/* The restore notice: the offer, then the marked rows. The notice track is their
+   one scroller, so a list never scrolls inside a scroller and a focus ring is
+   clipped by nothing but the track, which the scroll margin keeps it inside.
+   Each part of a row may take a line of its own and wrap there: a group name can
+   be 120 characters, and the file's name and reason still show. */
 .restore-notice .ui-button { flex: none; }
-.restore-marked { display: flex; flex-basis: 100%; flex-direction: column; gap: 2px; max-height: 84px; margin: 2px 0 0; padding: 0; overflow: auto; list-style: none; font-size: 12px; }
-.restore-marked li { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.restore-marked .ui-icon-button { width: 26px; height: 26px; min-width: 26px; min-height: 26px; padding: 0; }
-.restore-marked-name { min-width: 0; overflow-wrap: anywhere; color: var(--color-text-primary); font-weight: 600; }
-.restore-marked-group { flex: none; }
+.restore-marked { flex-basis: 100%; margin-top: 2px; font-size: 12px; }
+.restore-marked ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.restore-marked li { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.restore-marked .ui-icon-button { flex: none; width: 26px; height: 26px; min-width: 26px; min-height: 26px; padding: 0; scroll-margin-block: 6px; }
+.restore-marked-text { display: flex; flex: 1; flex-wrap: wrap; gap: 0 8px; min-width: 0; padding-block: 3px; }
+.restore-marked-name, .restore-marked-group, .restore-marked-reason { min-width: 0; overflow-wrap: anywhere; }
+.restore-marked-name { color: var(--color-text-primary); font-weight: 600; }
 .restore-marked-group::before { content: "· "; }
-.restore-marked-reason { min-width: 0; overflow-wrap: anywhere; }
 .restore-reason { font-size: 12px; }

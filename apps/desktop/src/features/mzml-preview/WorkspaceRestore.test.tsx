@@ -16,7 +16,7 @@ import { PreviewApiProvider } from "./api";
 import type { RestoredRow, RestoredRowState, WorkspaceRestorePutBack, WorkspaceRestoreRead, WorkspaceRestoreWrite } from "./contracts";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { PreviewWorkspace } from "./PreviewWorkspace";
-import { initialRosterState, rosterReducer } from "./rosterSelection";
+import { describeRestoreResult, initialRosterState, rosterReducer } from "./rosterSelection";
 import { buildArrangement } from "./useWorkspaceRestore";
 
 const en = UI_RESOURCES.en;
@@ -39,6 +39,13 @@ function mount(api: FakePreviewApi) {
 
 const offerNotice = () => document.querySelector<HTMLElement>('[data-restore="offer"]');
 const problemNotice = () => document.querySelector<HTMLElement>('[data-restore="problem"]');
+const stoppedNotice = () => document.querySelector<HTMLElement>('[data-restore="stopped"]');
+const actionNotice = () => document.querySelector<HTMLElement>('[data-restore="action"]');
+const checkbox = () => waitFor(() => {
+  const found = document.querySelector<HTMLElement>(`[data-handle="${selectedFile.handle}"] input[type="checkbox"]`);
+  expect(found).not.toBeNull();
+  return found as HTMLElement;
+});
 const restoreAction = async () => screen.findByRole("button", { name: en.restoreAction });
 
 describe("the arrangement Rust is told", () => {
@@ -61,6 +68,33 @@ describe("the arrangement Rust is told", () => {
       checked: ["file-2", "restored-1"],
     });
   });
+
+  it("keeps no stored group with nothing waiting in it, so a dissolved group does not come back", () => {
+    expect(buildArrangement(initialOrganization, new Set(), [
+      { name: null, rows: [] },
+      { name: "Batch", rows: [] },
+    ])).toEqual({ groups: [{ name: null, handles: [] }], checked: [] });
+  });
+
+  it("keeps two stored groups of one name apart, with and without such groups here", () => {
+    const stored = [
+      { name: null, rows: [] },
+      { name: "Batch", rows: [row("restored-0", "a.raw")] },
+      { name: "Batch", rows: [row("restored-1", "b.raw")] },
+    ];
+    expect(buildArrangement(initialOrganization, new Set(), stored).groups).toEqual([
+      { name: null, handles: [] },
+      { name: "Batch", handles: ["restored-0"] },
+      { name: "Batch", handles: ["restored-1"] },
+    ]);
+    const one = organize(initialOrganization, { type: "create", name: "Batch" });
+    const two = organize(one, { type: "create", name: "Batch" });
+    expect(buildArrangement(two, new Set(), [{ name: "Batch", rows: [] }, { name: "Batch", rows: [row("restored-1", "b.raw")] }]).groups).toEqual([
+      { name: null, handles: [] },
+      { name: "Batch", handles: [] },
+      { name: "Batch", handles: ["restored-1"] },
+    ]);
+  });
 });
 
 describe("what a put-back does to the arrangement", () => {
@@ -77,8 +111,8 @@ describe("what a put-back does to the arrangement", () => {
     const before = rosterReducer(rosterReducer(initialRosterState, { type: "rosterLoaded", roster: { datasets: [live], capacity: 1024 } }),
       { type: "membershipChanged", handles: ["file-0"], checked: true });
     const placed = [
-      { handle: "file-1", group: "Batch", checked: true, added: true },
-      { handle: "file-2", group: null, checked: false, added: true },
+      { handle: "file-1", group: 1, checked: true, added: true },
+      { handle: "file-2", group: 2, checked: false, added: true },
     ];
     const answer = result(placed);
     const after = rosterReducer(before, {
@@ -88,17 +122,32 @@ describe("what a put-back does to the arrangement", () => {
     });
     expect(after.organization.groups.map(group => [group.name, group.handles])).toEqual([
       ["", ["file-0", "file-2"]],
-      ["Empty", []],
       ["Batch", ["file-1"]],
     ]);
     expect([...after.conversionMembership].sort()).toEqual(["file-0", "file-1"]);
     expect(after.organization.history).toHaveLength(0);
   });
 
-  it("leaves a row that was already live where it is", () => {
-    const state = placeRestored(initialOrganization, ["Batch"], []);
-    expect(state.groups.map(group => group.name)).toEqual(["", "Batch"]);
-    expect(placeRestored(state, ["Batch"], []).groups.map(group => group.name)).toEqual(["", "Batch"]);
+  it("makes no group a row does not land in, so a name with only marked rows stays away", () => {
+    expect(placeRestored(initialOrganization, ["Batch"], []).groups.map(group => group.name)).toEqual([""]);
+  });
+
+  it("uses a group of that name that is already here", () => {
+    const here = organize(initialOrganization, { type: "create", name: "Batch" });
+    const state = placeRestored(here, ["Batch"], [{ handle: "file-1", group: 0 }]);
+    expect(state.groups.map(group => [group.name, group.handles])).toEqual([["", []], ["Batch", ["file-1"]]]);
+  });
+
+  it("keeps two stored groups of one name apart", () => {
+    const state = placeRestored(initialOrganization, ["Batch", "Batch"], [{ handle: "file-1", group: 0 }, { handle: "file-2", group: 1 }]);
+    expect(state.groups.map(group => [group.name, group.handles])).toEqual([["", []], ["Batch", ["file-1"]], ["Batch", ["file-2"]]]);
+  });
+
+  it("says a file replaced after the re-check was added, beside the rows that came back", () => {
+    const answer = result([{ handle: "file-1", group: 0, checked: false, added: true }]);
+    const replaced = { ...selectedFile, handle: "file-2" };
+    const notice = describeRestoreResult({ ...answer, workspace: { ...answer.workspace, outcomes: [...answer.workspace.outcomes, { outcome: "added", dataset: replaced }] } });
+    expect(notice.message).toEqual([["noticeRestored", { count: 1 }], ["noticeAdded", { count: 1 }]]);
   });
 });
 
@@ -130,7 +179,7 @@ describe("the restore notice", () => {
         waiting = offered([row("restored-1", "gone.raw", "missing")]);
         return Promise.resolve({
           workspace: { roster: { datasets: [dataset], capacity: 1024 }, outcomes: [{ outcome: "added", dataset }] },
-          placed: [{ handle: "file-1", group: null, checked: false, added: true }],
+          placed: [{ handle: "file-1", group: 0, checked: false, added: true }],
         });
       },
     } });
@@ -232,19 +281,153 @@ describe("the restore notice", () => {
       workspaceRestore: { saveWorkspaceRestore: save },
     });
     mount(api);
-    const row1 = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>(`[data-handle="${selectedFile.handle}"] input[type="checkbox"]`);
-      expect(found).not.toBeNull();
-      return found as HTMLElement;
-    });
+    const row1 = await checkbox();
     // Reads then changes: this is the first change after the baseline.
     await act(async () => { await Promise.resolve(); });
     fireEvent.click(row1);
-    await waitFor(() => expect(problemNotice()).toHaveTextContent(en.restoreProblemChangedElsewhere));
-    expect(within(problemNotice()!).queryByRole("button", { name: en.restoreTryAgain })).toBeNull();
+    await waitFor(() => expect(stoppedNotice()).toHaveTextContent(en.restoreProblemChangedElsewhere));
+    expect(within(stoppedNotice()!).queryByRole("button", { name: en.restoreTryAgain })).toBeNull();
     fireEvent.click(row1);
     await act(async () => { await Promise.resolve(); });
     expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps saying the session is not recorded after a dismiss and a later change", async () => {
+    let rows: readonly RestoredRow[] = [row("restored-0", "a.raw", "missing"), row("restored-1", "b.raw", "missing")];
+    const save = vi.fn<() => Promise<WorkspaceRestoreWrite>>(() => Promise.resolve({ outcome: "refused", problem: "changedElsewhere" }));
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      workspaceRestore: {
+        readWorkspaceRestore: () => Promise.resolve(offered(rows)),
+        saveWorkspaceRestore: save,
+        dismissRestoredRow: (handle) => { rows = rows.filter(entry => entry.handle !== handle); return Promise.resolve(); },
+      },
+    });
+    mount(api);
+    const row1 = await checkbox();
+    await waitFor(() => expect(offerNotice()).not.toBeNull());
+    fireEvent.click(row1);
+    await waitFor(() => expect(stoppedNotice()).not.toBeNull());
+    fireEvent.click(within(offerNotice()!).getByRole("button", { name: "Dismiss a.raw" }));
+    await waitFor(() => expect(document.querySelectorAll("[data-restored-row]")).toHaveLength(1));
+    expect(stoppedNotice()).toHaveTextContent(en.restoreProblemChangedElsewhere);
+    fireEvent.click(row1);
+    await act(async () => { await Promise.resolve(); });
+    expect(stoppedNotice()).toHaveTextContent(en.restoreProblemChangedElsewhere);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[data-live-region="restore"]')).toHaveTextContent(en.restoreProblemChangedElsewhere);
+  });
+
+  it.each([
+    ["changedElsewhere", en.restoreTurnedOffChangedElsewhere],
+    ["identityUnknown", en.restoreTurnedOffIdentityUnknown],
+  ])("says a clear that found %s emptied the record and turned restore off, and offers no retry", async (reason, sentence) => {
+    let off = false;
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(off ? { outcome: "off", leftoverCopies: 0 } : offered([row("restored-0", "a.raw", "missing")])),
+      clearWorkspaceRestore: () => { off = true; return Promise.resolve({ outcome: "turnedOff", problem: reason }); },
+    } });
+    mount(api);
+    await waitFor(() => expect(offerNotice()).not.toBeNull());
+    fireEvent.click(within(offerNotice()!).getByRole("button", { name: en.restoreStartFresh }));
+    await waitFor(() => expect(actionNotice()).not.toBeNull());
+    expect(actionNotice()).toHaveTextContent(`${en.restoreTurnedOff}${sentence}`);
+    expect(within(actionNotice()!).queryByRole("button", { name: en.restoreTryAgain })).toBeNull();
+    fireEvent.click(within(actionNotice()!).getByRole("button", { name: en.dismiss }));
+    expect(actionNotice()).toBeNull();
+  });
+
+  it("keeps a failed Off and its Try again through a later save that went through", async () => {
+    const answers: WorkspaceRestoreWrite[] = [{ outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false }, { outcome: "saved" }];
+    const set = vi.fn((_enabled: boolean) => Promise.resolve(answers.shift() as WorkspaceRestoreWrite));
+    const save = vi.fn<() => Promise<WorkspaceRestoreWrite>>(() => Promise.resolve({ outcome: "saved" }));
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      workspaceRestore: { saveWorkspaceRestore: save, setWorkspaceRestoreEnabled: set },
+    });
+    mount(api);
+    const row1 = await checkbox();
+    fireEvent.click(await screen.findByRole("button", { name: en.settingsEntry }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("radio", { name: en.restoreSwitchOff }));
+    await waitFor(() => expect(dialog.querySelector('[data-restore-settings="action"]')).toHaveTextContent(en.restoreProblemNotPublished));
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(row1);
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    await act(async () => { await Promise.resolve(); });
+    expect(actionNotice()).toHaveTextContent(en.restoreProblemNotPublished);
+    fireEvent.click(within(actionNotice()!).getByRole("button", { name: en.restoreTryAgain }));
+    await waitFor(() => expect(set).toHaveBeenCalledTimes(2));
+    expect(set).toHaveBeenLastCalledWith(false);
+    await waitFor(() => expect(actionNotice()).toBeNull());
+  });
+
+  it("asks a failed dismiss again, for that row, on Try again", async () => {
+    const dismissed: string[] = [];
+    const answers = [() => Promise.reject(new Error("no answer")), () => Promise.resolve()];
+    const save = vi.fn<() => Promise<WorkspaceRestoreWrite>>(() => Promise.resolve({ outcome: "saved" }));
+    let rows: readonly RestoredRow[] = [row("restored-0", "a.raw", "missing"), row("restored-1", "b.raw", "missing")];
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered(rows)),
+      saveWorkspaceRestore: save,
+      dismissRestoredRow: (handle) => {
+        dismissed.push(handle);
+        return (answers.shift() as () => Promise<void>)().then(() => { rows = rows.filter(entry => entry.handle !== handle); });
+      },
+    } });
+    mount(api);
+    await waitFor(() => expect(offerNotice()).not.toBeNull());
+    fireEvent.click(within(offerNotice()!).getByRole("button", { name: "Dismiss b.raw" }));
+    await waitFor(() => expect(actionNotice()).toHaveTextContent(en.restoreNotChanged));
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.click(within(actionNotice()!).getByRole("button", { name: en.restoreTryAgain }));
+    await waitFor(() => expect(dismissed).toEqual(["restored-1", "restored-1"]));
+    await waitFor(() => expect(actionNotice()).toBeNull());
+    expect(document.querySelectorAll("[data-restored-row]")).toHaveLength(1);
+  });
+
+  it("points a refusal at a line that exists while a dismiss runs", async () => {
+    const dismissing = deferred<undefined>();
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw", "missing"), row("restored-1", "b.raw", "missing")])),
+      dismissRestoredRow: () => dismissing.promise,
+    } });
+    mount(api);
+    await waitFor(() => expect(offerNotice()).not.toBeNull());
+    const fresh = within(offerNotice()!).getByRole("button", { name: en.restoreStartFresh });
+    fireEvent.click(within(offerNotice()!).getByRole("button", { name: "Dismiss a.raw" }));
+    await waitFor(() => expect(fresh).toHaveAttribute("aria-disabled", "true"));
+    expect(fresh).toHaveAccessibleDescription(en.restoreBusy);
+    await act(async () => { dismissing.resolve(undefined); await dismissing.promise; });
+    await waitFor(() => expect(fresh).not.toHaveAttribute("aria-disabled"));
+  });
+
+  it("says when there is nowhere to keep a record, above the surfaces and to a screen reader", async () => {
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve({ outcome: "unavailable", problem: "rootUnresolved" }),
+    } });
+    mount(api);
+    const notice = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-restore="unavailable"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(notice).toHaveTextContent(en.restoreUnavailable);
+    expect(document.querySelector('[data-live-region="restore"]')).toHaveTextContent(en.restoreUnavailable);
+    fireEvent.click(within(notice).getByRole("button", { name: en.dismiss }));
+    expect(document.querySelector('[data-restore="unavailable"]')).toBeNull();
+  });
+
+  it("counts the marked rows beside the offered ones, on screen and to a screen reader", async () => {
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw"), row("restored-1", "b.raw", "missing"), row("restored-2", "c.raw", "changed")])),
+    } });
+    mount(api);
+    await restoreAction();
+    expect(offerNotice()).toHaveTextContent("1 file from the last session can be added again.");
+    expect(offerNotice()).toHaveTextContent("2 files from the last session need attention.");
+    expect(document.querySelector('[data-live-region="restore"]')).toHaveTextContent("1 file from the last session can be added again. 2 files from the last session need attention.");
   });
 
   it("answers too many rows with Start fresh and records the session after it", async () => {
@@ -260,11 +443,7 @@ describe("the restore notice", () => {
       },
     });
     mount(api);
-    const row1 = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>(`[data-handle="${selectedFile.handle}"] input[type="checkbox"]`);
-      expect(found).not.toBeNull();
-      return found as HTMLElement;
-    });
+    const row1 = await checkbox();
     await waitFor(() => expect(offerNotice()).not.toBeNull());
     fireEvent.click(row1);
     await waitFor(() => expect(problemNotice()).toHaveTextContent(en.restoreProblemTooManyRows));
@@ -300,11 +479,7 @@ describe("the restore notice", () => {
     const save = vi.fn(() => Promise.resolve(saves.shift() as WorkspaceRestoreWrite));
     const api = createFakePreviewApi({ initialDatasets: [selectedFile], workspaceRestore: { saveWorkspaceRestore: save } });
     mount(api);
-    const row1 = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>(`[data-handle="${selectedFile.handle}"] input[type="checkbox"]`);
-      expect(found).not.toBeNull();
-      return found as HTMLElement;
-    });
+    const row1 = await checkbox();
     await act(async () => { await Promise.resolve(); });
     fireEvent.click(row1);
     await waitFor(() => expect(problemNotice()).toHaveTextContent(en.restoreProblemStaleArrangement));
@@ -315,7 +490,7 @@ describe("the restore notice", () => {
     await waitFor(() => expect(problemNotice()).toBeNull());
   });
 
-  it("asks a failed Start fresh again, and never a later failed save's Try again", async () => {
+  it("shows a failed Start fresh and a later failed save apart, each with its own Try again", async () => {
     const clears: WorkspaceRestoreWrite[] = [{ outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: true }, { outcome: "saved" }];
     const clear = vi.fn(() => Promise.resolve(clears.shift() as WorkspaceRestoreWrite));
     const save = vi.fn<() => Promise<WorkspaceRestoreWrite>>(() => Promise.resolve({ outcome: "failed", problem: "notWritten", retryable: true, temporaryLeftBehind: false }));
@@ -330,14 +505,18 @@ describe("the restore notice", () => {
     mount(api);
     await waitFor(() => expect(offerNotice()).not.toBeNull());
     fireEvent.click(within(offerNotice()!).getByRole("button", { name: en.restoreStartFresh }));
-    await waitFor(() => expect(problemNotice()).toHaveTextContent(en.restoreNotChanged));
-    expect(problemNotice()).toHaveTextContent(en.restoreProblemTemporaryLeft);
+    await waitFor(() => expect(actionNotice()).toHaveTextContent(en.restoreNotChanged));
+    expect(actionNotice()).toHaveTextContent(en.restoreProblemTemporaryLeft);
     const row1 = document.querySelector<HTMLElement>(`[data-handle="${selectedFile.handle}"] input[type="checkbox"]`)!;
     fireEvent.click(row1);
     await waitFor(() => expect(problemNotice()).toHaveTextContent(en.restoreNotRecorded));
+    expect(actionNotice()).toHaveTextContent(en.restoreNotChanged);
     fireEvent.click(within(problemNotice()!).getByRole("button", { name: en.restoreTryAgain }));
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
     expect(clear).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(actionNotice()!).getByRole("button", { name: en.restoreTryAgain }));
+    await waitFor(() => expect(clear).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(actionNotice()).toBeNull());
   });
 
   it("offers Try again for a read that failed, and reads again", async () => {
@@ -398,6 +577,29 @@ describe("the restore settings", () => {
     await waitFor(() => expect(dialog.querySelector('[data-restore-settings="refused"]')).toHaveTextContent(en.restoreRefusedKeepsAside));
     fireEvent.click(within(dialog).getByRole("radio", { name: en.restoreSwitchOn }));
     await waitFor(() => expect(enabled).toBe(true));
+  });
+
+  it("says Start fresh replaces a refused record and keeps no copy", async () => {
+    const dialog = await openSettings({ outcome: "refused", problem: "newerVersion", leftoverCopies: 0 });
+    await waitFor(() => expect(dialog.querySelector('[data-restore-settings="refused"]')).toHaveTextContent(en.restoreRefusedStartFreshReplaces));
+  });
+
+  it("shows neither choice as made while the switch is not known, and says why the read failed", async () => {
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.reject(previewError({ kind: "unexpected_error" })),
+    } });
+    mount(api);
+    fireEvent.click(await screen.findByRole("button", { name: en.settingsEntry }));
+    const dialog = await screen.findByRole("dialog");
+    const failed = await waitFor(() => {
+      const found = dialog.querySelector<HTMLElement>('[data-restore-settings="read-failed"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(failed).toHaveTextContent(en.restoreReadFailed);
+    expect(failed.textContent).not.toBe(`${en.restoreReadFailed}${en.restoreTryAgain}`);
+    expect(within(dialog).getByRole("radio", { name: en.restoreSwitchOn })).toHaveAttribute("aria-checked", "false");
+    expect(within(dialog).getByRole("radio", { name: en.restoreSwitchOff })).toHaveAttribute("aria-checked", "false");
   });
 
   it("refuses both choices while a document that may only be unreadable for now is kept", async () => {

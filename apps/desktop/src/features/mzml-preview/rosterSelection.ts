@@ -123,8 +123,13 @@ export function describeAddResult(result: WorkspaceAddResult): WorkspaceNotice {
  */
 export function describeRestoreResult(result: WorkspaceRestorePutBack): WorkspaceNotice {
   const notice = describeAddResult(result.workspace);
-  const added = result.placed.filter(row => row.added).length;
-  return added === 0 ? notice : { ...notice, message: [["noticeRestored", { count: added }], ...notice.message.slice(1)] };
+  const restored = result.placed.filter(row => row.added).length;
+  if (restored === 0) return notice;
+  const message: WorkspaceNoticePart[] = [["noticeRestored", { count: restored }]];
+  // A file replaced just after the re-check was added, and is no restored row.
+  const others = result.workspace.outcomes.filter(outcome => outcome.outcome === "added").length - restored;
+  if (others > 0) message.push(["noticeAdded", { count: others }]);
+  return { ...notice, message: [...message, ...notice.message.slice(1)] };
 }
 
 export function describeRemoveResult(result: WorkspaceRemoveResult): WorkspaceNotice {

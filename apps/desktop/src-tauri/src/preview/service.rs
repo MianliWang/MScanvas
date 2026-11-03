@@ -2020,6 +2020,13 @@ impl PreviewService {
         self.conversion_busy.load(Ordering::Acquire)
     }
 
+    /// What a conversion under way looks like to the rest of the workspace, for
+    /// a test outside this module that has no conversion to start.
+    #[cfg(test)]
+    pub(crate) fn set_conversion_busy_for_test(&self, busy: bool) {
+        self.conversion_busy.store(busy, Ordering::Release);
+    }
+
     /// Answers one exact plan question.
     //
     // Read-only and free: no gate, no discovery, no picker, no reservation, no

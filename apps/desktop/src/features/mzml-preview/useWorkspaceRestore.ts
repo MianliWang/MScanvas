@@ -27,10 +27,26 @@ export type RestoreProblem =
 
 export type RestoreWork = "restoring" | "dismissing" | "startingFresh" | "switching" | "reading";
 
+/**
+ * A clear, a switch or a dismiss that did not do what was asked. Apart from a
+ * save's `problem`, because the user still wants what was asked: a later save
+ * going through says nothing about it.
+ */
+export interface RestoreFailure {
+  readonly problem: RestoreProblem;
+  /** The same action, asked again. */
+  readonly again: () => void;
+  readonly putAway: () => void;
+}
+
 export interface WorkspaceRestoreSession {
   readonly reading: RestoreReading;
   readonly work: RestoreWork | null;
+  /** Why the last save did not record the session; the next save that does ends it. */
   readonly problem: RestoreProblem | null;
+  /** Why this session records nothing more (question 6). */
+  readonly stopped: RestoreProblem | null;
+  readonly failed: readonly RestoreFailure[];
   /** Whether the `expired` line was put away for this session. */
   readonly expiredDismissed: boolean;
   readonly restore: () => void;
@@ -59,8 +75,15 @@ export function markedRows(groups: readonly RestoredGroup[]): readonly (Restored
 export function buildArrangement(organization: OrganizationState, membership: ReadonlySet<string>, waiting: readonly RestoredGroup[]): WorkspaceArrangement {
   const groups = organization.groups.map(group => ({ name: group.id === UNGROUPED ? null : group.name, handles: [...group.handles] }));
   const checked = organization.groups.flatMap(group => group.handles.filter(handle => membership.has(handle)));
-  for (const stored of waiting) {
-    let target = groups.find(group => group.name === stored.name);
+  waiting.forEach((stored, at) => {
+    // A name with nothing waiting under it is not kept: the user may have
+    // dissolved or renamed that group, and the document holds no history of
+    // what has gone (decision 10).
+    if (stored.rows.length === 0) return;
+    // The group of its name at the same count, as `placeRestored` chose it: the
+    // Workbench allows two groups of one name.
+    const count = waiting.slice(0, at).filter(other => other.name === stored.name).length;
+    let target = groups.filter(group => group.name === stored.name)[count];
     if (target === undefined) {
       target = { name: stored.name, handles: [] };
       groups.push(target);
@@ -69,7 +92,7 @@ export function buildArrangement(organization: OrganizationState, membership: Re
       target.handles.push(row.handle);
       if (row.checked) checked.push(row.handle);
     }
-  }
+  });
   return { groups, checked };
 }
 
@@ -99,6 +122,9 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   const [reading, setReading] = useState<RestoreReading>({ status: "idle" });
   const [work, setWork] = useState<RestoreWork | null>(null);
   const [problem, setProblem] = useState<RestoreProblem | null>(null);
+  const [stopped, setStopped] = useState<RestoreProblem | null>(null);
+  const [writeFailed, setWriteFailed] = useState<RestoreFailure | null>(null);
+  const [dismissFailed, setDismissFailed] = useState<RestoreFailure | null>(null);
   const [expiredDismissed, setExpiredDismissed] = useState(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -107,8 +133,6 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   const recorded = useRef<string | null | undefined>(undefined);
   const latest = useRef<{ readonly key: string; readonly arrangement: WorkspaceArrangement } | null>(null);
   const saving = useRef(false);
-  /** The clear or switch a failure answered, which its Try again asks again. */
-  const failedWrite = useRef<(() => void) | null>(null);
   /** Another window wrote the record: this session records nothing more (question 6). */
   const latched = useRef(false);
 
@@ -136,7 +160,6 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
       while (latest.current !== null && latest.current.key !== recorded.current && !latched.current) {
         const { key, arrangement } = latest.current;
         recorded.current = key;
-        failedWrite.current = null;
         let write: WorkspaceRestoreWrite;
         try {
           write = await api.saveWorkspaceRestore(arrangement);
@@ -149,8 +172,13 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
           setProblem(null);
         } else if (write.outcome === "refused" && write.problem === "staleArrangement" && latest.current?.key !== key) {
           // A later roster answer already moved on; the next round records it.
+        } else if (write.outcome === "refused" && write.problem === "changedElsewhere") {
+          // Held apart from `problem`, which a later save or retry replaces:
+          // nothing here can end this but Off or a clear, and it stays said.
+          latched.current = true;
+          setProblem(null);
+          setStopped(writeProblem(write));
         } else {
-          if (write.outcome === "refused" && write.problem === "changedElsewhere") latched.current = true;
           setProblem(writeProblem(write));
         }
       }
@@ -202,29 +230,30 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   }, [act, offerable, putBack]);
 
   const dismissRow = useCallback((handle: string) => {
-    failedWrite.current = null;
-    act("dismissing", () => api.dismissRestoredRow(handle).then(() => setProblem(null), (cause: unknown) => {
-      if (mounted.current) setProblem({ kind: "error", error: toPreviewError(cause), action: true });
+    act("dismissing", () => api.dismissRestoredRow(handle).then(() => setDismissFailed(null), (cause: unknown) => {
+      if (mounted.current) setDismissFailed({ problem: { kind: "error", error: toPreviewError(cause), action: true }, again: () => dismissRow(handle), putAway: () => setDismissFailed(null) });
     }));
   }, [act, api]);
 
   /** A clear or a switch: a write that did what was asked owes a save of what is live now. */
   const writing = useCallback((kind: RestoreWork, write: () => Promise<WorkspaceRestoreWrite>) => {
-    const again = () => writing(kind, write);
-    failedWrite.current = null;
+    const answered = (problem: RestoreProblem | null) => setWriteFailed(problem === null ? null : { problem, again: () => writing(kind, write), putAway: () => setWriteFailed(null) });
     act(kind, () => write().then((answer) => {
       if (!mounted.current) return;
+      // The record is empty or off after either, so what a save or a dismiss said
+      // about it is no longer news.
+      if (answer.outcome === "saved" || answer.outcome === "turnedOff") {
+        setStopped(null);
+        setProblem(null);
+        setDismissFailed(null);
+      }
       if (answer.outcome === "saved") {
         recorded.current = null;
-        setProblem(null);
         setExpiredDismissed(false);
-      } else {
-        failedWrite.current = again;
-        setProblem(actionProblem(answer));
       }
+      answered(actionProblem(answer));
     }, (cause: unknown) => {
-      failedWrite.current = again;
-      if (mounted.current) setProblem({ kind: "error", error: toPreviewError(cause), action: true });
+      if (mounted.current) answered({ kind: "error", error: toPreviewError(cause), action: true });
     }));
   }, [act]);
 
@@ -233,10 +262,6 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
 
   const retry = useCallback(() => {
     setProblem(null);
-    if (failedWrite.current !== null) {
-      failedWrite.current();
-      return;
-    }
     recorded.current = null;
     // A stale refusal said this window's list is behind; the save waits for the
     // answer. Any other refusal is simply asked again.
@@ -247,7 +272,8 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   const retryRead = useCallback(() => act("reading", () => Promise.resolve()), [act]);
   const dismissExpired = useCallback(() => setExpiredDismissed(true), []);
 
-  return { reading, work, problem, expiredDismissed, restore, dismissRow, startFresh, setEnabled, retry, retryRead, dismissExpired };
+  const failed = [writeFailed, dismissFailed].filter(failure => failure !== null);
+  return { reading, work, problem, stopped, failed, expiredDismissed, restore, dismissRow, startFresh, setEnabled, retry, retryRead, dismissExpired };
 }
 
 /** The same problem, as the answer to a clear or a switch rather than to a save. */

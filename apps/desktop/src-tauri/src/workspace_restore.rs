@@ -33,9 +33,9 @@
 //! hashed, so a match says nothing about the content. A changed, missing or
 //! unreachable file stays a marked row; it is never dropped, never relinked
 //! and never aged out. Only an offer the user could take ages a row: one a read
-//! presented as matching, in a session that then saved without putting it back,
-//! was declined. A row [`MAX_OFFERS`] sessions declined is no longer offered by
-//! a session whose first read finds it matching, and every read of that
+//! presented as matching, in a session that then saved without putting it back
+//! or asking to, was declined. A row [`MAX_OFFERS`] sessions declined is no
+//! longer offered by a session whose first read finds it matching, and every read of that
 //! session says how many such rows there are; it leaves the document only at a
 //! save after that read.
 //!
@@ -170,8 +170,8 @@ pub struct StoredRow {
     pub family: Family,
     pub checked: bool,
     /// How many sessions have presented this row as matching and saved
-    /// without putting it back, since it was last in the Workbench: 0 for a
-    /// live row and for a row only ever marked.
+    /// without putting it back or asking to, since it was last in the
+    /// Workbench: 0 for a live row and for a row only ever marked.
     pub offered: u32,
     /// Primary first.
     pub members: Vec<StoredMember>,
@@ -498,8 +498,9 @@ pub struct RestoredRowDto {
 #[serde(rename_all = "camelCase")]
 pub struct PlacedRowDto {
     pub handle: String,
-    /// The stored group; `None` is Ungrouped.
-    pub group: Option<String>,
+    /// The stored group's place among a read's groups, not its name: the
+    /// Workbench allows two groups of one name.
+    pub group: usize,
     pub checked: bool,
     /// `false`: the object was already a row, which keeps its arrangement.
     pub added: bool,
@@ -667,6 +668,10 @@ struct Lane {
     /// offers the user could take, which a save counts in `offered`. Never
     /// refilled within a session, so positions stay meaningful.
     presented: HashSet<usize>,
+    /// The restored rows waiting when the user pressed Restore workspace. One
+    /// still waiting after that was refused, not declined, so a save does not
+    /// count it (decision 10), and a later read presenting it changes nothing.
+    asked: HashSet<usize>,
     /// The restored rows this session no longer offers (decision 10), decided
     /// once, by this session's first read: `None` before it, when nothing is
     /// expired and a save must place every stored row, so nothing leaves the
@@ -730,6 +735,7 @@ impl WorkspaceRestoreStore {
                     restored: Vec::new(),
                     gone: HashSet::new(),
                     presented: HashSet::new(),
+                    asked: HashSet::new(),
                     expired: None,
                 },
             ),
@@ -881,7 +887,8 @@ impl WorkspaceRestoreStore {
             {
                 continue;
             }
-            let declined = u32::from(lane.presented.contains(&index));
+            let declined =
+                u32::from(lane.presented.contains(&index) && !lane.asked.contains(&index));
             let row = StoredRow {
                 offered: row.offered.saturating_add(declined),
                 ..row.clone()
@@ -978,8 +985,10 @@ impl WorkspaceRestoreStore {
     /// only if the row admission answered with is the recorded objects; a file
     /// replaced since the re-check stays in the Workbench as any file added
     /// there, and its restored row reads `changed` at the next read. A marked
-    /// row, or one admission refused, stays where it is. Nothing is previewed
-    /// and nothing is written here: the webview's next save records the result.
+    /// row, or one admission refused, stays where it is, and a row the user
+    /// asked for here is not counted as declined, whatever became of it. Nothing
+    /// is previewed and nothing is written here: the webview's next save records
+    /// the result.
     ///
     /// # Errors
     ///
@@ -1007,8 +1016,8 @@ impl WorkspaceRestoreStore {
             .saves
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let waiting: Vec<(usize, Option<String>, StoredRow)> = {
-            let lane = self.locked();
+        let waiting: Vec<(usize, usize, StoredRow)> = {
+            let mut lane = self.locked();
             let Some(expired) = &lane.expired else {
                 return Err(PreviewErrorDto::new(
                     "workspace_restore_not_read",
@@ -1016,13 +1025,20 @@ impl WorkspaceRestoreStore {
                     true,
                 ));
             };
-            lane.restored
+            let waiting: Vec<_> = lane
+                .restored
                 .iter()
-                .flat_map(|group| group.rows.iter().map(move |row| (&group.name, row)))
+                .enumerate()
+                .flat_map(|(at, group)| group.rows.iter().map(move |row| (at, row)))
                 .enumerate()
                 .filter(|(index, _)| !expired.contains(index) && !lane.gone.contains(index))
-                .map(|(index, (name, row))| (index, name.clone(), row.clone()))
-                .collect()
+                .map(|(index, (at, row))| (index, at, row.clone()))
+                .collect();
+            // Before anything below can refuse them: whatever becomes of these
+            // rows, the user did not decline them.
+            lane.asked
+                .extend(waiting.iter().map(|(index, _, _)| *index));
+            waiting
         };
         let mut roots = Roots::new();
         let matching: Vec<_> = waiting
@@ -1052,7 +1068,7 @@ impl WorkspaceRestoreStore {
                 lane.gone.insert(*index);
                 placed.push(PlacedRowDto {
                     handle: handle.clone(),
-                    group: group.clone(),
+                    group: *group,
                     checked: row.checked,
                     added,
                 });
@@ -1395,6 +1411,7 @@ fn load(directory: &Path) -> Lane {
         restored,
         gone: HashSet::new(),
         presented: HashSet::new(),
+        asked: HashSet::new(),
         expired: None,
     };
     // Off: a refused document may be one the user had switched off.
