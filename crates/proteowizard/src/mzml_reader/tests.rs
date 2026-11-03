@@ -573,6 +573,23 @@ fn base64_text_longer_than_the_declared_length_allows_is_refused_unread() {
 }
 
 #[test]
+fn a_payload_past_its_bound_mid_read_is_that_arrays_refusal_and_not_the_documents() {
+    let long = "A".repeat(64 * 1024);
+    let mz = array(&[term(F64), term(NONE), mz_term()], &long);
+    let spectrum = ms1(0, &[mz, intensity_array(&[1.0])])
+        .replace("defaultArrayLength=\"3\"", "defaultArrayLength=\"1\"");
+    let document = document(&[spectrum]);
+    let table = table(&document).expect("the table opens");
+    // A reader shorter than the payload trips the limit in the tokenizer, before
+    // the pass is handed any of the text.
+    let reader = std::io::BufReader::with_capacity(64, Cursor::new(document.as_bytes()));
+    assert_eq!(
+        read_selected_spectrum_from(reader, &table, 0).expect_err("refused"),
+        refused(ArrayRole::Mz, ArrayProblem::EncodedTextOverBound)
+    );
+}
+
+#[test]
 fn the_caps_and_their_bound_are_checked_arithmetic() {
     assert_eq!(encoded_bound(u64::MAX, true), None);
     assert_eq!(encoded_bound(u64::MAX, false), None);
@@ -931,6 +948,9 @@ fn the_document_must_be_utf8_mzml_1_1() {
 
     let utf16 = base().replace("encoding=\"utf-8\"", "encoding=\"UTF-16\"");
     assert_eq!(table(&utf16).expect_err("refused"), MzmlOpenError::NotUtf8);
+    // The XIC pass has its own reading of this label; the viewer does not.
+    let latin = base().replace("encoding=\"utf-8\"", "encoding=\"ISO-8859-1\"");
+    assert_eq!(table(&latin).expect_err("refused"), MzmlOpenError::NotUtf8);
 }
 
 const XSI: &str = "http://www.w3.org/2001/XMLSchema-instance";

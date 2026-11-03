@@ -1056,6 +1056,12 @@ pub(crate) trait EventPass {
         Ok(())
     }
 
+    /// Whether this pass reads a document declaring this encoding. The reader
+    /// reads UTF-8 and nothing else (ADR 0056 decision 1).
+    fn accepts_encoding(&mut self, encoding: &[u8]) -> bool {
+        encoding.eq_ignore_ascii_case(b"utf-8")
+    }
+
     fn start(
         &mut self,
         start: &BytesStart<'_>,
@@ -1201,7 +1207,7 @@ pub(crate) fn drive<R: BufRead, P: EventPass>(
             Event::Decl(declaration) => {
                 if let Some(encoding) = declaration.encoding() {
                     let encoding = encoding.map_err(|_| not_well_formed())?;
-                    if !encoding.eq_ignore_ascii_case(b"utf-8") {
+                    if !pass.accepts_encoding(&encoding) {
                         return Err(MzmlOpenError::NotUtf8.into());
                     }
                 }

@@ -12,13 +12,22 @@
 //! decision 2 admits: the per-scan sum of stored intensities whose m/z lies in
 //! a closed window. Nothing centroids, smooths, fits or interpolates.
 //!
-//! A refusal of the whole query is decided on the whole document, so its reason
+//! A refusal of the whole query is decided on the whole document, so its kind
 //! does not depend on the order of the scans. Once one is certain, no further
 //! array is decoded, and the rest of the document is still read for an earlier
-//! reason. Malformed metadata comes first, then the run-wide unit rules, then
-//! decision 4's rules over the in-scope scans. Two refusals are not reasons about
-//! the document's metadata, and end the pass where they occur: cancellation, and
-//! the provisional refusal of an integer above 2^53.
+//! reason. A malformed document comes first, named by its first problem in source
+//! order, then the run-wide unit rules, then decision 4's rules over the in-scope
+//! scans. Two refusals are not reasons about the document's metadata, and end the
+//! pass where they occur: cancellation, and the provisional refusal of an integer
+//! above 2^53.
+//!
+//! **Its own encoding rule, as built 2026-11-03 and not an owner decision.** ADR
+//! 0071 decision 1 does not carry the viewer's refusal of a document that is not
+//! UTF-8 over to this pass, and the frozen row `inherited_tiny.pwiz.1.1.mzML`
+//! declares ISO-8859-1 on bytes that are all ASCII, which read the same under
+//! either encoding. So that one label is read when every byte is ASCII, and any
+//! other byte is the reader's `NotUtf8`. In the product the viewer's open refuses
+//! such a file first (decision 7).
 //!
 //! This is a library only. Nothing calls it, and VIEW-007 stays unavailable
 //! until the X3 decision admits the candidate.
@@ -27,7 +36,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use quick_xml::events::{BytesRef, BytesStart};
+use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::NamespaceResolver;
 use thiserror::Error;
 
@@ -231,7 +240,7 @@ impl XicRequiredValue {
 pub enum XicMetadataProblem {
     #[error("a value the pass requires is missing: {}", .0.stable_id())]
     Missing(XicRequiredValue),
-    #[error("an index wrapper does not hold exactly one mzML element")]
+    #[error("the document does not hold exactly one mzML element")]
     NotOneMzml,
     #[error("the run does not hold exactly one spectrum list")]
     NotOneSpectrumList,
@@ -271,6 +280,11 @@ impl XicMetadataProblem {
 
 /// Why the whole query was refused. No variant contains a path or document
 /// text, and no refusal carries a partial result.
+///
+/// ponytail: a unit refusal names the axis and not the attributes it saw, which
+/// ADR 0046's PX.1 clarification says are retained. X2's observer echoes them for
+/// every scan, on a refusal too, and X4's DTO takes them from there (as built
+/// 2026-11-03, not an owner decision).
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum XicRefusal {
     #[error("the query's operands are not a usable window at one MS level")]
@@ -341,6 +355,9 @@ pub enum XicUnreadableReason {
     Array(ArrayProblem),
     /// The array has no `binary` element.
     PayloadAbsent,
+    /// The array has more than one `binary` element, so no one payload is its
+    /// stored values, and two are never joined.
+    PayloadStatedTwice,
     /// A term follows the payload, whose bound depends on the terms.
     TermAfterPayload,
     /// The stored bytes are not a whole number of values.
@@ -353,6 +370,7 @@ impl XicUnreadableReason {
         match self {
             Self::Array(problem) => problem.stable_id(),
             Self::PayloadAbsent => "payload_absent",
+            Self::PayloadStatedTwice => "payload_stated_twice",
             Self::TermAfterPayload => "term_after_payload",
             Self::NotWholeValues => "not_whole_values",
         }
@@ -761,7 +779,7 @@ impl AxisUnits {
 struct OpenArray {
     parse: ArrayParse,
     role: Option<CvParam>,
-    refused: Option<ArrayProblem>,
+    refused: Option<XicUnreadableReason>,
 }
 
 impl OpenArray {
@@ -773,8 +791,9 @@ impl OpenArray {
         }
     }
 
-    fn refuse(&mut self, problem: ArrayProblem) {
-        self.refused = Some(problem);
+    /// The first reason stands.
+    fn refuse(&mut self, reason: XicUnreadableReason) {
+        self.refused.get_or_insert(reason);
         self.parse.encoded = Vec::new();
     }
 }
@@ -801,6 +820,7 @@ struct OpenSpectrum {
     decoded_bytes: u64,
     mz: Option<OpenArray>,
     intensity: Option<OpenArray>,
+    has_time_array: bool,
 }
 
 impl OpenSpectrum {
@@ -904,12 +924,15 @@ struct XicPass<'a, T, C> {
     stack: Vec<El>,
     elements: u64,
     root_seen: bool,
+    ascii_only: bool,
     mzml_elements: u32,
     groups: BTreeMap<String, Vec<CvParam>>,
     group: Option<(Option<String>, Vec<CvParam>)>,
     spectrum_lists: u32,
     declared_spectra: u64,
     spectra_read: u64,
+    indices: HashSet<u64>,
+    ids: HashSet<String>,
     spectrum: Option<OpenSpectrum>,
     rows: Vec<XicScan>,
     mz_units: AxisUnits,
@@ -924,6 +947,22 @@ struct XicPass<'a, T, C> {
 
 impl<T: XicSpectrumTransform, C: FnMut() -> bool> EventPass for XicPass<'_, T, C> {
     type Fail = XicRefusal;
+
+    /// Any event, whether this pass reads it or not: a byte in a comment is a
+    /// byte the declared encoding would read differently too.
+    fn before_event(&self, event: &Event<'_>) -> Result<(), XicRefusal> {
+        if self.ascii_only && !event.is_ascii() {
+            return Err(MzmlOpenError::NotUtf8.into());
+        }
+        Ok(())
+    }
+
+    /// See the module documentation. The label the frozen input states, in any
+    /// case, and none of its aliases.
+    fn accepts_encoding(&mut self, encoding: &[u8]) -> bool {
+        self.ascii_only |= encoding.eq_ignore_ascii_case(b"iso-8859-1");
+        self.ascii_only || encoding.eq_ignore_ascii_case(b"utf-8")
+    }
 
     fn start(
         &mut self,
@@ -1029,9 +1068,11 @@ impl<T: XicSpectrumTransform, C: FnMut() -> bool> EventPass for XicPass<'_, T, C
         }
         let total = (array.parse.encoded.len() as u64).saturating_add(bytes.len() as u64);
         if total > prepared.bound {
-            array.refuse(ArrayProblem::EncodedTextOverBound);
+            array.refuse(XicUnreadableReason::Array(
+                ArrayProblem::EncodedTextOverBound,
+            ));
         } else if array.parse.encoded.try_reserve(bytes.len()).is_err() {
-            array.refuse(ArrayProblem::AllocationRefused);
+            array.refuse(XicUnreadableReason::Array(ArrayProblem::AllocationRefused));
         } else {
             array.parse.encoded.extend_from_slice(bytes);
         }
@@ -1046,7 +1087,7 @@ impl<T: XicSpectrumTransform, C: FnMut() -> bool> EventPass for XicPass<'_, T, C
             return self.text(character.encode_utf8(&mut [0; 4]).as_bytes());
         }
         if let Some(array) = self.open_array() {
-            array.refuse(ArrayProblem::CorruptBase64);
+            array.refuse(XicUnreadableReason::Array(ArrayProblem::CorruptBase64));
         }
         Ok(())
     }
@@ -1067,12 +1108,15 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
             stack: Vec::new(),
             elements: 0,
             root_seen: false,
+            ascii_only: false,
             mzml_elements: 0,
             groups: BTreeMap::new(),
             group: None,
             spectrum_lists: 0,
             declared_spectra: 0,
             spectra_read: 0,
+            indices: HashSet::new(),
+            ids: HashSet::new(),
             spectrum: None,
             rows: Vec::new(),
             mz_units: AxisUnits::default(),
@@ -1126,6 +1170,7 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
             El::Mzml if self.stack == [El::IndexedMzml] => {
                 self.begin_mzml(start, attributes, resolver)?;
             }
+            El::Mzml => return Err(XicMetadataProblem::NotOneMzml.into()),
             El::ParamGroup if self.stack.ends_with(&[El::Mzml, El::ParamGroupList]) => {
                 if self.groups.len() >= MAX_PARAM_GROUPS {
                     return Err(MzmlOpenError::ReaderLimit(ReaderLimitKind::ParamGroups).into());
@@ -1219,6 +1264,10 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
             .as_deref()
             .filter(|id| !id.is_empty())
             .ok_or(XicMetadataProblem::Missing(XicRequiredValue::NativeId))?;
+        // Here and not over the rows, which stop once a refusal is certain.
+        if !self.indices.insert(index) || !self.ids.insert(id.to_owned()) {
+            return Err(XicMetadataProblem::DuplicateIdentity.into());
+        }
         let default_array_length = required_count(
             attributes.default_array_length.as_deref(),
             XicRequiredValue::DefaultArrayLength,
@@ -1245,6 +1294,7 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
             decoded_bytes: 0,
             mz: None,
             intensity: None,
+            has_time_array: false,
         });
         Ok(())
     }
@@ -1331,6 +1381,10 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
         let Some(array) = spectrum.array.as_mut() else {
             return;
         };
+        if array.parse.payload_started {
+            array.refuse(XicUnreadableReason::PayloadStatedTwice);
+            return;
+        }
         array.parse.payload_started = true;
         if skip {
             return;
@@ -1345,7 +1399,7 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
                 array.parse.prepared = Some(prepared);
                 spectrum.decoded_bytes += prepared.bytes;
             }
-            Err(problem) => array.refuse(problem),
+            Err(problem) => array.refuse(XicUnreadableReason::Array(problem)),
         }
     }
 
@@ -1356,6 +1410,11 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
         let Some(array) = spectrum.array.take() else {
             return Ok(());
         };
+        let is_time =
+            array.role.as_ref().and_then(|role| role.get("accession")) == Some(TIME_ARRAY);
+        if is_time && std::mem::replace(&mut spectrum.has_time_array, true) {
+            return Err(XicMetadataProblem::DuplicateArrayRole.into());
+        }
         // Any other array is not decoded and does not affect the usable pair.
         let slot = match array.decoded_role() {
             Some(ArrayRole::Mz) => &mut spectrum.mz,
@@ -1482,15 +1541,6 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
         if self.spectrum_lists != 1 {
             return Err(XicMetadataProblem::NotOneSpectrumList.into());
         }
-        let mut indices = HashSet::with_capacity(self.rows.len());
-        let mut ids = HashSet::with_capacity(self.rows.len());
-        for row in &self.rows {
-            let id = row.identity.representations().first();
-            if !indices.insert(row.identity.index()) || !ids.insert(id.map(|id| id.sensitive_raw()))
-            {
-                return Err(XicMetadataProblem::DuplicateIdentity.into());
-            }
-        }
         for (axis, units) in [
             (XicAxis::Mz, &self.mz_units),
             (XicAxis::Intensity, &self.intensity_units),
@@ -1572,8 +1622,8 @@ fn decode_array(mut array: OpenArray, role: ArrayRole) -> Result<Decoded, XicRef
     if array.parse.late_term {
         return Ok(Decoded::Unreadable(Reason::TermAfterPayload));
     }
-    if let Some(problem) = array.refused {
-        return Ok(Decoded::Unreadable(Reason::Array(problem)));
+    if let Some(reason) = array.refused {
+        return Ok(Decoded::Unreadable(reason));
     }
     let Some(prepared) = array.parse.prepared else {
         return Ok(Decoded::Unreadable(Reason::PayloadAbsent));

@@ -282,6 +282,12 @@ fn ppm_resolves_in_binary64_and_the_typed_input_travels_with_the_result() {
         query,
         XicQuery::from_bounds(2, 524.259257355, 524.269742645).unwrap()
     );
+
+    // Here `centre * (ppm / 1e6)` rounds differently, so the record's order
+    // shows. Python's repr, again.
+    let ordered = XicQuery::from_ppm(1, 1458.1862, 10.0).unwrap();
+    assert_eq!(ordered.low(), 1458.1716181380002);
+    assert_eq!(ordered.high(), 1458.200781862);
 }
 
 #[test]
@@ -996,6 +1002,20 @@ fn the_unit_rules_are_run_wide_over_every_ms_level() {
         ]),
         XicRefusal::MixedUnit(XicAxis::Intensity)
     );
+    assert_eq!(
+        refuse(&[
+            with_units(0, 1, MZ_UNIT, RT_UNIT, INTENSITY_UNIT),
+            with_units(1, 2, other, RT_UNIT, INTENSITY_UNIT),
+        ]),
+        XicRefusal::MixedUnit(XicAxis::Mz)
+    );
+    assert_eq!(
+        refuse(&[
+            with_units(0, 1, MZ_UNIT, RT_UNIT, INTENSITY_UNIT),
+            with_units(1, 2, MZ_UNIT, other, INTENSITY_UNIT),
+        ]),
+        XicRefusal::MixedUnit(XicAxis::RetentionTime)
+    );
 }
 
 #[test]
@@ -1275,6 +1295,32 @@ fn the_rules_are_taken_after_the_unit_rules_and_in_the_records_order() {
         ]),
         XicRefusal::MixedPolarity
     );
+    assert_eq!(
+        refuse(&[
+            with_terms(0, &format!("{}{}{PROFILE_TERM}", level(1), faims("-40"))),
+            with_terms(1, &format!("{}{}{CENTROID_TERM}", level(1), faims("-60"))),
+        ]),
+        XicRefusal::MixedFaimsCompensationVoltage
+    );
+}
+
+#[test]
+fn a_scan_with_no_declared_level_is_outside_decision_4s_rules() {
+    let result = evaluate(&[
+        with_terms(
+            0,
+            &format!("{}{POSITIVE}{}{PROFILE_TERM}", level(1), faims("-40")),
+        ),
+        with_terms(1, &format!("{NEGATIVE}{}{CENTROID_TERM}", faims("-60"))),
+    ]);
+    assert_eq!(
+        result.polarity(),
+        MzmlDeclared::Value(MzmlPolarity::Positive)
+    );
+    assert_eq!(result.faims_compensation_voltage(), Some(-40.0));
+    assert_eq!(result.representation(), MzmlRepresentation::Profile);
+    assert_eq!(result.rows()[1].state(), XicScanState::MsLevelUndeclared);
+    assert_eq!(result.coverage_gaps(), 1);
 }
 
 fn with_scan_windows(index: u64, ms_level: u32, windows: &[(f64, f64)]) -> String {
@@ -1504,6 +1550,35 @@ fn two_spectra_may_not_share_an_index_or_a_native_id() {
 }
 
 #[test]
+fn a_shared_identity_is_the_reason_whatever_the_order_of_the_scans() {
+    let other = r#"unitAccession="X:1" unitName="other" unitCvRef="X""#;
+    let good = with_units(0, 1, MZ_UNIT, RT_UNIT, INTENSITY_UNIT);
+    // Shares the first scan's native ID, under its own index.
+    let shared = with_units(7, 1, MZ_UNIT, RT_UNIT, INTENSITY_UNIT)
+        .replace(r#"id="scan=8""#, r#"id="scan=1""#);
+    let mix = with_units(8, 1, other, RT_UNIT, INTENSITY_UNIT);
+    // In the first and the third the refusal is already certain when the shared
+    // identity is read.
+    for spectra in [
+        [good.clone(), mix.clone(), shared.clone()],
+        [good.clone(), shared.clone(), mix.clone()],
+        [mix, good, shared],
+    ] {
+        assert_eq!(
+            refuse(&spectra),
+            XicMetadataProblem::DuplicateIdentity.into()
+        );
+    }
+    let positive = with_terms(0, &format!("{}{POSITIVE}", level(1)));
+    let negative = with_terms(1, &format!("{}{NEGATIVE}", level(1)));
+    let repeated = with_terms(1, &format!("{}{POSITIVE}", level(1)));
+    assert_eq!(
+        refuse(&[positive, negative, repeated]),
+        XicMetadataProblem::DuplicateIdentity.into()
+    );
+}
+
+#[test]
 fn a_list_count_that_disagrees_with_its_members_refuses_the_query() {
     let good = ms1(0, &[101.0], &[1.0]);
     let overstated = document(std::slice::from_ref(&good));
@@ -1561,6 +1636,11 @@ fn the_run_must_hold_exactly_one_spectrum_list_and_a_wrapper_one_mzml() {
         run(empty.as_bytes(), window(100.0, 102.0)),
         Err(MzmlOpenError::NotMzml11.into())
     );
+    let nested = format!("{head}{inner}</mzML>");
+    assert_eq!(
+        run(nested.as_bytes(), window(100.0, 102.0)),
+        Err(XicMetadataProblem::NotOneMzml.into())
+    );
 }
 
 #[test]
@@ -1604,6 +1684,194 @@ fn an_array_role_may_not_repeat_or_combine_and_any_other_array_is_ignored() {
             &time,
             &[other, mz_array(&[101.0]), intensity_array(&[1.0])],
         )]),
+        XicScanState::Measured {
+            sum: 1.0,
+            points_in_window: 1
+        }
+    );
+    // A time array is read for its role only. One is ignored; two are a repeat.
+    let time_array = array(&[&cv("MS:1000595", ""), F64, ZLIB], "%%%not-base64%%%");
+    let pair = [mz_array(&[101.0]), intensity_array(&[1.0])];
+    let with_time = [pair[0].clone(), pair[1].clone(), time_array.clone()];
+    assert_eq!(
+        only_state(&[spectrum(0, 1, &level_one, &time, &with_time)]),
+        XicScanState::Measured {
+            sum: 1.0,
+            points_in_window: 1
+        }
+    );
+    let [mz, intensity] = pair;
+    assert_eq!(
+        refuse(&[spectrum(
+            0,
+            1,
+            &level_one,
+            &time,
+            &[mz, intensity, time_array.clone(), time_array],
+        )]),
+        XicMetadataProblem::DuplicateArrayRole.into()
+    );
+}
+
+/// One array with two `binary` elements.
+fn two_payloads(role: &str, first: &[f64], second: &[f64]) -> String {
+    let joined = format!(
+        "{}</binary><binary>{}",
+        plain(&le_f64(first)),
+        plain(&le_f64(second))
+    );
+    array(&[role, F64, NO_COMPRESSION], &joined)
+}
+
+fn two_array_scan(length: u64, mz: String, intensity: String) -> String {
+    spectrum(0, length, &ms1_terms(), &scan_list(60.0), &[mz, intensity])
+}
+
+#[test]
+fn two_payloads_in_one_array_are_refused_and_never_joined() {
+    let refused = |role| XicScanState::Unreadable {
+        role,
+        reason: XicUnreadableReason::PayloadStatedTwice,
+    };
+    let mz_role = mz_role(MZ_UNIT);
+    let intensity_role = intensity_role(INTENSITY_UNIT);
+    // Three doubles are 32 base64 characters with no padding, so the two texts
+    // would join into one valid payload of six. One double ends in padding,
+    // which a join would corrupt. The answer is the same either way.
+    let six = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    assert_eq!(
+        only_state(&[two_array_scan(
+            6,
+            two_payloads(&mz_role, &[100.0, 100.5, 101.0], &[101.0, 101.5, 102.0]),
+            intensity_array(&six),
+        )]),
+        refused(ArrayRole::Mz)
+    );
+    assert_eq!(
+        only_state(&[two_array_scan(
+            2,
+            two_payloads(&mz_role, &[100.0], &[101.0]),
+            intensity_array(&[1.0, 2.0]),
+        )]),
+        refused(ArrayRole::Mz)
+    );
+    assert_eq!(
+        only_state(&[two_array_scan(
+            6,
+            mz_array(&[100.0, 100.5, 101.0, 101.0, 101.5, 102.0]),
+            two_payloads(&intensity_role, &six[..3], &six[3..]),
+        )]),
+        refused(ArrayRole::Intensity)
+    );
+    // The first reason stands, and the pass goes on to the next scan.
+    let numpress = format!("{mz_role}{}", cv("MS:1002312", ""));
+    let result = evaluate(&[
+        two_array_scan(
+            2,
+            two_payloads(&numpress, &[100.0], &[101.0]),
+            intensity_array(&[1.0, 2.0]),
+        ),
+        ms1(1, &[101.0], &[1.0]),
+    ]);
+    assert_eq!(
+        result.rows()[0].state(),
+        unreadable(ArrayRole::Mz, ArrayProblem::Numpress)
+    );
+    assert_eq!(
+        result.rows()[1].state(),
+        XicScanState::Measured {
+            sum: 1.0,
+            points_in_window: 1
+        }
+    );
+}
+
+#[test]
+fn a_reference_in_a_payload_joins_it_or_refuses_the_array() {
+    let values = plain(&le_f64(&[101.0]));
+    let role = mz_role(MZ_UNIT);
+    let first = values.chars().next().unwrap();
+    let with_character = format!("&#{};{}", u32::from(first), &values[first.len_utf8()..]);
+    let state = |payload: &str, extra: &str| {
+        only_state(&[spectrum(
+            0,
+            1,
+            &level(1),
+            &scan_list(60.0),
+            &[
+                array(&[&role, F64, NO_COMPRESSION, extra], payload),
+                intensity_array(&[1.0]),
+            ],
+        )])
+    };
+    assert_eq!(
+        state(&with_character, ""),
+        XicScanState::Measured {
+            sum: 1.0,
+            points_in_window: 1
+        }
+    );
+    assert_eq!(
+        state(&format!("{values}&amp;"), ""),
+        unreadable(ArrayRole::Mz, ArrayProblem::CorruptBase64)
+    );
+    // An array already refused keeps its first reason.
+    assert_eq!(
+        state(&format!("{values}&amp;"), &cv("MS:1002312", "")),
+        unreadable(ArrayRole::Mz, ArrayProblem::Numpress)
+    );
+}
+
+#[test]
+fn bytes_after_the_zlib_stream_are_a_corrupt_stream() {
+    let mut raw = STANDARD
+        .decode(zlib(&le_f64(&[101.0])))
+        .expect("the helper's own base64");
+    raw.push(b'x');
+    let payload = plain(&raw);
+    assert_eq!(
+        only_state(&[spectrum(
+            0,
+            1,
+            &level(1),
+            &scan_list(60.0),
+            &[
+                array(&[&mz_role(MZ_UNIT), F64, ZLIB], &payload),
+                intensity_array(&[1.0]),
+            ],
+        )]),
+        unreadable(ArrayRole::Mz, ArrayProblem::CorruptZlib)
+    );
+}
+
+#[test]
+fn a_spectrum_outside_the_list_does_not_close_the_open_one() {
+    let nested = scan_list(60.0).replace(
+        "</scan>",
+        r#"<spectrum index="9" id="elsewhere" defaultArrayLength="0"/></scan>"#,
+    );
+    let result = evaluate(&[spectrum(
+        0,
+        1,
+        &level(1),
+        &nested,
+        &[mz_array(&[101.0]), intensity_array(&[1.0])],
+    )]);
+    assert_eq!(result.rows().len(), 1);
+    assert_eq!(
+        result.rows()[0].state(),
+        XicScanState::Measured {
+            sum: 1.0,
+            points_in_window: 1
+        }
+    );
+}
+
+#[test]
+fn a_term_restated_with_its_attributes_in_another_order_does_not_conflict() {
+    let reordered = r#"<cvParam value="1" name="ms level" accession="MS:1000511" cvRef="MS"/>"#;
+    assert_eq!(
+        only_state(&[with_terms(0, &format!("{}{reordered}", level(1)))]),
         XicScanState::Measured {
             sum: 1.0,
             points_in_window: 1
@@ -1673,6 +1941,95 @@ fn the_readers_document_refusals_carry_over() {
         "",
         MzmlScanError::Malformed(MzmlMalformedKind::MissingRootElement).into(),
     );
+}
+
+#[test]
+fn an_undefined_param_group_is_refused_outside_every_read_scope() {
+    let configuration = format!(
+        r#"<instrumentConfigurationList count="1"><instrumentConfiguration id="i">{}</instrumentConfiguration></instrumentConfigurationList>"#,
+        group_ref("nowhere")
+    );
+    assert_eq!(
+        run(
+            &document_with_groups(&configuration, &[ms1(0, &[101.0], &[1.0])]),
+            window(100.0, 102.0)
+        ),
+        Err(MzmlOpenError::UndefinedParamGroup.into())
+    );
+}
+
+/// The shape of the frozen row `inherited_tiny.pwiz.1.1.mzML`, which is not read
+/// here: an index wrapper under an ISO-8859-1 declaration, all ASCII.
+fn declared_iso_8859_1(spectra: &[String]) -> Vec<u8> {
+    format!(
+        r#"<?xml version="1.0" encoding="ISO-8859-1"?><indexedmzML xmlns="http://psi.hupo.org/ms/mzml"><mzML version="1.1.0"><run id="r"><spectrumList count="{}">{}</spectrumList></run></mzML></indexedmzML>"#,
+        spectra.len(),
+        spectra.concat()
+    )
+    .into_bytes()
+}
+
+fn inserted(document: &[u8], before: &str, bytes: &[u8]) -> Vec<u8> {
+    let at = document
+        .windows(before.len())
+        .position(|slice| slice == before.as_bytes())
+        .unwrap();
+    [&document[..at], bytes, &document[at..]].concat()
+}
+
+#[test]
+fn an_iso_8859_1_declaration_is_read_when_every_byte_is_ascii() {
+    let minute = r#"unitAccession="UO:0000031" unitName="minute" unitCvRef="UO""#;
+    let query = XicQuery::from_bounds(1, 2.0, 4.0).unwrap();
+    let scan = |index, seconds| with_units(index, 1, MZ_UNIT, seconds, INTENSITY_UNIT);
+    let mixed = [
+        scan(0, minute),
+        scan(1, minute),
+        scan(2, ""),
+        scan(3, RT_UNIT),
+    ];
+    assert_eq!(
+        run(&declared_iso_8859_1(&mixed), query),
+        Err(XicRefusal::MixedUnit(XicAxis::RetentionTime))
+    );
+    let uniform = [ms1(0, &[3.0], &[5.0])];
+    assert_eq!(
+        run(&declared_iso_8859_1(&uniform), query).unwrap().rows()[0].state(),
+        XicScanState::Measured {
+            sum: 5.0,
+            points_in_window: 1
+        }
+    );
+    // The label is the one the frozen input states, in any case, and no other.
+    let lower = String::from_utf8(declared_iso_8859_1(&uniform))
+        .unwrap()
+        .replace("ISO-8859-1", "iso-8859-1");
+    assert!(run(lower.as_bytes(), query).is_ok());
+    let other_label = lower.replace("iso-8859-1", "windows-1252");
+    assert_eq!(
+        run(other_label.as_bytes(), query),
+        Err(MzmlOpenError::NotUtf8.into())
+    );
+}
+
+#[test]
+fn an_iso_8859_1_declaration_refuses_any_byte_that_is_not_ascii() {
+    let query = window(100.0, 102.0);
+    let ascii = declared_iso_8859_1(&[ms1(0, &[101.0], &[1.0])]);
+    for bytes in [
+        // These two are one character in UTF-8, and two in the encoding the
+        // document declares.
+        inserted(&ascii, "scan=1", &[0xc3, 0xa9]),
+        inserted(&ascii, "scan=1", &[0xe9]),
+        // Nothing in the pass reads a comment or a text it does not know.
+        inserted(&ascii, "<run", b"<!-- \xe9 -->"),
+        inserted(&ascii, "<run", b"<fileContent>\xe9</fileContent>"),
+    ] {
+        assert_eq!(run(&bytes, query), Err(MzmlOpenError::NotUtf8.into()));
+    }
+    // Under a UTF-8 declaration the same two bytes are the one character.
+    let utf8 = document(&[ms1(0, &[101.0], &[1.0])]);
+    assert!(run(&inserted(&utf8, "scan=1", &[0xc3, 0xa9]), query).is_ok());
 }
 
 #[test]
@@ -1934,6 +2291,34 @@ fn exact_sum(values: &[u64]) -> Option<u64> {
 /// reference, computed apart from this code. The values are the arithmetic the
 /// PX.3 protocol names: rounding ties, subnormals, cancellation and the range.
 const NAMED_SUMS: &[(&[u64], Option<u64>)] = &[
+    // A tie broken only by a bit in a lower limb, then only by a lower bit of
+    // the limb that holds the round bit.
+    (
+        &[
+            0x3ff0_0000_0000_0000,
+            0x3ca0_0000_0000_0000,
+            0x0170_0000_0000_0000,
+        ],
+        Some(0x3ff0_0000_0000_0001),
+    ),
+    (
+        &[
+            0x3ff0_0000_0000_0000,
+            0x3ca0_0000_0000_0000,
+            0x3c30_0000_0000_0000,
+        ],
+        Some(0x3ff0_0000_0000_0001),
+    ),
+    // A subtraction whose borrow crosses a limb.
+    (
+        &[
+            0x44d0_0000_0000_0000,
+            0x40f4_0000_0000_0000,
+            0xbcd0_0000_0000_0000,
+            0xc0f4_0000_0000_0000,
+        ],
+        Some(0x44d0_0000_0000_0000),
+    ),
     (
         &[
             0x3fb9_9999_9999_999a,
