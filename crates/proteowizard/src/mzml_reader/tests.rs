@@ -582,11 +582,13 @@ fn a_payload_past_its_bound_mid_read_is_that_arrays_refusal_and_not_the_document
     let table = table(&document).expect("the table opens");
     // A reader shorter than the payload trips the limit in the tokenizer, before
     // the pass is handed any of the text.
-    let reader = std::io::BufReader::with_capacity(64, Cursor::new(document.as_bytes()));
+    let mut reader = std::io::BufReader::with_capacity(64, Cursor::new(document.as_bytes()));
     assert_eq!(
-        read_selected_spectrum_from(reader, &table, 0).expect_err("refused"),
+        read_selected_spectrum_from(&mut reader, &table, 0).expect_err("refused"),
         refused(ArrayRole::Mz, ArrayProblem::EncodedTextOverBound)
     );
+    // And it stops there, well short of the end of the payload.
+    assert!(reader.get_ref().position() < (document.len() - 32 * 1024) as u64);
 }
 
 #[test]
