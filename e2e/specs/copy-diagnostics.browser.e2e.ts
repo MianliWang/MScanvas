@@ -224,6 +224,18 @@ describe("Copy diagnostics, rendered", () => {
       await browser.$("[data-diagnostics-failed]").waitForDisplayed();
       await inTheBody("[data-diagnostics-failed]");
     });
+
+    // Radix wraps Tab with preventScroll, and the text has scrolled the body down.
+    it(`Tab past Close brings the first choice back into view, ${String(width)}x${String(height)}`, async () => {
+      await open("en", width, height);
+      await browser.$(READ).click();
+      await browser.$(PREVIEW).waitForExist();
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-settings-close]")?.focus());
+      await browser.keys("Tab");
+      const first = `${DIALOG} [role="radio"][aria-checked="true"]`;
+      expect(await activeMatches(first)).toBe(true);
+      await inTheBody(first);
+    });
   }
 
   for (const [locale, words] of [["en", en], ["zh-CN", zh]] as const) {

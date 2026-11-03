@@ -293,7 +293,9 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
   because the text stays selectable by hand. Support is the last section, below
   anything a save or the stored record has to say, because the text makes it tall.
   Restore and the conversion history sit below those blocks too, so an unusable
-  record is in the dialog's body when Settings opens.
+  record is in the dialog's body when Settings opens. Support makes the body scroll
+  at 1366x768, so keyboard focus that lands out of sight is brought into view: Tab
+  past Close wraps to the first choice without scrolling.
 - `check_repo.py` refuses any other use of `navigator.clipboard` in the interface's
   source, and a second call or a read in this one, because the route was accepted
   for this button only (question 4).

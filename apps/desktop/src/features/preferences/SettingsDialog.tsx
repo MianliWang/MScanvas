@@ -141,6 +141,10 @@ export function SettingsDialog({ restore }: {
         }}
         onPointerDownOutside={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
+        // Radix wraps Tab past Close with preventScroll, which would leave the
+        // first choice focused out of sight in a scrolled body. Keyboard focus
+        // only: a pointer press must not move what is under the pointer.
+        onFocus={(event) => { if (event.target.matches(":focus-visible")) event.target.scrollIntoView?.({ block: "nearest" }); }}
         onCompositionStartCapture={() => { composing.current = true; }}
         onCompositionEndCapture={() => { composing.current = false; }}
         onKeyDownCapture={(event) => {
