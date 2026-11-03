@@ -1042,21 +1042,8 @@ impl ConversionHistory {
     /// Takes the lane, so never call it holding the lane.
     fn view(&self, directory: &Path, mut record: RunRecord) -> RunRecord {
         let own = Some(record.owner.as_str()) == self.owner_id();
-        if own {
-            let lane = self.locked();
-            if let Some(active) = lane
-                .active
-                .iter()
-                .chain(&lane.owed)
-                .find(|run| run.record.run_id == record.run_id)
-            {
-                let mut current = active.record.clone();
-                // As it is stored: without its items, where they did not fit.
-                if record.omitted.is_some() {
-                    omit_items(&mut current);
-                }
-                return current;
-            }
+        if own && let Some(current) = self.remembered(&record.run_id) {
+            return current;
         }
         if record.state == RunState::Running
             && (own || matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_)))

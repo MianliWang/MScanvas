@@ -1461,6 +1461,25 @@ fn a_run_too_large_for_its_file_is_told_without_its_items_from_memory_too() {
     history.begin(1, huge(), progress(RunState::Running, &["running"]));
     told_without_items(&history, &active_id(&history));
     drop(denied);
+
+    // Its file can be read, and says less: a holder refused the write that grew it.
+    let scratch = Scratch::new("history-huge-grown");
+    let history = open(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let id = active_id(&history);
+    let path = history_directory(&scratch).join(file_name_of(&id));
+    let holder = hold(&path, SHARES_ALL_BUT_DELETE);
+    let mut grown = progress(RunState::Running, &["running"]);
+    grown.items[0].outputs.push(RunOutput {
+        file_name: "y".repeat(17 * 1024 * 1024),
+        state: None,
+        byte_length: None,
+        sha256: None,
+        checks: None,
+    });
+    history.update(1, grown);
+    told_without_items(&history, &id);
+    drop(holder);
 }
 
 /// One corrupt run a holder keeps under its own name is one run and one link,
