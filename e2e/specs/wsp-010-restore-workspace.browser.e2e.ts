@@ -10,6 +10,7 @@ import { metrics } from "../support/cdp";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { consoleEntries, holdInvoke, horizontalOverflow, installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { revealRosterRow } from "../support/viewer";
+import { queueItem, queueOf, settledAt } from "../../apps/desktop/src/test/previewFixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 
 const ROW_STATES = ["changed", "missing", "unreachable", "unreadable", "unsafe"] as const;
@@ -53,6 +54,16 @@ async function expectCleanConsole() {
 async function toggleRow() {
   await revealRosterRow(MZML_ROW.handle);
   await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"] input[type="checkbox"]`).click();
+}
+
+/** The element and the keyboard's place both inside the part of Settings that scrolls. */
+async function expectInSettingsBody(css: string) {
+  const seen = await browser.execute((selector: string) => {
+    const body = document.querySelector(".settings-dialog-body")?.getBoundingClientRect();
+    const inside = (box: DOMRect | undefined) => box !== undefined && body !== undefined && box.top >= body.top - 0.5 && box.bottom <= body.bottom + 0.5;
+    return { answer: inside(document.querySelector(selector)?.getBoundingClientRect()), keyboard: inside(document.activeElement?.getBoundingClientRect()) };
+  }, css);
+  expect(seen).toEqual({ answer: true, keyboard: true });
 }
 
 describe("WSP-010 Restore workspace, rendered", () => {
@@ -273,7 +284,7 @@ describe("WSP-010 Restore workspace, rendered", () => {
     await browser.waitUntil(async () => (await calls("clear_workspace_restore")).length === 1);
     // Nothing is waiting now, so another press would only be written again at once.
     await browser.waitUntil(async () => (await browser.$("[data-restore-settings-clear]").getAttribute("aria-disabled")) === "true");
-    expect(await browser.$('[data-live-region="settings-restore"]').getProperty("textContent")).toBe(en.restoreNothingWaiting);
+    expect(await browser.$('[data-live-region="restore"]').getProperty("textContent")).toBe(en.restoreNothingWaiting);
     await setInvokeResult("read_workspace_restore", { outcome: "off", leftoverCopies: 2 });
     await browser.$('[role="radio"]:has([data-setting-value="restore-off"])').click();
     await browser.waitUntil(async () => (await calls("set_workspace_restore_enabled")).length === 1);
@@ -468,6 +479,211 @@ describe("WSP-010 Restore workspace, rendered", () => {
       return box !== undefined && stackBox !== undefined && box.bottom <= stackBox.bottom + 0.5 && box.top >= stackBox.top - 0.5;
     })).toBe(true);
     await expectCleanConsole();
+  });
+
+  /** Wholly on screen at once: each named element inside the track, and the row the keyboard is on inside its list too. */
+  async function expectOnScreen(css: readonly string[]) {
+    const hidden = await browser.execute((selectors: readonly string[]) => {
+      const track = document.querySelector(".shell-notices")?.getBoundingClientRect();
+      const list = document.querySelector(".restore-marked")?.getBoundingClientRect();
+      const inside = (box: DOMRect | undefined, within: DOMRect | undefined) => box !== undefined && within !== undefined && box.top >= within.top - 0.5 && box.bottom <= within.bottom + 0.5;
+      const active = document.activeElement;
+      return [
+        ...selectors.filter(selector => !inside(document.querySelector(selector)?.getBoundingClientRect(), track)),
+        ...(inside(active?.getBoundingClientRect(), track) && inside(active?.getBoundingClientRect(), list) ? [] : [`focused: ${active?.getAttribute("aria-label") ?? active?.tagName ?? "nothing"}`]),
+      ];
+    }, css);
+    expect(hidden).toEqual([]);
+  }
+
+  const REFUSAL_BESIDE_THE_LIST = [[[960, 640], 5], [[1366, 768], 6]] as const;
+  const named = (count: number) => Array.from({ length: count }, (_, index) => row(index, `run_${String(index)}.raw`, "missing"));
+  const focusLastDismiss = () => browser.execute(() => {
+    const buttons = document.querySelectorAll<HTMLElement>("[data-restore-dismiss]");
+    buttons[buttons.length - 1]?.focus();
+  });
+  const rejected = { __reject: { kind: "unexpected_error", summary: "no answer", detail: null, retryable: true } };
+
+  for (const [size, count] of REFUSAL_BESIDE_THE_LIST) {
+    const at = `at ${String(size[0])}x${String(size[1])}`;
+
+    it(`keeps a failed dismiss, its Try again, Start fresh and the row beside each other ${at}`, async () => {
+      await start({ read_workspace_restore: read(named(count)), dismiss_restored_row: rejected }, [], [], size);
+      await browser.$("[data-restored-row]").waitForDisplayed();
+      await focusLastDismiss();
+      await browser.keys("Enter");
+      await browser.$('[data-restore="action"]').waitForDisplayed();
+      await expectOnScreen(['[data-restore="action"]', '[data-restore="action"] [data-restore-retry]', '[data-restore="offer"] [data-restore-start-fresh]']);
+      await expectCleanConsole();
+    });
+
+    it(`says what is happening beside the row a held dismiss is on ${at}`, async () => {
+      await start({ read_workspace_restore: read(named(count)) }, [], ["dismiss_restored_row"], size);
+      await browser.$("[data-restored-row]").waitForDisplayed();
+      await focusLastDismiss();
+      await browser.keys("Enter");
+      await browser.$('.notice[data-restore="working"]').waitForDisplayed();
+      await expectOnScreen(['.notice[data-restore="working"]', '[data-restore="offer"] [data-restore-start-fresh]']);
+      await releaseInvokeHold("dismiss_restored_row");
+      await expectCleanConsole();
+    });
+
+    it(`keeps the later writer's refusal beside the row a dismiss left the keyboard on ${at}`, async () => {
+      const rows = named(count);
+      await start({ read_workspace_restore: read(rows), save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }, [], [], size);
+      await browser.$("[data-restored-row]").waitForDisplayed();
+      await setInvokeResult("read_workspace_restore", read(rows.slice(0, -1)));
+      await focusLastDismiss();
+      await browser.keys("Enter");
+      await browser.$('[data-restore="stopped"]').waitForDisplayed();
+      await expectOnScreen(['[data-restore="stopped"]', '[data-restore="offer"] [data-restore-start-fresh]']);
+      await expectCleanConsole();
+    });
+
+    it(`keeps two refusals and the row on screen together ${at}`, async () => {
+      const rows = named(count);
+      await start({ read_workspace_restore: read(rows), save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }, [], [], size);
+      await browser.$("[data-restored-row]").waitForDisplayed();
+      await setInvokeResult("read_workspace_restore", read(rows.slice(0, -1)));
+      await focusLastDismiss();
+      await browser.keys("Enter");
+      await browser.$('[data-restore="stopped"]').waitForDisplayed();
+      await setInvokeResult("dismiss_restored_row", rejected);
+      await focusLastDismiss();
+      await browser.keys("Enter");
+      await browser.$('[data-restore="action"]').waitForDisplayed();
+      await expectOnScreen(['[data-restore="stopped"]', '[data-restore="action"]', '[data-restore="action"] [data-restore-retry]']);
+      await expectCleanConsole();
+    });
+  }
+
+  it("shows the rows a too-many-rows choice is about, beside Start fresh, in the narrow window", async () => {
+    await start({ read_workspace_restore: read(named(5)), save_workspace_restore: { outcome: "refused", problem: "tooManyRows" } }, [MZML_ROW], [], [960, 640]);
+    await browser.$("[data-restored-row]").waitForDisplayed();
+    await toggleRow();
+    await browser.$('[data-restore="problem"]').waitForDisplayed();
+    const shown = await browser.execute(() => {
+      const list = document.querySelector(".restore-marked")?.getBoundingClientRect();
+      const track = document.querySelector(".shell-notices")?.getBoundingClientRect();
+      const inside = (box: DOMRect | undefined) => box !== undefined && list !== undefined && track !== undefined && box.top >= Math.max(list.top, track.top) - 0.5 && box.bottom <= Math.min(list.bottom, track.bottom) + 0.5;
+      return { rows: [...document.querySelectorAll("[data-restored-row]")].filter(entry => inside(entry.getBoundingClientRect())).length, fresh: inside(document.querySelector("[data-restore-start-fresh]")?.getBoundingClientRect()) };
+    });
+    expect(shown.rows).toBeGreaterThanOrEqual(4);
+    await expectCleanConsole();
+  });
+
+  it("answers the switch in view in the narrow window, with the keyboard still on it", async () => {
+    await start({ set_workspace_restore_enabled: { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false } }, [], [], [960, 640]);
+    await browser.$("[data-settings-entry]").click();
+    const off = browser.$('[role="radio"]:has([data-setting-value="restore-off"])');
+    await off.waitForExist();
+    await browser.waitUntil(async () => (await off.getAttribute("aria-disabled")) === null);
+    await browser.execute(() => document.querySelector<HTMLElement>('[role="radio"]:has([data-setting-value="restore-off"])')?.focus());
+    await browser.keys("Enter");
+    await browser.$('[data-restore-settings="action"]').waitForExist();
+    await expectInSettingsBody('[data-restore-settings="action"]');
+    expect(await browser.execute(() => document.activeElement?.querySelector("[data-setting-value]")?.getAttribute("data-setting-value"))).toBe("restore-off");
+    await expectCleanConsole();
+  });
+
+  it("shows why the switch is refused when the keyboard reaches it in the narrow window", async () => {
+    await start({ read_workspace_restore: { outcome: "refused", problem: "unreadable", leftoverCopies: 0 } }, [], [], [960, 640]);
+    await browser.$("[data-settings-entry]").click();
+    await browser.$('[data-restore-settings="refused"]').waitForExist();
+    await browser.execute(() => document.querySelector<HTMLElement>('[role="radio"]:has([data-setting-value="restore-off"])')?.focus());
+    await expectInSettingsBody('[data-restore-settings="refused"]');
+    await expectCleanConsole();
+  });
+
+  it("offers Start fresh in the refusal when too many rows leave nothing else to press", async () => {
+    await start({ save_workspace_restore: { outcome: "refused", problem: "tooManyRows" } }, [MZML_ROW]);
+    await toggleRow();
+    await browser.$('[data-restore="problem"] [data-restore-start-fresh]').waitForDisplayed();
+    await setInvokeResult("save_workspace_restore", { outcome: "saved" });
+    await browser.$('[data-restore="problem"] [data-restore-start-fresh]').click();
+    await browser.$('[data-restore="problem"]').waitForExist({ reverse: true });
+    expect(await calls("clear_workspace_restore")).toHaveLength(1);
+    await expectCleanConsole();
+  });
+
+  it("keeps the offer when the workspace refuses a put-back, shows why and says it", async () => {
+    await start({ read_workspace_restore: OFFER, restore_workspace: { __reject: { kind: "conversion_busy", summary: "A conversion is running.", detail: null, retryable: true } } });
+    const action = browser.$("[data-restore-action]");
+    await action.waitForClickable();
+    await action.click();
+    await browser.$(".shell-notices > .notice-danger").waitForDisplayed();
+    expect(await action.isDisplayed()).toBe(true);
+    expect(await browser.$('[data-live-region="restore"]').getProperty("textContent")).toContain(en.workspaceFailed);
+    await expectCleanConsole();
+  });
+
+  it("is refused with the conversion's reason while a conversion runs", async () => {
+    await start({
+      read_workspace_restore: OFFER,
+      get_workspace_conversion_state: {
+        sequence: 1,
+        state: { status: "running", operationId: "wsp-010", queue: queueOf([queueItem(MZML_ROW.handle, MZML_ROW.fileName, { state: "running", attempts: 1 })]) },
+        diagnostics: { eligibleItemCount: 0, available: false, exporting: false, lastExport: null },
+        backendQuarantined: false,
+        authority: settledAt(1, 1),
+      },
+    }, [MZML_ROW]);
+    await browser.$("[data-restore-action]").waitForDisplayed();
+    await browser.waitUntil(async () => (await browser.$("#restore-reason").isExisting()) && (await text("#restore-reason")) === en.shellConversionRunning);
+    expect(await browser.$("[data-restore-action]").getAttribute("aria-disabled")).toBe("true");
+    await browser.$("[data-restore-action]").click();
+    expect(await calls("restore_workspace")).toEqual([]);
+    await expectCleanConsole();
+  });
+
+  it("gives the next Enter nothing to forget after Restore workspace leaves the marked rows", async () => {
+    await start({
+      read_workspace_restore: MIXED,
+      restore_workspace: {
+        workspace: { roster: { datasets: [MZML_ROW], capacity: 1024 }, outcomes: [{ outcome: "added", dataset: MZML_ROW }] },
+        placed: [{ handle: MZML_ROW.handle, group: 0, checked: false, added: true }],
+      },
+    });
+    await browser.$("[data-restore-action]").waitForClickable();
+    await setInvokeResult("read_workspace_restore", read([row(1, "QC.raw", "missing", { context: "batch-1" }), row(2, "QC.raw", "changed", { context: "batch-2" })]));
+    await browser.execute(() => document.querySelector<HTMLElement>("[data-restore-action]")?.focus());
+    await browser.keys("Enter");
+    await browser.$("[data-restore-action]").waitForExist({ reverse: true });
+    await browser.waitUntil(async () => browser.execute(() => document.activeElement?.getAttribute("data-restore") === "offer"));
+    await browser.keys("Enter");
+    expect(await calls("dismiss_restored_row")).toEqual([]);
+    await browser.keys("Tab");
+    expect(await browser.execute(() => document.activeElement?.hasAttribute("data-restore-start-fresh"))).toBe(true);
+    await expectCleanConsole();
+  });
+
+  it("leaves the keyboard in the restore section after a read's Try again in Settings", async () => {
+    await start({ read_workspace_restore: { __reject: { kind: "unexpected_error", summary: "boom", detail: null, retryable: true } } }, [], [], [960, 640]);
+    await browser.$("[data-settings-entry]").click();
+    const failed = browser.$('[data-restore-settings="read-failed"]');
+    await failed.waitForExist();
+    await setInvokeResult("read_workspace_restore", FIRST_RUN);
+    await browser.execute(() => document.querySelector<HTMLElement>('[data-restore-settings="read-failed"] button')?.focus());
+    await browser.keys("Enter");
+    await failed.waitForExist({ reverse: true });
+    await browser.waitUntil(async () => browser.execute(() => document.activeElement?.querySelector("[data-setting-value]")?.getAttribute("data-setting-value") === "restore-on"));
+    await browser.keys("Tab");
+    expect(await browser.execute(() => document.activeElement?.closest(".setting-field")?.querySelector("[data-restore-settings-clear]") !== null)).toBe(true);
+    await expectCleanConsole();
+  });
+
+  it("does not let the dialog's clipped box scroll: only its body does", async () => {
+    await start({}, [], [], [960, 640]);
+    await browser.$("[data-settings-entry]").click();
+    await browser.$("[data-restore-settings-clear]").waitForExist();
+    const box = await browser.execute(() => {
+      const dialog = document.querySelector("[data-settings-dialog]");
+      // What a centring scroll would do to it, as any scroll into view can.
+      document.querySelector('[data-live-region="settings-layout"]')?.scrollIntoView({ block: "center" });
+      return { scroll: dialog?.scrollHeight ?? 0, client: dialog?.clientHeight ?? 0, top: dialog?.scrollTop ?? -1 };
+    });
+    expect(box.scroll).toBeLessThanOrEqual(box.client);
+    expect(box.top).toBe(0);
   });
 
   it("holds a save while a roster change is unanswered", async () => {

@@ -833,7 +833,7 @@ export function PreviewWorkspace() {
         {announceConversion(workspace.conversion, t)}
       </p>
       <p aria-live="polite" className="visually-hidden" data-live-region="restore">
-        {announceRestore(restore, t)}
+        {announceRestore(restore, t, workspace.workspaceError)}
       </p>
 
       {activeClear !== null ? <ActiveClearDialog returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onEmptyRosterClosed={claim => {

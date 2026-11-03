@@ -13,7 +13,7 @@ import {
 import { UI_RESOURCES } from "../preferences/i18n";
 import { initialOrganization, organize, placeRestored, UNGROUPED } from "../workbench/organization";
 import { PreviewApiProvider } from "./api";
-import type { RestoredRow, RestoredRowState, WorkspaceRestorePutBack, WorkspaceRestoreRead, WorkspaceRestoreWrite } from "./contracts";
+import type { RestoredRow, RestoredRowState, WorkspaceRestorePutBack, WorkspaceRestoreRead, WorkspaceRestoreWrite, WorkspaceRoster } from "./contracts";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { PreviewWorkspace } from "./PreviewWorkspace";
 import { describeRestoreResult, initialRosterState, rosterReducer } from "./rosterSelection";
@@ -141,6 +141,20 @@ describe("what a put-back does to the arrangement", () => {
   it("keeps two stored groups of one name apart", () => {
     const state = placeRestored(initialOrganization, ["Batch", "Batch"], [{ handle: "file-1", group: 0 }, { handle: "file-2", group: 1 }]);
     expect(state.groups.map(group => [group.name, group.handles])).toEqual([["", []], ["Batch", ["file-1"]], ["Batch", ["file-2"]]]);
+  });
+
+  it("makes both groups of one name when a row lands only in the later one", () => {
+    const state = placeRestored(initialOrganization, ["Batch", "Batch"], [{ handle: "file-1", group: 1 }]);
+    expect(state.groups.map(group => [group.name, group.handles])).toEqual([["", []], ["Batch", []], ["Batch", ["file-1"]]]);
+  });
+
+  it("leaves a row that was already live as it was: its group and its unchecked box", () => {
+    const live = { ...selectedFile, handle: "file-0" };
+    const before = rosterReducer(initialRosterState, { type: "rosterLoaded", roster: { datasets: [live], capacity: 1024 } });
+    const answer = result([{ handle: "file-0", group: 0, checked: true, added: false }]);
+    const after = rosterReducer(before, { type: "workspaceRestored", groups: ["Batch"], result: { ...answer, workspace: { ...answer.workspace, roster: { datasets: [live], capacity: 1024 } } } });
+    expect(after.organization.groups.map(group => [group.name, group.handles])).toEqual([["", ["file-0"]]]);
+    expect(after.conversionMembership.size).toBe(0);
   });
 
   it("says a file replaced after the re-check was added, beside the rows that came back", () => {
@@ -308,7 +322,7 @@ describe("the restore notice", () => {
     await waitFor(() => expect(offerNotice()).not.toBeNull());
     fireEvent.click(row1);
     await waitFor(() => expect(stoppedNotice()).not.toBeNull());
-    fireEvent.click(within(offerNotice()!).getByRole("button", { name: "Dismiss a.raw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss a.raw" }));
     await waitFor(() => expect(document.querySelectorAll("[data-restored-row]")).toHaveLength(1));
     expect(stoppedNotice()).toHaveTextContent(en.restoreProblemChangedElsewhere);
     fireEvent.click(row1);
@@ -378,7 +392,7 @@ describe("the restore notice", () => {
     } });
     mount(api);
     await waitFor(() => expect(offerNotice()).not.toBeNull());
-    fireEvent.click(within(offerNotice()!).getByRole("button", { name: "Dismiss b.raw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss b.raw" }));
     await waitFor(() => expect(actionNotice()).toHaveTextContent(en.restoreNotChanged));
     expect(save).not.toHaveBeenCalled();
     fireEvent.click(within(actionNotice()!).getByRole("button", { name: en.restoreTryAgain }));
@@ -396,7 +410,7 @@ describe("the restore notice", () => {
     mount(api);
     await waitFor(() => expect(offerNotice()).not.toBeNull());
     const fresh = within(offerNotice()!).getByRole("button", { name: en.restoreStartFresh });
-    fireEvent.click(within(offerNotice()!).getByRole("button", { name: "Dismiss a.raw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss a.raw" }));
     await waitFor(() => expect(fresh).toHaveAttribute("aria-disabled", "true"));
     expect(fresh).toHaveAccessibleDescription(en.restoreBusy);
     await act(async () => { dismissing.resolve(undefined); await dismissing.promise; });
@@ -551,6 +565,265 @@ describe("the restore notice", () => {
     expect(notice).toHaveTextContent(en.restoreRefusedTitle);
     expect(notice).toHaveTextContent(en.restoreRefusedNewerVersion);
   });
+
+  it("gives each dismiss its row's state and reason, for a reader moving by arrow keys", async () => {
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve({ outcome: "restored", groups: [{ name: "Batch", rows: [row("restored-0", "a.raw", "missing")] }], expired: 0, leftoverCopies: 0 }),
+    } });
+    mount(api);
+    const dismiss = await screen.findByRole("button", { name: "Dismiss a.raw" });
+    expect(dismiss).toHaveAccessibleDescription(expect.stringContaining(en.restoreStateMissing));
+    expect(dismiss).toHaveAccessibleDescription(expect.stringContaining("Batch"));
+  });
+});
+
+describe("where the keyboard goes when a restore button leaves", () => {
+  const dataset = { ...selectedFile, handle: "file-1" };
+  const putBackOne = () => Promise.resolve({ workspace: { roster: { datasets: [dataset], capacity: 1024 }, outcomes: [{ outcome: "added" as const, dataset }] }, placed: [{ handle: "file-1", group: 0, checked: false, added: true }] });
+
+  it("never lands on a dismiss after Restore workspace, so the next Enter forgets nothing", async () => {
+    let rows: readonly RestoredRow[] = [row("restored-0", "a.raw"), row("restored-1", "gone.raw", "missing")];
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered(rows)),
+      restoreWorkspace: () => { rows = rows.slice(1); return putBackOne(); },
+    } });
+    mount(api);
+    const action = await restoreAction();
+    action.focus();
+    fireEvent.click(action);
+    await waitFor(() => expect(screen.queryByRole("button", { name: en.restoreAction })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(offerNotice()));
+  });
+
+  it("lands on Restore workspace after a read's Try again, not on the first dismiss", async () => {
+    let attempts = 0;
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => {
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(previewError({ kind: "unexpected_error" })) : Promise.resolve(offered([row("restored-0", "a.raw"), row("restored-1", "gone.raw", "missing")]));
+      },
+    } });
+    mount(api);
+    const again = await screen.findByRole("button", { name: en.restoreTryAgain });
+    again.focus();
+    fireEvent.click(again);
+    const action = await restoreAction();
+    await waitFor(() => expect(document.activeElement).toBe(action));
+  });
+
+  it("returns to the row a failed dismiss was for when Try again takes it", async () => {
+    const answers = [() => Promise.reject(new Error("no answer")), () => Promise.resolve()];
+    let rows: readonly RestoredRow[] = ["a", "b", "c", "d"].map((name, index) => row(`restored-${String(index)}`, `${name}.raw`, "missing"));
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered(rows)),
+      dismissRestoredRow: (handle) => (answers.shift() as () => Promise<void>)().then(() => { rows = rows.filter(entry => entry.handle !== handle); }),
+    } });
+    mount(api);
+    const dismiss = await screen.findByRole("button", { name: "Dismiss c.raw" });
+    dismiss.focus();
+    fireEvent.click(dismiss);
+    await waitFor(() => expect(actionNotice()).not.toBeNull());
+    const again = within(actionNotice()!).getByRole("button", { name: en.restoreTryAgain });
+    again.focus();
+    fireEvent.click(again);
+    await waitFor(() => expect(actionNotice()).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Dismiss d.raw" })));
+  });
+
+  it("moves no focus when the failure arrives, and brings the row back into view", async () => {
+    const scrolled = vi.fn();
+    const scrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      const api = createFakePreviewApi({ workspaceRestore: {
+        readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw", "missing"), row("restored-1", "b.raw", "missing")])),
+        dismissRestoredRow: () => Promise.reject(new Error("no answer")),
+      } });
+      mount(api);
+      const dismiss = await screen.findByRole("button", { name: "Dismiss b.raw" });
+      dismiss.focus();
+      scrolled.mockClear();
+      fireEvent.click(dismiss);
+      await waitFor(() => expect(actionNotice()).not.toBeNull());
+      await waitFor(() => expect(scrolled).toHaveBeenCalled());
+      expect(document.activeElement).toBe(dismiss);
+      expect(scrolled.mock.contexts).toContain(dismiss);
+    } finally {
+      Element.prototype.scrollIntoView = scrollIntoView;
+    }
+  });
+
+  it("lands on the switch in Settings when a read's Try again leaves", async () => {
+    let attempts = 0;
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => {
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(previewError({ kind: "unexpected_error" })) : Promise.resolve(offered([]));
+      },
+    } });
+    mount(api);
+    fireEvent.click(await screen.findByRole("button", { name: en.settingsEntry }));
+    const dialog = await screen.findByRole("dialog");
+    const failed = await waitFor(() => {
+      const found = dialog.querySelector<HTMLElement>('[data-restore-settings="read-failed"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    const again = within(failed).getByRole("button", { name: en.restoreTryAgain });
+    again.focus();
+    fireEvent.click(again);
+    await waitFor(() => expect(dialog.querySelector('[data-restore-settings="read-failed"]')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole("radio", { name: en.restoreSwitchOn })));
+  });
+
+  it("lands on the note in Settings when the whole section becomes unavailable", async () => {
+    let attempts = 0;
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => {
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(previewError({ kind: "unexpected_error" })) : Promise.resolve({ outcome: "unavailable", problem: "rootUnresolved" });
+      },
+    } });
+    mount(api);
+    fireEvent.click(await screen.findByRole("button", { name: en.settingsEntry }));
+    const dialog = await screen.findByRole("dialog");
+    const failed = await waitFor(() => {
+      const found = dialog.querySelector<HTMLElement>('[data-restore-settings="read-failed"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    const again = within(failed).getByRole("button", { name: en.restoreTryAgain });
+    again.focus();
+    fireEvent.click(again);
+    await waitFor(() => expect(document.activeElement).toBe(dialog.querySelector('[data-restore-settings="unavailable"]')));
+  });
+});
+
+describe("what the restore live region says", () => {
+  const region = () => document.querySelector('[data-live-region="restore"]');
+
+  it("says nothing on a first run, and that nothing is waiting once the user has emptied the list", async () => {
+    let rows: readonly RestoredRow[] = [row("restored-0", "a.raw", "missing")];
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered(rows)),
+      dismissRestoredRow: () => { rows = []; return Promise.resolve(); },
+    } });
+    mount(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss a.raw" }));
+    await waitFor(() => expect(region()).toHaveTextContent(en.restoreNothingWaiting));
+    expect(document.querySelector("[data-restored-row]")).toBeNull();
+  });
+
+  it("says nothing about an empty first run", async () => {
+    let answered = false;
+    const api = createFakePreviewApi({ workspaceRestore: { readWorkspaceRestore: () => { answered = true; return Promise.resolve(offered([])); } } });
+    mount(api);
+    await waitFor(() => expect(answered).toBe(true));
+    await act(async () => { await Promise.resolve(); });
+    expect(region()?.textContent).toBe("");
+  });
+
+  it("says Start fresh emptied the list", async () => {
+    let cleared = false;
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered(cleared ? [] : [row("restored-0", "a.raw")])),
+      clearWorkspaceRestore: () => { cleared = true; return Promise.resolve({ outcome: "saved" }); },
+    } });
+    mount(api);
+    await restoreAction();
+    fireEvent.click(within(offerNotice()!).getByRole("button", { name: en.restoreStartFresh }));
+    await waitFor(() => expect(region()).toHaveTextContent(en.restoreNothingWaiting));
+  });
+
+  it("says a slow first read is being checked", async () => {
+    const reading = deferred<WorkspaceRestoreRead>();
+    const api = createFakePreviewApi({ workspaceRestore: { readWorkspaceRestore: () => reading.promise } });
+    mount(api);
+    await waitFor(() => expect(region()).toHaveTextContent(en.restoreLoading), { timeout: 2000 });
+    await act(async () => { reading.resolve(offered([])); await reading.promise; });
+    await waitFor(() => expect(region()?.textContent).toBe(""));
+  });
+
+  it("says a slow dismiss is working, on the same words the line shows", async () => {
+    const dismissing = deferred<undefined>();
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw", "missing")])),
+      dismissRestoredRow: () => dismissing.promise,
+    } });
+    mount(api);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss a.raw" }));
+    await waitFor(() => expect(region()).toHaveTextContent(en.restoreBusy), { timeout: 2000 });
+    await act(async () => { dismissing.resolve(undefined); await dismissing.promise; });
+  });
+
+  it("says rows are being added, over a refusal that still stands", async () => {
+    const restoring = deferred<WorkspaceRestorePutBack>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      workspaceRestore: {
+        readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw")])),
+        saveWorkspaceRestore: () => Promise.resolve({ outcome: "refused", problem: "changedElsewhere" }),
+        restoreWorkspace: () => restoring.promise,
+      },
+    });
+    mount(api);
+    const row1 = await checkbox();
+    const action = await restoreAction();
+    fireEvent.click(row1);
+    await waitFor(() => expect(stoppedNotice()).not.toBeNull());
+    fireEvent.click(action);
+    await waitFor(() => expect(region()).toHaveTextContent("Adding 1 file again"));
+    await act(async () => { restoring.resolve({ workspace: { roster: { datasets: [selectedFile], capacity: 1024 }, outcomes: [] }, placed: [] }); await restoring.promise; });
+    await waitFor(() => expect(region()).toHaveTextContent(en.restoreProblemChangedElsewhere));
+  });
+
+  it("changes before a read asked again fails the same way, so the failure is heard again", async () => {
+    const failure = previewError({ kind: "unexpected_error" });
+    const again = deferred<WorkspaceRestoreRead>();
+    let attempts = 0;
+    const api = createFakePreviewApi({ workspaceRestore: { readWorkspaceRestore: () => {
+      attempts += 1;
+      return attempts === 1 ? Promise.reject(failure) : again.promise;
+    } } });
+    mount(api);
+    await waitFor(() => expect(region()).toHaveTextContent(en.restoreReadFailed));
+    const said = region()?.textContent;
+    fireEvent.click(await screen.findByRole("button", { name: en.restoreTryAgain }));
+    await waitFor(() => expect(region()).toHaveTextContent(en.restoreLoading));
+    await act(async () => { again.reject(failure); await again.promise.catch(() => undefined); });
+    await waitFor(() => expect(region()?.textContent).toBe(said));
+  });
+
+  it("says why the workspace refused a put-back", async () => {
+    const api = createFakePreviewApi({ workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw")])),
+      restoreWorkspace: () => Promise.reject(previewError({ kind: "conversion_busy" })),
+    } });
+    mount(api);
+    fireEvent.click(await restoreAction());
+    await waitFor(() => expect(region()).toHaveTextContent(en.workspaceFailed));
+    expect(offerNotice()).toHaveTextContent(en.restoreAction);
+  });
+
+  it("says a failure from Settings once, in the page's region, with no alert of its own", async () => {
+    const api = createFakePreviewApi({ workspaceRestore: {
+      setWorkspaceRestoreEnabled: () => Promise.resolve({ outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false }),
+    } });
+    mount(api);
+    fireEvent.click(await screen.findByRole("button", { name: en.settingsEntry }));
+    const dialog = await screen.findByRole("dialog");
+    const off = await within(dialog).findByRole("radio", { name: en.restoreSwitchOff });
+    await waitFor(() => expect(off).not.toHaveAttribute("aria-disabled"));
+    fireEvent.click(off);
+    const note = await waitFor(() => {
+      const found = dialog.querySelector('[data-restore-settings="action"]');
+      expect(found).not.toBeNull();
+      return found;
+    });
+    expect(note).not.toHaveAttribute("role");
+    expect(region()).toHaveTextContent(en.restoreProblemNotPublished);
+    expect(document.querySelector('[data-live-region="settings-restore"]')).toBeNull();
+  });
 });
 
 describe("the restore settings", () => {
@@ -614,5 +887,55 @@ describe("the restore settings", () => {
     const dialog = await openSettings({ outcome: "unavailable", problem: "rootUnresolved" });
     await waitFor(() => expect(dialog.querySelector('[data-restore-settings="unavailable"]')).toHaveTextContent(en.restoreUnavailable));
     expect(within(dialog).queryByRole("radio", { name: en.restoreSwitchOn })).toBeNull();
+  });
+
+  it("records the live rows again after Off and On, because the switch emptied the record", async () => {
+    let enabled = true;
+    const save = vi.fn<() => Promise<WorkspaceRestoreWrite>>(() => Promise.resolve({ outcome: "saved" }));
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      workspaceRestore: {
+        readWorkspaceRestore: () => Promise.resolve(enabled ? offered([]) : { outcome: "off", leftoverCopies: 0 }),
+        saveWorkspaceRestore: save,
+        setWorkspaceRestoreEnabled: (next) => { enabled = next; return Promise.resolve({ outcome: "saved" }); },
+      },
+    });
+    mount(api);
+    await checkbox();
+    fireEvent.click(await screen.findByRole("button", { name: en.settingsEntry }));
+    const dialog = await screen.findByRole("dialog");
+    const off = await within(dialog).findByRole("radio", { name: en.restoreSwitchOff });
+    await waitFor(() => expect(off).not.toHaveAttribute("aria-disabled"));
+    fireEvent.click(off);
+    await waitFor(() => expect(off).toHaveAttribute("aria-checked", "true"));
+    expect(save).not.toHaveBeenCalled();
+    await waitFor(() => expect(off).not.toHaveAttribute("aria-disabled"));
+    fireEvent.click(within(dialog).getByRole("radio", { name: en.restoreSwitchOn }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  });
+
+  it("says restore is off where Start fresh would be", async () => {
+    const dialog = await openSettings({ outcome: "off", leftoverCopies: 0 });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: en.restoreStartFresh })).toHaveAccessibleDescription(en.restoreRememberedOff));
+  });
+
+  it("says a turn on refused over another window's write, and how to get past it", async () => {
+    const dialog = await openSettings({ outcome: "off", leftoverCopies: 0 }, {
+      setWorkspaceRestoreEnabled: () => Promise.resolve({ outcome: "refused", problem: "changedElsewhere" }),
+    });
+    const on = await within(dialog).findByRole("radio", { name: en.restoreSwitchOn });
+    await waitFor(() => expect(on).not.toHaveAttribute("aria-disabled"));
+    fireEvent.click(on);
+    await waitFor(() => expect(dialog.querySelector('[data-restore-settings="action"]')).toHaveTextContent(en.restoreTurnOnChangedElsewhere));
+  });
+
+  it("says it waits for the workspace list, and refuses both choices until then", async () => {
+    const roster = deferred<WorkspaceRoster>();
+    const api = { ...createFakePreviewApi(), getRoster: () => roster.promise };
+    mount(api);
+    fireEvent.click(await screen.findByRole("button", { name: en.settingsEntry }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(dialog.querySelector('[data-restore-settings="loading"]')).toHaveTextContent(en.restoreWaitingForList));
+    expect(within(dialog).getByRole("radio", { name: en.restoreSwitchOff })).toHaveAttribute("aria-disabled", "true");
   });
 });

@@ -44,8 +44,11 @@
    keeps no height at all (PM9 L10). */
 .workbench-shell .shell-notices:not(:has(> .notice:not([data-backend-mode="popover"]))) { padding: 0; }
 /* A status that appears is bounded so it cannot take the workspace's height.
-   The setup help the reader opened was asked for, so the bound relaxes while
-   it is open, and returns when it is not. */
+   A restore refusal relaxes the bound while it stands: it stays on screen with
+   its reason, beside the rows it is about. The setup help the reader opened was
+   asked for, so the bound relaxes further while it is open, and returns when it
+   is not. */
+.workbench-shell .shell-notices:has(> [data-restore="stopped"], > [data-restore="action"], > [data-restore="problem"]) { max-height: min(40vh, 320px); }
 .workbench-shell .shell-notices:has([data-backend-mode="notice"] [data-backend-help][aria-expanded="true"]) { max-height: min(60vh, 520px); }
 .shell-notices > .notice { align-items: center; }
 .notice-dismiss { margin-left: auto; }
@@ -490,13 +493,15 @@
   .spectrum-head-facts { height: auto; max-height: 36px; }
 }
 
-/* The restore notice: the offer, then the marked rows. The notice track is their
-   one scroller, so a list never scrolls inside a scroller and a focus ring is
-   clipped by nothing but the track, which the scroll margin keeps it inside.
+/* The restore notice: the offer, and joined under it the marked rows. The list is
+   the one part of the track that gives up height, down to one row, so the answers
+   above it and the offer's buttons stay on screen and a row of any height can be
+   reached. Its padding and the scroll margin keep a focus ring inside it.
    Each part of a row may take a line of its own and wrap there: a group name can
    be 120 characters, and the file's name and reason still show. */
 .restore-notice .ui-button { flex: none; }
-.restore-marked { flex-basis: 100%; margin-top: 2px; font-size: 12px; }
+.restore-notice:has(+ .restore-marked) { padding-bottom: 4px; border-bottom: 0; border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
+.shell-notices > .restore-marked { display: block; min-height: 36px; margin-top: -6px; padding: 2px 12px 8px; overflow: auto; border: 1px solid var(--color-border); border-top: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 .restore-marked ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .restore-marked li { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
 .restore-marked .ui-icon-button { flex: none; width: 26px; height: 26px; min-width: 26px; min-height: 26px; padding: 0; scroll-margin-block: 6px; }

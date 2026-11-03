@@ -276,7 +276,9 @@ restore notice above every surface, each under its stored group's name with its
 state, its reason and a dismiss, because the roster is a closed drawer at
 1,050 px and below, and an offer nobody sees is not an offer. The notice cannot
 be collapsed, and the track it sits in takes up to about 154 px of a 960x640
-window (`min(24vh, 180px)`).
+window (`min(24vh, 180px)`), and up to 256 px (`min(40vh, 320px)`) while a restore
+refusal stands. Only the list of marked rows gives up height, so the refusal with
+its reason, Restore workspace and Start fresh stay on screen while the rows scroll.
 
 *Alternative:* put matching rows back automatically at every start. Rejected
 (by the owner on 2026-10-31) because of what admission costs, which the

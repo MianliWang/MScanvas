@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { UNGROUPED, reconcileOrganization, type OrganizationState } from "../workbench/organization";
 import { usePreviewApi } from "./api";
@@ -37,11 +37,18 @@ export interface RestoreFailure {
   /** The same action, asked again. */
   readonly again: () => void;
   readonly putAway: () => void;
+  /** The row a failed dismiss was for, where the keyboard returns if asking again takes it. */
+  readonly row?: string;
 }
 
 export interface WorkspaceRestoreSession {
   readonly reading: RestoreReading;
   readonly work: RestoreWork | null;
+  /** The first read, or the action in `work`, has lasted long enough to be worth saying. */
+  readonly slowRead: boolean;
+  readonly slowWork: boolean;
+  /** The user has acted on the record, so "nothing is waiting" is news rather than a first run. */
+  readonly acted: boolean;
   /** Why the last save did not record the session; the next save that does ends it. */
   readonly problem: RestoreProblem | null;
   /** Why this session records nothing more (question 6). */
@@ -100,6 +107,21 @@ const nothingToKeep = (arrangement: WorkspaceArrangement) =>
   arrangement.groups.every(group => group.name === null && group.handles.length === 0);
 
 /**
+ * Whether `active` has lasted long enough to be worth a line. The usual answer
+ * is back before anything could be painted, and then nothing moves under a key
+ * pressed again; a drive that does not answer can hold one for an OS timeout.
+ */
+function useSlowly(active: boolean): boolean {
+  const [slow, setSlow] = useState(false);
+  useLayoutEffect(() => {
+    if (!active) { setSlow(false); return; }
+    const timer = window.setTimeout(() => setSlow(true), 400);
+    return () => window.clearTimeout(timer);
+  }, [active]);
+  return slow;
+}
+
+/**
  * The session's one restore conversation with Rust (ADR 0061).
  *
  * Reads once the roster is known, then records every later change of the
@@ -126,6 +148,9 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   const [writeFailed, setWriteFailed] = useState<RestoreFailure | null>(null);
   const [dismissFailed, setDismissFailed] = useState<RestoreFailure | null>(null);
   const [expiredDismissed, setExpiredDismissed] = useState(false);
+  const [acted, setActed] = useState(false);
+  const slowRead = useSlowly(reading.status === "loading");
+  const slowWork = useSlowly(work !== null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -217,6 +242,7 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
     if (acting.current) return;
     acting.current = true;
     setWork(kind);
+    if (kind !== "reading") setActed(true);
     void run().then(read).finally(() => {
       acting.current = false;
       if (mounted.current) setWork(null);
@@ -231,7 +257,7 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
 
   const dismissRow = useCallback((handle: string) => {
     act("dismissing", () => api.dismissRestoredRow(handle).then(() => setDismissFailed(null), (cause: unknown) => {
-      if (mounted.current) setDismissFailed({ problem: { kind: "error", error: toPreviewError(cause), action: true }, again: () => dismissRow(handle), putAway: () => setDismissFailed(null) });
+      if (mounted.current) setDismissFailed({ problem: { kind: "error", error: toPreviewError(cause), action: true }, again: () => dismissRow(handle), putAway: () => setDismissFailed(null), row: handle });
     }));
   }, [act, api]);
 
@@ -273,7 +299,7 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
   const dismissExpired = useCallback(() => setExpiredDismissed(true), []);
 
   const failed = [writeFailed, dismissFailed].filter(failure => failure !== null);
-  return { reading, work, problem, stopped, failed, expiredDismissed, restore, dismissRow, startFresh, setEnabled, retry, retryRead, dismissExpired };
+  return { reading, work, slowRead, slowWork, acted, problem, stopped, failed, expiredDismissed, restore, dismissRow, startFresh, setEnabled, retry, retryRead, dismissExpired };
 }
 
 /** The same problem, as the answer to a clear or a switch rather than to a save. */

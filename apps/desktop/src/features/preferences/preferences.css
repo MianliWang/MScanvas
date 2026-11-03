@@ -37,11 +37,13 @@
   border-bottom: 1px solid var(--color-border);
 }
 .settings-dialog h2 { margin: 0; font-size: 17px; font-weight: 650; }
-.settings-dialog-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* Positioned, so a visually hidden region stays in the scroller it lies in and
+   cannot give the dialog's clipped box a scroll of its own. */
+.settings-dialog-body { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
 .settings-fields { min-width: 0; padding: 18px 22px 20px; }
 /* Section heads; the second section sits below a divider. */
 .settings-section-title { margin: 0 0 4px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
-.settings-fields > .setting-field + .settings-section-title { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--color-border); }
+.settings-fields > :is(.setting-field, .settings-restore-answers) + .settings-section-title { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--color-border); }
 /* v5.11 settings rows: label left, control right, a divider between rows. */
 .settings-fields > .setting-field { padding: 12px 0; }
 .settings-fields > .setting-field + .setting-field { border-top: 1px solid var(--color-border); }
