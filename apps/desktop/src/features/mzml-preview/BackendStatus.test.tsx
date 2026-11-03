@@ -138,6 +138,10 @@ describe("keyboard focus across the native folder picker", () => {
     });
     renderWorkspace(api);
     await screen.findByText("No ProteoWizard installation was found");
+    // A later answer about this binding outranks a failure asked before it, so
+    // the press waits for the settings read every mount owes.
+    await waitFor(() => expect(api.calls()).toContain("readConversionConfiguration"));
+    await act(async () => { await Promise.resolve(); });
     const choose = screen.getByRole("button", { name: en.backendChoose });
 
     activate(choose);
