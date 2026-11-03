@@ -80,6 +80,7 @@ import {
   describeAddResult,
   describeClear,
   describeRemoveResult,
+  describeRestoreResult,
   initialRosterState,
   rosterReducer,
   rowStateForError,
@@ -734,6 +735,8 @@ export interface PreviewWorkspace {
    * the workspace admitted nothing.
    */
   readonly admitProjectInput: (result: WorkspaceAddResult) => string | null;
+  /** Restore workspace; the argument is the read's stored group names, in order. */
+  readonly restoreWorkspace: (groups: readonly (string | null)[]) => Promise<boolean>;
   /**
    * Recovers the authoritative list after a workspace mutation rejected.
    *
@@ -2391,6 +2394,54 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     rosterSettled,
     showWorkspaceNotice,
   ]);
+
+  /**
+   * Restore workspace (ADR 0061, question 1): one workspace change like an add,
+   * on the same gates, and deliberately without what follows a picker's add: no
+   * preview starts, for any row, into any workspace. Resolves once the roster is
+   * settled, `false` where another change holds the workspace and nothing ran.
+   */
+  const restoreWorkspace = useCallback((groups: readonly (string | null)[]): Promise<boolean> => {
+    if (
+      pickerBusyRef.current ||
+      folderBusyRef.current ||
+      dropBusyRef.current ||
+      workspaceBusyRef.current ||
+      folderReservationPendingRef.current
+    ) {
+      return Promise.resolve(false);
+    }
+    workspaceBusyRef.current = true;
+    workspaceMutations.current += 1;
+    rosterToken.current += 1;
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    return api
+      .restoreWorkspace()
+      .then((result) => {
+        if (mounted.current) {
+          workspaceReconcileOwed.current = false;
+          dispatchRoster({ type: "workspaceRestored", result, groups });
+          rosterSettled();
+          showWorkspaceNotice(describeRestoreResult(result));
+        }
+        return true;
+      })
+      .catch((cause: unknown) => {
+        if (mounted.current) {
+          setWorkspaceError(toPreviewError(cause));
+          reconcileAfterFailedWorkspaceMutation();
+        }
+        return true;
+      })
+      .finally(() => {
+        workspaceBusyRef.current = false;
+        if (mounted.current) {
+          setWorkspaceBusy(false);
+          drainWorkspaceReconciliation();
+        }
+      });
+  }, [api, drainWorkspaceReconciliation, reconcileAfterFailedWorkspaceMutation, rosterSettled, showWorkspaceNotice]);
 
   const removeSelected = useCallback(() => {
     const handles = [...rosterRef.current.selected];
@@ -4390,6 +4441,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     dispatchRoster,
     addFiles,
     admitProjectInput,
+    restoreWorkspace,
     reconcileAfterFailedWorkspaceMutation,
     addFolder,
     removeSelected,

@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createContext, useContext } from "react";
 
-import { DOCUMENT_AUTHORITY_HEADER, currentDocumentAuthority } from "../ipc/documentAuthority";
+import { DOCUMENT_AUTHORITY_HEADER, currentDocumentAuthority, documentAuthorityHeaders } from "../ipc/documentAuthority";
 
-import type { FigurePreviewRequest, FigurePreviewOutcome, StagingReclaimOutcome, OutputOpenAction, OutputOpenOutcome, WorkspaceClearAction, WorkspaceClearOutcome, WorkspaceClearPlanOutcome } from "./contracts";
+import type { FigurePreviewRequest, FigurePreviewOutcome, StagingReclaimOutcome, OutputOpenAction, OutputOpenOutcome, WorkspaceArrangement, WorkspaceClearAction, WorkspaceClearOutcome, WorkspaceClearPlanOutcome, WorkspaceRestorePutBack, WorkspaceRestoreRead, WorkspaceRestoreWrite } from "./contracts";
 
 import type {
   WorkspaceOutputAdoptionResult,
@@ -125,6 +125,18 @@ export interface PreviewApi {
   removeDatasets(handles: readonly string[]): Promise<WorkspaceRemoveResult>;
   /** Empties the workspace. Source files are never touched. */
   clearWorkspace(): Promise<WorkspaceRoster>;
+  /** The restored rows, each re-checked now by identity and length. Admits nothing. */
+  readWorkspaceRestore(): Promise<WorkspaceRestoreRead>;
+  /** Records the session for the next start, as arranged here. */
+  saveWorkspaceRestore(arrangement: WorkspaceArrangement): Promise<WorkspaceRestoreWrite>;
+  /** Start fresh: forgets every stored row. Source files are never touched. */
+  clearWorkspaceRestore(): Promise<WorkspaceRestoreWrite>;
+  /** The off switch. Off forgets every stored row. */
+  setWorkspaceRestoreEnabled(enabled: boolean): Promise<WorkspaceRestoreWrite>;
+  /** Restore workspace: admits the rows still matching, like Add files. Previews nothing. */
+  restoreWorkspace(): Promise<WorkspaceRestorePutBack>;
+  /** Forgets one restored row; the next save records it. The file is not touched. */
+  dismissRestoredRow(handle: string): Promise<void>;
   openPreview(handle: string): Promise<Preview>;
   /**
    * Begins the one-click view of one Thermo RAW row (ADR 0060). It names the
@@ -439,6 +451,13 @@ export const tauriPreviewApi: PreviewApi = {
     invoke<WorkspaceRemoveResult>("remove_workspace_datasets", { handles }),
   reclaimConversionStaging: (recoveryId) => invoke<StagingReclaimOutcome>("reclaim_conversion_staging", { recoveryId }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   clearWorkspace: () => invoke<WorkspaceRoster>("clear_workspace"),
+  // `async`, so a page without document authority gets a rejection the hook can say, not a throw.
+  readWorkspaceRestore: async () => invoke<WorkspaceRestoreRead>("read_workspace_restore", {}, documentAuthorityHeaders()),
+  saveWorkspaceRestore: async (arrangement) => invoke<WorkspaceRestoreWrite>("save_workspace_restore", { arrangement }, documentAuthorityHeaders()),
+  clearWorkspaceRestore: async () => invoke<WorkspaceRestoreWrite>("clear_workspace_restore", {}, documentAuthorityHeaders()),
+  setWorkspaceRestoreEnabled: async (enabled) => invoke<WorkspaceRestoreWrite>("set_workspace_restore_enabled", { enabled }, documentAuthorityHeaders()),
+  restoreWorkspace: async () => invoke<WorkspaceRestorePutBack>("restore_workspace", {}, documentAuthorityHeaders()),
+  dismissRestoredRow: async (handle) => invoke<void>("dismiss_restored_row", { handle }, documentAuthorityHeaders()),
   openFinalizedOutput: (outputId, action) => invoke<OutputOpenOutcome>("open_finalized_output", { outputId, action }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   planWorkspaceClear: () => invoke<WorkspaceClearPlanOutcome>("plan_workspace_clear", {}, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   executeWorkspaceClear: (planId, action) => invoke<WorkspaceClearOutcome>("execute_workspace_clear", { planId, action }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),

@@ -2273,7 +2273,7 @@ fn describe_origin(origin: &DatasetOrigin) -> String {
 /// A tie-break appended to an already-full context would be cut off by the very
 /// bound it was added to satisfy, so the room for it is kept back here rather
 /// than hoped for later.
-fn bounded_context(value: &str, reserved: usize) -> String {
+pub(crate) fn bounded_context(value: &str, reserved: usize) -> String {
     let budget = MAX_RELATIVE_CONTEXT_CHARS.saturating_sub(reserved);
     if budget == 0 {
         // The suffix alone fills the bound. It is the half that actually tells

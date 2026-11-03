@@ -35,6 +35,8 @@ const MESSAGE = {
   // The project-owned mzML reader's refusals (ADR 0056). Each keeps the
   // reader's stable id as its detail, shown as it is.
   preview_not_open: "errPreviewNotOpen",
+  workspace_restore_not_read: "errRestoreNotRead",
+  restored_row_not_offered: "errRestoredRowNotOffered",
   spectrum_table_refused: "errSpectrumTableRefused",
   spectrum_table_unreadable: "errSpectrumTableUnreadable",
   spectrum_not_as_recorded: "errSpectrumNotAsRecorded",
