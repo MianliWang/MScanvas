@@ -248,6 +248,26 @@ default.
 >
 > The `ui/unverified-labels` lane is to implement all three. Until it merges,
 > the build behaves as the earlier notes say.
+>
+> **Implemented, PR #201, 2026-11-03.**
+>
+> - (a) The tag is beside the viewer's title and on the Metadata tab's File
+>   row. No figure document had a source line, so one was added: `FigureSpec`
+>   gains an optional source note (contract version 5), drawn on its own line
+>   under the panels and first in the `<desc>`, in a figure's own English. The
+>   preview, the saved SVG and PNG and the clipboard build through it, and the
+>   clipboard has no text, so only the drawn line reaches it. The figure dialog
+>   also carries the tag beside its source line. A figure without a label is
+>   byte for byte what it was. A stored targeted result's figure and a reopened
+>   `.msfigure` carry no note yet.
+> - (b) The session keeps the label of every labelled output it finalized, by
+>   volume serial and file ID, for the life of the process. Every add route
+>   consults it: Add files…, Add mzML folder…, a drop and a reference carried
+>   back from a project. A reference registered with no row asks it too. Nothing
+>   keeps those objects open, so an identity can outlive its file and be
+>   reissued; the worst that does is label a file that needed no label. A move
+>   across volumes is a copy and carries none.
+> - (c) `Describe again` is offered only after a failure Rust calls retryable.
 
 ### 4. An ordered filter chain replaces the nine fixed rows
 

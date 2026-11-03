@@ -472,7 +472,8 @@ availability, queue, adoption and export contracts.
     queue — in queue order, and then in publication order within one item's own
     set — and only when it is pressed. The count offered is a count of output
     **files**: one finalized Thermo item offers one, and one finalized
-    ten-sample SCIEX acquisition offers ten. An acquisition that finalized only
+    ten-sample SCIEX acquisition offers ten. Each of those outputs also has its
+    own **Add** for taking one without the rest (ADR 0052). An acquisition that finalized only
     part of its output set offers none, and is explained separately rather than
     silently omitted. Nothing is adopted
     because a conversion finished and nothing is previewed as a result. Before
