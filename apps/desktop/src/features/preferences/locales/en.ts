@@ -1588,6 +1588,8 @@ export const en = {
   targetedFigureExports: "Export this figure",
   targetedTableExports: "Export the results table",
   targetedTableSaved: "Saved {{name}} with {{count, number}} target rows.",
+  targetedTableSavedSpreadsheet: "Saved {{name}} as Spreadsheet CSV with {{count, number}} target rows.",
+  targetedTableSpreadsheetCsv: "Spreadsheet CSV",
   targetedTargetListDigest: "Target list SHA-256",
   targetedPayloadDigest: "Stored result manifest SHA-256",
   targetedFigureDrawnFeatureCandidates: "the extracted points by retention time, the retention-time window, the feature's bounds and apex, and other candidates",

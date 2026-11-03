@@ -1544,6 +1544,8 @@ export const zhCN = {
   targetedFigureExports: "导出此图",
   targetedTableExports: "导出结果表",
   targetedTableSaved: "已保存 {{name}}，共 {{count, number}} 个目标行。",
+  targetedTableSavedSpreadsheet: "已保存 {{name}}（电子表格 CSV），共 {{count, number}} 个目标行。",
+  targetedTableSpreadsheetCsv: "电子表格 CSV",
   targetedTargetListDigest: "目标列表 SHA-256",
   targetedPayloadDigest: "已存储结果清单 SHA-256",
   targetedFigureDrawnFeatureCandidates: "按保留时间绘制的提取数据点、保留时间窗口、特征边界与峰顶，以及其他候选峰",

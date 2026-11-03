@@ -1038,6 +1038,68 @@ describe("a stored result reused (M9.2)", () => {
     for (const call of NEVER) expect(caused(api)).not.toContain(call);
   });
 
+  it("sends the spreadsheet CSV's own word and names it in the run and in its result", async () => {
+    const api = await inspectResult();
+    await screen.findByText(en.targetedRowsCaption);
+    expect(
+      [...document.querySelectorAll("[data-targeted-table-export] [data-targeted-export]")].map((control) =>
+        control.getAttribute("data-targeted-export"),
+      ),
+    ).toEqual(["csv", "tsv", "spreadsheetCsv"]);
+    expect(button("spreadsheetCsv").textContent).toBe("Export Spreadsheet CSV…");
+
+    const release = api.holdOnce("exportTargetedMs1Table");
+    await press(button("spreadsheetCsv"));
+    expect(api.exportTargetedMs1Table).toHaveBeenLastCalledWith(ARTIFACT, "spreadsheetCsv");
+    expect(status("table").textContent).toBe("Choose where to save the Spreadsheet CSV file.");
+    expect(button("spreadsheetCsv").textContent).toBe("Exporting Spreadsheet CSV…");
+    for (const other of ["csv", "tsv"]) {
+      expect(button(other).getAttribute("aria-disabled"), other).toBe("true");
+      expect(button(other), other).toHaveAccessibleDescription("Choose where to save the Spreadsheet CSV file.");
+    }
+    await act(async () => {
+      release();
+    });
+    expect(status("table").textContent).toBe(
+      "Saved mscanvas-targeted-ms1-eeeeeeee-results-spreadsheet.csv as Spreadsheet CSV with 2 target rows.",
+    );
+
+    api.cancelOnce("exportTargetedMs1Table");
+    await press(button("spreadsheetCsv"));
+    expect(status("table").textContent).toBe(en.viewerExportCancelled);
+
+    // A write Rust refused and one that failed: each stays, with its reason,
+    // and the choice stays offered.
+    for (const [code, sentence] of [
+      ["spectrum_destination_exists", en.m74ErrorExists],
+      ["spectrum_not_written", en.m74ErrorNotWritten],
+    ] as const) {
+      api.refuseOnce("exportTargetedMs1Table", code);
+      await press(button("spreadsheetCsv"));
+      expect(status("table").textContent, code).toBe(sentence);
+      expect(status("table").getAttribute("data-targeted-output"), code).toBe("failed");
+      expect(button("spreadsheetCsv").getAttribute("aria-disabled"), code).toBeNull();
+    }
+    expect(api.exportTargetedMs1Table).toHaveBeenCalledTimes(4);
+    for (const call of NEVER) expect(caused(api)).not.toContain(call);
+  });
+
+  it("says the spreadsheet CSV in Chinese in a Chinese session", async () => {
+    const api = await inspectResult(targetedProject(), undefined, "zh-CN");
+    await screen.findByText(zh.targetedRowsCaption);
+    expect(button("spreadsheetCsv").textContent).toBe("导出 电子表格 CSV…");
+    const release = api.holdOnce("exportTargetedMs1Table");
+    await press(button("spreadsheetCsv"));
+    expect(status("table").textContent).toBe("选择 电子表格 CSV 文件的保存位置。");
+    expect(button("spreadsheetCsv").textContent).toBe("正在导出 电子表格 CSV…");
+    await act(async () => {
+      release();
+    });
+    expect(status("table").textContent).toBe(
+      "已保存 mscanvas-targeted-ms1-eeeeeeee-results-spreadsheet.csv（电子表格 CSV），共 2 个目标行。",
+    );
+  });
+
   it("holds every output while one is out, and says which", async () => {
     const api = await inspectResult();
     await chooseDetected();
@@ -1046,12 +1108,13 @@ describe("a stored result reused (M9.2)", () => {
     expect(status("table").textContent).toBe("Choose where to save the CSV file.");
     // Every output is refused, never native-disabled (B4): each stays a Tab
     // stop and the table's refusals point at the line that says what runs.
-    for (const operation of ["csv", "tsv", "svg", "png"]) {
+    for (const operation of ["csv", "tsv", "spreadsheetCsv", "svg", "png"]) {
       expect(button(operation).getAttribute("aria-disabled"), operation).toBe("true");
       expect(button(operation).disabled, operation).toBe(false);
     }
     expect(button("tsv")).toHaveAccessibleDescription("Choose where to save the CSV file.");
-    for (const operation of ["tsv", "svg", "png"]) await press(button(operation));
+    expect(button("svg")).toHaveAccessibleDescription("Choose where to save the CSV file.");
+    for (const operation of ["tsv", "spreadsheetCsv", "svg", "png"]) await press(button(operation));
     await press(button("csv"));
     expect(api.exportTargetedMs1Table).toHaveBeenCalledTimes(1);
     await press(button("svg"));
@@ -1061,6 +1124,15 @@ describe("a stored result reused (M9.2)", () => {
     });
     expect(status("table").getAttribute("data-targeted-output")).toBe("savedTable");
     expect(button("svg").disabled).toBe(false);
+
+    // And the other way round: a figure's picker refuses the table's choices,
+    // and they point at the figure's line.
+    const releaseFigure = api.holdOnce("exportTargetedMs1Figure");
+    await press(button("svg"));
+    expect(button("spreadsheetCsv")).toHaveAccessibleDescription("Choose where to save the SVG file.");
+    await act(async () => {
+      releaseFigure();
+    });
   });
 
   it("exports the figure at the size typed, the same drawing the page shows", async () => {
