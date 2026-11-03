@@ -227,10 +227,27 @@ default.
 > beside the file. The project's Details names it beside the reference and
 > on every link to it. The viewer's file title, the Metadata tab's File row
 > and an exported figure's source line do not carry it; whether they should
-> is open for the owner.
+> is open for the owner. *Decided by the owner on 2026-10-31: they should
+> (below).*
 > The diagnostics export of a refused, stopped or set item, which has no
 > single-output report of its own, carries the label `BEGIN` bound to its
 > row, so it names the same release the queue row does.
+>
+> **Decided by the owner, 2026-10-31.** Shown the three questions #161's
+> review left, each with its recommendation, the owner replied verbatim
+> "全部按推荐。批准" ("all as recommended. Approved"):
+>
+> - (a) For a labelled output, the viewer's file title, the Metadata tab's File
+>   row and an exported figure's source line also carry "Not verified by
+>   MSCanvas".
+> - (b) Add files… and Add mzML folder… recognise a row whose file is one of
+>   this session's finalized outputs, matched by object identity (volume serial
+>   and file ID, never the name), and carry its label. A project reference
+>   registered from such a row records the label, not `null`.
+> - (c) "Describe again" is not offered after a refusal that is not retryable.
+>
+> The `ui/unverified-labels` lane is to implement all three. Until it merges,
+> the build behaves as the earlier notes say.
 
 ### 4. An ordered filter chain replaces the nine fixed rows
 
@@ -779,7 +796,8 @@ Each later in its own slice:
   >   had added another way gains the label when the same object is adopted.
   >   Until then a row from Add files… or Add mzML folder… carries none, even
   >   for a finalized output (review, 2026-10-31); whether those routes should
-  >   match the session's finalized outputs is open for the owner.
+  >   match the session's finalized outputs is open for the owner. *Decided by
+  >   the owner on 2026-10-31: they should (decision 3).*
   >   Advanced outputs are offered for adoption again.
   > - **Project.** Schema 5 adds `notVerifiedByMscanvas` to an input. It is
   >   recorded at registration when the object whose bytes were hashed is a
