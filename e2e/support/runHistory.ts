@@ -95,6 +95,12 @@ export const STOPPED = run("00000000000000000000000000000004", {
 });
 export const STOPPED_ITEMS = [item("Stopped_01.raw", { state: "cancelled", outcome: null, outputs: [] })];
 
+/** Ended by a refusal after a build was bound: the file it kept from starting never ran. */
+export const REFUSED_END = run("00000000000000000000000000000008", {
+  startedAtMs: NOON - 144 * HOUR, endedAtMs: NOON - 143 * HOUR, failure: "backend_quarantined", finalizedCount: 1,
+});
+export const REFUSED_END_ITEMS = [item("First_01.raw"), item("Second_02.raw", { state: "notRun", attempts: 0, outcome: null, outputs: [] })];
+
 /** Still being written, by this instance or another. */
 export const RUNNING = run("00000000000000000000000000000005", { state: "running", startedAtMs: NOON + 2 * HOUR, endedAtMs: null, finalizedCount: 0 });
 

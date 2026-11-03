@@ -65,7 +65,7 @@ fn a_finished_queue_is_recorded_with_its_sources_and_outputs_and_the_wire_names_
     assert!(stored.contains(&escaped(&source)));
     let document: serde_json::Value = serde_json::from_str(&stored).expect("a document");
     let recorded_source = &document["items"][0]["source"];
-    assert_members(&recorded_source["members"], &[source.clone()]);
+    assert_members(&recorded_source["members"], std::slice::from_ref(&source));
     assert_eq!(
         recorded_source["destination"].as_str().map(plain_path),
         Some(plain_path(

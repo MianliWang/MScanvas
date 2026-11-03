@@ -181,9 +181,9 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 
 - Set the interface language, the roster's row spacing and which of the two
   workspace panels you want, and find them the way you left them the next time
-  MSCanvas starts. That record holds those five things and nothing else: no
-  path, no file list, no selection, no range, no conversion and no backend
-  choice. A window that gets too narrow folds a panel away for space without
+  MSCanvas starts. That record holds those five things and, once you choose one,
+  the folder for ProteoWizard, and nothing else: no file list, no selection, no
+  range and no conversion. A window that gets too narrow folds a panel away for space without
   changing what you asked for, so widening it again brings the panel back.
 - Be told the truth when those preferences cannot be read or cannot be written.
   A stored record MSCanvas does not understand is left exactly as it found it,

@@ -26,7 +26,7 @@ import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered 
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
-import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, REQUEST_REFUSED, RUNNING, RUNNING_ITEMS, SET_ITEM, STOPPED, STOPPED_ITEMS, STOP_FAILED, STOP_FAILED_ITEMS, WHOLE_SET_ITEM, found, listed } from "../support/runHistory";
+import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, REFUSED_END, REFUSED_END_ITEMS, REQUEST_REFUSED, RUNNING, RUNNING_ITEMS, SET_ITEM, STOPPED, STOPPED_ITEMS, STOP_FAILED, STOP_FAILED_ITEMS, WHOLE_SET_ITEM, found, listed } from "../support/runHistory";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
   admittedIntents,
@@ -1196,6 +1196,13 @@ const STOPS: readonly Stop[] = [
     // What ended the whole queue, in words and by its code.
     name: "run-history-stopped",
     table: runHistoryWorld(listed([STOPPED]), found(STOPPED, STOPPED_ITEMS)),
+    drive: openRunHistory,
+    anchor: "[data-run-failure]",
+  },
+  {
+    // A refusal that ended a queue which had run, as the record says it later.
+    name: "run-history-ended-by-refusal",
+    table: runHistoryWorld(listed([REFUSED_END]), found(REFUSED_END, REFUSED_END_ITEMS)),
     drive: openRunHistory,
     anchor: "[data-run-failure]",
   },
