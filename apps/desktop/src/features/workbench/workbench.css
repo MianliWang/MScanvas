@@ -495,13 +495,17 @@
   .spectrum-head-facts { height: auto; max-height: 36px; }
 }
 
-/* The restore notice: the offer, and joined under it the marked rows. The list is
-   the one part of the track that gives up height, down to one row, so the answers
-   above it and the offer's buttons stay on screen and a row of any height can be
-   reached. Its padding and the scroll margin keep a focus ring inside it.
+/* The restore notice: the offer, and joined under it the marked rows. The list
+   gives up height first, down to its 36 px, so the answers above it and the offer's
+   buttons stay on screen and a row of any height can be reached. Past that the
+   track scrolls too, and may show less than one row whole, also with no refusal
+   standing: a neutral notice does not relax its bound. The list's padding and the
+   scroll margin keep a focus ring inside it.
    Each part of a row may take a line of its own and wrap there: a group name can
    be 120 characters, and the file's name and reason still show. */
 .restore-notice .ui-button { flex: none; }
+/* The keyboard lands on the offer when its buttons go; the list sits flush under it. */
+.restore-notice:focus-visible { outline-offset: -2px; }
 .restore-notice:has(+ .restore-marked) { padding-bottom: 4px; border-bottom: 0; border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
 .shell-notices > .restore-marked { display: block; min-height: 36px; margin-top: -6px; padding: 2px 12px 8px; overflow: auto; border: 1px solid var(--color-border); border-top: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 .restore-marked ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }

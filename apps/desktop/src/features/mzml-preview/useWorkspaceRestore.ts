@@ -84,19 +84,23 @@ export function markedRows(groups: readonly RestoredGroup[]): readonly (Restored
 export function buildArrangement(organization: OrganizationState, membership: ReadonlySet<string>, waiting: readonly RestoredGroup[]): WorkspaceArrangement {
   const groups = organization.groups.map(group => ({ name: group.id === UNGROUPED ? null : group.name, handles: [...group.handles] }));
   const checked = organization.groups.flatMap(group => group.handles.filter(handle => membership.has(handle)));
+  // The last stored group walked, as in `placeRestored`: a group made here goes
+  // after it, so a partial put-back leaves the stored order alone (decision 1).
+  let after = 0;
   waiting.forEach((stored, at) => {
-    // A name with nothing waiting under it is not kept: the user may have
-    // dissolved or renamed that group, and the document holds no history of
-    // what has gone (decision 10).
-    if (stored.rows.length === 0) return;
     // The group of its name at the same count, as `placeRestored` chose it: the
     // Workbench allows two groups of one name.
     const count = waiting.slice(0, at).filter(other => other.name === stored.name).length;
     let target = groups.filter(group => group.name === stored.name)[count];
     if (target === undefined) {
+      // A name with nothing waiting under it is not kept: the user may have
+      // dissolved or renamed that group, and the document holds no history of
+      // what has gone (decision 10).
+      if (stored.rows.length === 0) return;
       target = { name: stored.name, handles: [] };
-      groups.push(target);
+      groups.splice(after + 1, 0, target);
     }
+    after = Math.max(after, groups.indexOf(target));
     for (const row of stored.rows) {
       target.handles.push(row.handle);
       if (row.checked) checked.push(row.handle);

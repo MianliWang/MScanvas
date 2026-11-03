@@ -97,6 +97,51 @@ describe("the arrangement Rust is told", () => {
       { name: "Batch", handles: ["restored-1"] },
     ]);
   });
+
+  describe("keeps the stored order of groups through a partial put-back", () => {
+    const names = (groups: readonly { readonly name: string | null }[]) => groups.map(group => group.name);
+    /** The read after a put-back: a stored group holds a marked row, or nothing more. */
+    const stored = (...groups: readonly (readonly [string, boolean])[]) => [
+      { name: null, rows: [] },
+      ...groups.map(([name, marked], at) => ({ name, rows: marked ? [row(`restored-${String(at)}`, "a.raw", "missing")] : [] })),
+    ];
+
+    it("an earlier group holding only a marked row stays before the group put back", () => {
+      const here = placeRestored(initialOrganization, [null, "A", "B"], [{ handle: "file-0", group: 2 }]);
+      expect(buildArrangement(here, new Set(), stored(["A", true], ["B", false])).groups).toEqual([
+        { name: null, handles: [] },
+        { name: "A", handles: ["restored-0"] },
+        { name: "B", handles: ["file-0"] },
+      ]);
+    });
+
+    it("a later group holding only a marked row stays after the group put back", () => {
+      const here = placeRestored(initialOrganization, [null, "B", "A"], [{ handle: "file-0", group: 1 }]);
+      expect(names(buildArrangement(here, new Set(), stored(["B", false], ["A", true])).groups)).toEqual([null, "B", "A"]);
+    });
+
+    it("several groups holding only marked rows stay in their places around the one put back", () => {
+      const here = placeRestored(initialOrganization, [null, "A", "B", "C", "D"], [{ handle: "file-0", group: 3 }]);
+      expect(names(buildArrangement(here, new Set(), stored(["A", true], ["B", true], ["C", false], ["D", true])).groups)).toEqual([null, "A", "B", "C", "D"]);
+    });
+
+    it("a group the user made this session stays after the stored ones", () => {
+      const put = placeRestored(initialOrganization, [null, "A", "B"], [{ handle: "file-0", group: 2 }]);
+      const here = organize(put, { type: "create", name: "Mine" });
+      expect(names(buildArrangement(here, new Set(), stored(["A", true], ["B", false])).groups)).toEqual([null, "A", "B", "Mine"]);
+    });
+
+    it("a later group of one name goes after the earlier, wherever the user has moved that", () => {
+      const here = organize(organize(initialOrganization, { type: "create", name: "Other" }), { type: "create", name: "Batch" });
+      const saved = buildArrangement(here, new Set(), stored(["Batch", false], ["Other", false], ["Batch", true]));
+      expect(saved.groups).toEqual([
+        { name: null, handles: [] },
+        { name: "Other", handles: [] },
+        { name: "Batch", handles: [] },
+        { name: "Batch", handles: ["restored-2"] },
+      ]);
+    });
+  });
 });
 
 describe("what a put-back does to the arrangement", () => {
@@ -148,6 +193,19 @@ describe("what a put-back does to the arrangement", () => {
   it("makes both groups of one name when a row lands only in the later one", () => {
     const state = placeRestored(initialOrganization, ["Batch", "Batch"], [{ handle: "file-1", group: 1 }]);
     expect(state.groups.map(group => [group.name, group.handles])).toEqual([["", []], ["Batch", []], ["Batch", ["file-1"]]]);
+  });
+
+  it("makes a group in its stored place, so a second put-back of the session keeps the stored order", () => {
+    const first = placeRestored(initialOrganization, [null, "A", "B"], [{ handle: "file-0", group: 2 }]);
+    expect(first.groups.map(group => group.name)).toEqual(["", "B"]);
+    const second = placeRestored(first, [null, "A", "B"], [{ handle: "file-1", group: 1 }]);
+    expect(second.groups.map(group => [group.name, group.handles])).toEqual([["", []], ["A", ["file-1"]], ["B", ["file-0"]]]);
+  });
+
+  it("puts a later group of one name after the earlier, wherever the user has moved that", () => {
+    const here = organize(organize(initialOrganization, { type: "create", name: "Other" }), { type: "create", name: "Batch" });
+    const state = placeRestored(here, ["Batch", "Other", "Batch"], [{ handle: "file-1", group: 2 }]);
+    expect(state.groups.map(group => [group.name, group.handles])).toEqual([["", []], ["Other", []], ["Batch", []], ["Batch", ["file-1"]]]);
   });
 
   it("leaves a row that was already live as it was: its group and its unchecked box", () => {

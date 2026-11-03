@@ -733,12 +733,52 @@ describe("WSP-010 Restore workspace, rendered", () => {
     await browser.keys("Enter");
     await browser.$("[data-restore-action]").waitForExist({ reverse: true });
     await browser.waitUntil(async () => browser.execute(() => document.activeElement?.getAttribute("data-restore") === "offer"));
+    // The keyboard's place shows whole: the marked rows sit flush under the offer.
+    expect(await browser.execute(() => {
+      const offer = document.querySelector('[data-restore="offer"]');
+      const list = document.querySelector(".restore-marked");
+      if (offer === null || list === null) return null;
+      const ring = getComputedStyle(offer);
+      return { visible: offer.matches(":focus-visible"), clear: offer.getBoundingClientRect().bottom + parseFloat(ring.outlineOffset) + parseFloat(ring.outlineWidth) <= list.getBoundingClientRect().top + 0.5 };
+    })).toEqual({ visible: true, clear: true });
     await browser.keys("Enter");
     expect(await calls("dismiss_restored_row")).toEqual([]);
     await browser.keys("Tab");
     expect(await browser.execute(() => document.activeElement?.hasAttribute("data-restore-start-fresh"))).toBe(true);
     await expectCleanConsole();
   });
+
+  for (const size of [[960, 640], [1366, 768]] as const) {
+    it(`keeps the stored order of groups through a put-back in two parts at ${String(size[0])}x${String(size[1])}`, async () => {
+      const second = { ...MZML_ROW, handle: "file-second" };
+      const stored = (a: readonly unknown[], b: readonly unknown[]) => ({ outcome: "restored", groups: [{ name: null, rows: [] }, { name: "Batch A", rows: a }, { name: "Batch B", rows: b }], expired: 0, leftoverCopies: 0 });
+      const putBack = (datasets: readonly (typeof MZML_ROW)[], handle: string, group: number) => ({
+        workspace: { roster: { datasets, capacity: 1024 }, outcomes: [{ outcome: "added", dataset: datasets.at(-1) }] },
+        placed: [{ handle, group, checked: false, added: true }],
+      });
+      const saved = async () => (await calls("save_workspace_restore")).map(call => call.args["arrangement"]);
+      // Batch A is on a disk that is out, and back by the time the press is answered.
+      await start({ read_workspace_restore: stored([row(0, "a.raw", "missing")], [row(1, "b.raw", "matching")]), restore_workspace: putBack([MZML_ROW], MZML_ROW.handle, 2) }, [], [], size);
+      await browser.$("[data-restore-action]").waitForClickable();
+      await setInvokeResult("read_workspace_restore", stored([row(0, "a.raw", "matching")], []));
+      await pressRestoreByKeyboard();
+      await browser.waitUntil(async () => (await saved()).length === 1);
+      expect(await saved()).toEqual([{ groups: [{ name: null, handles: [] }, { name: "Batch A", handles: ["restored-0"] }, { name: "Batch B", handles: [MZML_ROW.handle] }], checked: [] }]);
+
+      await setInvokeResult("restore_workspace", putBack([MZML_ROW, second], second.handle, 1));
+      await setInvokeResult("read_workspace_restore", stored([], []));
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-restore-action]")?.focus());
+      await browser.keys("Enter");
+      await browser.waitUntil(async () => (await saved()).length === 2);
+      expect((await saved())[1]).toEqual({ groups: [{ name: null, handles: [] }, { name: "Batch A", handles: [second.handle] }, { name: "Batch B", handles: [MZML_ROW.handle] }], checked: [] });
+      await revealRosterRow(second.handle);
+      const shown = await browser.execute(() => [...document.querySelectorAll(".roster-group-header")].map(header => header.textContent).filter(name => name.includes("Batch")));
+      expect(shown).toHaveLength(2);
+      expect(shown[0]).toContain("Batch A");
+      expect(shown[1]).toContain("Batch B");
+      await expectCleanConsole();
+    });
+  }
 
   it("leaves the keyboard in the restore section after a read's Try again in Settings", async () => {
     await start({ read_workspace_restore: { __reject: { kind: "unexpected_error", summary: "boom", detail: null, retryable: true } } }, [], [], [960, 640]);

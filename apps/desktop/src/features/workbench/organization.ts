@@ -85,17 +85,20 @@ export function reconcileOrganization(state: OrganizationState, authoritative: r
 
 /**
  * Puts the rows Restore workspace admitted in the groups they were stored in,
- * making any named group this session lacks that one of them lands in, in stored
- * order. A stored name no row lands in stays away: it may hold only marked rows,
- * or be a group the user has since dissolved. The Workbench allows two groups of
- * one name, so a stored group is the group of its name at the same count, not
- * just any of that name. A put-back is not an organization move, so it records
- * no undo step.
+ * making any named group this session lacks that one of them lands in, right
+ * after the stored group before it, so a put-back in parts keeps the stored order.
+ * A stored name no row lands in stays away: it may hold only marked rows, or be a
+ * group the user has since dissolved. The Workbench allows two groups of one name,
+ * so a stored group is the group of its name at the same count, not just any of
+ * that name. A put-back is not an organization move, so it records no undo step.
  */
 export function placeRestored(state: OrganizationState, groupNames: readonly (string | null)[], placed: readonly { readonly handle: string; readonly group: number }[]): OrganizationState {
   let nextId = state.nextId;
   const groups = [...state.groups];
   const landing = new Set(placed.map(row => row.group));
+  // The last stored group walked. Ungrouped is always first. Never back, so a
+  // later group of one name stays after the earlier wherever the user moved that.
+  let after = 0;
   const targets = groupNames.map((name, at) => {
     if (name === null) return UNGROUPED;
     const alike = () => groups.filter(group => group.id !== UNGROUPED && group.name === name);
@@ -103,10 +106,12 @@ export function placeRestored(state: OrganizationState, groupNames: readonly (st
     // Also for a row in a later group of this name, whose count needs this one.
     const needed = groupNames.some((other, later) => later >= at && other === name && landing.has(later));
     if (needed && alike().length <= count) {
-      groups.push({ id: `group-${nextId}`, name, collapsed: false, handles: [] });
+      groups.splice(after + 1, 0, { id: `group-${nextId}`, name, collapsed: false, handles: [] });
       nextId += 1;
     }
-    return alike()[count]?.id;
+    const target = alike()[count];
+    if (target !== undefined) after = Math.max(after, groups.indexOf(target));
+    return target?.id;
   });
   const moving = new Set(placed.map(row => row.handle));
   const arranged = groups.map(group => ({
