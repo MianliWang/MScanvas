@@ -1227,6 +1227,11 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
           if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
         }
         await shot("7-panels-open");
+        if (width === 1366) {
+          // The narrowest window that still docks them, where the row has the least room.
+          await metrics(1060, height);
+          await shot("8-panels-docked-1060");
+        }
 
         // Only the spreadsheet word went to Rust, once per press that was not refused.
         const exports = (await ipcCalls()).filter((call) => call.command === "export_targeted_ms1_table");
