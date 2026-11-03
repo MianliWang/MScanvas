@@ -138,6 +138,87 @@ fn a_refused_set_joins_the_ring_by_its_refusal() {
     assert_eq!(noted, ["source_sample_failure_observed"]);
 }
 
+/// A set that published whole and can be adopted is a success.
+#[test]
+fn a_complete_set_notes_nothing() {
+    let fixture = TestFile::new("ring-complete");
+    let destination = fixture.destination("out");
+    let service = output_set_service(FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+
+    let (update, noted) = noted_during(|| {
+        run_visible_queue(
+            &service,
+            &[sciex.handle],
+            &destination,
+            ConversionConflictPolicyDto::Fail,
+        )
+    });
+    assert_eq!(
+        item_states(terminal_queue(&update)),
+        vec![ConversionQueueItemStateDto::Finalized]
+    );
+    assert!(noted.is_empty(), "{noted:?}");
+}
+
+/// Skipping names that are taken is what the user asked for, not a failure.
+#[test]
+fn a_skipped_set_notes_nothing() {
+    let fixture = TestFile::new("ring-skipped");
+    let destination = fixture.destination("out");
+    for name in ["a-S1.mzML", "a-S2.mzML"] {
+        fs::write(destination.join(name), b"the user converted this before")
+            .expect("occupy a name");
+    }
+    let service = output_set_service(FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+
+    let (update, noted) = noted_during(|| {
+        run_visible_queue(
+            &service,
+            &[sciex.handle],
+            &destination,
+            ConversionConflictPolicyDto::Skip,
+        )
+    });
+    assert_eq!(
+        item_states(terminal_queue(&update)),
+        vec![ConversionQueueItemStateDto::Skipped]
+    );
+    assert!(noted.is_empty(), "{noted:?}");
+}
+
+/// The one failure that reads like a success (ADR 0063, decision 5): the set
+/// published whole, but without established completeness it cannot be adopted.
+#[test]
+fn a_whole_set_that_cannot_be_adopted_notes_fully_finalized() {
+    let fixture = TestFile::new("ring-not-adoptable");
+    let destination = fixture.destination("out");
+    let service = output_set_service(FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML"]));
+    let sciex = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row");
+    service.forget_next_set_completeness();
+
+    let (update, noted) = noted_during(|| {
+        run_visible_queue(
+            &service,
+            &[sciex.handle],
+            &destination,
+            ConversionConflictPolicyDto::Fail,
+        )
+    });
+    assert_eq!(
+        item_states(terminal_queue(&update)),
+        vec![ConversionQueueItemStateDto::Failed]
+    );
+    assert_eq!(noted, ["fully_finalized"]);
+}
+
 /// A stop is what the user asked for. It runs on the helper's own thread, so
 /// this reads the ring itself; nothing else in the suite may ever record the code.
 #[test]

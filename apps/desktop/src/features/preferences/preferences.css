@@ -39,9 +39,9 @@
 .settings-dialog h2 { margin: 0; font-size: 17px; font-weight: 650; }
 .settings-dialog-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .settings-fields { min-width: 0; padding: 18px 22px 20px; }
-/* Section heads; the second section sits below a divider. */
+/* Section heads; each after the first sits below a divider. */
 .settings-section-title { margin: 0 0 4px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
-.settings-fields > .setting-field + .settings-section-title { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--color-border); }
+.settings-fields > .settings-section-title:not(:first-child) { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--color-border); }
 /* v5.11 settings rows: label left, control right, a divider between rows. */
 .settings-fields > .setting-field { padding: 12px 0; }
 .settings-fields > .setting-field + .setting-field { border-top: 1px solid var(--color-border); }

@@ -58,7 +58,8 @@ const WITHHELD: &str = "<withheld>";
 const UNKNOWN: &str = "unknown";
 const NONE: &str = "none";
 
-/// One code the native boundary produced, and when.
+/// One code the native boundary produced or a failed conversion ended with, and
+/// when.
 ///
 /// Consecutive repeats of one code are one entry with a first and a last
 /// time, so a retry loop or a re-projected failure cannot push every other
@@ -74,7 +75,8 @@ pub(crate) struct RecentError {
     pub(crate) repeated: bool,
 }
 
-/// This session's recent boundary error codes, in memory only.
+/// This session's recent boundary error codes and failed conversion outcomes, in
+/// memory only.
 #[derive(Debug, Default)]
 pub(crate) struct RecentErrors {
     entries: VecDeque<RecentError>,

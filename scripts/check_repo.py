@@ -699,7 +699,33 @@ def validate_clipboard_stays_write_only(errors: list[str]) -> None:
     would let anything running there replace what the user copied. And the
     JavaScript guest plugin is how both usually arrive, so it must not become a
     dependency of the application either.
+
+    Copy diagnostics is the one departure, accepted by the owner "for this button
+    only" (ADR 0063, question 4): it writes text through the platform's clipboard,
+    which needs no capability. So nothing below would see a second use of it, or
+    a read, and that scope is checked in the source.
     """
+    source_root = ROOT / "apps" / "desktop" / "src"
+    allowed = source_root / "features" / "preferences" / "SettingsDialog.tsx"
+    for source in sorted(source_root.glob("**/*")):
+        if source.suffix not in {".ts", ".tsx"} or ".test." in source.name or not source.is_file():
+            continue
+        uses = re.findall(
+            r"\bnavigator\s*\??\.\s*clipboard\b(\s*\??\.\s*writeText\s*\()?",
+            source.read_text(encoding="utf-8"),
+        )
+        relative = source.relative_to(ROOT).as_posix()
+        if source != allowed and uses:
+            errors.append(
+                f"{relative} uses navigator.clipboard; the platform clipboard is accepted "
+                "for the Copy diagnostics button only (ADR 0063, question 4)"
+            )
+        elif len(uses) > 1 or not all(uses):
+            errors.append(
+                f"{relative} may call navigator.clipboard.writeText once, for the Copy "
+                "diagnostics button, and nothing else on the clipboard (ADR 0063, question 4)"
+            )
+
     for capability in sorted((ROOT / "apps" / "desktop" / "src-tauri" / "capabilities").glob("*.json")):
         declared = json.loads(capability.read_text(encoding="utf-8"))
         relative = capability.relative_to(ROOT).as_posix()

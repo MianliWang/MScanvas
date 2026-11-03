@@ -3,7 +3,9 @@
 Status: **Accepted (2026-10-30)**; see the
 [owner decision](#owner-decision-2026-10-30-a0063), which answers questions 1–5,
 and the [owner decision of 2026-10-31](#owner-decision-2026-10-31), which
-answers questions 6 and 7.
+answers questions 6 and 7. [Question 8](#open-questions-for-the-owner), added on
+2026-11-03, is open: the interface departs from decision 10 until the owner
+answers it.
 Proposed on 2026-10-30. The owner asked that day for every backend
 item that can be done now to start; this record states the recommendations that
 lane implemented, and each choice the owner has not made is listed
@@ -157,7 +159,7 @@ can appear. The line tells a machine-wide installation from a per-user or
 portable copy; two side-by-side installations are told apart by the release,
 the source revision and the `msconvert` SHA-256.
 
-### 5. A bounded, in-memory ring of boundary error codes
+### 5. A bounded, in-memory ring of boundary error codes and failed conversion outcomes
 
 Every `PreviewErrorDto` is built through `PreviewErrorDto::new`, so that is
 where its code, and only its code, joins the ring. The one built elsewhere,
@@ -186,6 +188,11 @@ the run (`WorkspaceConversionReport::of`, `SciexAttemptSettlement::of`). It is
 not recorded where the report is serialized: a queue is read again and again,
 and two failed rows read in turn would push every other code out of the ring. A
 stop is not a failure and is not recorded.
+
+A view conversion (ADR 0060) has no report and builds neither of those, so it is
+recorded once, as the kind of the `PreviewErrorDto` the view run returns. That
+kind is usually the failure's coarse `stable_id()`: where a queue report records
+`missing_output`, a view conversion records `output_rejected`.
 
 These are not errors at the boundary or failed conversions, so they are not in
 it:
@@ -237,17 +244,24 @@ was sent and that the user should read it before sharing. Copying uses the
 platform's text clipboard write from that button's click, which needs no Tauri
 capability and reads nothing. This departs from the posture of ADR 0030 and
 ADR 0034, where the clipboard is reached from Rust only. `check_repo.py` checks
-that posture through the capabilities and `package.json`, so a
-`navigator.clipboard.writeText` call still passes it; the owner accepted this
-route on 2026-10-30 (question 4, A0063). The release guide's
+that posture through the capabilities and `package.json`, which a
+`navigator.clipboard.writeText` call does not touch; the owner accepted this
+route on 2026-10-30 for this button only (question 4, A0063), so `check_repo.py`
+also refuses any other use of `navigator.clipboard` in the interface's source,
+and a second call or a read in this one. The release guide's
 "For the environment, give" list then points at the button, from the first
 release that has it; beta 1's guide describes beta 1, which does not.
 
-Built on 2026-11-03, with one departure: the sentence is left out, because the
-owner's rule of 2026-10-28 removes secondary explanations from the interface
-(question 8). The button reads when pressed, and again as **Read again**.
-Closing Settings drops the text. The clipboard's refusal is shown above the text,
-because the text stays selectable by hand.
+Built on 2026-11-03, with one departure the owner has not decided: the sentence
+is not shown, because the owner's rule of 2026-10-28 removes secondary
+explanations from the interface and that rule does not say whether a reminder
+like this one stays (question 8). The button reads when pressed, and again as
+**Read again**. A second read leaves the screen as it is until it answers, with
+**Copy** refused meanwhile, and the result of a copy still out when it was pressed
+is not shown, because that copy took the old text. Closing Settings drops the
+text. The clipboard's refusal is shown above the text, because the text stays
+selectable by hand. Support is the last section, below anything a save or the
+stored record has to say, because the text makes it tall.
 
 ## Alternatives
 
@@ -274,7 +288,8 @@ because the text stays selectable by hand.
 - **A `Verified build: yes/no` line now.** The verified build is ADR 0055's
   `msconvert.exe` digest. Draft PR #161 adds that constant; this lane would have
   been a fourth copy of it. The digest itself is in the summary, so support can
-  compare it today.
+  compare it today. *Adopted on 2026-11-03, once #161 had merged, reading that
+  constant (decision 1).*
 - **The account check on every value**, as an earlier draft of this record did.
   Withholds a value the name can only match by chance, and the withheld line
   then points at the name: `jan` loses `Jan 13 2026` while `Release: 3.0.26013`
@@ -389,8 +404,16 @@ recommended"). Both are answered as recommended:
    decision 2 now says that the ring will name conversion outcomes too. The
    alternatives were the `Ok`-carried refusals as well, or the ring as it is,
    with decision 5 saying what it leaves out.
-8. *Open, added 2026-11-03:* **The sentence of decision 10.** It said that nothing
-   was sent and that the user should read the text before sharing. Recommended:
-   leave it out, as built, under the owner's rule of 2026-10-28 against secondary
-   explanations. The alternative is one line beside the preview, which that rule
-   would have to admit as a privacy statement.
+8. *Open, added 2026-11-03:* **The sentence of decision 10.** Decision 10, accepted
+   on 2026-10-30, lists one sentence saying that nothing was sent and that the user
+   should read the text before sharing. Question 4 as A0063 showed it to the owner
+   lists a Settings button, a read-only preview and the text clipboard, and no
+   sentence. The rule of 2026-10-28 removes secondary explanations and keeps
+   "recovery paths, no-overwrite and irreversible-action warnings, the
+   scientific-honesty statements and accessible names", which does not say whether
+   this reminder stays. Recommended: leave it out, as built. The text is in front
+   of the user before anything is copied, and it holds no backend text. The
+   conversion failure export keeps a sentence like it ("Review the file before
+   sharing", ADR 0017), but that file holds redacted backend text the user has not
+   seen when saving it. The alternative is one line beside the preview, in en and
+   zh-CN.

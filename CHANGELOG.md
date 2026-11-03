@@ -11,8 +11,9 @@ All notable changes will be documented here once versioned releases begin.
   the clipboard, for you to paste into a bug report yourself. It holds the
   MSCanvas, Windows, WebView2 and ProteoWizard versions, whether that
   ProteoWizard is the verified build, and this session's recent error codes,
-  failed conversions among them. It holds no file name, path, user name or
-  workspace content; nothing is written or sent
+  failed conversions among them. It holds no file name, path, user name or list
+  of what is in your workspace, though an error code can name a vendor or a
+  feature you used, and its time says when. Nothing is written or sent
   ([ADR 0063](docs/architecture/adr/0063-copy-diagnostics.md)).
 
 ### Changed

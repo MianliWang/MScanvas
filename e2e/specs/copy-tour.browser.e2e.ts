@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { cdp, metrics } from "../support/cdp";
 import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
 import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered } from "../support/conversion";
-import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
+import { IPC_TABLE_KEY, holdInvoke, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
@@ -1133,6 +1133,17 @@ const STOPS: readonly Stop[] = [
     anchor: '[data-diagnostics-read][aria-disabled="true"]',
   },
   {
+    name: "diagnostics-reading-again",
+    table: withDiagnostics,
+    drive: async () => {
+      await readDiagnostics();
+      await browser.$("[data-diagnostics-preview]").waitForExist();
+      await holdInvoke("read_environment_diagnostics");
+      await browser.$("[data-diagnostics-read]").click();
+    },
+    anchor: '[data-diagnostics-copy][aria-disabled="true"]',
+  },
+  {
     name: "diagnostics-read",
     table: withDiagnostics,
     drive: readDiagnostics,
@@ -1155,6 +1166,16 @@ const STOPS: readonly Stop[] = [
     table: withDiagnostics,
     drive: () => copyDiagnostics(true),
     anchor: "[data-diagnostics-copy-failed]",
+  },
+  {
+    name: "settings-save-failed-after-read",
+    table: (locale) => ({ ...withDiagnostics(locale), save_ui_preferences: { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false, revision: 1 } }),
+    drive: async () => {
+      await readDiagnostics();
+      await browser.$("[data-diagnostics-preview]").waitForExist();
+      await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="compact"])').click();
+    },
+    anchor: "[data-save='failed']",
   },
 ];
 

@@ -34,9 +34,12 @@ const COPY = "[data-diagnostics-copy]";
 const COPIED = "[data-diagnostics-copied]";
 const COPY_FAILED = "[data-diagnostics-copy-failed]";
 
-async function open(locale: "en" | "zh-CN", width: number, height: number) {
+const SECOND_READING = `${TEXT}a second reading\n`;
+const SAVE_FAILED = { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false, revision: 1 };
+
+async function open(locale: "en" | "zh-CN", width: number, height: number, table: Record<string, unknown> = {}) {
   await metrics(width, height);
-  await installIpcBoundary({ ...scenario("populated", locale), [COMMAND]: TEXT });
+  await installIpcBoundary({ ...scenario("populated", locale), [COMMAND]: TEXT, ...table });
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 60_000 });
   await browser.waitUntil(() => browser.execute((lang: string) => document.documentElement.lang === lang, locale));
@@ -64,6 +67,28 @@ async function standInClipboard(refuse = false) {
   }, refuse);
 }
 const written = () => browser.execute(() => Reflect.get(window, "__mscanvasCopied") as string[]);
+/** A stand-in whose answer waits for {@link endHeldCopy}. */
+async function holdCopies() {
+  await browser.execute(() => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      configurable: true,
+      value: () => new Promise<void>((resolve, reject) => { Reflect.set(window, "__mscanvasEndCopy", { resolve, reject }); }),
+    });
+  });
+}
+async function endHeldCopy(ending: "resolve" | "reject") {
+  await browser.execute((how: "resolve" | "reject") => {
+    (Reflect.get(window, "__mscanvasEndCopy") as Record<string, (reason?: unknown) => void>)[how]!(new DOMException("denied", "NotAllowedError"));
+    // Past the promise's own reaction, and a frame for anything it rendered.
+    return new Promise((done) => { requestAnimationFrame(() => { requestAnimationFrame(done); }); });
+  }, ending);
+}
+/** Inside the part of the dialog that scrolls, so nothing has to be scrolled to find it. */
+async function inTheBody(...selectors: readonly string[]) {
+  const body = await boxOf(".settings-dialog-body");
+  for (const selector of selectors) expect([selector, contains(body, await boxOf(selector))]).toEqual([selector, true]);
+}
+const choose = (value: string) => browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click();
 
 describe("Copy diagnostics, rendered", () => {
   afterEach(async () => {
@@ -123,7 +148,82 @@ describe("Copy diagnostics, rendered", () => {
         expect(await browser.$(PREVIEW).isExisting()).toBe(false);
         expect(await browser.$(READ).getText()).toBe(words.diagnosticsShow);
       });
+
+      it(`a second read leaves everything in place and Copy waits for it, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await standInClipboard();
+        await browser.$(READ).click();
+        await browser.$(PREVIEW).waitForExist();
+        await browser.$(COPY).click();
+        await browser.waitUntil(async () => (await browser.$(COPIED).getText()) === words.diagnosticsCopied);
+
+        await browser.$(READ).scrollIntoView({ block: "nearest" });
+        const before = await boxOf(READ);
+        await holdInvoke(COMMAND);
+        await setInvokeResult(COMMAND, SECOND_READING);
+        await browser.$(READ).click();
+        await browser.$(`${READ}[aria-disabled="true"]`).waitForExist();
+
+        // A second press lands on the same refused button, not on what is near it.
+        expect(await browser.execute((x: number, y: number, css: string) => document.elementFromPoint(x, y)?.closest(css) !== null,
+          before.left + before.width / 2, before.top + before.height / 2, READ)).toBe(true);
+        expect(await browser.$(READ).getText()).toBe(words.diagnosticsReadAgain);
+        expect(await browser.$(DIALOG).getText()).toContain(words.diagnosticsReading);
+        expect(await value()).toBe(TEXT);
+        expect(await browser.$(COPIED).getText()).toBe(words.diagnosticsCopied);
+        await inTheBody(READ);
+
+        // Copy is refused and says why: that text is about to be replaced.
+        expect(await browser.$(COPY).getAttribute("aria-disabled")).toBe("true");
+        await browser.$(COPY).click();
+        expect(await written()).toEqual([TEXT]);
+
+        await releaseInvokeHold(COMMAND);
+        await browser.waitUntil(async () => (await value()) === SECOND_READING);
+        expect(await browser.$(COPIED).getText()).toBe("");
+        expect(await browser.$(COPY).getAttribute("aria-disabled")).toBe(null);
+        await browser.$(COPY).click();
+        await browser.waitUntil(async () => (await browser.$(COPIED).getText()) === words.diagnosticsCopied);
+        expect(await written()).toEqual([TEXT, SECOND_READING]);
+      });
+
+      // Support is last: reading makes it 200px taller, and a save's explanation
+      // and its recovery buttons must not end up below it (ADR 0063, decision 10).
+      it(`a failed save and its actions stay in the body, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await setInvokeResult("save_ui_preferences", SAVE_FAILED);
+        await choose("compact");
+        await browser.$("[data-save='failed']").waitForDisplayed();
+        await inTheBody("[data-save='failed']", "[data-save-retry]", "[data-save-session-only]");
+        expect(await browser.$("[data-save='failed']").getText()).toContain(words.writeNotPublished);
+      });
+
+      it(`a failed save stays in the body with the text already read, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await browser.$(READ).click();
+        await browser.$(PREVIEW).waitForExist();
+        await setInvokeResult("save_ui_preferences", SAVE_FAILED);
+        await choose("compact");
+        await browser.$("[data-save='failed']").waitForDisplayed();
+        await inTheBody("[data-save='failed']", "[data-save-retry]", "[data-save-session-only]");
+      });
     }
+
+    it(`a stored record, a refused save and a failed read each stay in the body, ${String(width)}x${String(height)}`, async () => {
+      // An unusable record starts the session in en, and the refused choice is zh-CN.
+      await open("en", width, height, { load_ui_preferences: { outcome: "unusable", problem: "unsupportedVersion", revision: 0 } });
+      await inTheBody("[data-stored-record='unusable']", "[data-stored-replace]");
+
+      await setInvokeResult("save_ui_preferences", { outcome: "storedRecordUnusable", problem: "unsupportedVersion", revision: 0 });
+      await choose("zh-CN");
+      await browser.$("[data-save='refused']").waitForDisplayed();
+      await inTheBody("[data-save='refused']");
+
+      await setInvokeRejection(COMMAND, { kind: "preview_worker_unavailable", summary: "", detail: null, retryable: true });
+      await browser.$(READ).click();
+      await browser.$("[data-diagnostics-failed]").waitForDisplayed();
+      await inTheBody("[data-diagnostics-failed]");
+    });
   }
 
   for (const [locale, words] of [["en", en], ["zh-CN", zh]] as const) {
@@ -168,5 +268,21 @@ describe("Copy diagnostics, rendered", () => {
         return box.value.slice(box.selectionStart, box.selectionEnd);
       }, PREVIEW)).toBe(TEXT);
     });
+
+    for (const ending of ["resolve", "reject"] as const) {
+      it(`a copy still out when the text is read again claims nothing (${ending}), ${locale}`, async () => {
+        await open(locale, 960, 640);
+        await holdCopies();
+        await browser.$(READ).click();
+        await browser.$(PREVIEW).waitForExist();
+        await browser.$(COPY).click();
+        await setInvokeResult(COMMAND, SECOND_READING);
+        await browser.$(READ).click();
+        await browser.waitUntil(async () => (await value()) === SECOND_READING);
+        await endHeldCopy(ending);
+        expect(await browser.$(COPIED).getText()).toBe("");
+        expect(await browser.$(COPY_FAILED).isExisting()).toBe(false);
+      });
+    }
   }
 });
