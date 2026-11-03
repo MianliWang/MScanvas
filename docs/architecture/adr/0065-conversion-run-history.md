@@ -294,8 +294,11 @@ and of G16, cross-session staging ownership, unchanged.
   (`set-aside-<ms>-<name>`) and taken off its name. A hard link refuses an
   existing name, so nothing is replaced. Every list counts each run kept
   aside as `unreadable`, whether a start or a list found it, until Clear
-  removes it. One a holder keeps under its own name as well is one run with one
-  link: the next start or list only tries to take the name off.
+  removes it. One a holder keeps under its own name as well has one link: the
+  next start or list only tries to take the name off. It counts once, unless the
+  holder also keeps the name from being read, which counts it again until the
+  holder lets go. Another document at that name is another run, with its own
+  link.
 - **Newer schema:** left exactly where it is and never rewritten. The list
   counts it as `newer`. Neither pruning nor Clear removes it, and pruning does
   not count it: a later build's run may be one its live instance is still

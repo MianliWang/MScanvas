@@ -516,7 +516,7 @@ fn the_byte_bound_prunes_the_oldest_and_an_oversized_run_drops_only_its_items() 
 }
 
 #[test]
-fn a_document_one_byte_over_the_bound_with_its_newline_drops_its_items() {
+fn a_document_keeps_its_items_at_the_bound_and_drops_them_one_byte_over_it() {
     // The newline is part of the document the bound is checked against: a
     // body of exactly the bound would otherwise be written one byte over it,
     // and then read as corrupt and kept aside.
@@ -529,6 +529,38 @@ fn a_document_one_byte_over_the_bound_with_its_newline_drops_its_items() {
     let room = MAX_RECORD_BYTES - fs::metadata(&path).expect("written").len();
     drop(history);
     fs::remove_file(&path).expect("remove the measuring run");
+
+    // The document exactly the bound: it fits, in its file and from memory.
+    let history = open(&scratch);
+    exact.items[0].display_name = "z".repeat(usize::try_from(room).expect("fits"));
+    history.begin(1, exact.clone(), progress(RunState::Running, &["running"]));
+    let run_id = active_id(&history);
+    let path = history_directory(&scratch).join(file_name_of(&run_id));
+    assert_eq!(
+        fs::metadata(&path).expect("written").len(),
+        MAX_RECORD_BYTES
+    );
+    let stored = read_record(&path).expect("reads back").expect("written");
+    assert_eq!((stored.omitted, stored.items.len()), (None, 1));
+    let told_with_items = || {
+        let listed = runs(&history);
+        let run = listed
+            .iter()
+            .find(|run| run.run_id == run_id)
+            .expect("listed");
+        assert!(!run.items_omitted);
+        assert_eq!(items(&history, &run_id).len(), 1);
+    };
+    told_with_items();
+    #[cfg(windows)]
+    {
+        // A holder keeps the file from this session, so this can only be memory.
+        let holder = hold(&path, SHARES_NOTHING);
+        told_with_items();
+        drop(holder);
+    }
+    drop(history);
+    fs::remove_file(&path).expect("remove the run at the bound");
 
     let history = open(&scratch);
     // Same-length identifiers and times, so the body is exactly the bound.
@@ -1482,8 +1514,8 @@ fn a_run_too_large_for_its_file_is_told_without_its_items_from_memory_too() {
     drop(holder);
 }
 
-/// One corrupt run a holder keeps under its own name is one run and one link,
-/// however often it is listed.
+/// One corrupt run a holder keeps under its own name has one link however often
+/// it is listed. It counts once, unless the holder keeps the name from being read.
 #[cfg(windows)]
 #[test]
 fn a_corrupt_run_a_holder_keeps_is_counted_once_and_kept_aside_once() {
@@ -1515,11 +1547,62 @@ fn a_corrupt_run_a_holder_keeps_is_counted_once_and_kept_aside_once() {
     assert!(path.exists(), "the holder keeps its name");
 
     drop(holder);
+    let holder = hold(&path, SHARES_NOTHING);
+    assert_eq!(unreadable(), 2, "its link, and a name nobody can read");
+    assert_eq!(asides(), 1);
+
+    drop(holder);
     assert_eq!(unreadable(), 1, "kept aside, and its bytes with it");
     assert_eq!(asides(), 1);
     assert!(!path.exists(), "its name is gone once it can be");
     assert_eq!(history.clear(), FORGOT_ALL);
     assert_eq!(unreadable(), 0);
+}
+
+/// An earlier link keeps one file, not a name: another document at that name is
+/// another run to keep, and taking the name off must not lose it.
+#[cfg(windows)]
+#[test]
+fn another_document_at_a_name_already_kept_aside_gets_a_link_of_its_own() {
+    for held in [false, true] {
+        let scratch = Scratch::new(if held {
+            "history-corrupt-replaced"
+        } else {
+            "history-corrupt-again"
+        });
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let path = directory.join(file_name_of(&format!("{:013}-{}", 1, "c".repeat(32))));
+        let unreadable = || {
+            let RunHistoryListDto::Listed { unreadable, .. } = history.list() else {
+                panic!("listed");
+            };
+            unreadable
+        };
+
+        fs::write(&path, b"{ document A").expect("write");
+        let holder = held.then(|| hold(&path, SHARES_ALL_BUT_DELETE));
+        assert_eq!(unreadable(), 1);
+        assert_eq!(path.exists(), held, "only a holder keeps its name");
+        drop(holder);
+        // Two lists in one millisecond would give both links one name.
+        std::thread::sleep(Duration::from_millis(2));
+
+        // Over the first document's name, or at a name it has already left.
+        let sibling = directory.join("sibling");
+        fs::write(&sibling, b"{ document B").expect("write");
+        fs::rename(&sibling, &path).expect("takes the name");
+        assert_eq!(unreadable(), 2);
+        assert!(!path.exists(), "its bytes are in its own link");
+        let mut kept: Vec<Vec<u8>> = entries(&directory)
+            .iter()
+            .filter(|name| is_set_aside(name))
+            .map(|name| fs::read(directory.join(name)).expect("read"))
+            .collect();
+        kept.sort();
+        assert_eq!(kept, [b"{ document A".to_vec(), b"{ document B".to_vec()]);
+        assert_eq!(unreadable(), 2);
+    }
 }
 
 #[cfg(windows)]
