@@ -481,20 +481,100 @@ describe("WSP-010 Restore workspace, rendered", () => {
     await expectCleanConsole();
   });
 
-  /** Wholly on screen at once: each named element inside the track, and the row the keyboard is on inside its list too. */
+  /** Wholly on screen at once: each named element inside the track, and what the keyboard is on inside the track, and inside the list when it is a row. */
   async function expectOnScreen(css: readonly string[]) {
     const hidden = await browser.execute((selectors: readonly string[]) => {
       const track = document.querySelector(".shell-notices")?.getBoundingClientRect();
       const list = document.querySelector(".restore-marked")?.getBoundingClientRect();
       const inside = (box: DOMRect | undefined, within: DOMRect | undefined) => box !== undefined && within !== undefined && box.top >= within.top - 0.5 && box.bottom <= within.bottom + 0.5;
       const active = document.activeElement;
+      const onARow = active?.closest(".restore-marked") !== null;
       return [
         ...selectors.filter(selector => !inside(document.querySelector(selector)?.getBoundingClientRect(), track)),
-        ...(inside(active?.getBoundingClientRect(), track) && inside(active?.getBoundingClientRect(), list) ? [] : [`focused: ${active?.getAttribute("aria-label") ?? active?.tagName ?? "nothing"}`]),
+        ...(inside(active?.getBoundingClientRect(), track) && (!onARow || inside(active?.getBoundingClientRect(), list)) ? [] : [`focused: ${active?.getAttribute("aria-label") ?? active?.tagName ?? "nothing"}`]),
       ];
     }, css);
     expect(hidden).toEqual([]);
   }
+
+  /** How many marked rows the list shows whole. */
+  const wholeRows = () => browser.execute(() => {
+    const list = document.querySelector(".restore-marked")?.getBoundingClientRect();
+    const track = document.querySelector(".shell-notices")?.getBoundingClientRect();
+    if (list === undefined || track === undefined) return 0;
+    const top = Math.max(list.top, track.top) - 0.5;
+    const bottom = Math.min(list.bottom, track.bottom) + 0.5;
+    return [...document.querySelectorAll("[data-restored-row]")].filter(rowNode => {
+      const box = rowNode.getBoundingClientRect();
+      return box.top >= top && box.bottom <= bottom;
+    }).length;
+  });
+
+  /** Enter on Restore workspace, and the press answered: Restore workspace is no longer busy. */
+  async function pressRestoreByKeyboard() {
+    await browser.execute(() => document.querySelector<HTMLElement>("[data-restore-action]")?.focus());
+    await browser.keys("Enter");
+    await browser.waitUntil(async () => (await browser.$("[data-restore-action]").getAttribute("aria-busy")) !== "true" && (await browser.$('[data-live-region="restore"]').getProperty("textContent")) !== "");
+    expect(await browser.execute(() => document.activeElement?.hasAttribute("data-restore-action"))).toBe(true);
+  }
+
+  /** Eight of nine rows refused by a full workspace, and four more marked below the offer. */
+  const PARTLY_ROWS = [...Array.from({ length: 9 }, (_, index) => row(index, `QC_${String(index)}.raw`, "matching")), ...[9, 10, 11, 12].map(index => row(index, `run_${String(index)}.raw`, "missing"))];
+  const PARTLY_ANSWER = {
+    workspace: {
+      roster: { datasets: [MZML_ROW], capacity: 1024 },
+      outcomes: [
+        { outcome: "added", dataset: MZML_ROW },
+        ...[1, 2, 3, 4, 5, 6, 7, 8].map(index => ({ outcome: "rejected", candidateName: `QC_${String(index)}.raw`, error: { kind: "workspace_full", summary: "The workspace is full.", detail: null, retryable: true } })),
+      ],
+    },
+    placed: [{ handle: MZML_ROW.handle, group: 0, checked: false, added: true }],
+  };
+
+  for (const size of [[960, 640], [1366, 768]] as const) {
+    const at = `at ${String(size[0])}x${String(size[1])}`;
+
+    it(`keeps the pressed Restore workspace, Start fresh and the rows beside a put-back partly refused ${at}`, async () => {
+      await start({ read_workspace_restore: read(PARTLY_ROWS), restore_workspace: PARTLY_ANSWER }, [], [], size);
+      await browser.$("[data-restore-action]").waitForClickable();
+      await setInvokeResult("read_workspace_restore", read(PARTLY_ROWS.slice(1)));
+      await pressRestoreByKeyboard();
+      await browser.$(".shell-notices > .notice-warning").waitForDisplayed();
+      await expectOnScreen([".shell-notices > .notice-warning", "[data-restore-action]", '[data-restore="offer"] [data-restore-start-fresh]']);
+      expect(await wholeRows()).toBeGreaterThanOrEqual(2);
+      await expectCleanConsole();
+    });
+
+    it(`keeps the pressed Restore workspace, Start fresh and the rows beside a put-back refused whole ${at}`, async () => {
+      const rows = [row(0, "QC_01.raw", "matching"), row(1, "QC_02.raw", "matching"), ...[2, 3, 4, 5, 6].map(index => row(index, `run_${String(index)}.raw`, "missing"))];
+      await start({ read_workspace_restore: read(rows), restore_workspace: { __reject: { kind: "conversion_busy", summary: "A conversion is running.", detail: null, retryable: true } } }, [], [], size);
+      await browser.$("[data-restore-action]").waitForClickable();
+      await pressRestoreByKeyboard();
+      await browser.$(".shell-notices > .notice-danger").waitForDisplayed();
+      await expectOnScreen([".shell-notices > .notice-danger", "[data-restore-action]", '[data-restore="offer"] [data-restore-start-fresh]']);
+      expect(await wholeRows()).toBeGreaterThanOrEqual(4);
+      await expectCleanConsole();
+    });
+  }
+
+  it("brings the pressed Restore workspace into view when three refusals pass the track's bound", async () => {
+    const rejectedDismiss = { __reject: { kind: "unexpected_error", summary: "no answer", detail: null, retryable: true } };
+    await start({ read_workspace_restore: read(PARTLY_ROWS), restore_workspace: PARTLY_ANSWER, save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }, [], [], [960, 640]);
+    await browser.$("[data-restored-row]").waitForDisplayed();
+    await setInvokeResult("read_workspace_restore", read(PARTLY_ROWS.slice(0, -1)));
+    await browser.execute(() => [...document.querySelectorAll<HTMLElement>("[data-restore-dismiss]")].at(-1)?.focus());
+    await browser.keys("Enter");
+    await browser.$('[data-restore="stopped"]').waitForDisplayed();
+    await setInvokeResult("dismiss_restored_row", rejectedDismiss);
+    await browser.execute(() => [...document.querySelectorAll<HTMLElement>("[data-restore-dismiss]")].at(-1)?.focus());
+    await browser.keys("Enter");
+    await browser.$('[data-restore="action"]').waitForDisplayed();
+    await setInvokeResult("read_workspace_restore", read(PARTLY_ROWS.slice(1, -1)));
+    await pressRestoreByKeyboard();
+    await browser.$(".shell-notices > .notice-warning:not([data-restore])").waitForExist();
+    await expectOnScreen(["[data-restore-action]"]);
+    await expectCleanConsole();
+  });
 
   const REFUSAL_BESIDE_THE_LIST = [[[960, 640], 5], [[1366, 768], 6]] as const;
   const named = (count: number) => Array.from({ length: count }, (_, index) => row(index, `run_${String(index)}.raw`, "missing"));

@@ -412,6 +412,11 @@ const RESTORE_ANSWER = {
   placed: [{ handle: MZML_ROW.handle, group: 0, checked: true, added: true }],
 };
 
+const RESTORE_PARTLY_ROWS = [
+  ...Array.from({ length: 9 }, (_, index) => restoredRow(index, `QC_${String(index + 1).padStart(2, "0")}.raw`, "matching")),
+  ...[9, 10, 11, 12].map(index => restoredRow(index, `run_${String(index)}.raw`, "missing")),
+];
+
 /** A first run whose start-up read answers `read`. */
 function restoreTable(read: unknown) {
   return (locale: Locale) => ({ ...emptyTable(locale), read_workspace_restore: read });
@@ -1442,6 +1447,7 @@ const STOPS: readonly Stop[] = [
   { name: "restore-offer", table: restoreTable(RESTORE_OFFER), anchor: "[data-restore-action]" },
   { name: "restore-marked", table: restoreTable(RESTORE_MARKED), anchor: "[data-restored-row]" },
   { name: "restore-expired", table: restoreTable(restored([], 3)), anchor: "[data-restore-expired]" },
+  { name: "restore-expired-one", table: restoreTable(restored([], 1)), anchor: "[data-restore-expired]" },
   {
     // Refused like Add files, and for the same visible reason.
     name: "restore-refused-busy",
@@ -1485,6 +1491,16 @@ const STOPS: readonly Stop[] = [
   {
     name: "restore-putting-back",
     table: (locale) => ({ ...restoreTable(RESTORE_OFFER)(locale), restore_workspace: RESTORE_ANSWER }),
+    hold: ["restore_workspace"],
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await browser.$("[data-restore-action]").click();
+    },
+    anchor: '[data-restore-action][aria-busy="true"]',
+  },
+  {
+    name: "restore-putting-back-one",
+    table: (locale) => ({ ...restoreTable(restored([restoredRow(0, "QC_01.raw", "matching")]))(locale), restore_workspace: RESTORE_ANSWER }),
     hold: ["restore_workspace"],
     drive: async () => {
       await browser.$("[data-restore-action]").waitForClickable();
@@ -1565,6 +1581,23 @@ const STOPS: readonly Stop[] = [
       await browser.$(`[data-handle="${MZML_ROW.handle}"]`).waitForExist();
     },
     anchor: "[data-restore-action]",
+  },
+  {
+    // The answer takes its most height, with the keyboard still on Restore workspace and rows marked below.
+    name: "restore-put-back-partly-marked",
+    table: (locale) => ({
+      ...restoreTable(restored(RESTORE_PARTLY_ROWS))(locale),
+      restore_workspace: { ...RESTORE_ANSWER, workspace: { ...RESTORE_ANSWER.workspace, outcomes: [...RESTORE_ANSWER.workspace.outcomes, ...RESTORE_PARTLY_ROWS.slice(1, 9).map(({ displayName }) => ({ outcome: "rejected", candidateName: displayName, error: { kind: "workspace_full", summary: "The workspace is full.", detail: null, retryable: true } }))] } },
+    }),
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await setInvokeResult("read_workspace_restore", restored(RESTORE_PARTLY_ROWS.slice(1)));
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-restore-action]")?.focus());
+      await browser.keys("Enter");
+      await browser.$(`[data-handle="${MZML_ROW.handle}"]`).waitForExist();
+    },
+    anchor: "[data-restore-action]",
+    keepFocus: true,
   },
   { name: "restore-refused-conversion", table: (locale) => ({ ...conversionWorld(locale, STARTED), read_workspace_restore: RESTORE_OFFER }), anchor: "#restore-reason" },
   // The last: a code this build does not know is shown, not swallowed.

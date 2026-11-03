@@ -165,12 +165,13 @@ export function WorkspaceRestoreNotice({ session, canRestore, reason }: {
       ?? document.querySelector<HTMLElement>("[data-settings-return-target]"));
   });
 
-  // An answer above the list takes its height: the row the keyboard is on stays in view.
+  // An answer above takes height, a put-back's by the time its press ends: what
+  // the keyboard is on stays in view, a row or a button of the offer.
   const answers = session.failed.length;
   useLayoutEffect(() => {
     const active = document.activeElement;
-    if (active?.closest(".restore-marked")) active.scrollIntoView?.({ block: "nearest" });
-  }, [answers, problem, session.slowWork, stopped]);
+    if (active?.closest(".shell-notices")) active.scrollIntoView?.({ block: "nearest" });
+  }, [answers, problem, session.slowWork, stopped, work]);
 
   /** The refused or unavailable record's line, put away for this session. */
   const [readDismissed, setReadDismissed] = useState(false);
