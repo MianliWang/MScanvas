@@ -275,7 +275,6 @@ function RunDetail({ run, read: answer, catalog }: {
           </div>
         )}
       </dl>
-      {shown.state === "interrupted" ? <p className="notice notice-warning" data-run-interrupted-note="">{t("runHistoryInterruptedNote")}</p> : null}
       {shown.itemsOmitted ? <p className="notice notice-warning" data-run-items-omitted="">{t("runHistoryItemsOmitted")}</p> : null}
       {read.outcome === "reading" ? <p className="conversion-side-note" role="status" data-run-read="reading">{t("runHistoryReadingRun")}</p> : null}
       {read.outcome === "notFound" ? <p className="notice notice-warning" role="alert" data-run-read="notFound">{t("runHistoryNotFound")}</p> : null}

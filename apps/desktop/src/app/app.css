@@ -438,7 +438,7 @@ button:disabled,
   background: var(--color-surface);
 }
 
-.conversion-rail-foot:not([data-start-offered]):not(:has(.notice)) { padding: 0; border-top: 0; }
+.conversion-rail-foot:not([data-start-offered]):not(:has(.notice, [data-run-history-entry])) { padding: 0; border-top: 0; }
 
 /* A short window: the page scrolls as one, so nothing nests a scroll, and the
    rail -- stretched to the page's height -- keeps its foot pinned to the

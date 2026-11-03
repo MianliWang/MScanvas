@@ -1134,7 +1134,7 @@ const STOPS: readonly Stop[] = [
     name: "run-history-interrupted",
     table: runHistoryWorld(listed([INTERRUPTED]), found(INTERRUPTED, INTERRUPTED_ITEMS)),
     drive: openRunHistory,
-    anchor: "[data-run-interrupted-note]",
+    anchor: `[data-run-detail="${INTERRUPTED.runId}"] [data-run-interrupted-at]`,
   },
   {
     // What ended the whole queue, in words and by its code.

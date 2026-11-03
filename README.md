@@ -207,7 +207,7 @@ anything other than filename, and grouping it; a workspace that outlives the
 session -- a saved project records references and history, but reopening one
 restores no Workbench session -- which includes remembering a search, a sort, a selection, a range or
 the folder you chose for ProteoWizard -- the preferences that do survive a
-restart are the five listed above and nothing else; a dark theme, or any
+restart are the five listed above and the conversion history's off switch; a dark theme, or any
 appearance setting beyond language and row spacing; a remembered panel *size*,
 which the workspace has no way to set; conversion progress as a
 percentage; resuming a stopped queue; removing a row from a queue that is
@@ -377,6 +377,14 @@ acquisition, so it may still carry acquisition metadata, and MSCanvas says so
 beside the action and again inside the file. Nothing is uploaded, nothing is sent
 anywhere, and a file of that name that already exists is never replaced. The file
 is yours to read before you decide who sees it.
+
+`Conversion history`, at the foot of the conversion rail, lists every recorded run
+after a restart: when it started and ended, or that it was cut short, and each
+file's state, codes, outputs and checks. It reads only and shows no path. The
+record stays in your per-user folder and holds each source's path, on this
+computer only. `Clear history…` forgets ended runs and `Turn off…` in Settings
+forgets every run and records none; neither touches an acquisition or a converted
+file.
 
 ## Product scope
 
