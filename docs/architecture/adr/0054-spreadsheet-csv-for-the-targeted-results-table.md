@@ -188,9 +188,8 @@ LibreOffice and WPS. That check is the owner's and is pending. Until it passes:
   apostrophe is written as it is, so the stored labels `'=x` and `=x` are both
   written `'=x`: two different labels of one plan can print the same. Only the
   CSV or `target_id` tells them apart.
-- Until the webview adds `spreadsheetCsv` to `TargetedTableFormat`
-  (`projectApi.ts`) and offers a control, after PR #164, the variant is reached
-  only through the command.
+- The webview's `TargetedTableFormat` (`projectApi.ts`) carries `spreadsheetCsv`,
+  and the results table offers it as a third export button.
 - The golden fixtures in `fixtures/targeted-table-golden/` pin all three
   documents. The spreadsheet fixture holds the text after the byte-order mark;
   the test asserts the mark separately.
