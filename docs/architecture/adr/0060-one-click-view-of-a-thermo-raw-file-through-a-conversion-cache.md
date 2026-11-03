@@ -8,7 +8,8 @@ decision 5 of 2026-10-30) and asked that its details follow the
 recommendations. This record states those recommendations. Slice 1, the cache
 library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/172),
 2026-10-30). Slice 2, the operation and its commands, is implemented on `be/viewraw-op`
-([slice 2 notes](#slice-2-notes-2026-10-30)); nothing else here is. The questions still open for the owner are listed
+([slice 2 notes](#slice-2-notes-2026-10-30)). Slice 3, the interface, is implemented on `ui/view-raw-slice-3`
+([slice 3 notes](#slice-3-notes-2026-11-03)), without View with… and the Settings row; nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
 Amended 2026-10-30 by ADR 0056 slice 2: the data documents' version numbers
@@ -1334,6 +1335,86 @@ it says so; the decisions stand otherwise.
    - **Dated notes** are written in ADR 0005, ADR 0006, ADR 0012, ADR 0056
      decision 3 and ADR 0057 decision 2. ADR 0043 (CNV-D8) and ADR 0055 take
      theirs with slice 3, whose interface shows the progress and the reuse.
+
+## Slice 3 notes (2026-11-03)
+
+Dated notes of 2026-11-03, written with slice 3 (the interface, branch
+`ui/view-raw-slice-3`). Where a note departs from a decision above, it says so;
+the decisions stand otherwise.
+
+1. **What is implemented.** The pane of a highlighted Thermo RAW row
+   (`RawViewPane`) in every state of decision 3 but View with…'s; the phases read
+   by polling `get_raw_view_state` (`useRawView`, 400 ms while running, none
+   otherwise); Cancel; the open of a view that became ready while its row is
+   highlighted, and Ready with Open and the status bar's line otherwise; every
+   refusal of decision 4 from Rust's answer, each with its recovery; Enter on a
+   highlighted row (decision 1); the running view in `canAcquire`, `canPreview`,
+   the conversion lane and the scan selection (decision 5); the live region; and
+   the Metadata tab's group, from `PreviewDto.viewSource` (decision 12).
+2. **Exports are withheld, and that is the answer to slice 2 note 6.** Decision
+   11's provenance stays slice 4: it needs new spectrum and chromatogram document
+   versions, six preamble keys, a figure source line and their goldens, across
+   the single, linked and copied figures. So a viewed preview exports nothing
+   until they exist: `ScientificExportSlots` refuses every begin and copy of a
+   viewed open with `view_export_withheld`, a figure preview included. The tokens
+   stay issued, because the viewport's projection reads the spectrum by its token
+   and is not an export. The interface shows Export… and every figure and data
+   item of ⋯ refused, each pointing at one visible line in the file row, beside
+   Convert this file…, which is the route to an output that can be exported.
+3. **QC capture answers `viewed_through_cache`** (decision 11), and the Project
+   surface says so before the press. Its stable id keeps this record's spelling,
+   not the project errors' camelCase.
+4. **The wire, beyond decision 12.**
+   - `get_raw_view_state` takes `{ request: { handle } }`, like the other view
+     commands.
+   - `viewSource` carries the intent's shape (`intent`), the same one the
+     conversion catalog carries, in place of `intentId` and `intentSummary`, so
+     the summary follows the locale. It also carries `unverifiedBuildRelease`.
+   - A run that fails with less than the reserve free carries `freeBytes`, with
+     the reserve as `neededBytes`, so the pane words decision 9's sentence itself.
+5. **The availability answer, as implemented.**
+   - It asks what the session already holds: the last observed binding and the
+     catalog read for it. A session that has observed nothing, or a build that
+     cannot preview, answers `backend_not_found`; the webview says "Checking the
+     installation…" first while a check runs. A catalog not read yet says nothing
+     about the build, so the press stays open and its worker answers, as in slice
+     2 note 6. The webview reads the answer again when that catalog arrives.
+   - The root is looked at by `ViewCache::inspect`, which makes nothing: a root
+     that is not there is not a refusal, and `unreadable` is left to the press,
+     which can offer Try again.
+   - The length asked of the 1.5 GiB limit is the row's admitted length, as
+     `begin_raw_view` asks it, not one read through the lease handle. A RAW that
+     grew since is refused at Checking file's first chunk (slice 2 note 8).
+6. **The pane, as implemented.**
+   - **It takes the main column over an open preview.** Decision 1 was written for
+     a roster row that opens on activation, and today's Workbench leaves a preview
+     on screen when a vendor row is pressed. A RAW row needs a way to View while
+     an mzML row is open, so its pane replaces the viewer while it is highlighted.
+     The other row's preview stays held, and its own press comes back to it. Other
+     vendor rows keep today's behaviour.
+   - **Decision 1's one-line explanation is not on screen,** by the owner's rule
+     against secondary explanation text. The pane is the name, the family, the
+     label where it applies, and the buttons.
+   - **Where the roster is a drawer,** a press or a first Enter on a RAW row folds
+     it and moves the keyboard to the main column, so Tab reaches View (open
+     question 8's narrow path). Show from the status bar leaves it folded.
+   - **Each phase's line waits 300 ms** (design goal I8) by a CSS delay on an
+     element keyed by the phase; Cancel does not wait.
+   - **The file row of a viewed file** has Convert this file… and, on an unmeasured
+     build, the label. `ui/unverified-labels` adds the label to a labelled output's
+     title, a different fact, so a merge keeps both.
+7. **Deferred, each with its reason.**
+   - **View with…** (`begin_raw_view_with`, `rawViewIntents`) and the **Settings
+     row** (`describe_view_cache`, `clear_view_cache`, still awaiting a caller) are
+     not in this change. Both are ADR 0060's and neither gates View.
+   - A failure that is not retryable offers Convert this file… alone, as decision
+     10 says. View comes back with the next operation of any row.
+   - A native drop while a view runs still says a conversion is under way (slice 2
+     note 6), because that state is a webview-visible transfer object.
+   - The digest memo, the reporting form of the post-run revalidation, and the
+     key's move to the structured intent stay as slice 2 notes 4, 5 and 6 left them.
+   - Native QA (decision 14) waits for its hold release, HR-1. This slice's evidence
+     is the fake provider, Vitest and the browser boundary.
 
 ## Alternatives rejected
 

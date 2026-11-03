@@ -13,11 +13,11 @@ use crate::preview::dto::{
     ConversionIntentWireDto, FigurePreviewOutcomeDto, FigurePreviewRequestDto,
     FigurePreviewSourceDto, PreviewDto,
 };
-use crate::preview::service::RetainedSummaryRefusal;
 use crate::preview::raw_view::{
     MAX_RAW_BYTES, RawViewAvailabilityDto, RawViewBeginRequestDto, RawViewOperationRequestDto,
     RawViewPhaseDto, RawViewStateDto, RawViewStateRequestDto, ViewCacheSummaryDto,
 };
+use crate::preview::service::RetainedSummaryRefusal;
 
 /// An advanced intent (ADR 0055): MS1 only at 64/32, which no row holds.
 fn advanced_ms1() -> serde_json::Value {
@@ -828,9 +828,15 @@ fn a_failed_conversion_reports_its_own_code_and_publishes_nothing() {
     assert!(!retryable);
     assert_eq!(session.entries(), Vec::<String>::new());
     assert_eq!(session.staging(), Vec::<String>::new());
-    let RawViewStateDto::Failed { message, .. } = state else {
+    let RawViewStateDto::Failed {
+        message,
+        free_bytes,
+        ..
+    } = state
+    else {
         unreachable!()
     };
+    assert_eq!(free_bytes, None, "room left: nothing to say about space");
     assert!(!message.contains("GiB"), "{message}");
 }
 
@@ -851,7 +857,12 @@ fn a_disk_that_fills_during_the_run_fails_as_the_conversion_and_states_the_free_
     });
     let state = session.view();
     assert_eq!(failed(&state), ("backend_rejected", false));
-    let RawViewStateDto::Failed { message, .. } = state else {
+    let RawViewStateDto::Failed {
+        message,
+        free_bytes,
+        ..
+    } = state
+    else {
         unreachable!()
     };
     assert!(
@@ -859,6 +870,7 @@ fn a_disk_that_fills_during_the_run_fails_as_the_conversion_and_states_the_free_
         "{message}"
     );
     assert!(!message.to_lowercase().contains("full"), "{message}");
+    assert_eq!(free_bytes, Some(1 << 30), "the pane words this itself");
     assert_eq!(session.entries(), Vec::<String>::new());
     assert_eq!(session.staging(), Vec::<String>::new());
 }

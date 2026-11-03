@@ -6,6 +6,13 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **A Thermo RAW row can be viewed in two presses.** Highlighting it shows **View**
+  and starts nothing. View converts it with the verified default into MSCanvas's
+  view cache, never beside your file, shows each phase with Cancel, and opens it in
+  the same viewer; a second View of the same file finds the cached copy. The view
+  says which RAW file and conversion it came from. Its exports are refused until
+  they can say so too; **Convert this file…** is the route to an output you can
+  export ([ADR 0060](docs/architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).
 - **A saved PNG figure now carries the figure's title and description.** Every
   PNG saved from a spectrum, a chromatogram, the linked figure or a stored
   targeted result holds two uncompressed `iTXt` text chunks, `Title` and

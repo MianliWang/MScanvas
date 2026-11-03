@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type FocusEvent, type ReactNode } from "react";
 
 import { Button, EmptyState, Icon } from "../../components/ui";
 import type { UiMessage } from "../preferences/i18n";
@@ -127,6 +127,9 @@ export function RawViewPane({ row, view, localReason, runningName, canOpen, open
     shownKind.current = kind;
     heldFocus.current = node.contains(document.activeElement);
   });
+  // Between renders too: a press right after the keyboard arrived renders nothing first.
+  const onFocus = () => { heldFocus.current = true; };
+  const onBlur = (event: FocusEvent) => { if (event.relatedTarget !== null) heldFocus.current = false; };
 
   const convert = <Button onClick={onConvert}>{t("rawViewConvert")}</Button>;
   let body: ReactNode;
@@ -198,7 +201,7 @@ export function RawViewPane({ row, view, localReason, runningName, canOpen, open
       {convert}
     </div>} />;
   }
-  return <div ref={root} className="raw-view-pane" data-raw-view-pane={row.handle}>{body}</div>;
+  return <div ref={root} className="raw-view-pane" data-raw-view-pane={row.handle} onFocus={onFocus} onBlur={onBlur}>{body}</div>;
 }
 
 /** The settings a view was converted with, in the conversion surface's own words. */

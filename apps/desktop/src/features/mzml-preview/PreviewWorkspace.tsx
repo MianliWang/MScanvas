@@ -82,7 +82,7 @@ export function PreviewWorkspace() {
    * surface the column, and the row *is* the destination.
    */
   const revealInWorkbench = useCallback(
-    (handle: string) => {
+    (handle: string, openList = true) => {
       setSurface("workbench");
       // A row the list is not showing cannot be revealed, and a reveal that
       // reveals nothing is worse than no reveal. There are two reasons a row
@@ -125,7 +125,7 @@ export function PreviewWorkspace() {
       });
       revealToken.current += 1;
       setRevealRow({ handle, token: revealToken.current });
-      if (!rosterOpen && !panels.busy) panels.toggle("roster");
+      if (openList && !rosterOpen && !panels.busy) panels.toggle("roster");
     },
     [panels, rosterOpen, workspace],
   );
@@ -517,23 +517,26 @@ export function PreviewWorkspace() {
     panels.navigate();
   };
   const rawViewFinished = workspace.rawView.state.state === "ready" && workspace.rawView.state.openable ? workspace.rawView.state : null;
-  const rawViewReadyName = rawViewFinished === null || rawViewFinished.handle === rawPaneRow?.handle ? null : nameOfRow(rawViewFinished.handle);
+  const rawViewReadyName = rawViewFinished === null || rawViewFinished.handle === rawPaneRow?.handle || rawViewFinished.handle === previewedHandle
+    ? null : nameOfRow(rawViewFinished.handle);
+  /** Shows a RAW row's pane. Where the list is a drawer it stays folded, or it would cover the pane. */
+  const showRawRow = (handle: string) => { revealInWorkbench(handle, !constrained); };
   /** The bar's line: what runs, from every surface, or what became ready out of sight. */
   const rawViewStatus = rawViewRunning !== null ? {
     text: t("rawViewStatus", { name: shortFileName(rawViewRunning.fileName), elapsed: formatElapsed(rawViewRunning.elapsedMs) }),
     title: rawViewRunning.fileName,
     reason: rawViewReason,
     showLabel: t("rawViewShow", { name: rawViewRunning.fileName }),
-    onShow: () => revealInWorkbench(rawViewRunning.handle),
+    onShow: () => showRawRow(rawViewRunning.handle),
   } : rawViewFinished !== null && rawViewReadyName !== null ? {
     text: t("rawViewReady", { name: shortFileName(rawViewReadyName) }),
     title: rawViewReadyName,
     reason: null,
     showLabel: t("rawViewShow", { name: rawViewReadyName }),
-    onShow: () => revealInWorkbench(rawViewFinished.handle),
+    onShow: () => showRawRow(rawViewFinished.handle),
   } : null;
   const viewSource = preview.status === "loaded" ? preview.preview.viewSource : null;
-  const exportWithheld = viewSource === null ? null : { reason: t("viewExportWithheld"), reasonId: VIEW_EXPORT_WITHHELD_ID };
+  const exportWithheld = viewSource === null ? null : { reason: t("viewExportWithheldShort"), reasonId: VIEW_EXPORT_WITHHELD_ID };
   const evidenceState = rawPaneRow !== null ? "raw-view" : preview.status !== "empty" ? preview.status
     // While the list is being read, or could not be, the evidence never sends
     // the reader to a list that has nothing in it yet.
@@ -1188,7 +1191,7 @@ export function PreviewWorkspace() {
                     setSurface("conversion");
                     panels.navigate();
                   }}
-                  onShowRunning={() => { if (rawViewRunning !== null) revealInWorkbench(rawViewRunning.handle); }}
+                  onShowRunning={() => { if (rawViewRunning !== null) showRawRow(rawViewRunning.handle); }}
                 />
               </div>
             ) : preview.status === "opening" ? (

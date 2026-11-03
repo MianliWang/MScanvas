@@ -827,10 +827,9 @@ impl PreviewService {
         let probe = Arc::clone(&self.raw_view_settings().free_space);
         let mut message =
             String::from("The conversion for viewing failed. Convert this file to see why.");
-        let space = probe(cache.root());
-        if let Some(free) =
-            space.filter(|free| *free < super::super::raw_view::FREE_SPACE_RESERVE_BYTES)
-        {
+        let low = probe(cache.root())
+            .filter(|free| *free < super::super::raw_view::FREE_SPACE_RESERVE_BYTES);
+        if let Some(free) = low {
             let gib = free as f64 / f64::from(1 << 30);
             let _ = std::fmt::Write::write_fmt(
                 &mut message,
@@ -839,7 +838,10 @@ impl PreviewService {
                 ),
             );
         }
-        PreviewErrorDto::new(code, message, retryable).into()
+        Stop::Failed(Box::new((
+            PreviewErrorDto::new(code, message, retryable),
+            low.map(|free| (super::super::raw_view::FREE_SPACE_RESERVE_BYTES, free)),
+        )))
     }
 
     /// `open_raw_view`: opens a ready operation's pinned entry, once, through

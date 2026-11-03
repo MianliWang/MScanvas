@@ -93,6 +93,8 @@ pub enum RawViewStateDto {
         retryable: bool,
         /// For `view_cache_no_space`: the space a miss needs, and what was
         /// free, so the pane states both numbers without parsing a message.
+        /// For a run that failed with less than the reserve free: the reserve,
+        /// and what is free (decision 9).
         needed_bytes: Option<u64>,
         free_bytes: Option<u64>,
     },

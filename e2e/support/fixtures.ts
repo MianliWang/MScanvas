@@ -249,6 +249,9 @@ export function ipcTable(
       capacity: FAKE_WORKSPACE_CAPACITY,
     },
     subscribe_workspace_drop_updates: null,
+    // No view has run, and View could begin (ADR 0060). A spec about a view
+    // replaces this answer as the operation moves.
+    get_raw_view_state: { state: { state: "idle" }, availability: { available: true, unverifiedBuildRelease: null } },
     // The conversion slot, and the authority it is answered under. Every
     // response in this shape carries the projection -- the poll included, which
     // is the session's only voice while a drain runs -- so a table that omitted

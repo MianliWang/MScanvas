@@ -1044,6 +1044,7 @@ export const zhCN = {
   rawViewMetadataSettings: "设置",
   rawViewMetadataConvertedAt: "转换时间",
   viewExportWithheld: "此视图的导出暂时还不能写明 RAW 文件和转换信息。请转换此文件、添加输出，再从输出导出。",
+  viewExportWithheldShort: "此视图不可用。",
   errSourceRequiresBundle: "该采集包含多个文件，必须作为一个整体打开。",
   errSourceIdentityUnavailable: "在此平台上 MSCanvas 无法将该文件绑定到一次转换。",
   errSourceNotInspectable: "MSCanvas 无法确认该文件仍是它打开的那一个，因此没有读取它。",

@@ -248,6 +248,11 @@ default.
 >
 > The `ui/unverified-labels` lane is to implement all three. Until it merges,
 > the build behaves as the earlier notes say.
+>
+> **ADR 0060 slice 3, 2026-11-03.** The view cache's reuse of an existing entry is
+> not a conflict policy, because a view has no destination. On an unmeasured build
+> a view carries the label beside View, in its progress, in the file row and in
+> the Metadata tab; exports of a view are withheld until they can carry it too.
 
 ### 4. An ordered filter chain replaces the nine fixed rows
 

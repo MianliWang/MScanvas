@@ -3453,7 +3453,10 @@ mod tests {
         );
         assert_eq!(slot.begin_copy(&token, full()).map(|_| ()), Ok(()));
         assert!(slot.release_write());
-        assert!(slot.reconcile_viewed_preview(next, owner(1), None).is_some());
+        assert!(
+            slot.reconcile_viewed_preview(next, owner(1), None)
+                .is_some()
+        );
         assert_eq!(slot.begin_copy(&token, full()).map(|_| ()), refused);
     }
 

@@ -1071,6 +1071,7 @@ export const en = {
   rawViewMetadataSettings: "Settings",
   rawViewMetadataConvertedAt: "Converted at",
   viewExportWithheld: "Exports from this view cannot yet name the RAW file and the conversion. Convert this file, add the output, and export from that.",
+  viewExportWithheldShort: "Not available from this view.",
   errSourceRequiresBundle: "That acquisition is more than one file and must be opened as a bundle.",
   errSourceIdentityUnavailable: "MSCanvas cannot bind that file to a conversion on this platform.",
   errSourceNotInspectable: "MSCanvas could not confirm the file was still the one it opened, so it did not read it.",

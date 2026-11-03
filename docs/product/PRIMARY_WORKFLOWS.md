@@ -161,6 +161,14 @@ truncation refusals below remain. See the
 
 **Success:** user can confirm identity and inspect a relevant scan without changing modes.
 
+**A Thermo RAW row takes one more press** ([ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).
+Activating it starts nothing and shows its pane. View converts it with the
+verified default into MSCanvas's view cache, with its phases and Cancel on screen,
+and then opens it as above, while the row stays highlighted. Otherwise it waits
+under Ready, and the status bar says so. Exports of a view wait for
+[ADR 0060 slice 4](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-3-notes-2026-11-03);
+Convert this file… is the route to one meanwhile.
+
 **Implemented for mzML, end to end.** Activating a row reads the file once; the
 run summary, the chromatogram, the scan table and the selected-spectrum panel are
 what comes back. TIC and BPC are drawn from the loaded spectrum table — each
