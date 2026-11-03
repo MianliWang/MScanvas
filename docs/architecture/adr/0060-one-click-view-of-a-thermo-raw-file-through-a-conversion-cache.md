@@ -1340,7 +1340,8 @@ it says so; the decisions stand otherwise.
 
 Dated notes of 2026-11-03, written with slice 3 (the interface, branch
 `ui/view-raw-slice-3`). Where a note departs from a decision above, it says so;
-the decisions stand otherwise.
+the decisions stand otherwise. A note is as built and not an owner decision,
+unless it carries "Owner decision, 2026-11-03".
 
 1. **What is implemented.** The pane of a highlighted Thermo RAW row
    (`RawViewPane`) in every state of decision 3 but View with…'s; the phases read
@@ -1395,9 +1396,12 @@ the decisions stand otherwise.
      an mzML row is open, so its pane replaces the viewer while it is highlighted.
      The other row's preview stays held, and its own press comes back to it. Other
      vendor rows keep today's behaviour.
+     Owner decision, 2026-11-03 (P203): accepted. A highlighted RAW row temporarily
+     covers an open preview.
    - **Decision 1's one-line explanation is not on screen,** by the owner's rule
      against secondary explanation text. The pane is the name, the family, the
      label where it applies, and the buttons.
+     Owner decision, 2026-11-03 (P203): accepted. Decision 1's line is not shown.
    - **Where the roster is a drawer,** a press or a first Enter on a RAW row folds
      it and moves the keyboard to the main column, so Tab reaches View (open
      question 8's narrow path). Show from the status bar leaves it folded.
@@ -1407,11 +1411,19 @@ the decisions stand otherwise.
      an unmeasured build, the label on the line below with the export sentence, where
      it can wrap and never clips. `ui/unverified-labels` adds the label to a labelled
      output's title, a different fact, so a merge keeps both.
+   - **Convert this file… adds the row to the checked set.** It is one action
+     (`convertRow`) in the pane, the file row and a failed open, and does what the
+     vendor rows' action does on `main`: it checks the row, keeps every earlier
+     check, sets the scope to Checked rows, from All workspace rows too, and shows
+     Conversion. So the page lists every checked file, its button reads Convert N
+     eligible…, and the row stays checked afterwards. Nothing yet converts this file
+     alone; N-C3 is that one-item scope.
+     Owner decision, 2026-11-03 (P203): accepted, until N-C3, which comes right after.
 7. **Deferred, each with its reason.**
    - **View with…** (`begin_raw_view_with`, `rawViewIntents`) and the **Settings
      row** (`describe_view_cache`, `clear_view_cache`, still awaiting a caller) are
-     not in this change. Decision 16 puts both in this slice, so the split waits for
-     the owner (note 9).
+     not in this change. Decision 16 puts both in this slice, so the split was the
+     owner's to answer (note 9).
    - A failure that is not retryable offers Convert this file… alone, as decision
      10 says. View comes back with the next operation of any row, or with the cure
      of a failure of the build (note 8).
@@ -1438,21 +1450,44 @@ the decisions stand otherwise.
      (`provider_build_not_evidenced`, `backend_not_found`) offers Choose ProteoWizard
      folder…, and Try again once availability says the cause has gone. That is the
      one Try again decision 10 does not list.
+     Owner decision, 2026-11-03 (P203): accepted. Try again appears after a failure
+     of the build once the cause has gone.
    - **A failure out of sight** has the status bar's line and Show {name} until its
      row is looked at, and one `role="alert"`, as decision 1 asks.
    - **The keyboard.** Tabs, then Convert, then the panel (`Tabs` takes `actions`).
      Storing has no button, so the pane itself holds the keyboard. Open and a re-read
      hand it to the evidence and the pane.
    - **Converted at** is in the reader's locale, with the recorded instant as its title.
-9. **Waiting on the owner.**
+9. **What went to the owner.**
    - **DEF-2.** `OWNER_DECISIONS_V511.md` says it blocks shipping the view cache.
      Until it is answered no uninstall removes the cache unless "Delete the
      application data" is checked, and no NSIS hook is written here.
+     Owner decision, 2026-11-03 (DEF-2): option (b). Uninstall always removes the
+     cache folder, including `/S` and `/P`, except on `/UPDATE`. Presets and
+     preferences stay opt-in behind "Delete the application data". It is built as a
+     separate change, `be/uninstall-view-cache`, which must land before any release
+     that ships the view cache. This change touches no NSIS hook, so until that one
+     lands the sentence above still describes an uninstall.
    - **The split of View with… and the Settings row** (note 7). Until the row exists
      the cache is bounded by its 10 GiB cap, and a person has no way to clear it.
+     Owner decision, 2026-11-03 (A0060-split): accepted. View with… and the Settings
+     row (Clear view cache) are the next slice. Until then only the 10 GiB cap evicts.
    - **The install and support page.** "What this amends" lists it for this change.
      The beta 1 page describes a release that has no view cache, so the edit belongs
-     to the next release's page.
+     to the next release's page. Not an owner decision: the answers of 2026-11-03 do
+     not cover it.
+10. **Departures the answers of 2026-11-03 do not cover.** Each stays as built, and
+    is not an owner decision.
+    - Exports of a view are withheld until slice 4 (note 2).
+    - `viewSource` carries the intent's shape in place of `intentId` and
+      `intentSummary` (note 4).
+    - The size check of the availability answer uses the row's admitted length
+      (note 5).
+    - The label of an unmeasured build sits on the line below the file row (note 6).
+    - During a re-read the pane covers the row's own preview (note 8). P203 names a
+      highlighted RAW row over an open preview, and does not name a re-read.
+    - Clear's copy, the settings line and the scan's refusal name the view rather
+      than a conversion.
 
 ## Alternatives rejected
 
