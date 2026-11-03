@@ -792,14 +792,19 @@ impl ConversionHistory {
             if is_set_aside(&name) {
                 unreadable += 1;
             }
-            if run_id_of_name(&name).is_none() {
+            let Some(run_id) = run_id_of_name(&name) else {
                 continue;
-            }
+            };
             match read_record(&directory.join(&name)) {
                 Ok(Some(record)) => runs.push(RunSummaryDto::of(&self.view(directory, record))),
                 Ok(None) => {}
                 Err(RecordProblem::NewerVersion) => newer += 1,
-                Err(RecordProblem::Unreadable) => unreadable += 1,
+                // A holder keeps the file from this session, not what it knows
+                // of its own run.
+                Err(RecordProblem::Unreadable) => match self.remembered(run_id) {
+                    Some(record) => runs.push(RunSummaryDto::of(&record)),
+                    None => unreadable += 1,
+                },
                 Err(RecordProblem::Malformed) => {
                     set_aside(directory, &name);
                     unreadable += 1;
@@ -840,15 +845,20 @@ impl ConversionHistory {
             return RunHistoryReadDto::NotFound;
         }
         self.flush(directory, &mut self.locked());
-        let stored = read_record(&directory.join(file_name_of(run_id))).map(|stored| {
-            stored.or_else(|| {
-                let lane = self.locked();
-                let mut unwritten = lane.active.iter().chain(&lane.owed);
-                unwritten
-                    .find(|run| !run.written && run.record.run_id == run_id)
-                    .map(|run| run.record.clone())
+        let stored = read_record(&directory.join(file_name_of(run_id)))
+            .map(|stored| {
+                stored.or_else(|| {
+                    let lane = self.locked();
+                    let mut unwritten = lane.active.iter().chain(&lane.owed);
+                    unwritten
+                        .find(|run| !run.written && run.record.run_id == run_id)
+                        .map(|run| run.record.clone())
+                })
             })
-        });
+            .or_else(|problem| match (problem, self.remembered(run_id)) {
+                (RecordProblem::Unreadable, Some(record)) => Ok(Some(record)),
+                _ => Err(problem),
+            });
         match stored {
             Ok(Some(record)) => {
                 let record = self.view(directory, record);
@@ -891,6 +901,10 @@ impl ConversionHistory {
     /// Clear's removal. `everything` is Off's: every run goes, one in progress
     /// in any instance and one this build cannot judge included. An instance
     /// whose run went stops recording it at its next write.
+    ///
+    /// This session forgets a run only once its file is gone. A file a holder
+    /// keeps still says an earlier state, so the run stays in memory: its next
+    /// write lands its end, or removes the file while Off holds.
     fn sweep(&self, everything: bool) -> RunHistoryWriteDto {
         let directory = match &self.directory {
             Ok(directory) => directory,
@@ -904,34 +918,18 @@ impl ConversionHistory {
                 not_removed: 0,
             };
         };
-        let mut kept = {
-            // An ended run is forgotten here with any write still owed, so
-            // nothing writes it back.
-            let mut lane = self.locked();
-            lane.owed.clear();
-            if everything
-                || lane
-                    .active
-                    .as_ref()
-                    .is_some_and(|active| active.record.state != RunState::Running)
-            {
-                lane.active = None;
-            }
-            if lane.problem == Some("notWritten") && !lane.owes() {
-                lane.problem = None;
-            }
-            // The run being recorded, if its first write has not landed: no
-            // file below will count it.
-            usize::from(lane.active.as_ref().is_some_and(|active| !active.written))
-        };
+        let mut kept = 0;
         let mut not_removed = 0;
         for name in names {
             let path = directory.join(&name);
-            if run_id_of_name(&name).is_some() {
+            if let Some(run_id) = run_id_of_name(&name) {
                 let in_progress = !everything
                     && match read_record(&path) {
                         Ok(Some(record)) => self.view(directory, record).state == RunState::Running,
-                        Err(RecordProblem::NewerVersion | RecordProblem::Unreadable) => true,
+                        Err(RecordProblem::NewerVersion) => true,
+                        Err(RecordProblem::Unreadable) => self
+                            .remembered(run_id)
+                            .is_none_or(|record| record.state == RunState::Running),
                         Ok(None) | Err(RecordProblem::Malformed) => false,
                     };
                 if in_progress {
@@ -942,6 +940,22 @@ impl ConversionHistory {
             } else if is_set_aside(&name) && remove(&path).is_err() {
                 not_removed += 1;
             }
+        }
+        {
+            let mut lane = self.locked();
+            let gone = |run: &ActiveRun| !run.written || run.forgotten(directory);
+            lane.owed.retain(|run| !gone(run));
+            if lane.active.as_ref().is_some_and(|active| {
+                (everything || active.record.state != RunState::Running) && gone(active)
+            }) {
+                lane.active = None;
+            }
+            if lane.problem == Some("notWritten") && !lane.owes() {
+                lane.problem = None;
+            }
+            // The run being recorded, if its first write has not landed: no
+            // file above counted it.
+            kept += usize::from(lane.active.as_ref().is_some_and(|active| !active.written));
         }
         if not_removed > 0 {
             return RunHistoryWriteDto::Failed {
@@ -993,6 +1007,16 @@ impl ConversionHistory {
 
     fn owner_id(&self) -> Option<&str> {
         self.owner.as_ref().map(|owner| owner.id.as_str())
+    }
+
+    /// This session's own copy of a run it is still holding.
+    fn remembered(&self, run_id: &str) -> Option<RunRecord> {
+        let lane = self.locked();
+        lane.active
+            .iter()
+            .chain(&lane.owed)
+            .find(|run| run.record.run_id == run_id)
+            .map(|run| run.record.clone())
     }
 
     /// A stored run as a reader should be told it. Never written.
@@ -1136,15 +1160,17 @@ fn mark_interrupted(record: &mut RunRecord, now: u64) {
 
 /// Writes one of this session's runs as the shared switch allows. `false`
 /// where it is forgotten and must never be written again: turned off by any
-/// instance, or its file gone once written.
+/// instance with its file gone, or its file gone once written.
 ///
 /// A run whose first write never landed has no file to miss, so an Off and an
 /// On in another instance before that write lands do not stop it.
 fn write_run(directory: &Path, run: &mut ActiveRun) -> bool {
     match switch_off(directory) {
         Some(true) => {
-            let _ = remove(&directory.join(file_name_of(&run.record.run_id)));
-            return false;
+            // A file a holder keeps is tried again, so the run stays this
+            // session's to tell until it is gone.
+            run.unwritten = remove(&directory.join(file_name_of(&run.record.run_id))).is_err();
+            return run.unwritten;
         }
         // A switch nobody can read: nothing is written, and nothing that is
         // stored is removed on its account. A later write tries again.

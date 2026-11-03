@@ -602,6 +602,19 @@ fn a_corrupt_run_is_set_aside_and_a_newer_one_is_left_in_place() {
     assert!(!names.contains(aside));
     assert!(names.contains(&newer));
     assert!(names.contains(&format!("{SET_ASIDE_PREFIX}notes.txt")));
+
+    // Off removes the later build's run too, and still only this store's names.
+    fs::write(directory.join(aside), b"{ not a run").expect("write");
+    assert_eq!(
+        history.set_enabled(false),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+    let names = entries(&directory);
+    assert!(!names.contains(aside) && !names.contains(&newer));
+    assert!(names.contains(&format!("{SET_ASIDE_PREFIX}notes.txt")));
+    assert!(names.contains(&String::from("notes.txt")));
 }
 
 #[test]
@@ -1141,6 +1154,284 @@ fn an_end_still_owed_when_the_next_run_begins_is_still_written() {
         on_disk(),
         Ok(Some(RunState::Completed)),
         "the owed end was written"
+    );
+}
+
+/// Holds `path` as an indexer or a scanner can. `share` is what it lets others
+/// do; Windows refuses the rest.
+#[cfg(windows)]
+fn hold(path: &Path, share: u32) -> fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(share)
+        .open(path)
+        .expect("hold the file")
+}
+
+/// `FILE_SHARE_READ | FILE_SHARE_WRITE`: everything but a delete.
+#[cfg(windows)]
+const SHARES_ALL_BUT_DELETE: u32 = 0x1 | 0x2;
+#[cfg(windows)]
+const SHARES_NOTHING: u32 = 0;
+
+#[cfg(windows)]
+const NOT_REMOVED_ONE: RunHistoryWriteDto = RunHistoryWriteDto::Failed {
+    problem: "notRemoved",
+    not_removed: 1,
+};
+
+/// ADR 0065 section 2: a Clear that could not remove a file ended nothing, so the
+/// file's earlier state never replaces what this session knows of its own run.
+#[cfg(windows)]
+#[test]
+fn a_clear_that_could_not_remove_a_run_keeps_what_this_session_knows_of_it() {
+    for share in [SHARES_ALL_BUT_DELETE, SHARES_NOTHING] {
+        let scratch = Scratch::new("history-clear-held");
+        let history = open(&scratch);
+        history.begin(1, start(1), progress(RunState::Running, &["running"]));
+        let id = active_id(&history);
+        let path = history_directory(&scratch).join(file_name_of(&id));
+        let holder = hold(&path, share);
+        history.update(1, progress(RunState::Completed, &["finalized"]));
+
+        assert_eq!(history.clear(), NOT_REMOVED_ONE, "share {share}");
+
+        let RunHistoryListDto::Listed {
+            runs,
+            problem,
+            unreadable,
+            ..
+        } = history.list()
+        else {
+            panic!("listed");
+        };
+        assert_eq!(
+            (runs[0].state, runs[0].finalized_count, problem, unreadable),
+            (RunState::Completed, 1, Some("notWritten"), 0),
+            "share {share}"
+        );
+        assert!(runs[0].ended_at_ms.is_some());
+        assert_eq!(items(&history, &id)[0].progress.state, "finalized");
+
+        drop(holder);
+        let RunHistoryListDto::Listed { problem, .. } = history.list() else {
+            panic!("listed");
+        };
+        assert_eq!(problem, None, "share {share}: the end was written");
+        let stored = read_record(&path).expect("readable").expect("still there");
+        assert_eq!(stored.state, RunState::Completed);
+        assert!(stored.ended_at_ms.is_some());
+
+        assert_eq!(
+            history.clear(),
+            RunHistoryWriteDto::Done {
+                kept_in_progress: 0
+            }
+        );
+        assert!(run_files(&scratch).is_empty());
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_clear_that_could_not_remove_an_earlier_run_still_owes_its_end() {
+    let scratch = Scratch::new("history-clear-held-owed");
+    let history = open(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let first = active_id(&history);
+    let path = history_directory(&scratch).join(file_name_of(&first));
+    let holder = hold(&path, SHARES_ALL_BUT_DELETE);
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+    history.begin(2, start(1), progress(RunState::Running, &["running"]));
+
+    assert_eq!(history.clear(), NOT_REMOVED_ONE);
+    assert_eq!(items(&history, &first)[0].progress.state, "finalized");
+
+    drop(holder);
+    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert_eq!(problem, None);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(
+        read_record(&path).map(|record| record.map(|record| record.state)),
+        Ok(Some(RunState::Completed))
+    );
+}
+
+/// An Off that could not remove a file leaves the run this session's to tell. On
+/// again, its end lands; still off, its next write removes the file.
+#[cfg(windows)]
+#[test]
+fn an_off_that_could_not_remove_a_run_keeps_it_until_the_switch_decides() {
+    let scratch = Scratch::new("history-off-held");
+    let history = open(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    let holder = hold(&path, SHARES_ALL_BUT_DELETE);
+    assert_eq!(history.set_enabled(false), NOT_REMOVED_ONE);
+    assert_eq!(
+        history.set_enabled(true),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+    assert_eq!(
+        runs(&history)[0].state,
+        RunState::Running,
+        "its queue still runs"
+    );
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+    drop(holder);
+    assert_eq!(runs(&history)[0].state, RunState::Completed);
+    assert_eq!(
+        read_record(&path).map(|record| record.map(|record| record.state)),
+        Ok(Some(RunState::Completed)),
+        "its end landed"
+    );
+
+    history.begin(2, start(1), progress(RunState::Running, &["running"]));
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    let holder = hold(&path, SHARES_ALL_BUT_DELETE);
+    assert_eq!(history.set_enabled(false), NOT_REMOVED_ONE);
+    history.update(2, progress(RunState::Completed, &["finalized"]));
+    let RunHistoryListDto::Listed {
+        runs: told,
+        recording,
+        ..
+    } = history.list()
+    else {
+        panic!("listed");
+    };
+    assert_eq!((told[0].state, recording), (RunState::Completed, false));
+    drop(holder);
+    let RunHistoryListDto::Listed {
+        runs: told,
+        problem,
+        ..
+    } = history.list()
+    else {
+        panic!("listed");
+    };
+    assert!(told.is_empty());
+    assert_eq!(problem, None);
+    assert!(run_files(&scratch).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn clear_and_off_say_how_many_files_they_could_not_remove() {
+    let scratch = Scratch::new("history-not-removed");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let run = write_stored(&scratch, 1, RunState::Completed, Some(2));
+    let aside = directory.join(format!("{SET_ASIDE_PREFIX}1-{run}"));
+    fs::write(&aside, b"{ not a run").expect("write");
+    let holders = [
+        hold(&directory.join(&run), SHARES_ALL_BUT_DELETE),
+        hold(&aside, SHARES_ALL_BUT_DELETE),
+    ];
+    let failed = RunHistoryWriteDto::Failed {
+        problem: "notRemoved",
+        not_removed: 2,
+    };
+
+    assert_eq!(history.clear(), failed);
+    assert_eq!(history.set_enabled(false), failed);
+    assert_eq!(run_files(&scratch), [run]);
+
+    drop(holders);
+    let _ = history.list();
+    assert!(run_files(&scratch).is_empty(), "the next list finishes Off");
+    assert!(!aside.exists());
+}
+
+/// A folder at the marker's name reads as off and cannot be removed as a file.
+#[test]
+fn on_that_could_not_remove_the_marker_says_so_and_stays_off() {
+    let scratch = Scratch::new("history-not-turned-on");
+    let history = open(&scratch);
+    fs::create_dir(history_directory(&scratch).join(OFF_MARKER)).expect("a folder at the marker");
+
+    assert_eq!(
+        history.set_enabled(true),
+        RunHistoryWriteDto::Failed {
+            problem: "notTurnedOn",
+            not_removed: 1
+        }
+    );
+    let RunHistoryListDto::Listed { recording, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert!(!recording);
+}
+
+#[cfg(windows)]
+#[test]
+fn off_that_could_not_write_its_marker_says_so_and_removes_nothing() {
+    let scratch = Scratch::new("history-not-turned-off");
+    let history = open(&scratch);
+    write_stored(&scratch, 1, RunState::Completed, Some(2));
+    let denied = Denied::new(&history_directory(&scratch), "WD");
+
+    assert_eq!(
+        history.set_enabled(false),
+        RunHistoryWriteDto::Failed {
+            problem: "notTurnedOff",
+            not_removed: 0
+        }
+    );
+    drop(denied);
+    let RunHistoryListDto::Listed {
+        runs, recording, ..
+    } = history.list()
+    else {
+        panic!("listed");
+    };
+    assert!(recording);
+    assert_eq!(runs.len(), 1);
+}
+
+/// ADR 0065 section 2 for a run with a file: a holder that shares nothing keeps
+/// the file from this session, not what it knows of its own run. Anyone else's
+/// is unreadable, and Clear keeps it because it may still be in progress.
+#[cfg(windows)]
+#[test]
+fn a_file_nobody_can_read_is_unreadable_unless_the_run_is_this_sessions_own() {
+    let scratch = Scratch::new("history-exclusive-holder");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let other = write_stored(&scratch, 1, RunState::Completed, Some(2));
+    let other_id = run_id_of_name(&other).expect("a run's name").to_owned();
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let own = active_id(&history);
+    let _holders = [
+        hold(&directory.join(&other), SHARES_NOTHING),
+        hold(&directory.join(file_name_of(&own)), SHARES_NOTHING),
+    ];
+
+    let RunHistoryListDto::Listed {
+        runs, unreadable, ..
+    } = history.list()
+    else {
+        panic!("listed");
+    };
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].run_id, own);
+    assert_eq!(unreadable, 1, "only the other session's");
+    assert_eq!(items(&history, &own)[0].progress.state, "running");
+    assert_eq!(
+        history.read(&other_id),
+        RunHistoryReadDto::Refused {
+            problem: "unreadable"
+        }
+    );
+    assert_eq!(
+        history.clear(),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 2
+        }
     );
 }
 
