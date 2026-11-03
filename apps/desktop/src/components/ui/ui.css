@@ -108,8 +108,8 @@
 }
 
 /* Open, pressed or current. It outranks the hover rules, so the state still
-   shows under the pointer that just set it. The text is accent-hover, not
-   v5.11's accent: #1769e0 on #e8f1ff is 4.47:1, below AA at 12px. */
+   shows under the pointer that just set it. The text is accent-hover
+   (#125bb7 on #edf4ff, 5.92:1), a step darker than the accent's 4.77:1. */
 .ui-button:is([aria-expanded="true"], [aria-pressed="true"], [aria-current="true"]),
 .ui-button:is([aria-expanded="true"], [aria-pressed="true"], [aria-current="true"]):hover:not(:disabled):not([aria-disabled="true"]) {
   border-color: var(--color-selected-border);
