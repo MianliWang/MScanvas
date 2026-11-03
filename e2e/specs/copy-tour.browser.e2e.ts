@@ -26,6 +26,7 @@ import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered 
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
+import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, REFUSED_END, REFUSED_END_ITEMS, REQUEST_REFUSED, RUNNING, RUNNING_ITEMS, SET_ITEM, STOPPED, STOPPED_ITEMS, STOP_FAILED, STOP_FAILED_ITEMS, WHOLE_SET_ITEM, found, listed } from "../support/runHistory";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
   admittedIntents,
@@ -427,7 +428,8 @@ async function openRestoreSettings(section: string) {
   await browser.$("[data-settings-entry]").click();
   await browser.$("[data-settings-dialog]").waitForDisplayed();
   await browser.$(section).waitForExist();
-  await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "center" }), section);
+  // Nearest, as focus scrolls: centring also scrolls the dialog's own clipped box.
+  await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "nearest" }), section);
 }
 
 const DECLARED_UNITS = { mzUnit: { state: "declared", accession: "MS:1000040" }, intensityUnit: { state: "declared", accession: "MS:1000131" } };
@@ -1346,6 +1348,268 @@ const STOPS: readonly Stop[] = [
     await browser.$('[role="dialog"] #active-clear-status').waitForExist({ timeout: 30_000 });
     await frames();
   }, anchor: '[role="dialog"]' },
+  // The conversion history (ADR 0065): the rail's entry, every state of the list
+  // and of one run, and the off switch in Settings.
+  { name: "run-history-entry", table: (locale) => conversionWorld(locale, { status: "idle" }), drive: () => go(2), anchor: "[data-run-history-entry]" },
+  { name: "run-history-loading", table: populated, hold: ["list_conversion_runs"], drive: openRunHistory, anchor: "[data-run-history-loading]" },
+  { name: "run-history-empty", table: populated, drive: openRunHistory, anchor: "[data-run-history] .run-history-empty" },
+  { name: "run-history-off-empty", table: runHistoryWorld(listed([], { recording: false })), drive: openRunHistory, anchor: "[data-run-history] .run-history-empty" },
+  {
+    name: "run-history-list",
+    table: runHistoryWorld(listed([ENDED, LABELLED, INTERRUPTED, STOPPED]), found(ENDED, ENDED_ITEMS)),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${ENDED.runId}"] [data-run-item]`,
+  },
+  {
+    name: "run-history-reading-run",
+    table: runHistoryWorld(listed([ENDED])),
+    hold: ["read_conversion_run"],
+    drive: openRunHistory,
+    anchor: '[data-run-read="reading"]',
+  },
+  {
+    // Labelled on both counts, retried, and one file's failure with its code.
+    name: "run-history-labelled",
+    table: runHistoryWorld(listed([LABELLED]), found(LABELLED, LABELLED_ITEMS)),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${LABELLED.runId}"] [data-not-verified]`,
+  },
+  {
+    // Found cut short: no end time, the running file unknown, the next one not run.
+    name: "run-history-interrupted",
+    table: runHistoryWorld(listed([INTERRUPTED]), found(INTERRUPTED, INTERRUPTED_ITEMS)),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${INTERRUPTED.runId}"] [data-run-interrupted-at]`,
+  },
+  {
+    // What ended the whole queue, in words and by its code.
+    name: "run-history-stopped",
+    table: runHistoryWorld(listed([STOPPED]), found(STOPPED, STOPPED_ITEMS)),
+    drive: openRunHistory,
+    anchor: "[data-run-failure]",
+  },
+  {
+    // A refusal that ended a queue which had run, as the record says it later.
+    name: "run-history-ended-by-refusal",
+    table: runHistoryWorld(listed([REFUSED_END]), found(REFUSED_END, REFUSED_END_ITEMS)),
+    drive: openRunHistory,
+    anchor: "[data-run-failure]",
+  },
+  {
+    // A set open on its members, its finding and why it could not be added.
+    name: "run-history-set",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, [SET_ITEM])),
+    drive: async () => {
+      await openRunHistory();
+      await browser.$("[data-run-item] .conversion-item-toggle").click();
+      await browser.$("[data-run-item] .conversion-item-manifest").waitForDisplayed();
+    },
+    anchor: "[data-run-item] .conversion-item-manifest",
+  },
+  {
+    name: "run-history-many",
+    table: runHistoryWorld(listed(MANY_RUNS), found(MANY_RUNS[0]!, MANY_ITEMS)),
+    drive: openRunHistory,
+    anchor: '.run-history-list[data-windowed="true"]',
+  },
+  {
+    name: "run-history-omitted",
+    table: runHistoryWorld(listed([OMITTED]), found(OMITTED, [])),
+    drive: openRunHistory,
+    anchor: "[data-run-items-omitted]",
+  },
+  {
+    // Everything the list can say at once: off, a write this session owes,
+    // runs it could not read and runs from a later build.
+    name: "run-history-problems",
+    table: runHistoryWorld(listed([ENDED], { recording: false, problem: "notWritten", unreadable: 2, newer: 1 }), found(ENDED, ENDED_ITEMS)),
+    drive: openRunHistory,
+    anchor: '[data-run-history-note="newer"]',
+  },
+  {
+    name: "run-history-unavailable",
+    table: runHistoryWorld({ outcome: "unavailable", problem: "unsafeDirectory" }),
+    drive: openRunHistory,
+    anchor: '[data-run-history-problem="unsafeDirectory"]',
+  },
+  {
+    name: "run-history-list-refused",
+    table: runHistoryWorld(REQUEST_REFUSED),
+    drive: openRunHistory,
+    anchor: '[data-run-history-problem="error"]',
+  },
+  {
+    name: "run-history-not-listed",
+    table: runHistoryWorld({ outcome: "unavailable", problem: "notListed" }),
+    drive: openRunHistory,
+    anchor: '[data-run-history-problem="notListed"]',
+  },
+  {
+    // A later read refused with the question open: the runs stay, Clear and its
+    // answer are refused with the reason beside them, and Keep still works.
+    name: "run-history-clear-after-refused-read",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS)),
+    drive: async () => {
+      await openRunHistory();
+      await browser.$("[data-run-item]").waitForDisplayed();
+      await browser.$("[data-run-history-clear]").click();
+      await setInvokeResult("list_conversion_runs", REQUEST_REFUSED);
+      await browser.$("[data-run-history-refresh]").click();
+    },
+    anchor: '[data-run-history-problem="error"]',
+  },
+  {
+    name: "run-history-read-rejected",
+    table: runHistoryWorld(listed([ENDED]), REQUEST_REFUSED),
+    drive: openRunHistory,
+    anchor: '[data-run-read="error"]',
+  },
+  {
+    name: "run-history-in-progress",
+    table: runHistoryWorld(listed([RUNNING, ENDED]), found(RUNNING, RUNNING_ITEMS)),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${RUNNING.runId}"] [data-run-item]`,
+  },
+  {
+    // A stop nobody could confirm: no code, because neither the queue nor its file keeps one.
+    name: "run-history-stop-failed",
+    table: runHistoryWorld(listed([STOP_FAILED]), found(STOP_FAILED, STOP_FAILED_ITEMS)),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${STOP_FAILED.runId}"] [data-run-item]`,
+  },
+  {
+    // Every member published, and still not one set that could be added whole.
+    name: "run-history-set-whole",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, [WHOLE_SET_ITEM])),
+    drive: async () => {
+      await openRunHistory();
+      await browser.$("[data-run-item] .conversion-item-toggle").click();
+      await browser.$("[data-run-item] .conversion-item-manifest").waitForDisplayed();
+    },
+    anchor: "[data-run-item] .conversion-item-manifest",
+  },
+  {
+    // Too few runs to be windowed, and the page scrolls as one: the rail holds
+    // its height, and the run chosen low in it is what the main column shows.
+    name: "run-history-band",
+    table: runHistoryWorld(listed(MANY_RUNS.slice(0, 20)), found(MANY_RUNS[15]!, ENDED_ITEMS)),
+    narrowOnly: true,
+    keepFocus: true,
+    drive: async () => {
+      await openRunHistory();
+      await browser.$(`[data-run-row="${MANY_RUNS[15]!.runId}"]`).click();
+      // The keyboard's ring on the row chosen, whole inside the rail's box.
+      await tabFrom("[data-run-history-refresh]", 16);
+    },
+    anchor: `[data-run-detail="${MANY_RUNS[15]!.runId}"] [data-run-item]`,
+  },
+  {
+    name: "run-history-read-newer",
+    table: runHistoryWorld(listed([ENDED]), { outcome: "refused", problem: "newerVersion" }),
+    drive: openRunHistory,
+    anchor: '[data-run-read="newerVersion"]',
+  },
+  {
+    name: "run-history-read-gone",
+    table: runHistoryWorld(listed([ENDED]), { outcome: "notFound" }),
+    drive: openRunHistory,
+    anchor: '[data-run-read="notFound"]',
+  },
+  {
+    // The question before Clear, the keyboard on the safe answer.
+    name: "run-history-clear-ask",
+    table: runHistoryWorld(listed([ENDED, RUNNING]), found(ENDED, ENDED_ITEMS)),
+    drive: async () => {
+      await openRunHistory();
+      await browser.$("[data-run-history-clear]").click();
+      await browser.$('[data-run-history-keep]:focus').waitForExist();
+    },
+    anchor: "[data-run-history-confirm]",
+    keepFocus: true,
+  },
+  {
+    name: "run-history-cleared-kept",
+    table: runHistoryWorld(listed([RUNNING]), found(RUNNING, []), { outcome: "done", keptInProgress: 1 }),
+    drive: clearRunHistory,
+    anchor: "[data-run-history-clear-status]:not(:empty)",
+  },
+  {
+    // Everything forgotten: what happened, beside why Clear is now refused.
+    name: "run-history-cleared",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS)),
+    drive: async () => {
+      await clearRunHistory();
+      await setInvokeResult("list_conversion_runs", listed([]));
+      await browser.$("[data-run-history-refresh]").click();
+      await browser.$(".run-history-empty").waitForDisplayed();
+    },
+    anchor: "[data-run-history-clear-status]:not(:empty)",
+  },
+  {
+    name: "run-history-clear-failed",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS), { outcome: "failed", problem: "notRemoved", notRemoved: 3 }),
+    drive: clearRunHistory,
+    anchor: "[data-run-history-clear-problem]",
+  },
+  {
+    name: "run-history-clearing",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS)),
+    hold: ["clear_conversion_runs"],
+    drive: clearRunHistory,
+    anchor: "[data-run-history-clear-status]:not(:empty)",
+  },
+  {
+    name: "run-history-clear-rejected",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS), REQUEST_REFUSED),
+    drive: clearRunHistory,
+    anchor: "[data-run-history-clear-problem]",
+  },
+  { name: "settings-run-history-checking", table: populated, hold: ["list_conversion_runs"], drive: openSettings, anchor: '[data-settings-dialog] [data-run-history-setting]' },
+  {
+    name: "settings-run-history-ask",
+    table: populated,
+    drive: async () => {
+      await openSettings();
+      await browser.$('[data-run-history-toggle="on"]').click();
+      await browser.$('[data-run-history-off-keep]:focus').waitForExist();
+    },
+    anchor: "[data-run-history-off-confirm]",
+    keepFocus: true,
+  },
+  { name: "settings-run-history-off", table: runHistoryWorld(listed([], { recording: false })), drive: openSettings, anchor: '[data-run-history-toggle="off"]' },
+  {
+    name: "settings-run-history-failed",
+    table: (locale) => ({ ...runHistoryWorld(listed([]))(locale), set_conversion_run_history_enabled: { outcome: "failed", problem: "notTurnedOff", notRemoved: 0 } }),
+    drive: async () => {
+      await openSettings();
+      await browser.$('[data-run-history-toggle="on"]').click();
+      await browser.$("[data-run-history-off-forget]").click();
+    },
+    anchor: "[data-run-history-setting-problem]",
+  },
+  {
+    name: "settings-run-history-saving",
+    table: populated,
+    hold: ["set_conversion_run_history_enabled"],
+    drive: async () => {
+      await openSettings();
+      await browser.$('[data-run-history-toggle="on"]').click();
+      await browser.$("[data-run-history-off-forget]").click();
+    },
+    anchor: '[data-settings-dialog] [data-run-history-setting][aria-disabled="true"]',
+  },
+  {
+    name: "settings-run-history-unavailable",
+    table: runHistoryWorld({ outcome: "unavailable", problem: "directoryUnusable" }),
+    drive: openSettings,
+    anchor: '[data-settings-dialog] [data-run-history-setting][aria-disabled="true"]',
+  },
+  {
+    name: "settings-run-history-refused",
+    table: runHistoryWorld(REQUEST_REFUSED),
+    drive: () => openSettings("[data-run-history-setting-retry]"),
+    anchor: "[data-run-history-setting-retry]",
+  },
   // Workspace restore (ADR 0061): what the start-up read found, over a first run.
   { name: "restore-loading", table: emptyTable, hold: ["read_workspace_restore"], anchor: '[data-restore="loading"]' },
   { name: "restore-offer", table: restoreTable(RESTORE_OFFER), anchor: "[data-restore-action]" },
@@ -1412,6 +1676,28 @@ const STOPS: readonly Stop[] = [
     anchor: '[data-restore-settings="unavailable"]',
   },
 ];
+
+/** The populated world, its history answering `list`, `read` and `clear`. */
+function runHistoryWorld(list: unknown, read: unknown = { outcome: "notFound" }, clear: unknown = { outcome: "done", keptInProgress: 0 }) {
+  return (locale: Locale) => ({ ...scenario("populated", locale), list_conversion_runs: list, read_conversion_run: read, clear_conversion_runs: clear });
+}
+
+async function openRunHistory() {
+  await go(2);
+  await browser.$("[data-run-history-entry]").click();
+  await browser.$("[data-run-history]").waitForDisplayed();
+}
+
+async function clearRunHistory() {
+  await openRunHistory();
+  await browser.$("[data-run-history-clear]").click();
+  await browser.$("[data-run-history-forget]").click();
+}
+
+/** Settings, at the history's switch: workspace restore sits above it, and the dialog scrolls in a short window. */
+function openSettings(section = "[data-run-history-setting]") {
+  return openRestoreSettings(section);
+}
 
 async function expandBackend() {
   const item = browser.$("[data-backend-item]");

@@ -16,6 +16,7 @@ mod figure_preview;
 mod output_opening;
 /// The one-click view's work (ADR 0060, slice 2).
 mod raw_view_run;
+mod run_recording;
 mod staging_recovery;
 mod workspace_clear;
 pub(crate) mod workspace_rows;
@@ -711,6 +712,9 @@ pub struct PreviewService {
     // taken under the backend gate, so the commands write it after this
     /// service has answered and then tell this what happened.
     remembered: Mutex<RememberedFolder>,
+    /// Where this session records its conversion runs (ADR 0065). Unset in a
+    /// session that keeps none, which records nothing.
+    run_history: std::sync::OnceLock<Arc<crate::run_history::ConversionHistory>>,
     /// Where the view cache lives and how its volume is measured (ADR 0060).
     /// A leaf, held only to read or replace a setting.
     raw_views: Mutex<raw_view_run::RawViewSettings>,
@@ -798,6 +802,7 @@ impl PreviewService {
             spectrum_export: Mutex::new(ScientificExportSlots::default()),
             resolved: Mutex::new(ObservedBackend::default()),
             remembered: Mutex::new(RememberedFolder::default()),
+            run_history: std::sync::OnceLock::new(),
             raw_views: Mutex::new(raw_view_run::RawViewSettings::default()),
         }
     }
@@ -4890,6 +4895,8 @@ impl PreviewService {
             drop(running);
             return self.refuse_queue(operation, error);
         }
+        // A build is bound, so this pass is a run worth recording (ADR 0065).
+        self.record_run_start(operation, &backend.capabilities);
 
         // Again, because binding the installation released the lock and a stop
         // can have landed in between. Still before any item.
@@ -4988,6 +4995,13 @@ impl PreviewService {
                 return self.conversion_state();
             };
             self.publish_conversion_busy(&self.conversion_slot());
+            // Before anything is launched, so a session that ends while this
+            // item converts leaves it `running` on disk, which the next start
+            // reads as interrupted rather than as never run -- where this
+            // write is made (ADR 0065 §5).
+            if self.run_history.get().is_some() {
+                self.record_run_progress(operation, &self.conversion_state());
+            }
 
             // One cancellation object for this exact attempt, and its
             // request-only handle bound to the operation, item and attempt
@@ -5080,6 +5094,9 @@ impl PreviewService {
                 drop(running);
                 return self.conversion_state();
             }
+            if self.run_history.get().is_some() {
+                self.record_run_progress(operation, &self.conversion_state());
+            }
             // Entered before the gate is released, so no operation queued
             // behind this one can slip through between the two.
             if unconfirmed {
@@ -5121,6 +5138,7 @@ impl PreviewService {
             self.authority_projection().to_dto(),
         );
         drop(slot);
+        self.record_run_progress(operation, &update);
         update
     }
 
@@ -5573,11 +5591,14 @@ impl PreviewService {
         let mut slot = self.conversion_slot();
         slot.refuse(operation, error);
         self.publish_conversion_busy(&slot);
-        slot.read(
+        let update = slot.read(
             self.backend_is_quarantined(),
             self.diagnostics_read(),
             self.authority_projection().to_dto(),
-        )
+        );
+        drop(slot);
+        self.record_run_progress(operation, &update);
+        update
     }
 
     /// Reserves the right to claim the workspace's next state without opening

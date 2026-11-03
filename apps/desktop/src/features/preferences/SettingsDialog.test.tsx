@@ -82,7 +82,7 @@ describe("session Settings in the real application composition", () => {
     let dialog = openSettings();
     expect(within(dialog).getByRole("radio", { name: en.english })).toHaveFocus();
     // One Close and no Apply or Cancel.
-    expect(within(dialog).getAllByRole("button").map(button => button.textContent)).toEqual([en.layoutReset, en.restoreStartFresh, en.reset, en.close]);
+    expect(within(dialog).getAllByRole("button").map(button => button.textContent)).toEqual([en.layoutReset, en.restoreStartFresh, en.runHistoryTurnUnknown, en.reset, en.close]);
     // Already the default: refused, with its reason on the row.
     expect(within(dialog).getByRole("button", { name: en.reset })).toHaveAttribute("aria-disabled", "true");
     expect(within(dialog).getByRole("button", { name: en.reset })).toHaveAccessibleDescription(en.settingsAlreadyDefault);

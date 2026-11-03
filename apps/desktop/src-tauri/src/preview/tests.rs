@@ -3865,6 +3865,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // The conversion preset store's, beside the preference store it shares a
     // binding with.
     let presets = include_str!("../../../src/features/presets/presetsApi.ts");
+    // The conversion run history's, on its own store beside the queue.
+    let run_history = include_str!("../../../src/features/run-history/runHistoryApi.ts");
 
     let registered = host
         .split_once("generate_handler![")
@@ -4026,6 +4028,12 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // identifier can never open one.
             "begin_workspace_conversion_diagnostics_export",
             "save_workspace_conversion_diagnostics",
+            // The ADR 0065 conversion run history, on its own store beside the
+            // queue.
+            "list_conversion_runs",
+            "read_conversion_run",
+            "clear_conversion_runs",
+            "set_conversion_run_history_enabled",
             // The selected-spectrum export, in the same two-phase shape and for
             // the same reason. The first command binds which spectrum -- by the
             // opaque token that spectrum's panel received -- and the second is
@@ -4113,7 +4121,8 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             || drop_transport.contains(&format!("\"{name}\""))
             || preferences.contains(&format!("\"{name}\""))
             || projects.contains(&format!("\"{name}\""))
-            || presets.contains(&format!("\"{name}\""));
+            || presets.contains(&format!("\"{name}\""))
+            || run_history.contains(&format!("\"{name}\""));
         if awaiting_a_caller.contains(name) {
             assert!(
                 !called,
@@ -31333,4 +31342,5 @@ mod native_reader;
 mod output_opening;
 mod per_output_adoption;
 mod raw_view;
+mod run_history;
 mod staging_recovery;

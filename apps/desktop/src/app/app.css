@@ -438,7 +438,7 @@ button:disabled,
   background: var(--color-surface);
 }
 
-.conversion-rail-foot:not([data-start-offered]):not(:has(.notice)) { padding: 0; border-top: 0; }
+.conversion-rail-foot:not([data-start-offered]):not(:has(.notice, [data-run-history-entry])) { padding: 0; border-top: 0; }
 
 /* A short window: the page scrolls as one, so nothing nests a scroll, and the
    rail -- stretched to the page's height -- keeps its foot pinned to the
@@ -1270,6 +1270,9 @@ button:disabled,
 /* A backend-chosen basename can be long, and a truncated one is not a name
    anybody can find in a folder. */
 .conversion-item-manifest th[scope="row"] {
+  /* Beside a digest that cannot wrap, a floor keeps the name from going
+     character by character; the table scrolls in its own box. */
+  min-width: 14em;
   max-width: 22em;
   font-weight: 500;
   white-space: normal;

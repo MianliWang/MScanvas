@@ -1,0 +1,97 @@
+/* The conversion history: the conversion surface's own two columns (app.css),
+   with the runs in the rail and one run's files in the main column. */
+
+.run-history > .conversion-main { grid-area: 1 / 1; }
+.run-history > .conversion-side { grid-area: 1 / 2; }
+.run-history h2 { outline: none; }
+.run-history .conversion-main > :is(.notice, .conversion-side-note):first-child { margin-top: 12px; }
+.run-history-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Its own scroll box at every length: in a short window the page scrolls as one,
+   and a rail that grew it would carry the chosen run's detail out of sight and
+   rows under the foot. The inset is the focus ring's, which the box would clip. */
+.run-history-list {
+  display: flex;
+  max-height: max(320px, calc(100vh - 300px));
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 -4px;
+  padding: 4px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  list-style: none;
+}
+/* In a short window the page is what scrolls, and the rail's foot still covers
+   its bottom: what the keyboard reaches scrolls in above it, as app.css has it
+   for the rail. */
+.workbench-conversion:has(> .run-history) { scroll-padding-bottom: 96px; }
+.run-history-list > li.list-window-spacer { flex: none; margin: 0; padding: 0; border: 0; list-style: none; }
+
+/* A row is a bordered button, in the selected look of the settings' tiles. */
+.run-history-row.ui-button {
+  display: grid;
+  width: 100%;
+  justify-content: stretch;
+  gap: 3px;
+  padding: 7px 10px;
+  text-align: left;
+  white-space: normal;
+}
+.run-history-row[aria-current="true"].ui-button {
+  border-color: var(--color-accent);
+  background: var(--color-surface-selected);
+}
+.run-history-row-top { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.run-history-when { min-width: 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.run-history-counts { color: var(--color-text-secondary); font-size: 12px; font-weight: 400; }
+
+[data-run-state="running"] > * > .run-history-state {
+  background: var(--color-surface-selected);
+  color: var(--color-accent-hover);
+}
+[data-run-state="completed"] > * > .run-history-state {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+[data-run-state="stopped"] > * > .run-history-state,
+[data-run-state="interrupted"] > * > .run-history-state {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+[data-run-state="stopFailed"] > * > .run-history-state {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.metadata-list.run-history-facts {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 6px 24px;
+  padding-top: 0;
+  border-top: 0;
+}
+/* A sentence and a code: in half the row at 960x640 the code broke mid-word. */
+.run-history-facts > [data-run-failure] { grid-column: 1 / -1; }
+/* Beside a long sentence a label went character by character in a narrow column. */
+.run-history .conversion-item-judgements dt { white-space: nowrap; }
+.run-history-code {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* What the record says of an item whose outcome no one knows: not a failure. */
+.conversion-run-list > li[data-item-state="interrupted"] > .conversion-run-symbol {
+  border-color: var(--color-warning);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+.conversion-run-list > li[data-item-state="interrupted"] .conversion-queue-status {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.run-history-empty { flex: 1 1 auto; }
+[data-run-history-clear-status]:empty { display: none; }
+.run-history-confirm { display: grid; gap: 8px; font-size: 12px; }
