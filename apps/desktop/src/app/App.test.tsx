@@ -66,10 +66,29 @@ function renderApp(
  * waited out its whole timeout for rows nobody had asked for.
  */
 async function pressAddFiles(): Promise<void> {
+  await addFilesOffered();
+  fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+}
+
+async function addFilesOffered(): Promise<void> {
   await waitFor(() => {
     expect(screen.getByRole("button", { name: "Add files…" })).not.toHaveAttribute("aria-disabled");
   });
-  fireEvent.click(screen.getByRole("button", { name: "Add files…" }));
+}
+
+/**
+ * Presses a roster row and then Enter, once the row can be read.
+ *
+ * During the mount-time installation check neither gesture reads anything, and
+ * a row has no refused state to wait on. `Add files…` answers to the same
+ * `backendBusy`, so its offer is the moment. The wait comes before the press
+ * because a plain press on an mzML row also starts a read: which gesture started
+ * it must not be event-loop order.
+ */
+async function readRow(name: RegExp): Promise<void> {
+  await addFilesOffered();
+  fireEvent.click(await screen.findByRole("row", { name }));
+  fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 }
 
 /**
@@ -525,7 +544,9 @@ describe("mzML preview workspace", () => {
     const api = createFakePreviewApi({ chosenInstallation: chosenFolderWithoutTools });
     renderApp(api);
     await showBackendBanner();
-    fireEvent.click(await screen.findByRole("button", { name: "Choose folder…" }));
+    const choose = await screen.findByRole("button", { name: "Choose folder…" });
+    await waitFor(() => expect(choose).not.toHaveAttribute("aria-disabled"));
+    fireEvent.click(choose);
 
     expect(await screen.findByText(/has neither msconvert.exe nor msaccess.exe/)).toBeVisible();
     expect(screen.getByText(/Install or repair ProteoWizard, or choose the folder that contains msconvert\.exe/)).toBeVisible();
@@ -1746,8 +1767,7 @@ describe("the session workspace roster", () => {
       preview: () => open.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await readRow(/QC_pool_01\.mzML/);
 
     fireEvent.click(rosterRow(/QC_pool_02\.mzML/));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
@@ -1841,8 +1861,7 @@ describe("the session workspace roster", () => {
       removeDatasets: () => removal.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await readRow(/QC_pool_01\.mzML/);
     await screen.findByRole("grid", { name: "Scans" });
 
     // The row on screen is removed, and before Rust answers the user reads
@@ -1889,8 +1908,7 @@ describe("the session workspace roster", () => {
         Promise.reject(previewError({ kind: "preview_worker_unavailable" })),
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await readRow(/QC_pool_01\.mzML/);
     expect(await screen.findByRole("grid", { name: "Scans" })).toBeVisible();
 
     // The list menu gives the keyboard back to its trigger, which leaves with
@@ -2470,8 +2488,7 @@ describe("the session workspace roster", () => {
       preview: () => open.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await readRow(/QC_pool_01\.mzML/);
 
     const row = await screen.findByRole("row", { name: /Reading…/ });
     expect(row.className).not.toContain("is-active");
@@ -2493,8 +2510,7 @@ describe("the session workspace roster", () => {
         Promise.reject(previewError({ kind: "file_identity_changed", retryable: false })),
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await readRow(/QC_pool_01\.mzML/);
 
     expect(await screen.findByRole("row", { name: /Replaced/ })).toBeVisible();
     // The row stays. What the name now points at is a question for the next
@@ -2636,8 +2652,7 @@ describe("adding a folder of mzML files", () => {
       scannedFolder: () => scan.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await readRow(/QC_pool_01\.mzML/);
     await screen.findByRole("grid", { name: "Scans" });
     chooseExecutionOrder("name-desc");
     fireEvent.change(screen.getByRole("searchbox", { name: "Search files" }), {
@@ -3234,8 +3249,7 @@ describe("adding a folder of mzML files", () => {
         ),
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
-    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await readRow(/QC_pool_01\.mzML/);
     await screen.findByRole("grid", { name: "Scans" });
 
     await pressAddFolder();
@@ -3439,8 +3453,7 @@ describe("telling two identically named acquisitions apart", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("row", { name: /sample\.mzML/ }));
-    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await readRow(/sample\.mzML/);
     // Details names the open acquisition by the roster's identity.
     const grid = await screen.findByRole("grid", { name: "Scans" });
     const summary = await screen.findByRole("complementary", { name: "Details" });
@@ -3488,8 +3501,7 @@ describe("telling two identically named acquisitions apart", () => {
     });
     renderApp(api);
 
-    fireEvent.click(await screen.findByRole("row", { name: COLLIDING_ONE }));
-    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await readRow(COLLIDING_ONE);
     await screen.findByRole("grid", { name: "Scans" });
 
     // Changing installation discards backend-derived readings but deliberately
