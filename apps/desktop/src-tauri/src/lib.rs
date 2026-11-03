@@ -2551,6 +2551,49 @@ async fn set_workspace_restore_enabled(
     off_the_async_runtime(move || restore.set_enabled(enabled)).await
 }
 
+/// Restore workspace: the one explicit action that puts rows back (ADR 0061,
+/// question 1). Every row a read offered and a re-check still finds matching
+/// goes through ordinary admission, which hashes each file as a new baseline.
+/// Previews nothing and starts no conversion.
+#[tauri::command]
+async fn restore_workspace(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestorePutBackDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || restore.put_back(&service)).await?
+}
+
+/// Forgets one restored row a read reported; the next save records it. The
+/// file is not touched.
+#[tauri::command]
+async fn dismiss_restored_row(
+    handle: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<(), PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    off_the_async_runtime(move || {
+        if restore.dismiss(&handle) {
+            Ok(())
+        } else {
+            Err(PreviewErrorDto::new(
+                "restored_row_not_offered",
+                "That row is no longer waiting to be restored.",
+                false,
+            ))
+        }
+    })
+    .await?
+}
+
 fn picker_unavailable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "file_picker_unavailable",
@@ -2864,22 +2907,13 @@ pub fn run() {
             // It resolves nothing, reads nothing and creates nothing until a
             // user acts, so binding it cannot fail and cannot touch the disk.
             app.manage(SharedProjects::new(project::ProjectStore::new()));
-            // The workspace restore document is read once, here, from the same
-            // per-user directory. A QA build binds none, so a rendered
-            // campaign never reads or writes the real profile's workspace.
-            // ponytail: once the preference store exposes its bound directory
-            // (`sibling_directory`, which the conversion preset store adds),
-            // bind that instead, so a QA build uses its own QA root; the
-            // interface slice needs it for rendered QA (ADR 0061, decision 2).
-            #[cfg(not(feature = "e2e"))]
-            let restore_directory = app
-                .path()
-                .app_local_data_dir()
-                .map_err(|_| "rootUnresolved");
-            #[cfg(feature = "e2e")]
-            let restore_directory = Err("qaBuild");
+            // The workspace restore document is read once, here, from beside
+            // the preferences, under the same binding, so one path policy and
+            // one QA root hold for it too (ADR 0061, decision 2).
             app.manage(SharedRestore::new(
-                workspace_restore::WorkspaceRestoreStore::open(restore_directory),
+                workspace_restore::WorkspaceRestoreStore::open(
+                    app.state::<SharedPreferences>().sibling_directory(),
+                ),
             ));
             // One synthetic spectrum in the ordinary export slot, so a rendered
             // test can reach the real export path on a machine with no
@@ -3011,7 +3045,9 @@ pub fn run() {
             read_workspace_restore,
             save_workspace_restore,
             clear_workspace_restore,
-            set_workspace_restore_enabled
+            set_workspace_restore_enabled,
+            restore_workspace,
+            dismiss_restored_row
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");

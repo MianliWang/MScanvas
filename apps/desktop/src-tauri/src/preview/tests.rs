@@ -4065,12 +4065,13 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             // and answers whether the clipboard was written.
             "copy_selected_spectrum_plot",
             // The ADR 0061 workspace restore store, on its own boundary like
-            // the preference store. Registered ahead of its interface: see
-            // `awaiting_a_caller` below.
+            // the preference store.
             "read_workspace_restore",
             "save_workspace_restore",
             "clear_workspace_restore",
             "set_workspace_restore_enabled",
+            "restore_workspace",
+            "dismiss_restored_row",
         ]
     );
     // The picker command is named for the workspace it fills rather than for
@@ -4110,10 +4111,6 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
         "describe_view_cache",
         "clear_view_cache",
         "read_environment_diagnostics",
-        "read_workspace_restore",
-        "save_workspace_restore",
-        "clear_workspace_restore",
-        "set_workspace_restore_enabled",
     ];
     for name in &registered[1..] {
         let called = api.contains(&format!("\"{name}\""))

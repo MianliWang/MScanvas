@@ -245,6 +245,7 @@ fn a_restart_restores_rows_groups_order_and_checked_state_without_paths() {
         handle: handle.to_owned(),
         source_kind: Family::Mzml,
         display_name: name.to_owned(),
+        context: None,
         checked,
         state: RowState::Matching,
     };
@@ -960,6 +961,7 @@ fn a_row_declined_while_matching_and_then_gone_is_marked_not_aged_out() {
                     handle: "restored-0".to_owned(),
                     source_kind: Family::Mzml,
                     display_name: "a.mzML".to_owned(),
+                    context: None,
                     checked: false,
                     state: RowState::Missing,
                 }],
@@ -1250,5 +1252,370 @@ fn restoring_never_opens_a_source_for_writing_or_changes_it() {
     assert_eq!(
         fs::metadata(&a).and_then(|m| m.modified()).expect("mtime"),
         modified
+    );
+}
+
+// ----------------------------------------------------------------- put-back
+
+/// Rows an earlier session stored from real files: `a` (checked, in `Batch`)
+/// and `b` (unchecked, Ungrouped, so stored first).
+fn stored_a_and_b(scratch: &Scratch) -> (PathBuf, PathBuf) {
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let b = scratch.write("b.mzML", b"<mzML/>");
+    let arrangement = WorkspaceArrangementDto {
+        groups: vec![
+            ArrangedGroupDto {
+                name: None,
+                handles: vec!["file-1".to_owned()],
+            },
+            ArrangedGroupDto {
+                name: Some("Batch".to_owned()),
+                handles: vec!["file-0".to_owned()],
+            },
+        ],
+        checked: vec!["file-0".to_owned()],
+    };
+    assert_eq!(
+        reopen(scratch).save(&arrangement, vec![live("file-0", &a), live("file-1", &b)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    (a, b)
+}
+
+fn workspace() -> PreviewService {
+    PreviewService::new(Box::new(NoProcess))
+}
+
+#[test]
+fn restore_needs_a_read_first_because_only_a_read_offers_a_row() {
+    let scratch = Scratch::new("restore-unread");
+    stored_a_and_b(&scratch);
+    let service = workspace();
+    let refusal = reopen(&scratch)
+        .put_back(&service)
+        .expect_err("nothing has been offered");
+    assert_eq!(refusal.kind, "workspace_restore_not_read");
+    assert_eq!(service.workspace_restore_rows().len(), 0);
+}
+
+#[test]
+fn restore_admits_the_matching_rows_and_leaves_the_marked_ones_waiting() {
+    let scratch = Scratch::new("restore-put-back");
+    let (_a, b) = stored_a_and_b(&scratch);
+    let store = reopen(&scratch);
+    fs::remove_file(&b).expect("delete b");
+    // Stored order: Ungrouped (b, restored-0), then Batch (a, restored-1).
+    assert_eq!(
+        states(&restored(&store)),
+        vec![
+            ("b.mzML".to_owned(), RowState::Missing),
+            ("a.mzML".to_owned(), RowState::Matching),
+        ]
+    );
+
+    let service = workspace();
+    let answer = store.put_back(&service).expect("the batch runs");
+
+    assert_eq!(service.workspace_restore_rows().len(), 1, "only the matching row");
+    let [placed] = answer.placed.as_slice() else {
+        panic!("one row placed: {:?}", answer.placed);
+    };
+    assert_eq!(placed.group.as_deref(), Some("Batch"));
+    assert!(placed.checked, "the stored checked state comes back");
+    assert!(placed.added);
+    assert_eq!(answer.workspace.roster.datasets[0].handle, placed.handle);
+    // The marked row keeps its handle, so the row that left changed nothing.
+    let waiting = restored(&store);
+    assert_eq!(
+        states(&waiting),
+        vec![("b.mzML".to_owned(), RowState::Missing)]
+    );
+    assert_eq!(waiting[0].rows[0].handle, "restored-0");
+
+    // A save places the live row and the row still waiting, and not the one
+    // that left: that handle is stale.
+    let live_rows = || service.workspace_restore_rows();
+    let handle = placed.handle.as_str();
+    assert_eq!(
+        store.save_with(&ungrouped(&[handle, "restored-0", "restored-1"]), live_rows),
+        refused("staleArrangement")
+    );
+    assert_eq!(
+        store.save_with(&ungrouped(&[handle, "restored-0"]), live_rows),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let rows = &stored(&scratch).groups[0].rows;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].offered, 0, "a live row has declined nothing");
+    assert_eq!(rows[1].offered, 0, "a marked row was never an offer");
+}
+
+#[test]
+fn restore_re_checks_a_row_the_read_offered_and_refuses_what_changed_since() {
+    let scratch = Scratch::new("restore-recheck");
+    let (a, _b) = stored_a_and_b(&scratch);
+    let store = reopen(&scratch);
+    assert!(
+        states(&restored(&store))
+            .iter()
+            .all(|(_, state)| *state == RowState::Matching)
+    );
+    fs::write(&a, b"<mzML> rewritten, and longer </mzML>").expect("rewrite a");
+
+    let service = workspace();
+    let answer = store.put_back(&service).expect("the batch runs");
+
+    assert_eq!(service.workspace_restore_rows().len(), 1, "only b is still as recorded");
+    assert_eq!(answer.placed.len(), 1);
+    assert_eq!(
+        states(&restored(&store)),
+        vec![("a.mzML".to_owned(), RowState::Changed)]
+    );
+}
+
+#[test]
+fn a_file_replaced_after_the_re_check_stays_a_marked_row_beside_what_was_admitted() {
+    let scratch = Scratch::new("restore-race");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    assert_eq!(
+        reopen(&scratch).save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let store = reopen(&scratch);
+    let _ = restored(&store);
+
+    let service = workspace();
+    let answer = store
+        .put_back_between(&service, || {
+            fs::remove_file(&a).expect("delete a");
+            fs::write(&a, b"<mzML/>").expect("another object at the same path");
+        })
+        .expect("the batch runs");
+
+    assert_eq!(service.workspace_restore_rows().len(), 1, "admitted, as Add files would");
+    assert!(answer.placed.is_empty(), "not the recorded object");
+    assert_eq!(
+        states(&restored(&store)),
+        vec![("a.mzML".to_owned(), RowState::Changed)]
+    );
+}
+
+#[test]
+fn restoring_a_row_that_is_already_live_leaves_one_row_and_its_arrangement() {
+    let scratch = Scratch::new("restore-duplicate");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    assert_eq!(
+        reopen(&scratch).save(&ungrouped(&["file-0"]), vec![live("file-0", &a)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let store = reopen(&scratch);
+    let _ = restored(&store);
+    let service = workspace();
+    let added = service.add_files(std::slice::from_ref(&a)).expect("added");
+    let handle = added.roster.datasets[0].handle.clone();
+
+    let answer = store.put_back(&service).expect("the batch runs");
+
+    assert_eq!(service.workspace_restore_rows().len(), 1);
+    assert_eq!(answer.placed[0].handle, handle);
+    assert!(!answer.placed[0].added);
+    assert!(states(&restored(&store)).is_empty());
+}
+
+#[test]
+fn restore_admits_a_sciex_bundle_through_its_primary_as_one_row() {
+    use crate::preview::sciex_fixture::{
+        SCIEX_MARKERS, scan_companion_bytes, wiff_container_bytes,
+    };
+
+    let scratch = Scratch::new("restore-bundle");
+    let wiff = scratch.write("s.wiff", &wiff_container_bytes(&SCIEX_MARKERS));
+    scratch.write("s.wiff.scan", &scan_companion_bytes("payload"));
+    let service = workspace();
+    let first = service
+        .add_files(std::slice::from_ref(&wiff))
+        .expect("added");
+    let handle = first.roster.datasets[0].handle.clone();
+    assert_eq!(
+        reopen(&scratch).save_with(&ungrouped(&[handle.as_str()]), || service
+            .workspace_restore_rows()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(stored(&scratch).groups[0].rows[0].members.len(), 2);
+    service.remove_datasets(&[handle]).expect("removed");
+
+    let store = reopen(&scratch);
+    let _ = restored(&store);
+    let answer = store.put_back(&service).expect("the batch runs");
+
+    assert_eq!(service.workspace_restore_rows().len(), 1, "one acquisition is one row");
+    assert_eq!(answer.placed.len(), 1, "both members are the recorded ones");
+    assert!(states(&restored(&store)).is_empty());
+}
+
+// ------------------------------------------------------------------ dismiss
+
+#[test]
+fn a_dismissed_row_leaves_at_the_next_save_and_no_other_handle_moves() {
+    let scratch = Scratch::new("restore-dismiss");
+    let (_a, b) = stored_a_and_b(&scratch);
+    let store = reopen(&scratch);
+    assert!(!store.dismiss("restored-0"), "no read has offered it");
+    fs::remove_file(&b).expect("delete b");
+    let _ = restored(&store);
+
+    assert!(!store.dismiss("restored-9"), "no such row");
+    assert!(!store.dismiss("file-0"), "not a restored handle");
+    assert!(store.dismiss("restored-0"));
+    assert!(!store.dismiss("restored-0"), "already gone");
+
+    let waiting = restored(&store);
+    assert_eq!(
+        states(&waiting),
+        vec![("a.mzML".to_owned(), RowState::Matching)]
+    );
+    assert_eq!(waiting[1].rows[0].handle, "restored-1");
+    assert_eq!(
+        store.save(&ungrouped(&["restored-1"]), Vec::new()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(stored(&scratch).rows().count(), 1, "forgotten");
+}
+
+#[test]
+fn dismissing_marked_rows_is_a_way_out_of_too_many_rows() {
+    let scratch = Scratch::new("restore-dismiss-capacity");
+    let gone = scratch.join("gone.mzML");
+    write_stored(
+        &scratch,
+        &write_document(&RestoreDocument {
+            schema_version: SCHEMA_VERSION,
+            enabled: true,
+            groups: vec![StoredGroup {
+                name: None,
+                rows: vec![row_at(&gone); MAX_ROWS],
+            }],
+        }),
+    );
+    let store = reopen(&scratch);
+    let _ = restored(&store);
+    let live_file = scratch.write("live.mzML", b"<mzML/>");
+    let mut handles: Vec<String> = (0..MAX_ROWS).map(|n| format!("restored-{n}")).collect();
+    handles.push("file-0".to_owned());
+    let all: Vec<&str> = handles.iter().map(String::as_str).collect();
+    assert_eq!(
+        store.save(&ungrouped(&all), vec![live("file-0", &live_file)]),
+        refused("tooManyRows")
+    );
+    assert!(store.dismiss("restored-0"));
+    assert_eq!(
+        store.save(&ungrouped(&all[1..]), vec![live("file-0", &live_file)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+}
+
+#[test]
+fn clear_and_off_end_every_restored_handle() {
+    let scratch = Scratch::new("restore-clear-handles");
+    stored_a_and_b(&scratch);
+    let store = reopen(&scratch);
+    let _ = restored(&store);
+    assert!(store.dismiss("restored-0"));
+    assert_eq!(store.clear(), WorkspaceRestoreWriteDto::Saved);
+    assert!(!store.dismiss("restored-1"), "cleared");
+    let service = workspace();
+    let answer = store.put_back(&service).expect("nothing to do");
+    assert!(answer.placed.is_empty());
+    assert_eq!(service.workspace_restore_rows().len(), 0);
+}
+
+// ------------------------------------------------------------------ context
+
+fn contexts_of(paths: &[&Path]) -> Vec<Option<String>> {
+    let rows: Vec<StoredRow> = paths.iter().map(|path| row_at(path)).collect();
+    let shown: Vec<(usize, &StoredRow)> = rows.iter().enumerate().collect();
+    let contexts = collision_contexts(&shown);
+    (0..rows.len())
+        .map(|at| contexts.get(&at).cloned())
+        .collect()
+}
+
+#[test]
+fn a_unique_name_says_nothing_and_a_collision_says_the_fewest_folders() {
+    let scratch = Scratch::new("restore-context");
+    let one = scratch.join("batch-1/QC/x.raw");
+    let two = scratch.join("batch-2/QC/x.raw");
+    let other = scratch.join("batch-3/y.raw");
+    assert_eq!(
+        contexts_of(&[&one, &two, &other]),
+        vec![
+            Some("batch-1\\QC".to_owned()),
+            Some("batch-2\\QC".to_owned()),
+            None
+        ]
+    );
+    let near = scratch.join("batch-1/A/x.raw");
+    let far = scratch.join("batch-1/B/x.raw");
+    assert_eq!(
+        contexts_of(&[&near, &far]),
+        vec![Some("A".to_owned()), Some("B".to_owned())]
+    );
+}
+
+#[test]
+fn folders_that_do_not_tell_rows_apart_within_the_bound_say_the_rows_place() {
+    let scratch = Scratch::new("restore-context-bound");
+    let one = scratch.join("one/a/b/c/x.raw");
+    let two = scratch.join("two/a/b/c/x.raw");
+    assert_eq!(
+        contexts_of(&[&one, &two]),
+        vec![Some("a\\b\\c #1".to_owned()), Some("a\\b\\c #2".to_owned())]
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn the_context_never_names_a_drive_a_share_or_a_root() {
+    let at = |path: &str| PathBuf::from(path);
+    let contexts = contexts_of(&[
+        &at(r"C:\x.raw"),
+        &at(r"D:\QC\x.raw"),
+        &at(r"\\server\share\Runs\x.raw"),
+        &at(r"\\?\UNC\server\share\Verbatim\x.raw"),
+        &at(r"\\?\E:\Disk\x.raw"),
+    ]);
+    assert_eq!(
+        contexts,
+        vec![
+            None,
+            Some("QC".to_owned()),
+            Some("Runs".to_owned()),
+            Some("Verbatim".to_owned()),
+            Some("Disk".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn a_read_reports_the_context_only_among_the_rows_it_shows() {
+    let scratch = Scratch::new("restore-context-read");
+    let one = scratch.write("one/x.mzML", b"<mzML/>");
+    let two = scratch.write("two/x.mzML", b"<mzML/>");
+    assert_eq!(
+        reopen(&scratch).save(
+            &ungrouped(&["file-0", "file-1"]),
+            vec![live("file-0", &one), live("file-1", &two)]
+        ),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let store = reopen(&scratch);
+    let rows = restored(&store)[0].rows.clone();
+    assert_eq!(rows[0].context.as_deref(), Some("one"));
+    assert_eq!(rows[1].context.as_deref(), Some("two"));
+    assert!(store.dismiss("restored-1"));
+    assert_eq!(
+        restored(&store)[0].rows[0].context,
+        None,
+        "no collision left"
     );
 }

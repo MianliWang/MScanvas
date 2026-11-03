@@ -24,8 +24,8 @@
 //! A usable document becomes the session's *restored rows*. They are not
 //! Workbench rows: they carry `restored-N` handles, and putting one back in the
 //! Workbench is ordinary admission, only through the explicit Restore
-//! workspace action the user starts (a later slice), never at start-up
-//! (ADR 0061, question 1, decided 2026-10-31). Every read re-checks the
+//! workspace action the user starts ([`WorkspaceRestoreStore::put_back`]),
+//! never at start-up (ADR 0061, question 1, decided 2026-10-31). Every read re-checks the
 //! offered rows cheaply: the drive or share each recorded path is on is probed
 //! once, then the object at the path is opened for its attributes only,
 //! without data access or a link followed, and its file ID, volume serial and
@@ -58,13 +58,18 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
 use crate::local_document::{self, ReadRefusal, WriteRefusal};
-use crate::preview::dto::{DatasetSourceKindDto, MAX_WORKSPACE_DATASETS};
+use crate::preview::PreviewService;
+use crate::preview::dto::{
+    DatasetSourceKindDto, MAX_WORKSPACE_DATASETS, PreviewErrorDto, WorkspaceAddOutcomeDto,
+    WorkspaceAddResultDto,
+};
+use crate::preview::selection::bounded_context;
 use crate::preview::service::workspace_rows::LiveRow;
 
 /// The document's fixed name in the per-user directory.
@@ -103,6 +108,10 @@ const RESTORED_PREFIX: &str = "restored-";
 /// so untaken offers never become a growing history. A marked row could not be taken: it is
 /// never counted, and one that reaches this count while marked is still shown.
 pub const MAX_OFFERS: u32 = 1;
+
+/// How many folders above the file a same-named restored row may show
+/// (ADR 0061, question 7; ADR 0006, amended 2026-11-03).
+const MAX_CONTEXT_FOLDERS: usize = 3;
 
 // ------------------------------------------------------------------ document
 
@@ -475,8 +484,34 @@ pub struct RestoredRowDto {
     /// The roster's own key and values for a row's family.
     pub source_kind: Family,
     pub display_name: String,
+    /// The folders above the file, nearest last, only while another row this
+    /// read shows has the same name: never a drive, share or root, at most
+    /// [`MAX_CONTEXT_FOLDERS`] of them and as few as tell the rows apart, with
+    /// the row's place added where those read alike. `None` otherwise.
+    pub context: Option<String>,
     pub checked: bool,
     pub state: RowState,
+}
+
+/// One row Restore workspace left in the Workbench, and where it belongs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlacedRowDto {
+    pub handle: String,
+    /// The stored group; `None` is Ungrouped.
+    pub group: Option<String>,
+    pub checked: bool,
+    /// `false`: the object was already a row, which keeps its arrangement.
+    pub added: bool,
+}
+
+/// What Restore workspace did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRestorePutBackDto {
+    /// The ordinary add answer: the roster as it now is, and what each file did.
+    pub workspace: WorkspaceAddResultDto,
+    pub placed: Vec<PlacedRowDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -624,11 +659,10 @@ struct Lane {
     /// Every stored row, in its stored group, until a clear or off. The Nth
     /// row in order is `restored-N`, expired or not, so no handle changes
     /// meaning within a session.
-    ///
-    /// ponytail: only ever emptied whole (clear, off); putting one row back
-    /// or dismissing one needs stable per-row slots, which the interface
-    /// slice adds first (ADR 0061, decision 4).
     restored: Vec<StoredGroup>,
+    /// The restored rows this session put back or dismissed. A row that leaves
+    /// keeps its place in `restored`, so every other handle keeps its meaning.
+    gone: HashSet<usize>,
     /// The restored rows a read of this session presented as matching: the
     /// offers the user could take, which a save counts in `offered`. Never
     /// refilled within a session, so positions stay meaningful.
@@ -694,6 +728,7 @@ impl WorkspaceRestoreStore {
                     foreign: false,
                     kept_aside: false,
                     restored: Vec::new(),
+                    gone: HashSet::new(),
                     presented: HashSet::new(),
                     expired: None,
                 },
@@ -710,7 +745,7 @@ impl WorkspaceRestoreStore {
     /// back.
     #[must_use]
     pub fn read(&self) -> WorkspaceRestoreReadDto {
-        let (startup, enabled, restored, leftover_copies) = {
+        let (startup, enabled, restored, gone, leftover_copies) = {
             let lane = self.locked();
             // Counted under the lane, so this process's own write in progress
             // is never taken for a leftover.
@@ -719,6 +754,7 @@ impl WorkspaceRestoreStore {
                 lane.startup,
                 lane.enabled,
                 lane.restored.clone(),
+                lane.gone.clone(),
                 leftover_copies,
             )
         };
@@ -733,9 +769,14 @@ impl WorkspaceRestoreStore {
             Startup::Loaded => {
                 let mut roots = Roots::new();
                 let rows: Vec<&StoredRow> = restored.iter().flat_map(|g| &g.rows).collect();
-                let states: Vec<RowState> =
-                    rows.iter().map(|row| check_row(row, &mut roots)).collect();
-                let matching = |index: &usize| states[*index] == RowState::Matching;
+                let states: Vec<Option<RowState>> = rows
+                    .iter()
+                    .enumerate()
+                    .map(|(index, row)| {
+                        (!gone.contains(&index)).then(|| check_row(row, &mut roots))
+                    })
+                    .collect();
+                let matching = |index: &usize| states[*index] == Some(RowState::Matching);
                 let expired = {
                     let mut lane = self.locked();
                     // Only a row this read finds matching ages out, so a
@@ -755,6 +796,13 @@ impl WorkspaceRestoreStore {
                     lane.presented.extend(offers);
                     expired
                 };
+                let shown = |at: &usize| states[*at].is_some() && !expired.contains(at);
+                let contexts = collision_contexts(
+                    &(0..rows.len())
+                        .filter(shown)
+                        .map(|at| (at, rows[at]))
+                        .collect::<Vec<_>>(),
+                );
                 let mut index = 0;
                 let groups = restored
                     .iter()
@@ -766,8 +814,8 @@ impl WorkspaceRestoreStore {
                             .filter_map(|row| {
                                 let at = index;
                                 index += 1;
-                                (!expired.contains(&at))
-                                    .then(|| restored_row_dto(at, row, states[at]))
+                                let state = states[at].filter(|_| shown(&at))?;
+                                Some(restored_row_dto(at, row, state, contexts.get(&at).cloned()))
                             })
                             .collect(),
                     })
@@ -826,8 +874,11 @@ impl WorkspaceRestoreStore {
             rows.insert(row.handle, stored);
         }
         for (index, row) in lane.restored.iter().flat_map(|g| &g.rows).enumerate() {
-            // A read of this session reported it as no longer offered.
-            if lane.expired.as_ref().is_some_and(|e| e.contains(&index)) {
+            // A read of this session reported it as no longer offered, or the
+            // user put it back or dismissed it.
+            if lane.expired.as_ref().is_some_and(|e| e.contains(&index))
+                || lane.gone.contains(&index)
+            {
                 continue;
             }
             let declined = u32::from(lane.presented.contains(&index));
@@ -870,6 +921,7 @@ impl WorkspaceRestoreStore {
         let turned_off = seen != Seen::Same;
         lane.enabled = enabled;
         lane.restored.clear();
+        lane.gone.clear();
         lane.expired = Some(HashSet::new());
         if turned_off {
             WorkspaceRestoreWriteDto::TurnedOff {
@@ -913,9 +965,118 @@ impl WorkspaceRestoreStore {
         if outcome == WorkspaceRestoreWriteDto::Saved {
             lane.enabled = enabled;
             lane.restored.clear();
+            lane.gone.clear();
             lane.expired = Some(HashSet::new());
         }
         outcome
+    }
+
+    /// Restore workspace: the one explicit action that puts rows back
+    /// (ADR 0061, question 1). Every row a read offered and a re-check now finds
+    /// matching goes through ordinary admission in one batch, which hashes each
+    /// file as a new baseline as Add files does. A row leaves the restored rows
+    /// only if the row admission answered with is the recorded objects; a file
+    /// replaced since the re-check stays in the Workbench as any file added
+    /// there, and its restored row reads `changed` at the next read. A marked
+    /// row, or one admission refused, stays where it is. Nothing is previewed
+    /// and nothing is written here: the webview's next save records the result.
+    ///
+    /// # Errors
+    ///
+    /// `workspace_restore_not_read` before this session's first read, when
+    /// nothing has been offered; otherwise what `add_files` refuses, with every
+    /// row still waiting.
+    pub fn put_back(
+        &self,
+        service: &PreviewService,
+    ) -> Result<WorkspaceRestorePutBackDto, PreviewErrorDto> {
+        self.put_back_between(service, || ())
+    }
+
+    /// The same, with the moment a test needs: after the re-check and before
+    /// admission, when a path can be made to mean another file.
+    fn put_back_between(
+        &self,
+        service: &PreviewService,
+        between: impl FnOnce(),
+    ) -> Result<WorkspaceRestorePutBackDto, PreviewErrorDto> {
+        // Saves first, then the mutation gate, then the lane: `save_with`'s
+        // order. A save never sees a row in the registry whose slot is still
+        // waiting.
+        let _saving = self
+            .saves
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let waiting: Vec<(usize, Option<String>, StoredRow)> = {
+            let lane = self.locked();
+            let Some(expired) = &lane.expired else {
+                return Err(PreviewErrorDto::new(
+                    "workspace_restore_not_read",
+                    "The last session has not been read yet.",
+                    true,
+                ));
+            };
+            lane.restored
+                .iter()
+                .flat_map(|group| group.rows.iter().map(move |row| (&group.name, row)))
+                .enumerate()
+                .filter(|(index, _)| !expired.contains(index) && !lane.gone.contains(index))
+                .map(|(index, (name, row))| (index, name.clone(), row.clone()))
+                .collect()
+        };
+        let mut roots = Roots::new();
+        let matching: Vec<_> = waiting
+            .into_iter()
+            .filter(|(_, _, row)| check_row(row, &mut roots) == RowState::Matching)
+            .collect();
+        let paths: Vec<PathBuf> = matching
+            .iter()
+            .map(|(_, _, row)| PathBuf::from(primary_path(row)))
+            .collect();
+        between();
+        let workspace = service.add_files(&paths)?;
+        let live: HashMap<String, Vec<(u64, String)>> = service
+            .workspace_restore_rows()
+            .iter()
+            .filter_map(|row| Some((row.handle.clone(), objects(&stored_row(row)?))))
+            .collect();
+        let mut placed = Vec::new();
+        let mut lane = self.locked();
+        for ((index, group, row), outcome) in matching.iter().zip(&workspace.outcomes) {
+            let (handle, added) = match outcome {
+                WorkspaceAddOutcomeDto::Added { dataset } => (&dataset.handle, true),
+                WorkspaceAddOutcomeDto::Duplicate { existing, .. } => (&existing.handle, false),
+                WorkspaceAddOutcomeDto::Rejected { .. } => continue,
+            };
+            if live.get(handle) == Some(&objects(row)) {
+                lane.gone.insert(*index);
+                placed.push(PlacedRowDto {
+                    handle: handle.clone(),
+                    group: group.clone(),
+                    checked: row.checked,
+                    added,
+                });
+            }
+        }
+        drop(lane);
+        Ok(WorkspaceRestorePutBackDto { workspace, placed })
+    }
+
+    /// Forgets one restored row a read reported, which the webview's next save
+    /// records (ADR 0061, decision 4). `false`: no read of this session offers
+    /// that row now.
+    #[must_use]
+    pub fn dismiss(&self, handle: &str) -> bool {
+        let mut lane = self.locked();
+        let Some(index) = handle
+            .strip_prefix(RESTORED_PREFIX)
+            .and_then(|index| index.parse::<usize>().ok())
+        else {
+            return false;
+        };
+        let offered = lane.expired.as_ref().is_some_and(|e| !e.contains(&index))
+            && index < lane.restored.iter().map(|group| group.rows.len()).sum();
+        offered && lane.gone.insert(index)
     }
 
     fn writable(&self, lane: &Lane) -> Result<&Path, WorkspaceRestoreWriteDto> {
@@ -946,22 +1107,97 @@ const fn refused(problem: &'static str) -> WorkspaceRestoreWriteDto {
     WorkspaceRestoreWriteDto::Refused { problem }
 }
 
-fn restored_row_dto(index: usize, row: &StoredRow, state: RowState) -> RestoredRowDto {
-    let primary = row
-        .members
+fn primary_path(row: &StoredRow) -> &str {
+    row.members
         .first()
-        .map_or("", |member| member.path.as_str());
+        .map_or("", |member| member.path.as_str())
+}
+
+fn display_name(row: &StoredRow) -> &str {
+    Path::new(primary_path(row))
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+}
+
+fn restored_row_dto(
+    index: usize,
+    row: &StoredRow,
+    state: RowState,
+    context: Option<String>,
+) -> RestoredRowDto {
     RestoredRowDto {
         handle: format!("{RESTORED_PREFIX}{index}"),
         source_kind: row.family,
-        display_name: Path::new(primary)
-            .file_name()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default()
-            .to_owned(),
+        display_name: display_name(row).to_owned(),
+        context,
         checked: row.checked,
         state,
     }
+}
+
+/// The folders above a recorded file, outermost first. Only `Normal`
+/// components, so a drive, a share or a root cannot be among them.
+fn parent_folders(row: &StoredRow) -> Vec<&str> {
+    Path::new(primary_path(row))
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .filter_map(|component| match component {
+            Component::Normal(folder) => folder.to_str(),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What each shown row sharing its exact file name with another must say
+/// (ADR 0061, question 7; ADR 0006, amended 2026-11-03): the fewest folders
+/// nearest the file that tell every row of that name apart, up to
+/// [`MAX_CONTEXT_FOLDERS`], bounded like the live roster's context. Rows those
+/// folders do not tell apart also say their place. A unique name says nothing.
+fn collision_contexts(shown: &[(usize, &StoredRow)]) -> HashMap<usize, String> {
+    let mut by_name: HashMap<&str, Vec<(usize, Vec<&str>)>> = HashMap::new();
+    for (index, row) in shown {
+        by_name
+            .entry(display_name(row))
+            .or_default()
+            .push((*index, parent_folders(row)));
+    }
+    let nearest =
+        |folders: &[&str], depth: usize| folders[folders.len().saturating_sub(depth)..].join("\\");
+    let mut contexts = HashMap::new();
+    for rows in by_name.into_values().filter(|rows| rows.len() > 1) {
+        let depth = (1..=MAX_CONTEXT_FOLDERS)
+            .find(|depth| {
+                let said: HashSet<String> = rows
+                    .iter()
+                    .map(|(_, folders)| bounded_context(&nearest(folders, *depth), 0))
+                    .collect();
+                said.len() == rows.len()
+            })
+            .unwrap_or(MAX_CONTEXT_FOLDERS);
+        let said: Vec<String> = rows
+            .iter()
+            .map(|(_, folders)| bounded_context(&nearest(folders, depth), 0))
+            .collect();
+        for ((index, folders), shown) in rows.iter().zip(&said) {
+            let alike = said.iter().filter(|other| *other == shown).count() > 1;
+            let context = if alike {
+                let place = format!("#{}", index + 1);
+                let room = place.chars().count() + 1;
+                format!(
+                    "{} {place}",
+                    bounded_context(&nearest(folders, depth), room)
+                )
+            } else {
+                shown.clone()
+            };
+            if !context.trim().is_empty() {
+                contexts.insert(*index, context.trim().to_owned());
+            }
+        }
+    }
+    contexts
 }
 
 /// How many files beside the document can still hold paths; see
@@ -1157,6 +1393,7 @@ fn load(directory: &Path) -> Lane {
         foreign: false,
         kept_aside: false,
         restored,
+        gone: HashSet::new(),
         presented: HashSet::new(),
         expired: None,
     };
