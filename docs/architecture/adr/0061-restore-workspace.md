@@ -277,8 +277,12 @@ state, its reason and a dismiss, because the roster is a closed drawer at
 1,050 px and below, and an offer nobody sees is not an offer. The notice cannot
 be collapsed, and the track it sits in takes up to about 154 px of a 960x640
 window (`min(24vh, 180px)`), and up to 256 px (`min(40vh, 320px)`) while a restore
-refusal stands. Only the list of marked rows gives up height, so the refusal with
-its reason, Restore workspace and Start fresh stay on screen while the rows scroll.
+refusal, or any warning or failure beside the offer, stands: the workspace's own
+answer to a press of Restore workspace is one of those. Only the list of marked
+rows gives up height, so the refusal with its reason, Restore workspace and Start
+fresh stay on screen while the rows scroll. Refusals can pass even that bound, as
+three at once do at 960x640; the track then scrolls too and keeps what the
+keyboard is on in view, which can take the top of the first refusal out of it.
 
 *Alternative:* put matching rows back automatically at every start. Rejected
 (by the owner on 2026-10-31) because of what admission costs, which the
@@ -471,12 +475,17 @@ found it matching, is not counted if it is still waiting afterwards: a full
 workspace, a conversion or a file another program holds refused it, and the user
 had asked for it, so a refusal does not use up its one offer. "Only an offer the
 user could take counts" is the argument for this, and it can be argued either
-way. A row the re-check found marked is counted as usual if it matches again and
-the session saves without taking it. Two things go past that argument: a row
-refused once and left there after room was made is still not counted, although
-the user could then have taken it, and a row pressed and refused in every session
-never expires, so "offered at the next start only" does not hold for it. Such a
-row only stays longer; none leaves earlier. The owner has not answered this.
+way. Two things go past that argument: a row refused once and left there after
+room was made is still not counted, although the user could then have taken it,
+and a row pressed and refused in every session never expires, so "offered at the
+next start only" does not hold for it. Such a row only stays longer; none leaves
+earlier. A row the re-check found marked was not handed to admission, so the press
+does not protect it: if a read of the session presented it as matching and the
+session saves without taking it, it is counted, whether or not it ever matches
+again. That is the rule above to the letter, and this PR changed it: at `88facc6a`
+the press protected every waiting row. Such a row uses its one offer although the
+user pressed Restore workspace; its source file is untouched and the next start
+reports it as no longer offered. The owner has not answered this.
 
 Which rows are no longer offered is decided once per session, by its first
 read, from what that read finds, never at load: a row whose count has reached
@@ -563,11 +572,13 @@ answer is a one-line change.
   timeout per unreachable root plus one slow open per member.
 - A restored row is offered at the next start only: if that session presents
   it as matching and saves without taking it, the start after reports it as no
-  longer offered when it finds it matching (decision 10, and its as-built note
-  for a row a press could not place); a user who wants it
+  longer offered when it finds it matching (decision 10); a user who wants it
   back adds the file again. A marked row is never aged out, so marked rows
   wait until put back, dismissed or cleared, and can build up toward
   `tooManyRows` (decision 5).
+- *As built (2026-11-03), not an owner decision, for the owner's eye:* on PR #204
+  a row a press could not place is an exception to the point above, set out in
+  decision 10's note. The owner has not answered this.
 - A restored row that matches is the same object at the same length, not the
   same content: a rewrite in place at the same length comes back with its
   group and checked state, and put-back admits what is there then (decision 4,
