@@ -576,6 +576,42 @@ fn a_document_keeps_its_items_at_the_bound_and_drops_them_one_byte_over_it() {
     assert_eq!(run.item_count, 1);
 }
 
+/// Left without its items, a run's own facts answer to the same bound.
+#[test]
+fn a_run_whose_own_facts_fill_a_document_is_written_up_to_the_bound_and_no_further() {
+    let with_intent = |length: usize| {
+        let mut run = start(1);
+        run.items[0].display_name = "y".repeat(17 * 1024 * 1024);
+        run.settings.intent = serde_json::Value::String("i".repeat(length));
+        run
+    };
+    let running = || progress(RunState::Running, &["running"]);
+
+    let scratch = Scratch::new("history-facts-measured");
+    let history = open(&scratch);
+    history.begin(1, with_intent(0), running());
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    let room = MAX_RECORD_BYTES - fs::metadata(&path).expect("written").len();
+    let room = usize::try_from(room).expect("fits");
+
+    let scratch = Scratch::new("history-facts-at-the-bound");
+    let history = open(&scratch);
+    history.begin(1, with_intent(room), running());
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    assert_eq!(
+        fs::metadata(&path).expect("written").len(),
+        MAX_RECORD_BYTES
+    );
+    let stored = read_record(&path).expect("reads back").expect("written");
+    assert!(stored.omitted.is_some() && stored.items.is_empty());
+
+    let scratch = Scratch::new("history-facts-over-the-bound");
+    let history = open(&scratch);
+    history.begin(1, with_intent(room + 1), running());
+    assert!(run_files(&scratch).is_empty());
+    assert_eq!(history.locked().problem, Some("notWritten"));
+}
+
 #[test]
 fn a_corrupt_run_is_set_aside_and_a_newer_one_is_left_in_place() {
     let scratch = Scratch::new("history-corrupt");
