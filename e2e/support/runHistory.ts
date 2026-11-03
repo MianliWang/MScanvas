@@ -120,6 +120,9 @@ export const SET_ITEM = item("Sciex_batch.wiff", {
   ],
 }, { family: "sciex_wiff" });
 
+/** A retry pass has not reached it yet: it waits, still holding its earlier attempt (ADR 0065 §5). */
+export const RETRY_WAITING_ITEM: RunItem = { ...SET_ITEM, progress: { ...SET_ITEM.progress, state: "pending" } };
+
 /** Every member published, and still not adoptable whole: ADR 0065 §1's failed item with no failure code. */
 export const WHOLE_SET_ITEM = item("Sciex_batch.wiff", {
   state: "failed",

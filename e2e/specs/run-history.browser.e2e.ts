@@ -6,7 +6,7 @@
  */
 import { consoleEntries, heldCallers, holdInvoke, horizontalOverflow, installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { RUNNING as QUEUE_RUNNING, conversionSlot, scenario } from "../support/pm9Scenarios";
-import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, MANY_ITEMS, MANY_RUNS, REQUEST_REFUSED, RUNNING, SET_ITEM, found, listed } from "../support/runHistory";
+import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, MANY_ITEMS, MANY_RUNS, REQUEST_REFUSED, RETRY_WAITING_ITEM, RUNNING, SET_ITEM, found, listed } from "../support/runHistory";
 import { readBackSavedPreferences } from "../support/viewer";
 import { metrics } from "../support/cdp";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
@@ -123,6 +123,17 @@ describe("Conversion history", () => {
     await focused("[data-run-item] .conversion-item-toggle");
     await browser.keys("Enter");
     await browser.$("[data-run-item] .conversion-item-manifest").waitForDisplayed();
+  });
+
+  it("offers no Details for a file a retry has not reached, so Tab goes on to the next file's", async () => {
+    await start(world({ list_conversion_runs: listed([RUNNING]), read_conversion_run: found(RUNNING, [RETRY_WAITING_ITEM, ...ENDED_ITEMS]) }));
+    await browser.$(ENTRY).click();
+    await browser.$('[data-run-item][data-item-state="pending"]').waitForDisplayed();
+    expect(await browser.$('[data-run-item][data-item-state="pending"] .conversion-item-toggle').isExisting()).toBe(false);
+    expect(await browser.$('[data-run-item][data-item-state="pending"] .conversion-queue-reason').isExisting()).toBe(false);
+    await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), "[data-run-history-clear]");
+    await browser.keys("Tab");
+    await focused('[data-run-item][data-item-state="finalized"] .conversion-item-toggle');
   });
 
   it("gives Conversion back to the queue when anything sends the reader to a surface", async () => {
