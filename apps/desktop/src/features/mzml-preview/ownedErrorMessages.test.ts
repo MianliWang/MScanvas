@@ -65,9 +65,7 @@ const SHOWN_AS_UNTRANSLATED_ORIGINAL: readonly string[] = [
   "conversion_intent_rejected",
   "conversion_intent_unsupported",
   "conversion_step_blocked_for_source",
-  // Test seams. Not reachable from any shipped path; `spectrum_failed` is
-  // produced only in `preview/tests.rs` (PM9 UI-44).
-  "spectrum_failed",
+  // Test seams. Not reachable from any shipped path (PM9 UI-44).
   "synthetic_drop_failure",
   "test_exhausted",
 ];
@@ -95,6 +93,23 @@ describe("the boundary's fixed sentences (PM9 UI-44)", () => {
   it("keeps the bound out of the queue sentence, so it cannot go stale", () => {
     expect(UI_RESOURCES.en.errQueueTooLarge).not.toMatch(/\d/u);
     expect(UI_RESOURCES["zh-CN"].errQueueTooLarge).not.toMatch(/\d/u);
+  });
+});
+
+describe("the project-owned reader's refusals (ADR 0056)", () => {
+  const READER = {
+    preview_not_open: "errPreviewNotOpen", spectrum_table_refused: "errSpectrumTableRefused",
+    spectrum_table_unreadable: "errSpectrumTableUnreadable", spectrum_not_as_recorded: "errSpectrumNotAsRecorded",
+    spectrum_value_not_exact: "errSpectrumValueNotExact", spectrum_encoding_unsupported: "errSpectrumEncodingUnsupported",
+    spectrum_unreadable: "errSpectrumUnreadable", spectrum_refused: "errSpectrumRefused",
+  } as const;
+  it.each(["en", "zh-CN"] as const)("says each in %s, and keeps the reader's stable id as the detail", locale => {
+    const t = bindUiMessages(createUiRuntime().instance.getFixedT(locale, "ui"));
+    for (const [kind, key] of Object.entries(READER)) {
+      const error = { kind, summary: `boundary words for ${kind}`, detail: "intensity:integer_not_exact", retryable: false };
+      expect(ownedErrorMessage(error, t)).toBe(t(key));
+      expect(ownedErrorDetail(error, t)).toBe("intensity:integer_not_exact");
+    }
   });
 });
 

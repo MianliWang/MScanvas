@@ -903,12 +903,15 @@ def validate_the_chromatogram_authority_has_one_installation_path(
     # is the one thing that is neither a question nor an answer to one. The run
     # summary a QC capture may copy (M8.5) is retained by the same rule as the
     # chromatogram, in its own function that compares *and* installs under the
-    # one `&mut self` -- the shape this check exists to keep.
+    # one `&mut self` -- the shape this check exists to keep. A cached view's
+    # open (ADR 0060) commits through the same shape: it compares and installs
+    # its chromatogram under one `&mut self`, and retains no summary.
     expected = {
         "default",
         "begin_preview_open",
         "reconcile_preview_chromatogram",
         "reconcile_preview_run_summary",
+        "reconcile_viewed_preview",
     }
     if owners != expected:
         errors.append(

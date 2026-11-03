@@ -789,13 +789,14 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await browser.waitUntil(() => existsSync(csv), { timeout: 60_000 });
     const text = readFileSync(csv, "utf8"), lines = text.split(/\r?\n/u);
     record({ kind: "real export in a Chinese session", bytes: Buffer.byteLength(text), sha256: digest(csv), head: lines.slice(0, 10) });
-    // A machine export is a machine export. Its keys, its header, its
-    // unreported states and its numbers are the canonical ones in either
-    // language -- the interface language is not a property of this document.
+    // A machine export is a machine export. Its keys, its header, its unit
+    // states and its numbers are the canonical ones in either language -- the
+    // interface language is not a property of this document. A unit is the
+    // accession the converted file declares, or `unreported` (ADR 0056).
     expect(lines[0]).toBe("#format,mscanvas_spectrum_export");
-    expect(lines).toContain("#schema_version,1");
-    expect(lines).toContain("#mz_unit,unreported");
-    expect(lines).toContain("#intensity_unit,unreported");
+    expect(lines).toContain("#schema_version,3");
+    expect(text).toMatch(/^#mz_unit,(unreported|[A-Za-z0-9]+:[A-Za-z0-9]+)$/mu);
+    expect(text).toMatch(/^#intensity_unit,(unreported|[A-Za-z0-9]+:[A-Za-z0-9]+)$/mu);
     expect(lines).toContain("mz,intensity");
     expect(text).toMatch(/^\d+(\.\d+)?,\d+(\.\d+)?$/mu);
     expect(text).not.toMatch(/[一-鿿]/u);

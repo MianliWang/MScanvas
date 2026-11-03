@@ -7,7 +7,7 @@ import { PlotRangeActions, plotGestureHelpId } from "./PlotRangeActions";
 import { mzInput } from "./viewer/plotInputAdapters";
 import { usePlotInput } from "./viewer/usePlotInput";
 
-import type { PreviewError, SelectedSpectrum, SpectrumDomainRefusal } from "./contracts";
+import type { PreviewError, SelectedSpectrum, SpectrumDomainRefusal, SpectrumRepresentation, ValueUnit } from "./contracts";
 import { formatMz } from "./format";
 import type { SpectrumDrawing } from "./StickSpectrum";
 import {
@@ -106,9 +106,11 @@ export interface SpectrumViewportProps {
   /** The transferred arrays, drawn where there is no viewport to navigate. */
   readonly mz: readonly number[];
   readonly intensity: readonly number[];
-  readonly reportedMzLow: number;
-  readonly reportedMzHigh: number;
-  readonly valueUnitsKnown?: boolean;
+  readonly reportedMzLow: number | null;
+  readonly reportedMzHigh: number | null;
+  readonly representation?: SpectrumRepresentation;
+  readonly mzUnit?: ValueUnit;
+  readonly intensityUnit?: ValueUnit;
   readonly labelledBy: string;
   /** Whether the range editor is open; the spectrum's ⋯ menu opens it. */
   readonly rangeEditing?: boolean;
@@ -141,7 +143,9 @@ export function SpectrumViewport({
   intensity,
   reportedMzLow,
   reportedMzHigh,
-  valueUnitsKnown = false,
+  representation,
+  mzUnit,
+  intensityUnit,
   labelledBy,
   rangeEditing = false,
   onRangeEditorClose = () => {},
@@ -256,7 +260,9 @@ export function SpectrumViewport({
             intensity={drawn.intensity}
             labelledBy={labelledBy}
             mz={drawn.mz}
-            valueUnitsKnown={valueUnitsKnown}
+            representation={representation}
+            mzUnit={mzUnit}
+            intensityUnit={intensityUnit}
             readout={readout}
             overlay={overlay}
             surface={{
@@ -281,7 +287,9 @@ export function SpectrumViewport({
           intensity={intensity}
           labelledBy={labelledBy}
           mz={mz}
-          valueUnitsKnown={valueUnitsKnown}
+          representation={representation}
+          mzUnit={mzUnit}
+          intensityUnit={intensityUnit}
           readout={readout}
           overlay={overlay}
           surface={{ kind: "static" }}
@@ -326,10 +334,10 @@ export function spectrumSourceDetails(spectrum: SelectedSpectrum, viewport: Spec
   if (spectrum.pointCount === 0) return "";
   if (viewport.status === "ready") {
     const drawn = drawnPoints(viewport);
-    return describeSpectrumSource(drawn.mz, drawn.intensity, drawingFor(viewport), spectrum.representationKnown, t);
+    return describeSpectrumSource(drawn.mz, drawn.intensity, drawingFor(viewport), spectrum.representation, t);
   }
   return describeSpectrumSource(spectrum.mz, spectrum.intensity,
-    { kind: "transfer", reportedMzLow: spectrum.mzLow, reportedMzHigh: spectrum.mzHigh }, spectrum.representationKnown, t);
+    { kind: "transfer", reportedMzLow: spectrum.mzLow, reportedMzHigh: spectrum.mzHigh }, spectrum.representation, t);
 }
 
 /**
@@ -379,8 +387,9 @@ export function drawingFor(state: SpectrumViewportState & { readonly status: "re
       reason: state.projection.status === "failed" ? "failed" : "pending",
     };
   }
+  const outside = [state.projection.projection.outsideLow, state.projection.projection.outsideHigh] as const;
   if (state.gesture !== null) {
-    return { kind: "viewport-transient", low: shown.low, high: shown.high };
+    return { kind: "viewport-transient", low: shown.low, high: shown.high, outside };
   }
   return {
     kind: "viewport",
@@ -388,6 +397,7 @@ export function drawingFor(state: SpectrumViewportState & { readonly status: "re
     high: shown.high,
     sourcePoints: state.projection.projection.sourcePoints,
     reduced: state.projection.projection.reduced,
+    outside,
   };
 }
 

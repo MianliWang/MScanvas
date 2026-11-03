@@ -89,13 +89,23 @@ async function newGroup(name: string) {
  * footer became one row (direction A 2.1): read from the open menu, which is
  * then closed. With `backToRow`, the keyboard goes back to the row that holds
  * the list's tab stop, as it was before the menu took it.
+ *
+ * Closed means focus is back on the trigger, not merely the menu gone: Radix
+ * returns it a timer task after the menu unmounts. A row focused before then
+ * loses the keyboard to that return, and the next key lands on the trigger
+ * (the bulk-move test's End, which then never reached the roster).
  */
 async function highlightContext(backToRow = false): Promise<string> {
   await browser.$("[data-roster-list-menu]").click();
   const text = await browser.$(".roster-menu-context").getText();
   await browser.keys("Escape");
   await browser.$(".roster-menu-context").waitForExist({ reverse: true });
-  if (backToRow) await browser.execute(() => document.querySelector<HTMLElement>('.grouped-roster [data-handle][tabindex="0"]')?.focus());
+  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true), { timeoutMsg: "list menu did not return focus to its trigger" });
+  if (backToRow) {
+    const tabStop = '.grouped-roster [data-handle][tabindex="0"]';
+    await browser.execute(selector => document.querySelector<HTMLElement>(selector)?.focus(), tabStop);
+    await browser.waitUntil(() => browser.execute(selector => document.activeElement?.matches(selector) === true, tabStop), { timeoutMsg: "tab-stop row did not take focus" });
+  }
   return text;
 }
 async function locale(value: "en" | "zh-CN") {
