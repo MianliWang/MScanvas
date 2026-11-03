@@ -101,6 +101,7 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
   // On mount, so a reloaded document resumes, and whenever the row changes.
   useEffect(() => {
     setAvailability(null);
+    setRefusal(null);
     read();
   }, [highlighted, read]);
 

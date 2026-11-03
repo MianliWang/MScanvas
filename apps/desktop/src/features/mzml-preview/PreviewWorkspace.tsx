@@ -1101,13 +1101,15 @@ export function PreviewWorkspace() {
             {/* Decision 11's provenance is ADR 0060 slice 4: until an export can
                 name the RAW and the conversion, a view exports nothing, and this
                 line is what every refused export points at. */}
-            {viewSource === null ? null : <p id={VIEW_EXPORT_WITHHELD_ID} className="viewer-file-note" data-view-export-withheld="">{t("viewExportWithheld")}</p>}
+            {viewSource === null ? null : <div className="viewer-file-facts">
+              {viewSource.verified ? null : <NotVerifiedTag label={{ unverifiedSettings: false, unverifiedBuildRelease: viewSource.unverifiedBuildRelease }} />}
+              <p id={VIEW_EXPORT_WITHHELD_ID} className="viewer-file-note" data-view-export-withheld="">{t("viewExportWithheld")}</p>
+            </div>}
             <Tabs className="viewer-tabs" label={t("viewerViews")} value={viewerView} onChange={setViewerView} items={[
               { value: "spectra", label: t("viewerTabSpectra") },
               { value: "scans", label: t("viewerTabScans") },
               { value: "metadata", label: t("viewerTabMetadata") },
             ]} actions={viewSource === null ? undefined : <div className="viewer-file-actions">
-              {viewSource.verified ? null : <NotVerifiedTag label={{ unverifiedSettings: false, unverifiedBuildRelease: viewSource.unverifiedBuildRelease }} />}
               <Button size="sm" data-raw-view-convert="" onClick={() => convertRow(preview.preview.file.handle)}>{t("rawViewConvert")}</Button>
             </div>}>
               {viewerView === "metadata" ? (

@@ -1301,7 +1301,7 @@ const STOPS: readonly Stop[] = [
     await browser.$('.chromatogram-panel .figure-quick-actions button[aria-haspopup="menu"]').click();
   }, anchor: '[role="menuitem"][aria-disabled="true"]' },
   { name: "view-open-metadata", table: viewWorld(viewReady()), drive: async () => { await openTheView(); await browser.$('.viewer-tabs [role="tab"]:nth-child(3)').click(); await frames(); }, anchor: "[data-view-source]" },
-  { name: "view-open-unmeasured", table: viewWorld(viewReady({ unverifiedBuildRelease: UNMEASURED }), { available: true, unverifiedBuildRelease: UNMEASURED }, UNMEASURED), drive: openTheView, anchor: ".viewer-file-actions .not-verified-tag" },
+  { name: "view-open-unmeasured", table: viewWorld(viewReady({ unverifiedBuildRelease: UNMEASURED }), { available: true, unverifiedBuildRelease: UNMEASURED }, UNMEASURED), drive: openTheView, anchor: ".viewer-file-facts .not-verified-tag" },
   { name: "view-open-metadata-unmeasured", table: viewWorld(viewReady({ unverifiedBuildRelease: UNMEASURED }), { available: true, unverifiedBuildRelease: UNMEASURED }, UNMEASURED), drive: async () => { await openTheView(); await browser.$('.viewer-tabs [role="tab"]:nth-child(3)').click(); await frames(); }, anchor: "[data-view-source] .not-verified-tag" },
   { name: "view-qc-refused", table: viewQcWorld, drive: async () => { await openTheView(); await go(3); }, anchor: '[data-project-qc-unavailable="qcViewedThroughCache"]' },
   // The states the first rendered review found no stop for.
@@ -1324,7 +1324,7 @@ const STOPS: readonly Stop[] = [
     await setInvokeResult("get_raw_view_state", { state: viewFailed("view_cache_not_stored", true, { operation: 2 }), availability: { available: true, unverifiedBuildRelease: null } });
     await browser.$('[data-raw-view-code="view_cache_not_stored"]').waitForExist({ timeout: 30_000 });
   }, anchor: '[data-raw-view-code="view_cache_not_stored"]' },
-  { name: "view-open-long-label", table: viewWorld(viewReady({ handle: LONG_NAME.handle, unverifiedBuildRelease: UNMEASURED }), { available: true, unverifiedBuildRelease: UNMEASURED }, UNMEASURED, LONG_NAME), drive: async () => { await highlight(LONG_NAME); await browser.$("[data-raw-view-open]").click(); await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 30_000 }); await foldNarrowRoster(); await frames(); }, anchor: ".viewer-file-actions .not-verified-tag" },
+  { name: "view-open-long-label", table: viewWorld(viewReady({ handle: LONG_NAME.handle, unverifiedBuildRelease: UNMEASURED }), { available: true, unverifiedBuildRelease: UNMEASURED }, UNMEASURED, LONG_NAME), drive: async () => { await highlight(LONG_NAME); await browser.$("[data-raw-view-open]").click(); await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 30_000 }); await foldNarrowRoster(); await frames(); }, anchor: ".viewer-file-facts .not-verified-tag" },
   { name: "view-open-scans", table: viewWorld(viewReady()), drive: async () => { await openTheView(); await browser.$('.viewer-tabs [role="tab"]:nth-child(2)').click(); await frames(); }, anchor: "[data-view-export-withheld]" },
   { name: "view-long-name-busy", table: viewWorld(viewRunning("converting", { handle: LONG_NAME.handle, fileName: LONG_NAME.fileName }), { available: false, code: "raw_view_busy" }), drive: () => highlight(SECOND), anchor: '[data-raw-view-refusal="raw_view_busy"]' },
   { name: "view-long-name-idle", table: viewWorld({ state: "idle" }), drive: () => highlight(LONG_NAME), anchor: VIEW_BUTTON },

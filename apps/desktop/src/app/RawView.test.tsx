@@ -458,6 +458,24 @@ describe("viewing a Thermo RAW row", () => {
       expect(within(evidence()).getByRole("heading", { level: 1 })).toHaveTextContent(RAW.fileName);
     });
 
+    it("lets a refused Reopen go when the reader moves on, and the open view comes back", async () => {
+      const { api } = session({
+        state: ready(),
+        spectrum: () => Promise.reject({ kind: "spectrum_not_as_recorded", summary: "x", detail: null, retryable: false }),
+      });
+      api.beginRawView = () => Promise.reject({ kind: "view_cache_unavailable", summary: "x", detail: null, retryable: false });
+      await highlight();
+      await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.rawViewOpen })); });
+      const grid = await screen.findByRole("grid", { name: "Scans" });
+      await act(async () => { fireEvent.click(within(grid).getAllByRole("row")[1]!); });
+      await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.viewerReopenFile })); });
+      await waitFor(() => expect(document.querySelector("[data-raw-view-refusal='view_cache_unavailable']")).not.toBeNull());
+
+      await act(async () => { fireEvent.click(await row(OTHER)); });
+      await act(async () => { fireEvent.click(await row(RAW)); });
+      await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "loaded"));
+    });
+
     it("reaches a Ready that became ready while the row's own failed read was left", async () => {
       const { world, api, opened } = session({ state: ready() });
       const open = api.openRawView;
@@ -590,7 +608,7 @@ describe("viewing a Thermo RAW row", () => {
       await waitFor(() => expect(statusBar()).not.toBeNull());
       await act(async () => { fireEvent.click(screen.getByRole("button", { name: words.conversionTask })); });
       const settings = () => document.querySelector("#workbench-conversion [data-settings-state]");
-      await waitFor(() => expect(settings()).toHaveTextContent(words.rawViewBusyUnnamed));
+      await waitFor(() => expect(settings()).toHaveTextContent(`Preparing ${RAW.fileName} for viewing.`));
       expect(settings()).not.toHaveTextContent(words.cnvSettingsLoading);
       const reads = vi.spyOn(api, "readConversionConfiguration");
       expect(reads).not.toHaveBeenCalled();

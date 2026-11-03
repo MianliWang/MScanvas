@@ -470,17 +470,18 @@
 .raw-view-bar { flex: 1 1 120px; min-width: 60px; }
 .raw-view-note { margin: 0; color: var(--color-warning); font-size: 12px; font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .raw-view-phase { animation-duration: 1ms; } }
-/* A viewed RAW file's file row, and the one line that says why exports are refused. The name
-   gives way first (it has an ellipsis), then the label: the row's one line never breaks. */
-.viewer-file[data-viewed] { grid-template-columns: minmax(48px, 1fr) auto minmax(0, auto); grid-template-rows: 36px auto minmax(0, 1fr); }
+/* A viewed RAW file's file row. Only the name gives way (it has an ellipsis); the label and the
+   sentence every refused export points at have the line below, which can wrap and never clips. */
+.viewer-file[data-viewed] { grid-template-columns: minmax(48px, max-content) auto minmax(min-content, 1fr); grid-template-rows: 36px auto minmax(0, 1fr); }
 .viewer-file[data-viewed] .viewer-tabs > .ui-tabpanel { grid-row: 3; }
-.viewer-file-actions { display: flex; grid-row: 1; grid-column: 3; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; padding: 0 12px; }
-.viewer-file-actions .ui-button { flex: none; }
-.viewer-file-actions .not-verified-tag { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-file-actions { display: flex; grid-row: 1; grid-column: 3; align-items: center; justify-content: flex-end; padding: 0 12px; }
 .raw-view-pane:focus { outline: none; }
+.raw-view-pane:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .raw-view-notice { align-items: center; justify-content: space-between; }
 .raw-view-notice p { margin: 0; }
-.viewer-file-note { grid-row: 2; grid-column: 1 / -1; margin: 0; padding: 2px 12px 4px; color: var(--color-warning); font-size: 12px; font-weight: 600; }
+.viewer-file-facts { display: flex; flex-wrap: wrap; grid-row: 2; grid-column: 1 / -1; align-items: center; gap: 2px 8px; padding: 2px 12px 4px; }
+.viewer-file-facts .not-verified-tag { flex: none; white-space: nowrap; }
+.viewer-file-note { margin: 0; color: var(--color-warning); font-size: 12px; font-weight: 600; }
 .metadata-digest { font-family: var(--font-mono); overflow-wrap: anywhere; }
 /* Evidence states (spec 3.6), centred in the card: an icon, one heading, a
    row of buttons. */

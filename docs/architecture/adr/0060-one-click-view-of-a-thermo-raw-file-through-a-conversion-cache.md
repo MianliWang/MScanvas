@@ -1403,9 +1403,10 @@ the decisions stand otherwise.
      question 8's narrow path). Show from the status bar leaves it folded.
    - **Each phase's line waits 300 ms** (design goal I8) by a CSS delay on an
      element keyed by the phase; Cancel does not wait.
-   - **The file row of a viewed file** has Convert this file… and, on an unmeasured
-     build, the label. `ui/unverified-labels` adds the label to a labelled output's
-     title, a different fact, so a merge keeps both.
+   - **The file row of a viewed file** has Convert this file… beside the tabs and, on
+     an unmeasured build, the label on the line below with the export sentence, where
+     it can wrap and never clips. `ui/unverified-labels` adds the label to a labelled
+     output's title, a different fact, so a merge keeps both.
 7. **Deferred, each with its reason.**
    - **View with…** (`begin_raw_view_with`, `rawViewIntents`) and the **Settings
      row** (`describe_view_cache`, `clear_view_cache`, still awaiting a caller) are

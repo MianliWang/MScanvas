@@ -373,30 +373,29 @@ for (const locale of ["en", "zh-CN"] as const) {
         await browser.$("[data-raw-view-open]").click();
         await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 10_000 });
         await foldNarrowRoster();
-        const facts = await browser.execute(() => {
-          const box = (css: string) => { const found = document.querySelector(css)!.getBoundingClientRect(); return { left: found.left, right: found.right, height: found.height }; };
-          const tag = document.querySelector<HTMLElement>(".viewer-file-actions .not-verified-tag")!;
-          return { tag: box(".viewer-file-actions .not-verified-tag"), clipped: tag.scrollWidth > tag.clientWidth, convert: box("[data-raw-view-convert]"), tabs: box(".viewer-tabs > .ui-tablist"), row: box(".viewer-file") };
-        });
-        expect(facts.tag.height).toBeLessThanOrEqual(24);
-        expect(facts.clipped).toBe(false);
-        expect(facts.convert.left).toBeGreaterThanOrEqual(facts.tabs.right);
-        expect(facts.convert.right).toBeLessThanOrEqual(facts.row.right);
+        const judge = async () => {
+          const facts = await browser.execute(() => {
+            const box = (css: string) => { const found = document.querySelector(css)!.getBoundingClientRect(); return { left: found.left, right: found.right, height: found.height }; };
+            const tag = document.querySelector<HTMLElement>(".viewer-file-facts .not-verified-tag")!;
+            return { tag: box(".viewer-file-facts .not-verified-tag"), clipped: tag.scrollWidth > tag.clientWidth, convert: box("[data-raw-view-convert]"), tabs: box(".viewer-tabs > .ui-tablist"), row: box(".viewer-file") };
+          });
+          expect(facts.tag.height).toBeLessThanOrEqual(24);
+          expect(facts.clipped).toBe(false);
+          expect(facts.tag.right).toBeLessThanOrEqual(facts.row.right);
+          expect(facts.convert.left).toBeGreaterThanOrEqual(facts.tabs.right);
+          expect(facts.convert.right).toBeLessThanOrEqual(facts.row.right);
+        };
+        await judge();
 
-        // The tightest the row gets: both side panels beside it. The label gives
-        // way before Convert or the tabs do, and stays on its line.
+        // The tightest the row gets: both side panels beside it.
         if (viewport[0] > 1050) {
-          await metrics(1060, viewport[1]);
           await readBackSavedPreferences();
           await browser.$('[aria-controls="workbench-inspector"]').click();
           await browser.$("#workbench-inspector:not([hidden])").waitForExist({ timeout: 10_000 });
-          const tight = await browser.execute(() => {
-            const box = (css: string) => document.querySelector(css)!.getBoundingClientRect();
-            return { tag: box(".viewer-file-actions .not-verified-tag").height, convertRight: box("[data-raw-view-convert]").right, convertLeft: box("[data-raw-view-convert]").left, tabsRight: box(".viewer-tabs > .ui-tablist").right, rowRight: box(".viewer-file").right };
-          });
-          expect(tight.tag).toBeLessThanOrEqual(24);
-          expect(tight.convertRight).toBeLessThanOrEqual(tight.rowRight);
-          expect(tight.convertLeft).toBeGreaterThanOrEqual(tight.tabsRight);
+          await judge();
+          await metrics(1060, viewport[1]);
+          await browser.waitUntil(async () => browser.execute(() => innerWidth === 1060));
+          await judge();
         }
         await clean();
       });

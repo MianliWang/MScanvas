@@ -467,6 +467,7 @@ export function ConversionPanel({
               conversion={conversion}
               configuration={configuration}
               settingsRefusalNoticeId={settingsRefusalNoticeId}
+              rawViewHeldBy={rawViewHolder?.reason ?? null}
               settingsView={settingsView}
               onSettingsViewChange={setSettingsView}
               plan={plan}
@@ -817,6 +818,7 @@ function PlanForm({
   conversion,
   configuration,
   settingsRefusalNoticeId,
+  rawViewHeldBy,
   settingsView,
   onSettingsViewChange,
   plan,
@@ -827,6 +829,7 @@ function PlanForm({
   readonly configuration: ConversionConfigurationView;
   /** The notice the settings read's retry points at, minted by the panel. */
   readonly settingsRefusalNoticeId: string | null;
+  readonly rawViewHeldBy: string | null;
   readonly settingsView: "basic" | "advanced";
   readonly onSettingsViewChange: (view: "basic" | "advanced") => void;
   readonly plan: ConversionPlanView;
@@ -841,6 +844,7 @@ function PlanForm({
         configuration={configuration}
         onChoose={configuration.select}
         refusalNoticeId={settingsRefusalNoticeId}
+        rawViewHeldBy={rawViewHeldBy}
         view={settingsView}
         onViewChange={onSettingsViewChange}
       />
