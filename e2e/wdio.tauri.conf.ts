@@ -172,7 +172,9 @@ export const config: WebdriverIO.Config = {
   },
 
   beforeSession(_configuration, _capabilities, specs): void {
-    if (specs.some(spec => spec.replaceAll("\\", "/").endsWith("/m7.5-preferences.native.e2e.ts"))) {
+    // wsp-010 writes `workspace-restore.json`: a reused driver's application on
+    // the real profile would write it there, so it refuses as M7.5 does.
+    if (specs.some(spec => /\/(m7\.5-preferences|wsp-010-restore-workspace)\.native\.e2e\.ts$/.test(spec.replaceAll("\\", "/")))) {
       if (!M75_CAMPAIGN) {
         throw new Error("Fresh user M7.5 native readiness is required before application session creation.");
       }
