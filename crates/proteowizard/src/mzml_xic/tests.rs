@@ -272,6 +272,16 @@ fn ppm_resolves_in_binary64_and_the_typed_input_travels_with_the_result() {
         }
     );
     assert_eq!(result.query().low(), 524.259257355);
+
+    // ppm never reaches the query's identity.
+    assert_eq!(
+        query,
+        XicQuery::from_bounds(1, 524.259257355, 524.269742645).unwrap()
+    );
+    assert_ne!(
+        query,
+        XicQuery::from_bounds(2, 524.259257355, 524.269742645).unwrap()
+    );
 }
 
 #[test]
@@ -1731,6 +1741,21 @@ fn a_refused_path_is_a_document_refusal_with_nothing_read() {
         ),
         Err(XicRefusal::Document(_))
     ));
+}
+
+#[test]
+fn the_product_entry_point_reads_a_file_with_the_identity() {
+    let spectra = [ms1(0, &[101.0], &[1.0])];
+    let path = std::env::temp_dir().join(format!("mscanvas-xic-{}.mzML", std::process::id()));
+    std::fs::write(&path, document(&spectra)).unwrap();
+    let result = read_xic(
+        &path,
+        &window(100.0, 102.0),
+        MzmlScanLimits::default(),
+        || false,
+    );
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(result.unwrap(), evaluate(&spectra));
 }
 
 // ---------------------------------------------------------------------------

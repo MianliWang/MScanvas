@@ -16,7 +16,9 @@
 //! does not depend on the order of the scans. Once one is certain, no further
 //! array is decoded, and the rest of the document is still read for an earlier
 //! reason. Malformed metadata comes first, then the run-wide unit rules, then
-//! decision 4's rules over the in-scope scans.
+//! decision 4's rules over the in-scope scans. Two refusals are not reasons about
+//! the document's metadata, and end the pass where they occur: cancellation, and
+//! the provisional refusal of an integer above 2^53.
 //!
 //! This is a library only. Nothing calls it, and VIEW-007 stays unavailable
 //! until the X3 decision admits the candidate.
@@ -85,13 +87,20 @@ pub enum XicWindowInput {
 
 /// One MS level and one closed `[low, high]`, both ends inclusive, compared
 /// against stored values without rounding. There is no default level and no
-/// "all levels".
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// "all levels". Two queries with equal operands are one query, however the
+/// window was typed.
+#[derive(Debug, Clone, Copy)]
 pub struct XicQuery {
     ms_level: u32,
     low: f64,
     high: f64,
     input: XicWindowInput,
+}
+
+impl PartialEq for XicQuery {
+    fn eq(&self, other: &Self) -> bool {
+        (self.ms_level, self.low, self.high) == (other.ms_level, other.low, other.high)
+    }
 }
 
 impl XicQuery {
