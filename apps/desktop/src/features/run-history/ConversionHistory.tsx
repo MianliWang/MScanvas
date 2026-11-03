@@ -19,7 +19,7 @@ import { useListWindow } from "../mzml-preview/conversionListWindow";
 import { catalogRow } from "../mzml-preview/conversionIntentSelection";
 import { formatByteLength, formatCount } from "../mzml-preview/format";
 import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
-import type { UiMessage } from "../preferences/i18n";
+import { joinSentences, type UiMessage } from "../preferences/i18n";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { explainRunHistoryProblem, RUN_STATE_LABEL, writeProblem } from "./runHistoryMessages";
 import { useRunHistoryApi, type RunItem, type RunItemProgress, type RunListOutcome, type RunReadOutcome, type RunSummary } from "./runHistoryApi";
@@ -394,6 +394,9 @@ export function ConversionHistory({ catalog, queueState, onClose }: {
         : runs.length === 0 && listed.unreadable === 0 ? t("runHistoryClearNothing")
           : null;
   const clearProblem = writeProblem(clear.answer, t);
+  // Said beside the reason it can now leave, "Nothing to clear" above all.
+  const cleared = clear.answer?.outcome !== "done" ? ""
+    : clear.answer.keptInProgress === 0 ? t("runHistoryCleared") : t("runHistoryClearedKept", { count: clear.answer.keptInProgress });
   const forget = () => {
     setConfirming(false);
     clearButton.current?.focus();
@@ -427,9 +430,7 @@ export function ConversionHistory({ catalog, queueState, onClose }: {
           <Button className="conversion-wide-action" ref={clearButton} data-run-history-clear="" aria-expanded={confirming}
             refused={clearReason !== null} reasonId={reasonId} onClick={() => setConfirming((open) => !open)}>{t("runHistoryClear")}</Button>
           <p id={reasonId} className="conversion-side-note" role="status" data-run-history-clear-status="">
-            {clearReason ?? (clear.answer?.outcome === "done"
-              ? clear.answer.keptInProgress === 0 ? t("runHistoryCleared") : t("runHistoryClearedKept", { count: clear.answer.keptInProgress })
-              : "")}
+            {joinSentences(t, [cleared, clearReason ?? ""])}
           </p>
           {clearProblem === null ? null : <p className="notice notice-danger" role="alert" data-run-history-clear-problem="">{clearProblem}</p>}
         </div>

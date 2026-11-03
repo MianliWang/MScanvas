@@ -1217,6 +1217,18 @@ const STOPS: readonly Stop[] = [
     anchor: "[data-run-history-clear-status]:not(:empty)",
   },
   {
+    // Everything forgotten: what happened, beside why Clear is now refused.
+    name: "run-history-cleared",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS)),
+    drive: async () => {
+      await clearRunHistory();
+      await setInvokeResult("list_conversion_runs", listed([]));
+      await browser.$("[data-run-history-refresh]").click();
+      await browser.$(".run-history-empty").waitForDisplayed();
+    },
+    anchor: "[data-run-history-clear-status]:not(:empty)",
+  },
+  {
     name: "run-history-clear-failed",
     table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS), { outcome: "failed", problem: "notRemoved", notRemoved: 3 }),
     drive: clearRunHistory,
