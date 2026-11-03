@@ -11,7 +11,8 @@ The roster scrolls locally and evidence receives the remaining space.
 
 The acquisition treegrid distinguishes keyboard focus, viewed source,
 highlighted interaction selection and checkbox conversion membership. One level
-of session groups references Rust dataset handles. Highlighted rows may remain
+of groups references Rust dataset handles; after a restart they come back only
+through Restore workspace (WSP-010). Highlighted rows may remain
 hidden by search/collapse; selection context reports that count. Menus, local
 undo and pointer/keyboard drag change presentation references, never the roster
 or execution order. New acquisitions enter Ungrouped; dissolving a group does

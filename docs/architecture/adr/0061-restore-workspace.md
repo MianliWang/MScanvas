@@ -260,14 +260,18 @@ explicit **Restore workspace** action the user starts puts the matching rows
 back through ordinary admission (the same rule, duplicate check and capacity as
 Add files), in their restored groups and checked state; nothing is put back at
 start-up, nothing is previewed and no conversion starts. Marked rows are
-listed in the restore notice above every surface, each under its stored group's
-name with its state, its reason and a dismiss: above the surfaces, not in the
-roster, because the roster is a closed drawer at 1,050 px and below, and an offer
-nobody sees is not an offer. Putting a marked row back
+shown in place with their state and a Remove action. Putting a marked row back
 is the user adding the file again. This is not adoption in the sense of
 [ADR 0016](0016-explicit-converted-output-adoption.md), which takes a
 conversion's outputs into the Workbench and stays explicit: a restored row is
 only ever the file the user had already added, at the path it had.
+
+*As built, not an owner decision (interface slice, 2026-11-03), for the owner's
+eye:* "in place" above is not what shipped. Marked rows are listed in the
+restore notice above every surface, each under its stored group's name with its
+state, its reason and a dismiss, because the roster is a closed drawer at
+1,050 px and below, and an offer nobody sees is not an offer. The notice cannot
+be collapsed, and the track it sits in takes up to 152 px of a 960x640 window.
 
 *Alternative:* put matching rows back automatically at every start. Rejected
 (by the owner on 2026-10-31) because of what admission costs, which the
@@ -308,7 +312,9 @@ What the interface slice needed, as built (2026-11-03):
   admission refused (a full workspace, say) stay waiting; a conversion's refusal
   leaves every row waiting. The stored group and checked state come back with the
   row, as an arrangement the webview applies with no undo step; a row that was
-  already live keeps its own. Nothing is written here: the save that follows
+  already live keeps its own. A row's group is its stored group's place among the
+  read's groups, not its name, because the Workbench allows two groups of one
+  name. Nothing is written here: the save that follows
   records it. The webview says the rows were added again, not verified against
   the last session (question 10). Before the session's first read it is refused
   (`workspace_restore_not_read`).
@@ -442,10 +448,13 @@ Try again, only if no newer arrangement already followed it.
 Only an offer the user could take counts. Each stored row counts the sessions
 that declined it since it was last a Workbench row (`offered`; a live row is
 saved with 0): a session declines a row when one of its reads presented the
-row as `matching` and it then saved without putting the row back. A row a
+row as `matching` and it then saved without putting the row back or asking to.
+A row a
 read presented in any other state (changed, missing, unreachable, unreadable,
 unsafe) could not be put back as itself, so it is not counted; nor is a row in
-a session that saved without reading.
+a session that saved without reading; nor is a row still waiting after the user
+pressed Restore workspace, because a full workspace, a conversion or a file
+another program holds refused it and the user declined nothing.
 
 Which rows are no longer offered is decided once per session, by its first
 read, from what that read finds, never at load: a row whose count has reached
@@ -494,7 +503,9 @@ answer is a one-line change.
 ## Consequences
 
 - A restart keeps the Workbench's rows, groups, order and checked state, and a
-  file that moved or changed is visible as such rather than gone.
+  file that moved or changed is visible as such rather than gone. A group with
+  nothing in it does not come back: a save carries only a stored group something
+  still waits in, so a group the user dissolved or renamed stays gone.
 - The webview must save after every roster answer and organization change; a
   crash between a change and its save restores the previous arrangement. A
   row removed just before a crash can therefore come back as a restored row,

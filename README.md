@@ -22,9 +22,13 @@ restart — language, roster density and which workspace panels you asked for �
 recovers from a stored record it cannot read or cannot write, explains offline
 what ProteoWizard is yours to install and how long a folder you choose lasts,
 and reads in English or Simplified Chinese throughout, including the
-installed-backend banner and the inspector panel. Nothing about a dataset, a
-path, a selection, a range or a conversion is stored. See
+installed-backend banner and the inspector panel. These preferences hold nothing
+about a dataset, a path, a selection, a range or a conversion. See
 [the implementation record](docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md).
+Since then, Restore workspace keeps the Workbench's files (their absolute paths),
+groups, order and checked rows in one local document, on by default, off in
+Settings, and puts them back only when you press it
+([ADR 0061](docs/architecture/adr/0061-restore-workspace.md)).
 
 It builds on the published **M7.4** slice: compact bilingual
 conversion/results, identity-checked output opening, active-run Clear,
@@ -203,11 +207,12 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 Not implemented yet: vendor RAW preview; XIC — refused on measured evidence for
 the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
-anything other than filename, and grouping it; a workspace that outlives the
-session -- a saved project records references and history, but reopening one
-restores no Workbench session -- which includes remembering a search, a sort, a selection, a range or
-the folder you chose for ProteoWizard -- the preferences that do survive a
-restart are the five listed above and nothing else; a dark theme, or any
+anything other than filename, and grouping it; remembering a search, a sort, a
+highlighted selection, a range or the folder you chose for ProteoWizard -- what
+survives a restart is the five preferences listed above and, through Restore
+workspace, the Workbench's files, groups, order and checked rows, while a saved
+project records references and history and reopening one restores no Workbench
+session; a dark theme, or any
 appearance setting beyond language and row spacing; a remembered panel *size*,
 which the workspace has no way to set; conversion progress as a
 percentage; resuming a stopped queue; removing a row from a queue that is
