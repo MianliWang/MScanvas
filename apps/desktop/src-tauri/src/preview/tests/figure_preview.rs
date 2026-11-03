@@ -420,7 +420,9 @@ fn copied_figure(
     figure
 }
 
-const COPIES: [(&str, fn() -> PreviewErrorDto); 3] = [
+type Refusal = fn() -> PreviewErrorDto;
+
+const COPIES: [(&str, Refusal); 3] = [
     ("spectrum", crate::preview::dto::spectrum_export_stale),
     (
         "chromatogram",
