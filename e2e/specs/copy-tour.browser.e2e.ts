@@ -26,7 +26,7 @@ import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered 
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
-import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, RUNNING, SET_ITEM, STOPPED, STOPPED_ITEMS, found, listed } from "../support/runHistory";
+import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, REQUEST_REFUSED, RUNNING, RUNNING_ITEMS, SET_ITEM, STOPPED, STOPPED_ITEMS, STOP_FAILED, STOP_FAILED_ITEMS, WHOLE_SET_ITEM, found, listed } from "../support/runHistory";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
   admittedIntents,
@@ -1108,7 +1108,7 @@ const STOPS: readonly Stop[] = [
   { name: "run-history-entry", table: (locale) => conversionWorld(locale, { status: "idle" }), drive: () => go(2), anchor: "[data-run-history-entry]" },
   { name: "run-history-loading", table: populated, hold: ["list_conversion_runs"], drive: openRunHistory, anchor: "[data-run-history-loading]" },
   { name: "run-history-empty", table: populated, drive: openRunHistory, anchor: "[data-run-history] .run-history-empty" },
-  { name: "run-history-off-empty", table: runHistoryWorld(listed([], { recording: false })), drive: openRunHistory, anchor: '[data-run-history-note="off"]' },
+  { name: "run-history-off-empty", table: runHistoryWorld(listed([], { recording: false })), drive: openRunHistory, anchor: "[data-run-history] .run-history-empty" },
   {
     name: "run-history-list",
     table: runHistoryWorld(listed([ENDED, LABELLED, INTERRUPTED, STOPPED]), found(ENDED, ENDED_ITEMS)),
@@ -1182,9 +1182,71 @@ const STOPS: readonly Stop[] = [
   },
   {
     name: "run-history-list-refused",
-    table: runHistoryWorld({ __reject: { kind: "stale_document", summary: "", detail: null, retryable: false } }),
+    table: runHistoryWorld(REQUEST_REFUSED),
     drive: openRunHistory,
     anchor: '[data-run-history-problem="error"]',
+  },
+  {
+    name: "run-history-not-listed",
+    table: runHistoryWorld({ outcome: "unavailable", problem: "notListed" }),
+    drive: openRunHistory,
+    anchor: '[data-run-history-problem="notListed"]',
+  },
+  {
+    // A later read refused with the question open: the runs stay, Clear and its
+    // answer are refused with the reason beside them, and Keep still works.
+    name: "run-history-clear-after-refused-read",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS)),
+    drive: async () => {
+      await openRunHistory();
+      await browser.$("[data-run-item]").waitForDisplayed();
+      await browser.$("[data-run-history-clear]").click();
+      await setInvokeResult("list_conversion_runs", REQUEST_REFUSED);
+      await browser.$("[data-run-history-refresh]").click();
+    },
+    anchor: '[data-run-history-problem="error"]',
+  },
+  {
+    name: "run-history-read-rejected",
+    table: runHistoryWorld(listed([ENDED]), REQUEST_REFUSED),
+    drive: openRunHistory,
+    anchor: '[data-run-read="error"]',
+  },
+  {
+    name: "run-history-in-progress",
+    table: runHistoryWorld(listed([RUNNING, ENDED]), found(RUNNING, RUNNING_ITEMS)),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${RUNNING.runId}"] [data-run-item]`,
+  },
+  {
+    // A stop nobody could confirm, and a code this build does not know, named once.
+    name: "run-history-stop-failed",
+    table: runHistoryWorld(listed([STOP_FAILED]), found(STOP_FAILED, STOP_FAILED_ITEMS)),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${STOP_FAILED.runId}"] [data-run-item]`,
+  },
+  {
+    // Every member published, and still not one set that could be added whole.
+    name: "run-history-set-whole",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, [WHOLE_SET_ITEM])),
+    drive: async () => {
+      await openRunHistory();
+      await browser.$("[data-run-item] .conversion-item-toggle").click();
+      await browser.$("[data-run-item] .conversion-item-manifest").waitForDisplayed();
+    },
+    anchor: "[data-run-item] .conversion-item-manifest",
+  },
+  {
+    // Too few runs to be windowed, and the page scrolls as one: the rail holds
+    // its height, and the run chosen low in it is what the main column shows.
+    name: "run-history-band",
+    table: runHistoryWorld(listed(MANY_RUNS.slice(0, 20)), found(MANY_RUNS[15]!, ENDED_ITEMS)),
+    narrowOnly: true,
+    drive: async () => {
+      await openRunHistory();
+      await browser.$(`[data-run-row="${MANY_RUNS[15]!.runId}"]`).click();
+    },
+    anchor: `[data-run-detail="${MANY_RUNS[15]!.runId}"] [data-run-item]`,
   },
   {
     name: "run-history-read-newer",
@@ -1234,6 +1296,19 @@ const STOPS: readonly Stop[] = [
     drive: clearRunHistory,
     anchor: "[data-run-history-clear-problem]",
   },
+  {
+    name: "run-history-clearing",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS)),
+    hold: ["clear_conversion_runs"],
+    drive: clearRunHistory,
+    anchor: "[data-run-history-clear-status]:not(:empty)",
+  },
+  {
+    name: "run-history-clear-rejected",
+    table: runHistoryWorld(listed([ENDED]), found(ENDED, ENDED_ITEMS), REQUEST_REFUSED),
+    drive: clearRunHistory,
+    anchor: "[data-run-history-clear-problem]",
+  },
   { name: "settings-run-history-checking", table: populated, hold: ["list_conversion_runs"], drive: openSettings, anchor: '[data-settings-dialog] [data-run-history-setting]' },
   {
     name: "settings-run-history-ask",
@@ -1256,6 +1331,29 @@ const STOPS: readonly Stop[] = [
       await browser.$("[data-run-history-off-forget]").click();
     },
     anchor: "[data-run-history-setting-problem]",
+  },
+  {
+    name: "settings-run-history-saving",
+    table: populated,
+    hold: ["set_conversion_run_history_enabled"],
+    drive: async () => {
+      await openSettings();
+      await browser.$('[data-run-history-toggle="on"]').click();
+      await browser.$("[data-run-history-off-forget]").click();
+    },
+    anchor: '[data-settings-dialog] [data-run-history-setting][aria-disabled="true"]',
+  },
+  {
+    name: "settings-run-history-unavailable",
+    table: runHistoryWorld({ outcome: "unavailable", problem: "directoryUnusable" }),
+    drive: openSettings,
+    anchor: '[data-settings-dialog] [data-run-history-setting][aria-disabled="true"]',
+  },
+  {
+    name: "settings-run-history-refused",
+    table: runHistoryWorld(REQUEST_REFUSED),
+    drive: openSettings,
+    anchor: "[data-run-history-setting-retry]",
   },
 ];
 

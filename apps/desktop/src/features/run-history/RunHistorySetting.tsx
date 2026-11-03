@@ -2,9 +2,8 @@ import { useEffect, useId, useRef, useState, type ReactElement } from "react";
 
 import { SettingField } from "../../components/fields/SettingField";
 import { Button } from "../../components/ui";
-import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { explainRunHistoryProblem, writeProblem } from "./runHistoryMessages";
+import { explainRunHistoryError, explainRunHistoryProblem, writeProblem } from "./runHistoryMessages";
 import { useRunHistoryApi } from "./runHistoryApi";
 import { useRunList, useRunWrite } from "./useRunList";
 
@@ -18,17 +17,24 @@ export function RunHistorySetting(): ReactElement {
   const t = useUiMessages();
   const api = useRunHistoryApi();
   const list = useRunList();
-  const { writing, answer, write } = useRunWrite();
+  const { writing, answer, write } = useRunWrite("off");
   const labelId = useId();
   const [confirming, setConfirming] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
   const keep = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (confirming) keep.current?.focus(); }, [confirming]);
+  // Read again goes when it succeeds, and the keyboard goes to what it was for.
+  const retrying = useRef(false);
+  useEffect(() => {
+    if (list.reading || !retrying.current) return;
+    retrying.current = false;
+    if (list.error === null) toggle.current?.focus();
+  }, [list.reading, list.error]);
 
   const listed = list.answer?.outcome === "listed" ? list.answer : null;
   const refusal = writing ? t("runHistorySaving")
     : list.reading ? t("runHistoryChecking")
-      : list.error !== null ? ownedErrorMessage(list.error, t)
+      : list.error !== null ? explainRunHistoryError(list.error, t)
         : list.answer?.outcome === "unavailable" ? explainRunHistoryProblem(list.answer.problem, t)
           : null;
   const problem = writeProblem(answer, t);
@@ -48,11 +54,11 @@ export function RunHistorySetting(): ReactElement {
           if (listed?.recording === true) setConfirming((open) => !open);
           else write(() => api.setEnabled(true));
         }}>
-        {t(listed?.recording === false ? "runHistoryTurnOn" : "runHistoryTurnOff")}
+        {t(listed === null ? "runHistoryTurnUnknown" : listed.recording ? "runHistoryTurnOff" : "runHistoryTurnOn")}
       </Button>
     </SettingField>
     {list.error === null ? null : <div className="settings-storage-actions">
-      <Button size="sm" data-run-history-setting-retry="" onClick={list.reload}>{t("runHistoryRefresh")}</Button>
+      <Button size="sm" data-run-history-setting-retry="" onClick={() => { retrying.current = true; list.reload(); }}>{t("runHistoryRefresh")}</Button>
     </div>}
     {confirming ? (
       <div className="settings-storage-problem" role="group" aria-labelledby={`${labelId}-ask`} data-run-history-off-confirm="">

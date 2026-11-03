@@ -106,13 +106,43 @@ export const SET_ITEM = item("Sciex_batch.wiff", {
   state: "failed",
   outcome: "partial_group",
   failure: "multi_output_member_rejected",
-  completeness: { kind: "notEstablished", reason: "sample_count_unavailable" },
+  completeness: { kind: "notEstablished", reason: "source_sample_set_not_fully_published" },
   setAdoptable: false,
   outputs: [
     { fileName: "Sciex_batch-Sample1.mzML", state: "validated_not_published", byteLength: 1_048_576, sha256: "aa".repeat(32), checks: { mode: "output_only", fullyVerified: false, verified: ["well_formed"], unverified: ["spectrum_count"], inapplicable: [], advisory: ["scan_window_rounded"] } },
     { fileName: "Sciex_batch-Sample2.mzML", state: "rejected", byteLength: null, sha256: null, checks: null },
   ],
 }, { family: "sciex_wiff" });
+
+/** Every member published, and still not adoptable whole: ADR 0065 §1's failed item with no failure code. */
+export const WHOLE_SET_ITEM = item("Sciex_batch.wiff", {
+  state: "failed",
+  outcome: "published",
+  completeness: { kind: "established", method: "reader_audit", sampleCount: 2 },
+  setAdoptable: false,
+  outputs: [
+    { fileName: "Sciex_batch-Sample1.mzML", state: "finalized", byteLength: 1_048_576, sha256: "aa".repeat(32), checks: { mode: "output_only", fullyVerified: false, verified: ["well_formed"], unverified: [], inapplicable: [], advisory: [] } },
+    { fileName: "Sciex_batch-Sample2.mzML", state: "finalized", byteLength: 2_097_152, sha256: "bb".repeat(32), checks: { mode: "output_only", fullyVerified: false, verified: ["well_formed"], unverified: [], inapplicable: [], advisory: [] } },
+  ],
+}, { family: "sciex_wiff" });
+
+/** In progress, as a list shows it: one file converting, one waiting. */
+export const RUNNING_ITEMS = [
+  item("QC_pool_01.raw", { state: "running", outcome: null, outputs: [] }),
+  item("Plasma_QC_batch_08.raw", { state: "pending", attempts: 0, outcome: null, outputs: [] }),
+];
+
+/** A stop nobody could confirm: the file it was on says so, in a code this build knows. */
+export const STOP_FAILED = run("00000000000000000000000000000007", {
+  state: "stopFailed", startedAtMs: NOON - 120 * HOUR, endedAtMs: NOON - 119 * HOUR, failure: "backend_quarantined", itemCount: 2, finalizedCount: 0, failedCount: 0,
+});
+export const STOP_FAILED_ITEMS = [
+  item("Unconfirmed_01.raw", { state: "cancellationFailed", outcome: null, failure: "queue_stop_unconfirmed", outputs: [] }),
+  item("Unconfirmed_02.raw", { state: "notRun", attempts: 0, outcome: null, outputs: [] }),
+];
+
+/** The one refusal every history command shares: the document check's. */
+export const REQUEST_REFUSED = { __reject: { kind: "invalid_conversion_reservation", summary: "", detail: null, retryable: false } };
 
 /** The list at its bound. */
 export const MANY_RUNS = Array.from({ length: 200 }, (_, index) => run(String(index + 1).padStart(32, "0"), {

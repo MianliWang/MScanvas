@@ -49,11 +49,20 @@ export function useRunList(): RunList {
 /** What a Clear or an Off answered, or the refusal of the request itself. */
 export type RunWriteAnswer = RunWriteOutcome | { readonly outcome: "error"; readonly error: PreviewError };
 
+/** A write that did not plainly succeed, answered after its view had gone: the next view of that kind says it. */
+const unreported = new Map<"clear" | "off", RunWriteAnswer>();
+
 /** One write at a time. Every open list is read again whatever it answered. */
-export function useRunWrite() {
+export function useRunWrite(kind: "clear" | "off") {
   const [writing, setWriting] = useState(false);
-  const [answer, setAnswer] = useState<RunWriteAnswer | null>(null);
+  const [answer, setAnswer] = useState<RunWriteAnswer | null>(() => unreported.get(kind) ?? null);
   const claimed = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    unreported.delete(kind);
+    return () => { mounted.current = false; };
+  }, [kind]);
   const write = (operation: () => Promise<RunWriteOutcome>) => {
     if (claimed.current) return;
     claimed.current = true;
@@ -63,8 +72,12 @@ export function useRunWrite() {
       .catch((cause: unknown): RunWriteAnswer => ({ outcome: "error", error: toPreviewError(cause) }))
       .then((settled) => {
         claimed.current = false;
-        setWriting(false);
-        setAnswer(settled);
+        if (mounted.current) {
+          setWriting(false);
+          setAnswer(settled);
+        } else if (settled.outcome !== "done") {
+          unreported.set(kind, settled);
+        }
         written.dispatchEvent(new Event("written"));
       });
   };

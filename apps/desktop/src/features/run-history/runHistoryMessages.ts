@@ -1,3 +1,4 @@
+import type { PreviewError } from "../mzml-preview/contracts";
 import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import type { MessageKey, UiMessage } from "../preferences/i18n";
 import { explainUnavailableProblem } from "../preferences/storageMessages";
@@ -14,6 +15,8 @@ const PROBLEM = {
   unreadable: "runHistoryProblemUnreadable",
   notTurnedOn: "runHistoryProblemNotOn",
   notTurnedOff: "runHistoryProblemNotOff",
+  notListed: "runHistoryProblemNotListed",
+  notSwept: "runHistoryProblemNotSwept",
 } as const satisfies Record<string, MessageKey>;
 
 /**
@@ -23,6 +26,33 @@ const PROBLEM = {
  */
 export function explainRunHistoryProblem(code: string, t: UiMessage): string {
   return Object.hasOwn(PROBLEM, code) ? t(PROBLEM[code as keyof typeof PROBLEM]) : explainUnavailableProblem(code, t);
+}
+
+/**
+ * A refused request as a sentence. The one refusal every history command shares
+ * is the document check's, whose own sentence is about a conversion request and
+ * would send the reader off to convert again.
+ */
+export function explainRunHistoryError(error: PreviewError, t: UiMessage): string {
+  return error.kind === "invalid_conversion_reservation" ? t("runHistoryRequestRefused") : ownedErrorMessage(error, t);
+}
+
+/** `SampleCompletenessRefusal::stable_id`'s identifiers, in the user's terms. */
+const COMPLETENESS_REASON = {
+  source_sample_failure_observed: "runHistoryCompletenessFailureObserved",
+  source_sample_audit_truncated: "runHistoryCompletenessAuditTruncated",
+  source_sample_audit_unrecognized: "runHistoryCompletenessAuditUnrecognized",
+  source_sample_output_filtering_requested: "runHistoryCompletenessFiltered",
+  source_sample_backend_incomplete: "runHistoryCompletenessBackendIncomplete",
+  source_sample_no_published_members: "runHistoryCompletenessNoMembers",
+  source_sample_set_not_fully_published: "runHistoryCompletenessNotWhole",
+} as const satisfies Record<string, MessageKey>;
+
+/** Why completeness was not established. One this table does not know is named as itself. */
+export function completenessSentence(reason: string, t: UiMessage): string {
+  return t("runHistoryCompletenessNotEstablished", {
+    reason: Object.hasOwn(COMPLETENESS_REASON, reason) ? t(COMPLETENESS_REASON[reason as keyof typeof COMPLETENESS_REASON]) : reason,
+  });
 }
 
 export const RUN_STATE_LABEL = {
@@ -43,7 +73,7 @@ export function writeProblem(answer: RunWriteAnswer | null, t: UiMessage): strin
     case "unavailable":
       return explainRunHistoryProblem(answer.problem, t);
     case "error":
-      return ownedErrorMessage(answer.error, t);
+      return explainRunHistoryError(answer.error, t);
     default:
       return null;
   }

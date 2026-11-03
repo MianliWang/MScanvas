@@ -18,15 +18,20 @@ import { conversionErrorMessage } from "../mzml-preview/conversionMessages";
 import { useListWindow } from "../mzml-preview/conversionListWindow";
 import { catalogRow } from "../mzml-preview/conversionIntentSelection";
 import { formatByteLength, formatCount } from "../mzml-preview/format";
-import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import { joinSentences, type UiMessage } from "../preferences/i18n";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
-import { explainRunHistoryProblem, RUN_STATE_LABEL, writeProblem } from "./runHistoryMessages";
+import { completenessSentence, explainRunHistoryError, explainRunHistoryProblem, RUN_STATE_LABEL, writeProblem } from "./runHistoryMessages";
 import { useRunHistoryApi, type RunItem, type RunItemProgress, type RunListOutcome, type RunReadOutcome, type RunSummary } from "./runHistoryApi";
 import { useRunList, useRunWrite } from "./useRunList";
 
+/** Past what a `Date` holds `format` throws, and this runs during render: the raw number instead. */
 function formatRunTime(ms: number, locale: string): string {
-  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" }).format(ms);
+  return Math.abs(ms) > 8.64e15 ? String(ms) : new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" }).format(ms);
+}
+
+/** A stable code beside its sentence, unless the sentence is the fallback that already names it. */
+function StableCode({ code, sentence }: { readonly code: string; readonly sentence: string }): ReactElement | null {
+  return sentence.includes(code) ? null : <code className="run-history-code">{code}</code>;
 }
 
 /** The same label a queue shows while it runs (ADR 0055), read off the record. */
@@ -71,9 +76,12 @@ function itemSymbol(state: string): string {
 function recordedFailure({ state, outcome, failure, outputs, completeness }: RunItemProgress, t: UiMessage): string | null {
   if (state !== "failed") return null;
   if (completeness !== null) {
+    const finalized = outputs.filter((output) => output.state === "finalized").length;
+    // Every member at its final name and still a failure: ADR 0065 §1's set that
+    // could not be adopted whole, which no sentence of a set's refusal describes.
+    if (finalized > 0 && finalized === outputs.length) return t("runHistorySetNotAdoptable");
     // Part of a set reached its final names: what the partial report would say.
-    const partial = outputs.some((output) => output.state === "finalized") ? {} : null;
-    return setFailureSentence({ partial, detailedOutcome: failure }, t);
+    return setFailureSentence({ partial: finalized > 0 ? {} : null, detailedOutcome: failure }, t);
   }
   if (outcome !== null) return failureSentence({ outcome, detailedOutcome: failure }, t);
   return failure === null ? t("m74CnvNoWrittenFile") : conversionErrorMessage(codeAsError(failure), t);
@@ -118,9 +126,12 @@ function ItemDetails({ item }: { readonly item: RunItem }): ReactElement | null 
         {completeness === null || completeness.kind === "notPosed" ? null : (
           <div>
             <dt>{t("runHistoryCompleteness")}</dt>
-            <dd>{completeness.kind === "established"
-              ? t("m74CnvSampleCompleteness")
-              : t("runHistoryCompletenessNotEstablished", { reason: completeness.reason })}</dd>
+            {completeness.kind === "established" ? <dd>{t("m74CnvSampleCompleteness")}</dd> : (
+              <dd>
+                {completenessSentence(completeness.reason, t)}{" "}
+                <StableCode code={completeness.reason} sentence={completenessSentence(completeness.reason, t)} />
+              </dd>
+            )}
           </div>
         )}
         {setAdoptable === false ? (
@@ -171,7 +182,9 @@ function ItemDetails({ item }: { readonly item: RunItem }): ReactElement | null 
 
 function ItemList({ items, run }: { readonly items: readonly RunItem[]; readonly run: RunSummary }): ReactElement {
   const t = useUiMessages();
-  const keys = useMemo(() => items.map((_, index) => String(index)), [items]);
+  // By length: the same run read again is a new array of the same rows.
+  const count = items.length;
+  const keys = useMemo(() => Array.from({ length: count }, (_, index) => String(index)), [count]);
   const { listProps, rows, spacer } = useListWindow(keys, 64);
   return (
     <ol className="conversion-queue-list conversion-run-list" aria-label={t("runHistoryItems")} {...listProps}>
@@ -198,7 +211,7 @@ function ItemList({ items, run }: { readonly items: readonly RunItem[]; readonly
             <div className="conversion-run-detail">
               {progress.attempts > 1 ? <span className="conversion-queue-attempts">{t("m74CnvAttempt", { count: progress.attempts })}</span> : null}
               {failure === null ? null : <span className="conversion-queue-reason">{failure}</span>}
-              {progress.failure === null ? null : <code className="run-history-code">{progress.failure}</code>}
+              {progress.failure === null ? null : <StableCode code={progress.failure} sentence={failure ?? ""} />}
               <ItemDetails item={item} />
             </div>
           </li>
@@ -223,6 +236,7 @@ function RunDetail({ run, read: answer, catalog }: {
   // What the read says wins over the list's copy, which can be a moment older.
   const shown = read.outcome === "found" ? read.run : run;
   const label = runLabel(shown);
+  const ended = shown.failure === null ? "" : conversionErrorMessage(codeAsError(shown.failure), t);
   return (
     <div className="conversion-running conversion-run-rows" data-run-detail={shown.runId} data-run-state={shown.state}>
       <div className="conversion-column-head">
@@ -271,7 +285,7 @@ function RunDetail({ run, read: answer, catalog }: {
         {shown.failure === null ? null : (
           <div data-run-failure="">
             <dt>{t("runHistoryFailure")}</dt>
-            <dd>{conversionErrorMessage(codeAsError(shown.failure), t)} <code className="run-history-code">{shown.failure}</code></dd>
+            <dd>{ended} <StableCode code={shown.failure} sentence={ended} /></dd>
           </div>
         )}
       </dl>
@@ -280,7 +294,7 @@ function RunDetail({ run, read: answer, catalog }: {
       {read.outcome === "notFound" ? <p className="notice notice-warning" role="alert" data-run-read="notFound">{t("runHistoryNotFound")}</p> : null}
       {read.outcome === "refused" || read.outcome === "unavailable"
         ? <p className="notice notice-warning" role="alert" data-run-read={read.problem}>{explainRunHistoryProblem(read.problem, t)}</p> : null}
-      {read.outcome === "error" ? <p className="notice notice-danger" role="alert" data-run-read="error">{ownedErrorMessage(read.error, t)}</p> : null}
+      {read.outcome === "error" ? <p className="notice notice-danger" role="alert" data-run-read="error">{explainRunHistoryError(read.error, t)}</p> : null}
       {read.outcome === "found" && read.items.length > 0 ? <ItemList items={read.items} run={read.run} /> : null}
     </div>
   );
@@ -329,7 +343,8 @@ function RunRows({ runs, selectedId, onSelect }: {
 function ListNotices({ listed }: { readonly listed: Extract<RunListOutcome, { outcome: "listed" }> }): ReactElement {
   const t = useUiMessages();
   return <>
-    {listed.recording ? null : <p className="notice notice-warning" data-run-history-note="off">{t("runHistoryRecordingOff")}</p>}
+    {/* With no runs the main column says it. */}
+    {listed.recording || listed.runs.length === 0 ? null : <p className="notice notice-warning" data-run-history-note="off">{t("runHistoryRecordingOff")}</p>}
     {listed.problem === null ? null : <p className="notice notice-warning" role="alert" data-run-history-note={listed.problem}>{explainRunHistoryProblem(listed.problem, t)}</p>}
     {listed.unreadable === 0 ? null : <p className="conversion-side-note" data-run-history-note="unreadable">{t("runHistoryUnreadable", { count: listed.unreadable })}</p>}
     {listed.newer === 0 ? null : <p className="conversion-side-note" data-run-history-note="newer">{t("runHistoryNewer", { count: listed.newer })}</p>}
@@ -352,7 +367,7 @@ export function ConversionHistory({ catalog, queueState, onClose }: {
   const api = useRunHistoryApi();
   const list = useRunList();
   const { reload } = list;
-  const clear = useRunWrite();
+  const clear = useRunWrite("clear");
   const reasonId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const clearButton = useRef<HTMLButtonElement>(null);
@@ -379,7 +394,9 @@ export function ConversionHistory({ catalog, queueState, onClose }: {
   useEffect(() => {
     if (selectedId === null) return;
     let retired = false;
-    setRead({ outcome: "reading" });
+    // The same run read again stays on screen, so nothing the reader is in is
+    // taken away by a read they did not ask for: the queue changing state starts one.
+    setRead((held) => (held.outcome === "found" && held.run.runId === selectedId ? held : { outcome: "reading" }));
     void api.readRun(selectedId).then(
       (answer) => { if (!retired) setRead(answer); },
       (cause: unknown) => { if (!retired) setRead({ outcome: "error", error: toPreviewError(cause) }); },
@@ -389,16 +406,20 @@ export function ConversionHistory({ catalog, queueState, onClose }: {
 
   const clearReason = clear.writing ? t("runHistoryClearing")
     : list.reading ? t("runHistoryReading")
-      : listed === null ? t("runHistoryClearNotRead")
+      // Runs still on screen from an earlier read are not what the store holds now.
+      : listed === null || list.error !== null ? t("runHistoryClearNotRead")
         : runs.length === 0 && listed.unreadable === 0 ? t("runHistoryClearNothing")
           : null;
   const clearProblem = writeProblem(clear.answer, t);
   // Said beside the reason it can now leave, "Nothing to clear" above all.
   const cleared = clear.answer?.outcome !== "done" ? ""
     : clear.answer.keptInProgress === 0 ? t("runHistoryCleared") : t("runHistoryClearedKept", { count: clear.answer.keptInProgress });
-  const forget = () => {
+  const keep = () => {
     setConfirming(false);
     clearButton.current?.focus();
+  };
+  const forget = () => {
+    keep();
     clear.write(() => api.clearRuns());
   };
 
@@ -418,11 +439,12 @@ export function ConversionHistory({ catalog, queueState, onClose }: {
         {/* The rail's foot, pinned like Convert's. The attribute keeps its padding. */}
         <div className="conversion-rail-foot" data-start-offered="">
           {confirming ? (
-            <div className="run-history-confirm" role="group" aria-labelledby={`${reasonId}-ask`} data-run-history-confirm="">
+            <div className="run-history-confirm" role="group" aria-labelledby={`${reasonId}-ask`} data-run-history-confirm=""
+              onKeyDown={(event) => { if (event.key === "Escape") keep(); }}>
               <p id={`${reasonId}-ask`}>{t("runHistoryClearAsk")}</p>
               <div className="conversion-actions">
-                <Button variant="danger" size="sm" data-run-history-forget="" onClick={forget}>{t("runHistoryClearConfirm")}</Button>
-                <Button size="sm" ref={keepButton} data-run-history-keep="" onClick={() => { setConfirming(false); clearButton.current?.focus(); }}>{t("runHistoryClearKeep")}</Button>
+                <Button variant="danger" size="sm" data-run-history-forget="" refused={clearReason !== null} reasonId={reasonId} onClick={forget}>{t("runHistoryClearConfirm")}</Button>
+                <Button size="sm" ref={keepButton} data-run-history-keep="" onClick={keep}>{t("runHistoryClearKeep")}</Button>
               </div>
             </div>
           ) : null}
@@ -437,7 +459,7 @@ export function ConversionHistory({ catalog, queueState, onClose }: {
       <div className="conversion-main">
         {list.error !== null ? (
           <div className="notice notice-danger" role="alert" data-run-history-problem="error">
-            <span>{ownedErrorMessage(list.error, t)}</span>
+            <span>{explainRunHistoryError(list.error, t)}</span>
           </div>
         ) : null}
         {list.answer?.outcome === "unavailable" ? (
@@ -449,7 +471,7 @@ export function ConversionHistory({ catalog, queueState, onClose }: {
         {selected === null && list.answer === null && list.error === null
           ? <p className="conversion-side-note" role="status" data-run-history-loading="">{t("runHistoryReading")}</p> : null}
         {selected === null && listed !== null ? (
-          <EmptyState className="run-history-empty" message={t(listed.recording ? "runHistoryEmpty" : "runHistoryEmptyOff")} />
+          <EmptyState className="run-history-empty" message={t(listed.recording ? "runHistoryEmpty" : "runHistoryRecordingOff")} />
         ) : null}
       </div>
     </section>

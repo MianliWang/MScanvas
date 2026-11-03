@@ -7,20 +7,25 @@
 .run-history .conversion-main > :is(.notice, .conversion-side-note):first-child { margin-top: 12px; }
 .run-history-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* Its own scroll box at every length: in a short window the page scrolls as one,
+   and a rail that grew it would carry the chosen run's detail out of sight and
+   rows under the foot. The inset is the focus ring's, which the box would clip. */
 .run-history-list {
   display: flex;
+  max-height: max(320px, calc(100vh - 300px));
   flex-direction: column;
   gap: 6px;
-  margin: 0;
-  padding: 0 2px 2px;
-  list-style: none;
-}
-.run-history-list[data-windowed="true"] {
-  max-height: max(320px, calc(100vh - 300px));
+  margin: 0 -4px;
+  padding: 4px;
   overflow: auto;
   overscroll-behavior: contain;
   overflow-anchor: none;
+  list-style: none;
 }
+/* In a short window the page is what scrolls, and the rail's foot still covers
+   its bottom: what the keyboard reaches scrolls in above it, as app.css has it
+   for the rail. */
+.workbench-conversion:has(> .run-history) { scroll-padding-bottom: 96px; }
 .run-history-list > li.list-window-spacer { flex: none; margin: 0; padding: 0; border: 0; list-style: none; }
 
 /* A row is a bordered button, in the selected look of the settings' tiles. */
@@ -65,6 +70,8 @@
   padding-top: 0;
   border-top: 0;
 }
+/* Beside a long sentence a label went character by character in a narrow column. */
+.run-history .conversion-item-judgements dt { white-space: nowrap; }
 .run-history-code {
   color: var(--color-text-secondary);
   font-family: var(--font-mono, monospace);
