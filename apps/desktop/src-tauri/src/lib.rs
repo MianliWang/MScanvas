@@ -27,7 +27,7 @@ mod qc_snapshot;
 /// a dependency either of them grew. See the module for what each side decides.
 mod reattachment;
 /// The conversion run history of ADR 0065 (RUN-007): one document per run in
-/// the per-user directory, fed by the queue. No interface calls it yet.
+/// the per-user directory, fed by the queue.
 mod run_history;
 /// The targeted MS1 supervisor: the only place the recipe's worker process is
 /// started, behind the executor boundary the project store runs it through.

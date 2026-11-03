@@ -193,6 +193,256 @@ fn a_set_records_its_completeness_and_whether_it_was_adoptable() {
     );
 }
 
+fn recorded(
+    profile: &Scratch,
+    history: &ConversionHistory,
+) -> Vec<crate::run_history::RunSummaryDto> {
+    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+        panic!("the history lists");
+    };
+    assert_eq!(problem, None, "every write was made");
+    assert_eq!(
+        fs::read_dir(profile.join("app").join("conversion-history"))
+            .expect("the history's folder")
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("run-")
+            })
+            .count(),
+        runs.len(),
+        "what is listed is what is on disk"
+    );
+    runs
+}
+
+/// What ended before a build was bound ran nothing, and leaves nothing.
+#[test]
+fn a_queue_refused_before_it_bound_a_build_leaves_no_record() {
+    let fixture = TestFile::new("run-history-before-binding");
+    let profile = Scratch::new("run-history-before-binding-profile");
+    let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    service.attach_run_history(Arc::clone(&history));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_under_now(
+            &[handle],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").expect("a name")),
+        )
+        .expect("a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    service.quarantine_backend_now();
+
+    let update = service.resolve_claimed_conversion(operation);
+
+    assert_eq!(
+        terminal_queue(&update)
+            .error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("backend_quarantined")
+    );
+    assert!(recorded(&profile, &history).is_empty());
+}
+
+/// A refusal after the build was bound ended a run that ran, and says so by
+/// its code: the item it kept from starting never ran.
+#[test]
+fn a_queue_refused_after_it_bound_a_build_records_its_failure_code() {
+    let fixture = TestFile::new("run-history-after-binding");
+    let profile = Scratch::new("run-history-after-binding-profile");
+    let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::StrandAnOwnedProcess),
+    )));
+    service.attach_run_history(Arc::clone(&history));
+    let first = add_one_acquisition(&service, &fixture.thermo_raw("first.raw"));
+    let second = add_one_acquisition(&service, &fixture.thermo_raw("second.raw"));
+    let document = current_document(&service);
+    let reservation = service
+        .begin_conversion_under_now(
+            &[first, second],
+            ConversionConflictPolicyDto::Fail,
+            document,
+            DestinationPolicy::NamedSubfolder(SubfolderName::parse("converted").expect("a name")),
+        )
+        .expect("a queue");
+    let operation = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("claim it");
+    assert!(service.start_resolved_for_test(operation, None));
+
+    let update = service.drain_queue_for_test(operation);
+
+    let runs = recorded(&profile, &history);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].failure.as_deref(), Some("backend_quarantined"));
+    assert!(runs[0].ended_at_ms.is_some());
+    assert_eq!(
+        terminal_reason(&update),
+        ConversionQueueTerminalReasonDto::Completed
+    );
+    assert_eq!(runs[0].state, RunState::Completed);
+    let RunHistoryReadDto::Found { items, .. } = history.read(&runs[0].run_id) else {
+        panic!("the run reads back");
+    };
+    assert_eq!(items[1].progress.state, "notRun");
+}
+
+/// A stop ends the run as what it was, each item as the queue reports it.
+#[test]
+fn a_stopped_queue_is_recorded_as_stopped_and_an_unconfirmed_stop_as_stop_failed() {
+    for (ending, state) in [
+        (StopEnding::Confirmed, RunState::Stopped),
+        (StopEnding::Survivors, RunState::StopFailed),
+    ] {
+        let fixture = TestFile::new("run-history-stop");
+        let destination = destination_root(&fixture, "out");
+        let profile = Scratch::new("run-history-stop-profile");
+        let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+        let (runner, started, release) = StopAwareRunner::parked(ending);
+        let service = Arc::new(PreviewService::new(Box::new(ConvertingProvider::new(
+            evidenced_capabilities(),
+            runner,
+        ))));
+        service.attach_run_history(Arc::clone(&history));
+        let handles: Vec<String> = ["one.raw", "two.raw"]
+            .iter()
+            .map(|name| add_one_acquisition(&service, &fixture.thermo_raw(name)))
+            .collect();
+        let document = current_document(&service);
+        let reservation = service
+            .begin_conversion_now(&handles, ConversionConflictPolicyDto::Fail, document)
+            .expect("the queue is admitted");
+        let operation = service
+            .claim_conversion(&reservation.reservation_id, document)
+            .expect("claim it");
+        let worker = {
+            let service = Arc::clone(&service);
+            std::thread::spawn(move || service.run_claimed_conversion(operation, &destination))
+        };
+        started
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the first item reaches its process");
+        service
+            .stop_conversion_queue(&operation.to_string(), document)
+            .expect("stoppable");
+        // Asked while it stops: the queue is still running, and so is the run.
+        assert_eq!(recorded(&profile, &history)[0].state, RunState::Running);
+        release.send(()).expect("release the parked conversion");
+        let update = worker.join().expect("the queue worker finishes");
+
+        let runs = recorded(&profile, &history);
+        assert_eq!((runs[0].state, runs.len()), (state, 1), "{ending:?}");
+        assert!(runs[0].ended_at_ms.is_some());
+        let RunHistoryReadDto::Found { items, .. } = history.read(&runs[0].run_id) else {
+            panic!("the run reads back");
+        };
+        let wire: Vec<serde_json::Value> = terminal_queue(&update)
+            .items
+            .iter()
+            .map(|item| serde_json::to_value(&item.state).expect("serializes"))
+            .collect();
+        let stored: Vec<serde_json::Value> = items
+            .iter()
+            .map(|item| serde_json::Value::from(item.progress.state.clone()))
+            .collect();
+        assert_eq!(stored, wire, "{ending:?}");
+    }
+}
+
+/// A retry is the same queue, so the same record, and what is stored holds a
+/// settings intent the only judge of one accepts: schema 1 is fixed now, and a
+/// re-run reads it through that judge.
+#[test]
+fn a_retry_reopens_the_record_and_the_stored_intent_passes_the_judge() {
+    let fixture = TestFile::new("run-history-retry");
+    let destination = destination_root(&fixture, "out");
+    let profile = Scratch::new("run-history-retry-profile");
+    let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+    let service = PreviewService::new(Box::new(ConvertingProvider::faithful()));
+    service.attach_run_history(Arc::clone(&history));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+    let writer = hold_for_writing(&held);
+    queue_and_run(&service, &[done, blocked], &destination);
+    drop(writer);
+
+    let first = recorded(&profile, &history);
+    assert_eq!(
+        (first[0].state, first[0].passes, first[0].failed_count),
+        (RunState::Completed, 1, 1)
+    );
+    let file = profile
+        .join("app")
+        .join("conversion-history")
+        .join(format!("run-{}.json", first[0].run_id));
+    let stored: serde_json::Value =
+        serde_json::from_slice(&fs::read(&file).expect("the run's document")).expect("a document");
+    assert!(
+        crate::preview::service::read_structured_intent(&stored["settings"]["intent"]).is_ok(),
+        "{}",
+        stored["settings"]
+    );
+    assert_eq!(stored["conflictPolicy"], "fail");
+
+    service
+        .retry_conversion_queue(current_document(&service))
+        .expect("the retry answers");
+
+    let again = recorded(&profile, &history);
+    assert_eq!(again.len(), 1, "a retry is not a new run");
+    assert_eq!(again[0].run_id, first[0].run_id);
+    assert_eq!((again[0].state, again[0].passes), (RunState::Completed, 2));
+    assert_eq!((again[0].finalized_count, again[0].failed_count), (2, 0));
+}
+
+/// A retry refused before it bound a build ran nothing, so the ended record
+/// stays as it was: not reopened, and not given that refusal's code.
+#[test]
+fn a_retry_refused_before_it_bound_a_build_leaves_the_record_as_it_was() {
+    let fixture = TestFile::new("run-history-retry-refused");
+    let destination = destination_root(&fixture, "out");
+    let profile = Scratch::new("run-history-retry-refused-profile");
+    let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+    let provider = ConvertingProvider::faithful();
+    let label = provider.installation_label();
+    let service = PreviewService::new(Box::new(provider));
+    service.attach_run_history(Arc::clone(&history));
+    let done = add_one_acquisition(&service, &fixture.thermo_raw("done.raw"));
+    let held = fixture.thermo_raw("held.raw");
+    let blocked = add_one_acquisition(&service, &held);
+    let writer = hold_for_writing(&held);
+    queue_and_run(&service, &[done, blocked], &destination);
+    drop(writer);
+    let before = recorded(&profile, &history);
+
+    *label.lock().expect("the installation label") = String::from("other-msconvert");
+    let update = service
+        .retry_conversion_queue(current_document(&service))
+        .expect("the retry answers");
+
+    assert_eq!(
+        terminal_queue(&update)
+            .error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("queue_installation_changed")
+    );
+    assert_eq!(recorded(&profile, &history), before);
+}
+
 /// The interface offers the list, Clear and Off, so the application attaches the
 /// store (ADR 0065 question 6). Host wiring no unit test can run.
 #[test]

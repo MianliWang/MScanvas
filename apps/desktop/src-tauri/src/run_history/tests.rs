@@ -742,6 +742,11 @@ fn a_run_that_lands_after_off_is_removed_by_the_next_start_or_list() {
         "a start forgets it rather than writing it as interrupted"
     );
 
+    // A start forgets an ended run too: it carries the same paths.
+    write_stored(&scratch, 3, RunState::Completed, Some(4));
+    let _ = open(&scratch);
+    assert!(run_files(&scratch).is_empty(), "a start forgets it");
+
     late_write(&scratch, 2);
     let RunHistoryListDto::Listed {
         runs, recording, ..
@@ -751,6 +756,286 @@ fn a_run_that_lands_after_off_is_removed_by_the_next_start_or_list() {
     };
     assert!(!recording && runs.is_empty());
     assert!(run_files(&scratch).is_empty());
+}
+
+#[test]
+fn a_time_no_webview_can_show_is_kept_aside_rather_than_listed() {
+    let scratch = Scratch::new("history-time-out-of-range");
+    let history = open(&scratch);
+    let mut record = RunRecord {
+        schema_version: SCHEMA_VERSION,
+        run_id: format!("{:013}-{}", 1, "e".repeat(32)),
+        owner: "e".repeat(32),
+        state: RunState::Completed,
+        started_at_ms: MAX_TIME_MS,
+        ended_at_ms: None,
+        interrupted_at_ms: None,
+        passes: 1,
+        settings: start(0).settings,
+        build_release: None,
+        conflict_policy: "fail".to_owned(),
+        failure: None,
+        omitted: None,
+        items: Vec::new(),
+    };
+    publish(&history_directory(&scratch), &record).expect("write the run");
+    assert_eq!(runs(&history).len(), 1, "the last time a webview can show");
+
+    record.ended_at_ms = Some(MAX_TIME_MS + 1);
+    publish(&history_directory(&scratch), &record).expect("write the run");
+    let RunHistoryListDto::Listed {
+        runs, unreadable, ..
+    } = history.list()
+    else {
+        panic!("listed");
+    };
+    assert!(runs.is_empty());
+    assert_eq!(unreadable, 1, "counted, and kept aside");
+    assert!(run_files(&scratch).is_empty());
+}
+
+/// Denies this user `right` on `path` until dropped, so a failed assert cannot
+/// leave a scratch directory nobody can remove.
+#[cfg(windows)]
+struct Denied(PathBuf);
+
+#[cfg(windows)]
+impl Denied {
+    fn new(path: &Path, right: &str) -> Self {
+        let user = std::env::var("USERNAME").expect("a user");
+        icacls(path, &["/deny", &format!("{user}:({right})")]);
+        Self(path.to_path_buf())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Denied {
+    fn drop(&mut self) {
+        let user = std::env::var("USERNAME").expect("a user");
+        icacls(&self.0, &["/remove:d", &user]);
+    }
+}
+
+#[cfg(windows)]
+fn icacls(path: &Path, arguments: &[&str]) {
+    let done = std::process::Command::new("icacls")
+        .arg(path)
+        .args(arguments)
+        .output()
+        .expect("run icacls");
+    assert!(done.status.success(), "icacls {arguments:?}: {done:?}");
+}
+
+/// Off stays off, and a folder that could not be listed is never answered as
+/// one that held no runs or had them removed: the run's paths are still there.
+#[cfg(windows)]
+#[test]
+fn a_folder_that_cannot_be_listed_is_never_answered_as_empty_or_cleared() {
+    let scratch = Scratch::new("history-unlistable");
+    let history = open(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+    let directory = history_directory(&scratch);
+    let refused = RunHistoryWriteDto::Failed {
+        problem: "notSwept",
+        not_removed: 0,
+    };
+
+    let denied = Denied::new(&directory, "RD");
+    assert_eq!(
+        history.list(),
+        RunHistoryListDto::Unavailable {
+            problem: "notListed"
+        }
+    );
+    assert_eq!(history.clear(), refused);
+    drop(denied);
+    assert_eq!(runs(&history).len(), 1, "Clear removed nothing");
+
+    let denied = Denied::new(&directory, "RD");
+    assert_eq!(history.set_enabled(false), refused);
+    drop(denied);
+    assert_eq!(run_files(&scratch).len(), 1, "nor did Off, and it says so");
+    let RunHistoryListDto::Listed {
+        recording, runs, ..
+    } = history.list()
+    else {
+        panic!("listed");
+    };
+    assert!(!recording && runs.is_empty(), "the next list finishes Off");
+    assert!(run_files(&scratch).is_empty());
+}
+
+/// RUN-1 question 5, for the narrowest case: a retry whose reopening a reader
+/// held off is `running` in memory and still ended on disk.
+#[cfg(windows)]
+#[test]
+fn clear_keeps_a_retry_whose_reopening_was_refused_and_its_end_still_lands() {
+    let scratch = Scratch::new("history-reopen-refused");
+    let history = open(&scratch);
+    history.begin(3, start(1), progress(RunState::Running, &["running"]));
+    history.update(3, progress(RunState::Completed, &["failed"]));
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    let reader = fs::File::open(&path).expect("open the run");
+    let mut retry = progress(RunState::Running, &["running"]);
+    retry.passes = 2;
+    history.begin(3, start(1), retry);
+
+    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert_eq!(problem, Some("notWritten"));
+    assert_eq!(
+        (runs[0].state, runs[0].ended_at_ms, runs[0].passes),
+        (RunState::Running, None, 2),
+        "this session says what it knows"
+    );
+    assert_eq!(
+        history.clear(),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 1
+        }
+    );
+    drop(reader);
+    assert!(path.exists(), "Clear kept it");
+
+    let mut retried = progress(RunState::Completed, &["finalized"]);
+    retried.passes = 2;
+    history.update(3, retried);
+    let stored = read_record(&path)
+        .expect("readable")
+        .expect("its end landed");
+    assert_eq!((stored.state, stored.passes), (RunState::Completed, 2));
+}
+
+/// ADR 0065 section 2: a run a refused first write left with no file is still
+/// this session's list and read, until the write lands.
+#[cfg(windows)]
+#[test]
+fn a_run_whose_first_write_was_refused_is_listed_and_read_from_memory() {
+    let scratch = Scratch::new("history-first-write-refused");
+    let history = open(&scratch);
+    let earlier = write_stored(&scratch, 1, RunState::Completed, Some(2));
+    let denied = Denied::new(&history_directory(&scratch), "WD");
+    history.begin(
+        1,
+        start(2),
+        progress(RunState::Running, &["finalized", "running"]),
+    );
+    let id = active_id(&history);
+
+    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert_eq!(problem, Some("notWritten"));
+    assert_eq!(runs.len(), 2);
+    assert_eq!(
+        (runs[0].run_id.as_str(), runs[0].state),
+        (id.as_str(), RunState::Running),
+        "newest first, with what is on disk"
+    );
+    assert_eq!(items(&history, &id)[1].progress.state, "running");
+    // Not in a file, so no file counts it. Its write is still owed.
+    assert_eq!(
+        history.clear(),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 1
+        }
+    );
+    assert!(!run_files(&scratch).contains(&earlier));
+    drop(denied);
+
+    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert_eq!(problem, None, "the write was made");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(run_files(&scratch), [file_name_of(&id)]);
+}
+
+/// A switch nobody can read neither records nor loses the run: it is owed, and
+/// the switch decides it once it can be read.
+#[cfg(windows)]
+#[test]
+fn a_run_begun_while_the_switch_cannot_be_read_is_owed_and_the_switch_decides_it() {
+    let scratch = Scratch::new("history-switch-unreadable");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let marker = directory.join(OFF_MARKER);
+    assert_eq!(
+        history.set_enabled(false),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+
+    let begun = |key: u64| {
+        let on_the_marker = Denied::new(&marker, "RA");
+        let on_the_folder = Denied::new(&directory, "RD");
+        assert_eq!(switch_off(&directory), None, "the test's own condition");
+        history.begin(key, start(1), progress(RunState::Running, &["running"]));
+        assert_eq!(history.locked().problem, Some("notWritten"));
+        drop(on_the_folder);
+        drop(on_the_marker);
+    };
+
+    begun(1);
+    assert!(history.locked().active.is_some(), "kept, and owed");
+    assert!(run_files(&scratch).is_empty(), "nothing was written");
+    // Still off once it can be read, so it is forgotten and nothing is owed.
+    assert!(runs(&history).is_empty());
+    assert_eq!(history.locked().problem, None);
+    assert!(history.locked().active.is_none());
+
+    begun(2);
+    assert_eq!(
+        history.set_enabled(true),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+    // On, so the write it owed is made.
+    let listed = runs(&history);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(history.locked().problem, None);
+    assert_eq!(run_files(&scratch), [file_name_of(&listed[0].run_id)]);
+}
+
+/// Nothing is owed once what owed it is forgotten, so nothing says so.
+#[cfg(windows)]
+#[test]
+fn clear_and_off_take_the_not_written_notice_with_what_they_forgot() {
+    for off in [false, true] {
+        let scratch = Scratch::new("history-notice-goes");
+        let history = open(&scratch);
+        history.begin(1, start(1), progress(RunState::Running, &["running"]));
+        let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+        let reader = fs::File::open(&path).expect("open the run");
+        history.update(1, progress(RunState::Completed, &["finalized"]));
+        assert_eq!(history.locked().problem, Some("notWritten"));
+
+        let _ = if off {
+            history.set_enabled(false)
+        } else {
+            history.clear()
+        };
+        drop(reader);
+        let RunHistoryListDto::Listed { problem, .. } = history.list() else {
+            panic!("listed");
+        };
+        assert_eq!(problem, None, "off: {off}");
+    }
+}
+
+/// A store with nowhere to record says that rather than `notWritten`, and a
+/// Clear does not take that away.
+#[test]
+fn clear_leaves_the_owner_notice_alone() {
+    let scratch = Scratch::new("history-owner-notice");
+    let history = open(&scratch);
+    history.locked().problem = Some("ownerUnavailable");
+    let _ = history.clear();
+    assert_eq!(history.locked().problem, Some("ownerUnavailable"));
 }
 
 #[test]

@@ -72,6 +72,10 @@ pub const MAX_RUNS: usize = 200;
 /// How many bytes of runs are kept, whichever bound is reached first.
 pub const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
+/// The latest time a webview's `Date` can hold. A stored time past it is not a
+/// time this application wrote.
+const MAX_TIME_MS: u64 = 8_640_000_000_000_000;
+
 /// The item states a queue reports while work on an item is not over.
 const RUNNING_ITEM: &str = "running";
 const PENDING_ITEM: &str = "pending";
@@ -337,6 +341,17 @@ fn read_record(path: &Path) -> Result<Option<RunRecord>, RecordProblem> {
     if file_name_of(&record.run_id) != path.file_name().and_then(|n| n.to_str()).unwrap_or("") {
         return Err(RecordProblem::Malformed);
     }
+    if [
+        Some(record.started_at_ms),
+        record.ended_at_ms,
+        record.interrupted_at_ms,
+    ]
+    .into_iter()
+    .flatten()
+    .any(|time| time > MAX_TIME_MS)
+    {
+        return Err(RecordProblem::Malformed);
+    }
     Ok(Some(record))
 }
 
@@ -465,7 +480,8 @@ pub enum RunHistoryWriteDto {
     Done {
         kept_in_progress: usize,
     },
-    /// Some files could not be removed; they are still there.
+    /// Some files could not be removed, or the folder could not be listed so
+    /// none was; they are still there.
     Failed {
         problem: &'static str,
         not_removed: usize,
@@ -597,6 +613,11 @@ impl ConversionHistory {
                 history.locked().problem = Some("ownerUnavailable");
             }
             history.recover(directory);
+            // Off forgets what is stored whenever it is looked at: a write that
+            // was under way when it was turned off can land just after.
+            if switch_off(directory) == Some(true) {
+                let _ = history.sweep(true);
+            }
             prune(directory, history.owner_id());
         }
         history
@@ -612,13 +633,10 @@ impl ConversionHistory {
         };
         let mut lane = self.locked();
         self.flush(directory, &mut lane);
-        match switch_off(directory) {
-            Some(false) => {}
-            Some(true) => return,
-            None => {
-                lane.problem = Some("notWritten");
-                return;
-            }
+        // A switch nobody can read goes on: `write_run` writes nothing and owes
+        // the write, which the switch decides once it can be read.
+        if switch_off(directory) == Some(true) {
+            return;
         }
         let reopened = match lane.active.take() {
             // Unless it was forgotten. A run that a Clear, an Off or a prune
@@ -761,27 +779,46 @@ impl ConversionHistory {
         if switch_off(directory) == Some(true) {
             let _ = self.sweep(true);
         }
+        // A folder that cannot be listed says nothing about what is in it, so
+        // it is never answered as a list of no runs.
+        let Ok(names) = names(directory) else {
+            return RunHistoryListDto::Unavailable {
+                problem: "notListed",
+            };
+        };
         let mut runs = Vec::new();
         let (mut unreadable, mut newer) = (0, 0);
-        for (name, _) in run_entries(directory) {
+        for name in names {
+            if is_set_aside(&name) {
+                unreadable += 1;
+            }
+            if run_id_of_name(&name).is_none() {
+                continue;
+            }
             match read_record(&directory.join(&name)) {
                 Ok(Some(record)) => runs.push(RunSummaryDto::of(&self.view(directory, record))),
                 Ok(None) => {}
                 Err(RecordProblem::NewerVersion) => newer += 1,
                 Err(RecordProblem::Unreadable) => unreadable += 1,
-                // Counted below, among the runs kept aside.
                 Err(RecordProblem::Malformed) => {
-                    if !set_aside(directory, &name) {
-                        unreadable += 1;
-                    }
+                    set_aside(directory, &name);
+                    unreadable += 1;
                 }
             }
         }
-        unreadable += names(directory)
-            .iter()
-            .filter(|name| is_set_aside(name))
-            .count();
-        runs.reverse();
+        // A run whose first write was refused has no file yet, and is this
+        // session's to tell all the same.
+        {
+            let lane = self.locked();
+            let unwritten = lane.active.iter().chain(&lane.owed);
+            runs.extend(
+                unwritten
+                    .filter(|run| !run.written)
+                    .map(|run| RunSummaryDto::of(&run.record)),
+            );
+        }
+        // Names sort oldest first, and an identifier starts with its start.
+        runs.sort_by(|a, b| b.run_id.cmp(&a.run_id));
         runs.truncate(MAX_RUNS);
         RunHistoryListDto::Listed {
             recording: !recording_off(directory),
@@ -803,7 +840,16 @@ impl ConversionHistory {
             return RunHistoryReadDto::NotFound;
         }
         self.flush(directory, &mut self.locked());
-        match read_record(&directory.join(file_name_of(run_id))) {
+        let stored = read_record(&directory.join(file_name_of(run_id))).map(|stored| {
+            stored.or_else(|| {
+                let lane = self.locked();
+                let mut unwritten = lane.active.iter().chain(&lane.owed);
+                unwritten
+                    .find(|run| !run.written && run.record.run_id == run_id)
+                    .map(|run| run.record.clone())
+            })
+        });
+        match stored {
             Ok(Some(record)) => {
                 let record = self.view(directory, record);
                 RunHistoryReadDto::Found {
@@ -850,7 +896,15 @@ impl ConversionHistory {
             Ok(directory) => directory,
             Err(problem) => return RunHistoryWriteDto::Unavailable { problem },
         };
-        {
+        // Listed first: a folder that cannot be listed had nothing removed, and
+        // is never answered as if it had.
+        let Ok(names) = names(directory) else {
+            return RunHistoryWriteDto::Failed {
+                problem: "notSwept",
+                not_removed: 0,
+            };
+        };
+        let mut kept = {
             // An ended run is forgotten here with any write still owed, so
             // nothing writes it back.
             let mut lane = self.locked();
@@ -863,23 +917,29 @@ impl ConversionHistory {
             {
                 lane.active = None;
             }
-        }
-        let (mut kept, mut not_removed) = (0, 0);
-        for (name, _) in run_entries(directory) {
-            let in_progress = !everything
-                && match read_record(&directory.join(&name)) {
-                    Ok(Some(record)) => self.view(directory, record).state == RunState::Running,
-                    Err(RecordProblem::NewerVersion | RecordProblem::Unreadable) => true,
-                    Ok(None) | Err(RecordProblem::Malformed) => false,
-                };
-            if in_progress {
-                kept += 1;
-            } else if remove(&directory.join(&name)).is_err() {
-                not_removed += 1;
+            if lane.problem == Some("notWritten") && !lane.owes() {
+                lane.problem = None;
             }
-        }
-        for name in names(directory) {
-            if is_set_aside(&name) && remove(&directory.join(&name)).is_err() {
+            // The run being recorded, if its first write has not landed: no
+            // file below will count it.
+            usize::from(lane.active.as_ref().is_some_and(|active| !active.written))
+        };
+        let mut not_removed = 0;
+        for name in names {
+            let path = directory.join(&name);
+            if run_id_of_name(&name).is_some() {
+                let in_progress = !everything
+                    && match read_record(&path) {
+                        Ok(Some(record)) => self.view(directory, record).state == RunState::Running,
+                        Err(RecordProblem::NewerVersion | RecordProblem::Unreadable) => true,
+                        Ok(None) | Err(RecordProblem::Malformed) => false,
+                    };
+                if in_progress {
+                    kept += 1;
+                } else if remove(&path).is_err() {
+                    not_removed += 1;
+                }
+            } else if is_set_aside(&name) && remove(&path).is_err() {
                 not_removed += 1;
             }
         }
@@ -939,51 +999,48 @@ impl ConversionHistory {
     ///
     /// The run this session is recording, and an ended one whose end it still
     /// owes, is read from memory, where its latest state is even when its
-    /// file could not be written yet. A `running` run whose session is gone --
-    /// or one of this session's own that it is not recording, whose worker
-    /// left without an end -- reads as interrupted, its items included,
+    /// file could not be written yet: a retry whose reopening was refused is
+    /// `running` there and still ended on disk. A `running` run whose session
+    /// is gone -- or one of this session's own that it is not recording, whose
+    /// worker left without an end -- reads as interrupted, its items included,
     /// whether or not a start has said so on disk yet.
     ///
     /// Takes the lane, so never call it holding the lane.
     fn view(&self, directory: &Path, mut record: RunRecord) -> RunRecord {
-        if record.state != RunState::Running {
-            return record;
-        }
-        let interrupted = if Some(record.owner.as_str()) == self.owner_id() {
+        let own = Some(record.owner.as_str()) == self.owner_id();
+        if own {
             let lane = self.locked();
-            match lane
+            if let Some(active) = lane
                 .active
                 .iter()
                 .chain(&lane.owed)
                 .find(|run| run.record.run_id == record.run_id)
             {
-                Some(active) => {
-                    let mut current = active.record.clone();
-                    // As it is stored: without its items, where they did not
-                    // fit.
-                    if record.omitted.is_some() {
-                        current.omitted = Some(ItemTally::of(&current.items));
-                        current.items.clear();
-                    }
-                    return current;
+                let mut current = active.record.clone();
+                // As it is stored: without its items, where they did not fit.
+                if record.omitted.is_some() {
+                    current.omitted = Some(ItemTally::of(&current.items));
+                    current.items.clear();
                 }
-                None => true,
+                return current;
             }
-        } else {
-            matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_))
-        };
-        if interrupted {
+        }
+        if record.state == RunState::Running
+            && (own || matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_)))
+        {
             mark_interrupted(&mut record, now_ms());
         }
         record
     }
 
     /// Marks every run whose session died mid-run, and removes those sessions'
-    /// locks. While recording is off, such a run is removed rather than
-    /// written again.
+    /// locks. While recording is off, or may be, no run is written: `open` then
+    /// forgets what is stored.
     fn recover(&self, directory: &Path) {
-        let switch = switch_off(directory);
-        for (name, _) in run_entries(directory) {
+        let recording = switch_off(directory) == Some(false);
+        // A folder that cannot be listed has nothing to recover from here; the
+        // next list says so.
+        for (name, _) in run_entries(directory).unwrap_or_default() {
             let path = directory.join(&name);
             let record = match read_record(&path) {
                 Ok(Some(record)) => record,
@@ -1004,28 +1061,15 @@ impl ConversionHistory {
             let Liveness::Dead(_held) = owner_liveness(directory, &record.owner) else {
                 continue;
             };
-            if let Ok(Some(mut record)) = read_record(&path)
+            if recording
+                && let Ok(Some(mut record)) = read_record(&path)
                 && record.state == RunState::Running
             {
-                match switch {
-                    Some(false) => {
-                        mark_interrupted(&mut record, now_ms());
-                        let _ = publish(directory, &record);
-                    }
-                    // Off forgets what is stored, this too.
-                    // ponytail: Off removes every run when it is turned off,
-                    // so this is a write that was under way then and landed
-                    // just after; one whose instance is still alive is
-                    // removed by its next write, or by a list while off.
-                    Some(true) => {
-                        let _ = remove(&path);
-                    }
-                    // Left as it is; a reader is told it is interrupted.
-                    None => {}
-                }
+                mark_interrupted(&mut record, now_ms());
+                let _ = publish(directory, &record);
             }
         }
-        for name in names(directory) {
+        for name in names(directory).unwrap_or_default() {
             let Some(id) = name
                 .strip_prefix(OWNER_PREFIX)
                 .and_then(|rest| rest.strip_suffix(OWNER_SUFFIX))
@@ -1230,36 +1274,33 @@ fn claim_owner(directory: &Path) -> Option<Owner> {
     Some(Owner { id, _lock: file })
 }
 
-/// Every name in the directory that is valid UTF-8.
-fn names(directory: &Path) -> Vec<String> {
-    fs::read_dir(directory)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter_map(|entry| entry.file_name().into_string().ok())
-                .collect()
-        })
-        .unwrap_or_default()
+/// Every name in the directory that is valid UTF-8. A directory that cannot be
+/// listed is an error, never no names.
+fn names(directory: &Path) -> io::Result<Vec<String>> {
+    let mut names = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        if let Ok(name) = entry?.file_name().into_string() {
+            names.push(name);
+        }
+    }
+    Ok(names)
 }
 
 /// Run documents only, oldest first, with their sizes. Nothing whose name is
-/// not exactly a run's is ever read, kept aside or removed.
-fn run_entries(directory: &Path) -> Vec<(String, u64)> {
-    let mut entries: Vec<(String, u64)> = fs::read_dir(directory)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter_map(|entry| {
-                    let name = entry.file_name().into_string().ok()?;
-                    run_id_of_name(&name)?;
-                    let size = entry.metadata().ok()?.len();
-                    Some((name, size))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+/// not exactly a run's is ever read, kept aside or removed. A size that cannot
+/// be read counts as none: the name stays, for its read to judge.
+fn run_entries(directory: &Path) -> io::Result<Vec<(String, u64)>> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        if let Ok(name) = entry.file_name().into_string()
+            && run_id_of_name(&name).is_some()
+        {
+            entries.push((name, entry.metadata().map_or(0, |metadata| metadata.len())));
+        }
+    }
     entries.sort();
-    entries
+    Ok(entries)
 }
 
 /// Keeps this build's runs within both bounds, removing the ones that ended
@@ -1274,7 +1315,8 @@ fn run_entries(directory: &Path) -> Vec<(String, u64)> {
 /// such runs alone push out every run this build records, the newest
 /// included.
 fn prune(directory: &Path, own: Option<&str>) {
-    let entries = run_entries(directory);
+    // A folder that cannot be listed cannot be bounded now; the next list says so.
+    let entries = run_entries(directory).unwrap_or_default();
     let within = |count: usize, bytes: u64| count <= MAX_RUNS && bytes <= MAX_TOTAL_BYTES;
     // Nothing is read while every file together is within the bounds.
     if within(entries.len(), entries.iter().map(|(_, size)| size).sum()) {
