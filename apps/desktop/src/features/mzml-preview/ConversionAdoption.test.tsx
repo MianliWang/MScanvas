@@ -554,7 +554,7 @@ describe("adding one converted output", () => {
   const group = (panel: HTMLElement, name: string): HTMLElement =>
     within(panel).getByRole("group", { name: `Locate ${name}` });
   const addIn = (panel: HTMLElement, name: string): HTMLElement =>
-    within(group(panel, name)).getByRole("button", { name: UI_RESOURCES.en.outputAdd });
+    within(group(panel, name)).getByRole("button", { name: `Add ${name} to workspace` });
 
   it("adds exactly that output, says so on its own line and takes back the queue's summary", async () => {
     const api = apiWith(terminalOf([offered("file-1", "run-1.raw"), offered("file-2", "run-2.raw")]));
@@ -636,7 +636,7 @@ describe("adding one converted output", () => {
       fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
       const panel = await screen.findByRole("region", { name: "Convert" });
       await waitFor(() => { expect(panel.querySelector(".conversion-run-list"), name).not.toBeNull(); });
-      expect(within(panel).queryByRole("button", { name: UI_RESOURCES.en.outputAdd }), name).toBeNull();
+      expect(within(panel).queryByRole("button", { name: /^Add run-/u }), name).toBeNull();
       if (name === "a partial set's prefix") {
         const locate = await within(panel).findByRole("group", { name: "Locate run-1.mzML" });
         expect(within(locate).getByRole("button", { name: UI_RESOURCES.en.outputOpenFile })).toBeVisible();

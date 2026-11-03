@@ -59,6 +59,7 @@ export function OutputOpenActions({ output, add = null }: { readonly output: Fin
       onClick={() => open(action)}>{t(action === "file" ? "outputOpenFile" : "outputOpenFolder")}</Button>)}
     {add === null ? null : <>
       <Button variant="secondary" size="sm" icon={<Icon name="plus" />} refused={add.refused} reasonId={add.refusedBy ?? undefined}
+        aria-label={t("outputAddNamed", { name: output.fileName })}
         onClick={() => { setOpenedLast(false); add.onAdd(); }}>{t("outputAdd")}</Button>
       <NotVerifiedTag label={add.notVerified} />
     </>}

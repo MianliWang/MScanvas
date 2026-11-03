@@ -1421,6 +1421,13 @@ function QueueState({
             const single = singleReportOf(item);
             const set = setReportOf(item);
             const skipping = conversion.skippingItem(index);
+            // Whether this item's outputs each offer an Add: Rust's answer and
+            // nothing else (ADR 0052 decision 3). The outputs an item lists for
+            // opening include ones that must not be adopted one by one, and the
+            // item's signals do not look at the queue, so only the count says
+            // it has settled.
+            const addOffered = conversion.eligibleOutputCount > 0 && !conversion.retrying &&
+              item.state === "finalized" && item.adoption.kind !== "nothingToAdopt" && item.finalizedOutputs.length > 0;
             // While the queue runs, a converted or skipped row is one line (its
             // state and name); its outputs and Open actions wait for the
             // results. A failure keeps its reason and its recovery in view.
@@ -1479,8 +1486,9 @@ function QueueState({
                 </span>
                 {/* Waiting, running and settled alike, even when every check
                     passed (ADR 0055 decision 3), on its own line under the
-                    names so neither is cut for it. */}
-                {itemNotVerified(item) === null ? null : (
+                    names so neither is cut for it. Where the row offers an Add
+                    it is said once, beside the action that carries it on. */}
+                {itemNotVerified(item) === null || addOffered ? null : (
                   <span className="conversion-run-label"><NotVerifiedTag label={itemNotVerified(item)} /></span>
                 )}
                 {compact ? null : <div className="conversion-run-detail">
@@ -1592,15 +1600,9 @@ function QueueState({
                     <StagingRecoveryActions key={item.stagingRecovery.recoveryId} recovery={item.stagingRecovery} enabled={state.status === "terminal" && !conversion.busy && !conversion.backendQuarantined} refusedBy={refusedBy.cleanup} reclaim={conversion.reclaimStaging} onReview={onReviewNewPlan ?? (() => {})} />
                   ) : null}
                   {item.finalizedOutputs.map(output => {
-                    // Rust's answer and nothing else (ADR 0052 decision 3): the
-                    // outputs an item lists for opening include ones that must
-                    // not be adopted one by one, and the item's signals do not
-                    // look at the queue, so only the count says it has settled.
-                    const offered = conversion.eligibleOutputCount > 0 && !conversion.retrying &&
-                      item.state === "finalized" && item.adoption.kind !== "nothingToAdopt";
                     const answer = conversion.outputAnswers.get(output.outputId) ?? null;
                     const live = answer !== null && answer.kind !== "refused" && liveDatasetHandles?.has(answer.handle) === true;
-                    return <OutputOpenActions key={output.outputId} output={output} add={offered ? {
+                    return <OutputOpenActions key={output.outputId} output={output} add={addOffered ? {
                       onAdd: () => conversion.adopt(output.outputId),
                       refused: !conversion.canAdopt,
                       refusedBy: refusedBy.adopt,

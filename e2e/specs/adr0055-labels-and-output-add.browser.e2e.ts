@@ -1,0 +1,310 @@
+/**
+ * The not-verified label on the viewer and the figure dialog (ADR 0055, owner
+ * decision A0055 of 2026-10-31), one Add per converted output (ADR 0052) and
+ * no Describe again after a refusal that is final.
+ *
+ * Production React in Chrome over a controlled IPC table. What Rust decides,
+ * the label on a row and whether an output is offered, is what the table says;
+ * the Rust side is `preview/tests/conversion_intent_wire.rs`.
+ */
+import { mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { metrics } from "../support/cdp";
+import { CONVERSION_SURFACE, showConversion } from "../support/conversion";
+import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
+import { MZML_ROW } from "../support/fixtures";
+import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
+import { NO_PROJECT, scenario, type Locale } from "../support/pm9Scenarios";
+import { readBackSavedPreferences, revealRosterRow, selectTheSpectrum } from "../support/viewer";
+import {
+  availableBackend,
+  completeCatalog,
+  finalizedAttemptFacts,
+  outputSetReport,
+  queueItem,
+  queueOf,
+  sciexQueueItem,
+  settledAt,
+  shippedIntent,
+} from "../../apps/desktop/src/test/previewFixtures";
+import type { SelectedFile } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { en } from "../../apps/desktop/src/features/preferences/locales/en";
+import { zhCN } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
+
+const OUTPUT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".tmp", "adr0055-labels");
+const AUTHORITY = settledAt(1, 1);
+const OPERATION = "labels-queue";
+const RELEASE = "3.0.26204";
+const LABEL = { unverifiedSettings: false, unverifiedBuildRelease: RELEASE };
+const BUNDLES = { en, "zh-CN": zhCN } as const;
+const buildLabel = (locale: Locale) => BUNDLES[locale].m74CnvNotVerifiedBuild.replace("{{release}}", RELEASE);
+
+const RAW: SelectedFile = { handle: "raw-1", fileName: "QC_pool_01.raw", byteLength: 52_428_800, sourceKind: "thermo_raw", relativeContext: null };
+const OUTPUT_NAME = "QC_pool_01.mzML";
+const LABELLED_FINISHED = {
+  status: "terminal",
+  reason: "completed",
+  operationId: OPERATION,
+  queue: queueOf([queueItem(RAW.handle, RAW.fileName, {
+    state: "finalized",
+    attempts: 1,
+    finalizedOutputs: [{ outputId: "output-1", fileName: OUTPUT_NAME }],
+    notVerifiedByMscanvas: LABEL,
+    ...finalizedAttemptFacts(),
+  })]),
+};
+const ADDED_ROW: SelectedFile = { handle: "added-1", fileName: OUTPUT_NAME, byteLength: 1_048_576, sourceKind: "mzml", relativeContext: null, notVerifiedByMscanvas: LABEL };
+
+const WIFF: SelectedFile = { handle: "wiff-1", fileName: "Plasma_QC_batch_08_sciex_set.wiff", byteLength: 1_048_576, sourceKind: "sciex_wiff", relativeContext: null };
+const SET_NAMES = Array.from({ length: 24 }, (_, index) => `Plasma_QC_batch_08_sciex_set-${String(index + 1).padStart(2, "0")}.mzML`);
+const setFinished = (overrides: Parameters<typeof outputSetReport>[2] = {}, adoption = {}) => ({
+  status: "terminal",
+  reason: "completed",
+  operationId: OPERATION,
+  queue: queueOf([sciexQueueItem(WIFF.handle, WIFF.fileName, {
+    state: "finalized",
+    attempts: 1,
+    finalizedOutputs: SET_NAMES.map((fileName, index) => ({ outputId: `set-${String(index)}`, fileName })),
+    result: { kind: "outputSet", report: outputSetReport(WIFF.handle, SET_NAMES, overrides) },
+    ...finalizedAttemptFacts(),
+    ...adoption,
+  })]),
+});
+
+function conversionWorld(locale: Locale, rows: readonly SelectedFile[], state: { status: string }): Record<string, unknown> {
+  const table = scenario("populated", locale);
+  table.inspect_backend = { ...availableBackend, authority: AUTHORITY };
+  table.get_workspace_roster = { datasets: rows, capacity: 1024 };
+  table.get_project_state = NO_PROJECT;
+  table.read_conversion_configuration = {
+    authority: AUTHORITY,
+    configuration: { configuration: "ready", catalog: completeCatalog, shipped: shippedIntent.id },
+    outcome: { outcome: "answered" },
+  };
+  table.get_workspace_conversion_state = {
+    sequence: state.status === "idle" ? 0 : 1,
+    state,
+    diagnostics: { eligibleItemCount: 0, available: false, exporting: false, lastExport: null },
+    backendQuarantined: false,
+    authority: AUTHORITY,
+  };
+  return table;
+}
+
+/** The populated world with its mzML row labelled, under the name given. */
+function labelledViewerWorld(locale: Locale, fileName: string): Record<string, unknown> {
+  const table = scenario("populated", locale);
+  const roster = table.get_workspace_roster as { datasets: SelectedFile[]; capacity: number };
+  table.get_workspace_roster = {
+    ...roster,
+    datasets: roster.datasets.map((row) => row.handle === MZML_ROW.handle ? { ...row, fileName, notVerifiedByMscanvas: LABEL } : row),
+  };
+  return table;
+}
+
+async function open(table: Record<string, unknown>, locale: Locale, width: number, height: number) {
+  await metrics(width, height);
+  await installIpcBoundary(table);
+  await browser.url("/");
+  await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
+  await browser.waitUntil(() => browser.execute((lang: string) => document.documentElement.lang === lang, locale));
+  await readBackSavedPreferences();
+}
+
+async function shot(name: string) {
+  mkdirSync(OUTPUT, { recursive: true });
+  await browser.saveScreenshot(join(OUTPUT, `${name}.png`));
+}
+
+async function requests(command: string): Promise<unknown[]> {
+  return (await ipcCalls()).filter((call) => call.command === command).map((call) => call.args);
+}
+
+async function unexpectedConsole(): Promise<string[]> {
+  return (await consoleEntries())
+    .filter((entry) => !ALLOWED_CONSOLE_SUBSTRINGS.some((allowed) => entry.text.includes(allowed)))
+    .map((entry) => `${entry.level}: ${entry.text}`);
+}
+
+/** The group that holds one output's actions. */
+const group = (locale: Locale, name: string) =>
+  `.output-open-actions[aria-label="${BUNDLES[locale].outputOpenGroup.replace("{{name}}", name)}"]`;
+const OUTPUT_ADD = "button:nth-of-type(3)";
+
+describe("A0055 and ADR 0052, rendered", () => {
+  for (const [locale, width, height] of [["en", 1366, 768], ["zh-CN", 960, 640]] as const) {
+    it(`labels the viewer's title, the Metadata row and the figure dialog, ${locale} ${String(width)}x${String(height)}`, async () => {
+      const name = "Plasma_QC_batch_08_replicate_04_long_acquisition_converted.mzML";
+      await open(labelledViewerWorld(locale, name), locale, width, height);
+      await revealRosterRow(MZML_ROW.handle);
+      await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+      await selectTheSpectrum(0);
+
+      const title = await browser.execute(() => {
+        const heading = document.querySelector<HTMLElement>("h1.viewer-file-name")!;
+        const tag = document.querySelector<HTMLElement>(".viewer-file-title [data-not-verified]")!;
+        const tabs = document.querySelector<HTMLElement>(".viewer-tabs > .ui-tablist")!;
+        const box = tag.getBoundingClientRect();
+        return {
+          heading: heading.textContent,
+          tag: tag.textContent,
+          tagWhole: tag.scrollWidth <= tag.clientWidth + 1 && box.right <= tabs.getBoundingClientRect().left + 1,
+          tagOneLine: box.height <= 24,
+          headingShown: heading.getBoundingClientRect().width >= 40,
+          overflowX: document.documentElement.scrollWidth - innerWidth,
+        };
+      });
+      await shot(`viewer-title-${locale}-${String(width)}`);
+      expect(title).toEqual({ heading: name, tag: buildLabel(locale), tagWhole: true, tagOneLine: true, headingShown: true, overflowX: 0 });
+
+      await browser.$('.viewer-tabs [role="tab"]:nth-child(3)').click();
+      await browser.$(".preview-metadata [data-not-verified]").waitForExist({ timeout: 30_000 });
+      expect(await browser.$(".preview-metadata [data-not-verified]").getText()).toBe(buildLabel(locale));
+      await shot(`viewer-metadata-${locale}-${String(width)}`);
+
+      await browser.$('.viewer-tabs [role="tab"]:nth-child(1)').click();
+      await answerFigurePreviews();
+      await openFigureDialog(".spectrum-panel");
+      await waitForFigurePreview();
+      expect(await browser.$(".figure-export-heading [data-not-verified]").getText()).toBe(buildLabel(locale));
+      await shot(`figure-dialog-${locale}-${String(width)}`);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  }
+
+  it("adds one labelled output from the keyboard, says so on its line and shows the row", async () => {
+    const table = conversionWorld("en", [RAW], LABELLED_FINISHED);
+    table.adopt_workspace_conversion_output = {
+      operationId: OPERATION,
+      retryRound: 0,
+      roster: { datasets: [RAW, ADDED_ROW], capacity: 1024 },
+      outcomes: [{ kind: "added", itemIndex: 0, memberIndex: 0, sourceHandle: RAW.handle, outputFileName: OUTPUT_NAME, dataset: ADDED_ROW }],
+    };
+    await open(table, "en", 1366, 768);
+    await showConversion();
+    const scope = `${CONVERSION_SURFACE} ${group("en", OUTPUT_NAME)}`;
+    const add = browser.$(`${scope} ${OUTPUT_ADD}`);
+    await add.waitForExist({ timeout: 30_000 });
+    expect(await add.getText()).toBe(en.outputAdd);
+    expect(await add.getAttribute("aria-label")).toBe(en.outputAddNamed.replace("{{name}}", OUTPUT_NAME));
+    // Said once on the row, beside the action that carries it on.
+    expect(await browser.$(`${scope} [data-not-verified]`).getText()).toBe(buildLabel("en"));
+    expect(await browser.execute(() => document.querySelectorAll(".conversion-run-list [data-not-verified]").length)).toBe(1);
+
+    await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), `${scope} ${OUTPUT_ADD}`);
+    await browser.keys(["Enter"]);
+    await browser.waitUntil(async () => (await browser.$(`${scope} [role="status"]`).getText()) === en.outputAdded, { timeout: 15_000 });
+    expect(await requests("adopt_workspace_conversion_output")).toEqual([{ operationId: OPERATION, outputId: "output-1" }]);
+    expect(await requests("adopt_workspace_conversion_outputs")).toEqual([]);
+    expect(await browser.execute((css: string) => document.activeElement === document.querySelector(css), `${scope} ${OUTPUT_ADD}`)).toBe(true);
+    await shot("output-added-en-1366");
+
+    await browser.$(`${scope} button:nth-of-type(4)`).click();
+    await browser.$(`.grouped-roster [data-handle="${ADDED_ROW.handle}"] [data-not-verified]`).waitForExist({ timeout: 15_000 });
+    expect(await browser.execute(() => document.querySelector("#workbench-evidence")?.hasAttribute("hidden"))).toBe(false);
+    expect(await unexpectedConsole()).toEqual([]);
+  });
+
+  for (const [locale, width, height] of [["en", 960, 640], ["zh-CN", 960, 640], ["zh-CN", 1366, 768]] as const) {
+    it(`fits one Add per member of a 24-member set, and adds one, ${locale} ${String(width)}x${String(height)}`, async () => {
+      const table = conversionWorld(locale, [WIFF], setFinished());
+      const dataset = { ...ADDED_ROW, fileName: SET_NAMES[2]!, notVerifiedByMscanvas: null };
+      table.adopt_workspace_conversion_output = {
+        operationId: OPERATION,
+        retryRound: 0,
+        roster: { datasets: [WIFF, dataset], capacity: 1024 },
+        outcomes: [{ kind: "added", itemIndex: 0, memberIndex: 2, sourceHandle: WIFF.handle, outputFileName: SET_NAMES[2]!, dataset }],
+      };
+      await open(table, locale, width, height);
+      await showConversion();
+      await browser.$(`${group(locale, SET_NAMES[0]!)} ${OUTPUT_ADD}`).waitForExist({ timeout: 30_000 });
+
+      const fit = await browser.execute((button: string) => {
+        const groups = [...document.querySelectorAll<HTMLElement>(".output-open-actions")];
+        const panel = document.querySelector<HTMLElement>(".conversion-run-list")!.getBoundingClientRect();
+        return {
+          groups: groups.length,
+          adds: groups.filter((each) => each.querySelector(button) !== null).length,
+          clippedButtons: [...document.querySelectorAll<HTMLElement>(".output-open-actions button")].filter((each) => each.scrollWidth > each.clientWidth + 1).length,
+          outside: groups.filter((each) => each.getBoundingClientRect().right > panel.right + 1).length,
+          overflowX: document.documentElement.scrollWidth - innerWidth,
+        };
+      }, OUTPUT_ADD);
+      await shot(`set-finished-${locale}-${String(width)}`);
+      expect(fit).toEqual({ groups: 24, adds: 24, clippedButtons: 0, outside: 0, overflowX: 0 });
+
+      // What Rust records on the item for the re-read that follows the reply
+      // (ADR 0052 decision 5): this one member, in place of what the item held.
+      await setInvokeResult("get_workspace_conversion_state", {
+        ...(table.get_workspace_conversion_state as object),
+        sequence: 2,
+        state: setFinished({}, { adoption: { kind: "settled", added: 1, alreadyInWorkspace: 0, refused: 0, refusals: [] } }),
+      });
+      const third = `${group(locale, SET_NAMES[2]!)} ${OUTPUT_ADD}`;
+      await browser.$(third).scrollIntoView({ block: "center" });
+      await browser.$(third).click();
+      await browser.waitUntil(async () => (await browser.$(`${group(locale, SET_NAMES[2]!)} [role="status"]`).getText()) === BUNDLES[locale].outputAdded, { timeout: 15_000 });
+      expect(await requests("adopt_workspace_conversion_output")).toEqual([{ operationId: OPERATION, outputId: "set-2" }]);
+      // The other members say nothing, and the queue's summary is empty.
+      expect(await browser.execute(() => [...document.querySelectorAll('.output-open-actions [role="status"]')].filter((each) => (each.textContent ?? "") !== "").length)).toBe(1);
+      expect(await browser.$(".conversion-adoption-summary").getText()).toBe("");
+      await shot(`set-member-added-${locale}-${String(width)}`);
+      expect(await unexpectedConsole()).toEqual([]);
+
+      // The item's Details say what the latest Add did: this one member.
+      const record = await browser.execute(() => {
+        const row = document.querySelector('li[data-item-state="finalized"]')!;
+        [...row.querySelectorAll<HTMLElement>("button[aria-expanded='false']")].at(-1)?.click();
+        return true;
+      });
+      expect(record).toBe(true);
+      const adoption = browser.$('li[data-item-state="finalized"] [data-testid$="-adoption"]');
+      await adoption.waitForExist({ timeout: 15_000 });
+      await adoption.scrollIntoView({ block: "center" });
+      const parts = BUNDLES[locale].cnvAddedCount.replace("{{n}}", "1");
+      expect(await adoption.getText()).toContain(parts);
+      await shot(`set-member-record-${locale}-${String(width)}`);
+    });
+  }
+
+  it("offers no Add for a partial set's prefix or while the queue runs, and keeps Open", async () => {
+    const partial = setFinished({ completeSetAdoptable: false, groupOutcome: "partially_finalized" }, { adoption: { kind: "nothingToAdopt" } });
+    const running = { status: "running", operationId: OPERATION, queue: queueOf([...LABELLED_FINISHED.queue.items, queueItem("raw-2", "other.raw", { state: "running", attempts: 1 })]) };
+    for (const [state, rows] of [[partial, [WIFF]], [running, [RAW]]] as const) {
+      await open(conversionWorld("en", rows, state), "en", 1366, 768);
+      await showConversion();
+      await browser.$(".conversion-run-list").waitForExist({ timeout: 30_000 });
+      await browser.pause(200);
+      expect(await browser.execute((button: string) => document.querySelectorAll(`.output-open-actions ${button}`).length, OUTPUT_ADD)).toBe(0);
+    }
+  });
+
+  it("says an output the queue does not offer on its own line, not in the queue's words", async () => {
+    const table = conversionWorld("en", [RAW], LABELLED_FINISHED);
+    table.adopt_workspace_conversion_output = { __reject: { kind: "outputs_not_adoptable", summary: en.m74ErrorNotAdoptable, detail: null, retryable: false } };
+    await open(table, "en", 960, 640);
+    await showConversion();
+    const scope = group("en", OUTPUT_NAME);
+    await browser.$(`${scope} ${OUTPUT_ADD}`).waitForExist({ timeout: 30_000 });
+    await browser.$(`${scope} ${OUTPUT_ADD}`).click();
+    const sentence = en.m74CnvNotAdded.replace("{{name}}", OUTPUT_NAME).replace("{{reason}}", en.m74CnvAdoptUnverified);
+    await browser.waitUntil(async () => (await browser.$(`${scope} [role="status"]`).getText()) === sentence, { timeout: 15_000 });
+    expect(await browser.$(".conversion-notice").isExisting()).toBe(false);
+    await shot("output-refused-en-960");
+  });
+
+  for (const [retryable, buttons] of [[false, 1], [true, 2]] as const) {
+    it(`offers Describe again only after a retryable failure: retryable ${String(retryable)}`, async () => {
+      const table = conversionWorld("en", [RAW], { status: "idle" });
+      table.describe_workspace_conversion_queue = { __reject: { kind: "plan_unreadable", summary: "The plan was not read.", detail: null, retryable } };
+      await open(table, "en", 1366, 768);
+      await showConversion();
+      await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+      await browser.$(".conversion-plan-pending").waitForExist({ timeout: 30_000 });
+      await browser.waitUntil(async () => (await browser.$(".conversion-plan-pending").getText()).includes("The plan was not read."), { timeout: 15_000 });
+      expect(await browser.execute(() => document.querySelectorAll(".conversion-start-actions button").length)).toBe(buttons);
+    });
+  }
+});

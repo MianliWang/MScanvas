@@ -141,7 +141,7 @@ describe("the not-verified label", () => {
       notVerifiedByMscanvas: { unverifiedSettings: false, unverifiedBuildRelease: RELEASE } };
     renderApp(createFakePreviewApi({ initialDatasets: [...ROWS, adopted], availability: availableBackend, initialConversion: terminal }));
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => expect(panel.querySelectorAll(".conversion-run-label [data-not-verified]")).toHaveLength(1));
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-run-list [data-not-verified]")).toHaveLength(1));
 
     const add = within(panel).getByRole("button", { name: "Add converted outputs to workspace" });
     const tag = document.getElementById("conversion-adopt-not-verified");
