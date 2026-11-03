@@ -70,6 +70,8 @@
   padding-top: 0;
   border-top: 0;
 }
+/* A sentence and a code: in half the row at 960x640 the code broke mid-word. */
+.run-history-facts > [data-run-failure] { grid-column: 1 / -1; }
 /* Beside a long sentence a label went character by character in a narrow column. */
 .run-history .conversion-item-judgements dt { white-space: nowrap; }
 .run-history-code {
