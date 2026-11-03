@@ -3,16 +3,18 @@
 Status: **Accepted (2026-10-30)**; see the
 [owner decision](#owner-decision-2026-10-30-a0063), which answers questions 1–5,
 and the [owner decision of 2026-10-31](#owner-decision-2026-10-31), which
-answers questions 6 and 7. [Question 8](#open-questions-for-the-owner), added on
-2026-11-03, is open: the interface departs from decision 10 until the owner
-answers it.
+answers questions 6 and 7.
+The [owner decision of 2026-11-03](#owner-decision-2026-11-03) answers question 8.
 Proposed on 2026-10-30. The owner asked that day for every backend
 item that can be done now to start; this record states the recommendations that
 lane implemented, and each choice the owner has not made is listed
-[at the end](#open-questions-for-the-owner). The Rust side merged in PR #178. On
-2026-11-03, branch `ui/diagnostics-button` added the Settings button and its
-preview (question 4), the `Verified build` line (question 3) and a failed
-conversion's outcome in the ring (question 7).
+[at the end](#open-questions-for-the-owner). The Rust side is implemented on
+branch `be/copy-diagnostics`. No interface calls it yet.
+On 2026-11-03: the Rust side had merged in PR #178, and branch
+`ui/diagnostics-button` added the Settings button and its preview (question 4),
+the `Verified build` line (question 3) and a failed conversion's outcome in the
+ring (question 7). The accepted text below stays as it was accepted; a dated
+note beside it says what was built.
 Related: [0005](0005-mzml-preview-boundary.md),
 [0017](0017-redacted-conversion-diagnostics-export.md),
 [0044](0044-conversion-configuration-authority.md),
@@ -78,8 +80,13 @@ Every backend value describes one reading. A configuration read or a conversion
 can bind another build without taking a new reading, so the source revision and
 the `msconvert` digest are taken from the bound identity only while the binding
 the reading was taken under is still current, and are `unknown` after it
-changed, as `Verified build` then is, never the new build's facts beside the
-old reading's release and folder.
+changed, never the new build's facts beside the old reading's release and
+folder.
+
+*As built, 2026-11-03:* `Verified build` (question 3) follows that digest, so it
+is `unknown` after the binding changed as well as without a digest. Question 3
+says `yes/no`; the third value follows from having no digest to compare and is
+not an owner decision.
 
 ### 2. What never goes in
 
@@ -95,24 +102,31 @@ account name.
 
 The recent error codes of decision 5 do say something about the user's work: a
 code can name the input's vendor (`sciex_companion_missing`) or a feature that
-was used (`targeted_evidence_absent`), and its times say when. A failed
-conversion's outcome is in the ring too (question 7), so it also names
-conversion outcomes, and their times say when a conversion failed. An outcome
-is an owned id, so it adds no text.
+was used (`targeted_evidence_absent`), and its times say when. Once a failed
+conversion's outcome joins the ring (question 7, decided 2026-10-31,
+implemented after PR #161 merges), the ring also names conversion outcomes, and
+their times say when a conversion failed. An outcome is an owned id, so it adds
+no text.
+
+*As built, 2026-11-03:* that slice has landed, so the ring does name conversion
+outcomes.
 
 ### 3. Codes come from owned ids; every value passes its shape, or is withheld whole
 
 There is no free-text field. The first line of defence covers the code fields
 only: a *code* is a stable id the repository defines — a backend failure kind,
-a preference problem, a boundary error kind, a conversion outcome — never text
-a person or a file supplied. As of 2026-10-30 every source of a code field and
-every `PreviewErrorDto::new` kind is such an id. The version and the build commit are
+a preference problem, a boundary error kind — never text a person or a file
+supplied. As of 2026-10-30 every source of a code field and every
+`PreviewErrorDto::new` kind is such an id. The version and the build commit are
 compile-time values. The other values are not MSCanvas's own: the Windows facts
 come from the registry, the WebView2 version from the runtime, and the
 ProteoWizard release, build date and source revision from the installed tool's
 own help text. Those are held by their shapes alone, none of which admits a
 path separator or a colon, so loosening one of those shapes removes the only
 defence that value has.
+
+*As built, 2026-11-03:* a conversion outcome (question 7) is a code too, an owned
+`&'static str` id.
 
 The second line is shape. Each value must match its own shape from the table.
 No shape admits a path separator or a colon, so a redactor that knows the
@@ -159,7 +173,7 @@ can appear. The line tells a machine-wide installation from a per-user or
 portable copy; two side-by-side installations are told apart by the release,
 the source revision and the `msconvert` SHA-256.
 
-### 5. A bounded, in-memory ring of boundary error codes and failed conversion outcomes
+### 5. A bounded, in-memory ring of boundary error codes
 
 Every `PreviewErrorDto` is built through `PreviewErrorDto::new`, so that is
 where its code, and only its code, joins the ring. The one built elsewhere,
@@ -174,41 +188,54 @@ that was used (`targeted_*`), and its times say when (decision 2).
 It says what the native boundary *produced* this session, which is close to,
 but not exactly, what the interface showed: an error built and then discarded
 is counted too. A search of the native sources on 2026-10-30 found no
-`ok_or`, `unwrap_or`, `map_or` or `or` that builds one eagerly. `file_identity`
-does build and discard one, through `.ok()`, so `file_not_resolvable` can also
-mean that a path was looked at and not found.
+`ok_or`, `unwrap_or`, `map_or` or `or` that builds one eagerly.
 
-A conversion that ran and ended in failure joins the ring too (question 7). It
-is a report and not a `PreviewErrorDto`, so what is recorded is the report's
-`detailedOutcome`, or its `outcome` when it has none: a set whose publication
-stopped partway is `partially_finalized`, and a set that published whole but
-cannot be adopted keeps `fully_finalized`, the one failure that reads like a
-success. It is recorded once per run, where the session builds its report from
-the run (`WorkspaceConversionReport::of`, `SciexAttemptSettlement::of`). It is
-not recorded where the report is serialized: a queue is read again and again,
-and two failed rows read in turn would push every other code out of the ring. A
-stop is not a failure and is not recorded.
+*Found on 2026-11-03:* `file_identity` does build and discard one, through
+`.ok()`, so `file_not_resolvable` can also mean that a path was looked at and not
+found.
 
-A view conversion (ADR 0060) has no report and builds neither of those, so it is
-recorded once, as the kind of the `PreviewErrorDto` the view run returns. That
-kind is usually the failure's coarse `stable_id()`: where a queue report records
-`missing_output`, a view conversion records `output_rejected`.
+Until the slice of question 7 lands, the ring holds `PreviewErrorDto` kinds
+only. These are not errors at the boundary, so they are not in it:
 
-These are not errors at the boundary or failed conversions, so they are not in
-it:
-
+- a conversion that ran and failed, which is a report whose `outcome` and
+  `detailedOutcome` say why;
 - a refusal carried in an `Ok` outcome: opening an output, clearing the
   workspace, reclaiming staging, a spectrum domain and a conversion
   configuration;
 - a preference save that failed, whose `problem` is part of its `Ok` result.
 
-So `Held: 0` does not mean that nothing was refused this session.
+So `Held: 0` does not mean that no conversion failed this session. On
+2026-10-31 the owner decided that a failed conversion's outcome will join the
+ring (question 7): when a conversion that ran ends in failure, its report's
+`detailedOutcome`, or its `outcome` when it has none, is recorded where the
+report is projected. That projection is PR #161's code, so this is implemented
+after #161 merges; until then the ring holds only `PreviewErrorDto` kinds, as
+stated above. Nothing else in the list above joins it.
+
+*As built, 2026-11-03:* the slice of question 7 has landed, so a conversion that
+ran and ended in failure is in the ring and off the list above. `Held: 0` still
+does not mean that nothing was refused this session. What is recorded is the
+report's `detailedOutcome`, or its `outcome` when it has none: a set whose
+publication stopped partway is `partially_finalized`, and a set that published
+whole but cannot be adopted keeps `fully_finalized`, the one failure that reads
+like a success. A stop is not a failure and is not recorded.
+
+Two readings of question 7 here are not owner decisions:
+
+- "Where the report is projected" is built as where the session builds its report
+  from the run (`WorkspaceConversionReport::of`, `SciexAttemptSettlement::of`), so
+  it is recorded once per run. It is not recorded where the report is serialized:
+  a queue is read again and again, and two failed rows read in turn would push
+  every other code out of the ring.
+- A view conversion (ADR 0060) has no report and builds neither of those, so it is
+  recorded once, as the kind of the `PreviewErrorDto` the view run returns. That
+  kind is usually the failure's coarse `stable_id()`: where a queue report records
+  `missing_output`, a view conversion records `output_rejected`.
 
 ### 6. Format
 
 Plain text, so it pastes into an issue as it is. The first line is
-`MSCanvas diagnostics`, then `Format: 2` (1 had no `Verified build` line and
-reached no interface) and `Created`. Sections are
+`MSCanvas diagnostics`, then `Format: 1` and `Created`. Sections are
 `[Application]`, `[System]`, `[ProteoWizard]`, `[View cache]` and
 `[Recent errors]`, each a run of `Key: value` lines. Keys are English and
 stable, so support can read a summary whatever the interface language was.
@@ -216,6 +243,10 @@ Values are written as they are, never translated. `Format` changes when a
 heading or a key does. A recent error is
 `- <first time> <code>`, followed by `(repeated until <last time>)` when it
 repeated, even within the same second.
+
+*As built, 2026-11-03:* `Format` is `2`, because `Verified build` is a new key.
+Format 1 reached no interface. This follows from the rule above and is not an
+owner decision.
 
 ### 7. Bounds
 
@@ -244,24 +275,28 @@ was sent and that the user should read it before sharing. Copying uses the
 platform's text clipboard write from that button's click, which needs no Tauri
 capability and reads nothing. This departs from the posture of ADR 0030 and
 ADR 0034, where the clipboard is reached from Rust only. `check_repo.py` checks
-that posture through the capabilities and `package.json`, which a
-`navigator.clipboard.writeText` call does not touch; the owner accepted this
-route on 2026-10-30 for this button only (question 4, A0063), so `check_repo.py`
-also refuses any other use of `navigator.clipboard` in the interface's source,
-and a second call or a read in this one. The release guide's
-"For the environment, give" list then points at the button, from the first
-release that has it; beta 1's guide describes beta 1, which does not.
+that posture through the capabilities and `package.json`, so a
+`navigator.clipboard.writeText` call still passes it; the owner accepted this
+route on 2026-10-30 (question 4, A0063). The release guide's
+"For the environment, give" list then points at the button.
 
-Built on 2026-11-03, with one departure the owner has not decided: the sentence
-is not shown, because the owner's rule of 2026-10-28 removes secondary
-explanations from the interface and that rule does not say whether a reminder
-like this one stays (question 8). The button reads when pressed, and again as
-**Read again**. A second read leaves the screen as it is until it answers, with
-**Copy** refused meanwhile, and the result of a copy still out when it was pressed
-is not shown, because that copy took the old text. Closing Settings drops the
-text. The clipboard's refusal is shown above the text, because the text stays
-selectable by hand. Support is the last section, below anything a save or the
-stored record has to say, because the text makes it tall.
+Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
+(question 8, [owner decision](#owner-decision-2026-11-03)).
+
+*As built, 2026-11-03, not an owner decision:*
+
+- The button reads when pressed, and again as **Read again**. A second read leaves
+  the screen as it is until it answers, with **Copy** refused meanwhile, and the
+  result of a copy still out when it was pressed is not shown, because that copy
+  took the old text.
+- Closing Settings drops the text. The clipboard's refusal is shown above the text,
+  because the text stays selectable by hand. Support is the last section, below
+  anything a save or the stored record has to say, because the text makes it tall.
+- `check_repo.py` refuses any other use of `navigator.clipboard` in the interface's
+  source, and a second call or a read in this one, because the route was accepted
+  for this button only (question 4).
+- The release guide's list points at the button from the first release that has
+  it; beta 1's guide describes beta 1, which does not.
 
 ## Alternatives
 
@@ -288,8 +323,8 @@ stored record has to say, because the text makes it tall.
 - **A `Verified build: yes/no` line now.** The verified build is ADR 0055's
   `msconvert.exe` digest. Draft PR #161 adds that constant; this lane would have
   been a fourth copy of it. The digest itself is in the summary, so support can
-  compare it today. *Adopted on 2026-11-03, once #161 had merged, reading that
-  constant (decision 1).*
+  compare it today.
+  *Adopted on 2026-11-03, once #161 had merged, reading that constant (decision 1).*
 - **The account check on every value**, as an earlier draft of this record did.
   Withholds a value the name can only match by chance, and the withheld line
   then points at the name: `jan` loses `Jan 13 2026` while `Release: 3.0.26013`
@@ -327,12 +362,15 @@ stored record has to say, because the text makes it tall.
   cost is a short critical section, and the lock never panics.
 - `project::format_rfc3339` and `BackendAuthority::bound_identity` are visible
   within the crate.
-- The registration test lists the command, and the frontend calls it.
-- `VERIFIED_MSCONVERT_SHA256` is public from the ProteoWizard adapter, so this
-  summary and ADR 0055's tier read one value.
+- The registration test lists the command and exempts it from "the frontend
+  calls every command" until the interface lane adds its caller.
 - When ADR 0060's slice 2 gives the session a view cache, the `[View cache]`
-  section reports its usage and `Format` stays `2` only if the keys do not
+  section reports its usage and `Format` stays `1` only if the keys do not
   change.
+- *2026-11-03:* the frontend calls the command, so the registration test no longer
+  exempts it. `Format` is `2` (decision 6), and the line above holds for `2`.
+  `VERIFIED_MSCONVERT_SHA256` is public from the ProteoWizard adapter, so this
+  summary and ADR 0055's tier read one value.
 
 ## Owner decision, 2026-10-30 (A0063)
 
@@ -346,14 +384,15 @@ questions 1–5, and each is answered as recommended:
 2. **The error ring's recording point (decision 5):** at `PreviewErrorDto::new`,
    accepting that an error built and then discarded counts.
 3. **The verified-build line:** add `Verified build: yes/no` once PR #161
-   merges, reading its constant rather than a copy. Done on 2026-11-03; it says
-   `unknown` when there is no digest to read.
+   merges, reading its constant rather than a copy. Not done yet: #161 is open.
+   *Done on 2026-11-03; it says `unknown` when there is no digest to read
+   (decision 1).*
 4. **The interface and the copy route (decision 10):** a Settings button, a
    read-only preview and the platform text clipboard written from that
    button's click. The departure from ADR 0030 and ADR 0034's "the clipboard is
    reached from Rust" is accepted for this button only; those records are not
-   amended. The interface lane builds the button after PR #164. Done on
-   2026-11-03.
+   amended. The interface lane builds the button after PR #164.
+   *Done on 2026-11-03.*
 5. **Workspace contents by family:** left out until a support case needs it.
    That a recent error code can name a vendor or a feature (decision 5) is
    accepted; no code allowlist or category is added to the ring.
@@ -374,8 +413,21 @@ recommended"). Both are answered as recommended:
    conversion that ran ends in failure, its report's `detailedOutcome`, or its
    `outcome` when it has none, joins the ring, recorded where the report is
    projected. That projection is PR #161's code, so this is implemented after
-   #161 merges, not on this branch. Done on 2026-11-03; decisions 2 and 5 say
-   what the ring now holds and where each is recorded.
+   #161 merges, not on this branch. Decision 2 says that the ring will then
+   also hold conversion outcomes; until that slice lands it holds only
+   `PreviewErrorDto` kinds, as decision 5 states.
+   *Done on 2026-11-03; the notes beside decisions 2 and 5 say what the ring now
+   holds and where each is recorded.*
+
+## Owner decision, 2026-11-03
+
+Shown a list of decisions on 2026-11-03, question 8 of this record among them
+(P202), the owner replied "全部按推荐" ("all as recommended"). It is answered as
+recommended:
+
+8. **The sentence of decision 10:** not shown. #202 as built stands, and no code
+   changes. Decision 10's text stays as it was accepted on 2026-10-30, with this
+   answer in a dated note beside it.
 
 ## Open questions for the owner
 
@@ -404,16 +456,17 @@ recommended"). Both are answered as recommended:
    decision 2 now says that the ring will name conversion outcomes too. The
    alternatives were the `Ok`-carried refusals as well, or the ring as it is,
    with decision 5 saying what it leaves out.
-8. *Open, added 2026-11-03:* **The sentence of decision 10.** Decision 10, accepted
+8. *Answered on 2026-11-03 ([owner decision](#owner-decision-2026-11-03)):*
+   **The sentence of decision 10.** Added on 2026-11-03. Decision 10, accepted
    on 2026-10-30, lists one sentence saying that nothing was sent and that the user
    should read the text before sharing. Question 4 as A0063 showed it to the owner
    lists a Settings button, a read-only preview and the text clipboard, and no
    sentence. The rule of 2026-10-28 removes secondary explanations and keeps
    "recovery paths, no-overwrite and irreversible-action warnings, the
    scientific-honesty statements and accessible names", which does not say whether
-   this reminder stays. Recommended: leave it out, as built. The text is in front
+   this reminder stays. As recommended: left out, as built. The text is in front
    of the user before anything is copied, and it holds no backend text. The
    conversion failure export keeps a sentence like it ("Review the file before
    sharing", ADR 0017), but that file holds redacted backend text the user has not
-   seen when saving it. The alternative is one line beside the preview, in en and
+   seen when saving it. The alternative was one line beside the preview, in en and
    zh-CN.
