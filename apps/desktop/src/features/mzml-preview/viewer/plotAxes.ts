@@ -49,8 +49,8 @@ const MAX_FIXED_CHARS = 12;
  * both sides to one table.
  *
  * ponytail: no label-collision check, the figure's `fits`: long labels on a
- * narrow plot can overlap, or be cut at the panel's edge, where the figure would
- * thin them out. Measure them here if that matters in real data.
+ * narrow plot can overlap, where the figure would thin them out. Measure them
+ * here if that matters in real data.
  */
 export function niceTicks(low: number, high: number): readonly AxisTick[] {
   if (!Number.isFinite(low) || !Number.isFinite(high)) return [];
@@ -168,7 +168,10 @@ export function paintTicks(container: HTMLElement | null, ticks: readonly AxisTi
     const label = document.createElement("span");
     label.className = "plot-tick";
     label.textContent = tick.label;
-    label.style.setProperty(axis === "x" ? "left" : "top", `${percent(tick.value)}%`);
+    const at = percent(tick.value);
+    label.style.setProperty(axis === "x" ? "left" : "top", `${at}%`);
+    // What workbench.css keeps an x label inside its frame by.
+    if (axis === "x") label.style.setProperty("--tick-at", String(at));
     return label;
   }));
 }
