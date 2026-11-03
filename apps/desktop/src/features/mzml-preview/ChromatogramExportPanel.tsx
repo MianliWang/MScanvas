@@ -17,8 +17,8 @@ import type { FigureSettingsValidation } from "./figureSettingsValidation";
  * the linked chromatogram + spectrum figure, which opens the same dialog.
  */
 
-import type { ChromatogramExportFormat } from "./contracts";
-import { formatCount } from "./format";
+import type { ChromatogramExportFormat, RetentionTimeUnit } from "./contracts";
+import { formatCount, retentionTimeUnitSymbol } from "./format";
 import { figureRefusal, QuickFigureActions, type PlotMenuItem } from "./QuickFigureActions";
 import type {
   ChromatogramExportState,
@@ -85,11 +85,12 @@ export function ChromatogramExportTools({ leadingItems, onOpenFigure, onOpenLink
  * a result never takes height from the plot. Each result is its own named
  * region, so a reader can tell which export finished.
  */
-export function ChromatogramExportStatus({ exportState, linkedExportState, onDismiss, onDismissLinked }: {
+export function ChromatogramExportStatus({ exportState, linkedExportState, onDismiss, onDismissLinked, rtUnit }: {
   readonly exportState: ChromatogramExportState;
   readonly linkedExportState: LinkedFigureExportState;
   readonly onDismiss: () => void;
   readonly onDismissLinked: () => void;
+  readonly rtUnit: RetentionTimeUnit;
 }) {
   const t = useUiMessages();
   return <div className="plot-status">
@@ -97,13 +98,18 @@ export function ChromatogramExportStatus({ exportState, linkedExportState, onDis
       <ChromatogramExportResult onDismiss={onDismiss} state={exportState} />
     </div>
     <div aria-label={t("viewerLinkedStatus")} aria-live="polite" className="spectrum-export-status linked-figure-status" role="status">
-      <LinkedFigureResult onDismiss={onDismissLinked} state={linkedExportState} />
+      <LinkedFigureResult onDismiss={onDismissLinked} rtUnit={rtUnit} state={linkedExportState} />
     </div>
   </div>;
 }
 
-/** What one finished linked export says about itself. */
-export function LinkedFigureResult({ state, onDismiss }: { readonly state: LinkedFigureExportState; readonly onDismiss: () => void }) {
+/**
+ * What one finished linked export says about itself. `rtUnit` is the run's on
+ * screen now: a result stops being shown when the run changes, so it is the
+ * unit the export was made in.
+ */
+export function LinkedFigureResult({ state, onDismiss, rtUnit }: { readonly state: LinkedFigureExportState; readonly onDismiss: () => void;
+  readonly rtUnit: RetentionTimeUnit }) {
   const t = useUiMessages();
   if (state.status === "idle") return null;
   if (state.status === "running") return <p className="spectrum-export-message">{describeRunning(state.operation, t)}</p>;
@@ -111,7 +117,9 @@ export function LinkedFigureResult({ state, onDismiss }: { readonly state: Linke
     state.status === "copied" ? t("viewerLinkedCopied", { width: String(state.figure.width), height: String(state.figure.height),
       theme: t(state.figure.theme), index: formatCount(state.selectedIndex), count: state.sourceScanCount }) :
     t("viewerLinkedSaved", { name: state.fileName, index: formatCount(state.selectedIndex),
-      rt: String(state.selectedRetentionTime), count: state.sourceScanCount });
+      // The canonical value, never rounded for display, and the run's unit.
+      rt: [String(state.selectedRetentionTime), retentionTimeUnitSymbol(rtUnit)].filter(part => part !== null).join(" "),
+      count: state.sourceScanCount });
   return <p className="spectrum-export-message"><ResultText message={message} detail={state.status === "failed" ? ownedErrorDetail(state.error, t) : null} />
     <DismissButton label={t("viewerLinkedDismiss")} onDismiss={onDismiss} />
   </p>;

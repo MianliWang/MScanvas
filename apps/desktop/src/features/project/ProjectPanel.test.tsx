@@ -981,4 +981,142 @@ describe("the project surface", () => {
     expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
     expect(screen.getByText(en.projectUnsaved).hasAttribute("data-project-unsaved")).toBe(true);
   });
+
+  it("labels a reference recorded from a conversion MSCanvas did not verify", async () => {
+    const labelled = projectInput({ id: "labelled", label: "converted.mzML", notVerifiedByMscanvas: { unverifiedSettings: true, unverifiedBuildRelease: null } });
+    const plain = projectInput({ id: "plain", label: "plain.mzML", notVerifiedByMscanvas: null });
+    mount(openProject({ inputs: [labelled, plain] }));
+    await waitFor(() => expect(screen.getByText("converted.mzML")).toBeTruthy());
+    expect(row("labelled").querySelector("[data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
+    expect(row("plain").querySelector("[data-not-verified]")).toBeNull();
+  });
+
+  describe("before the Save that upgrades a beta-1 project", () => {
+    const beta1 = (dirty: boolean) =>
+      openProject({ inputs: [projectInput()], dirty, published: true, savingUpgradesSchema: true });
+
+    it("asks first, and writes once only when the keyboard confirms", async () => {
+      const api = mount(beta1(true));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+      await press(screen.getByRole("button", { name: en.projectSave }));
+      expect(api.saveProject).not.toHaveBeenCalled();
+      expect(document.querySelector("[data-project-upgrade]")?.textContent).toContain(en.projectUpgradeWarning);
+      // The question has the keyboard on Cancel: a held or repeated Enter on
+      // Save must not write what it warns about.
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: en.projectUpgradeCancel }));
+      const confirm = screen.getByRole("button", { name: en.projectUpgradeSave });
+      await press(confirm);
+      expect(api.saveProject).toHaveBeenCalledTimes(1);
+      // Still one filled primary: the question adds none.
+      expect(document.querySelectorAll("[data-project-surface] .ui-button--primary")).toHaveLength(1);
+    });
+
+    it("writes nothing on Cancel and hands the keyboard back to Save", async () => {
+      const api = mount(beta1(true));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+
+      const save = screen.getByRole("button", { name: en.projectSave });
+      await press(save);
+      await press(screen.getByRole("button", { name: en.projectUpgradeCancel }));
+      expect(api.saveProject).not.toHaveBeenCalled();
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(document.activeElement).toBe(save);
+    });
+
+    it("asks before the unsaved question's Save first as well", async () => {
+      const api = mount(beta1(true));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      api.refuseOnce("closeProject", "unsavedChanges");
+      await press(screen.getByRole("button", { name: en.projectClose }));
+      const saveFirst = await screen.findByRole("button", { name: en.projectUnsavedSaveFirst });
+      await press(saveFirst);
+      expect(api.saveProject).not.toHaveBeenCalled();
+      expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
+      // Cancel goes back to the question that asked, not to the head.
+      await press(screen.getByRole("button", { name: en.projectUpgradeCancel }));
+      expect(document.activeElement).toBe(saveFirst);
+      expect(api.saveProject).not.toHaveBeenCalled();
+    });
+
+    it("drops an unanswered question when its project closes, even if the same file reopens", async () => {
+      const api = mount(beta1(true));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      api.refuseOnce("closeProject", "unsavedChanges");
+      await press(screen.getByRole("button", { name: en.projectClose }));
+      await press(await screen.findByRole("button", { name: en.projectUnsavedSaveFirst }));
+      expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
+
+      api.set(NO_PROJECT);
+      await press(screen.getByRole("button", { name: en.projectUnsavedDiscard }));
+      await waitFor(() => expect(screen.getByText(en.projectNone)).toBeTruthy());
+      // The same durable project id, changed again: nothing was asked here.
+      api.set(beta1(true));
+      await press(screen.getByRole("button", { name: en.projectOpen }));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(api.saveProject).not.toHaveBeenCalled();
+    });
+
+    it("drops an unanswered Save As question when its project closes, before another beta-1 project opens", async () => {
+      const api = mount(beta1(false));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      await press(screen.getByRole("button", { name: en.projectSaveAs }));
+      expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
+
+      api.set(NO_PROJECT);
+      await press(screen.getByRole("button", { name: en.projectClose }));
+      await waitFor(() => expect(screen.getByText(en.projectNone)).toBeTruthy());
+      api.set({ ...beta1(false), projectId: "aaaaaaaa-0000-4111-8111-000000000002", name: "Another beta-1 project" });
+      await press(screen.getByRole("button", { name: en.projectOpen }));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(api.saveProjectAs).not.toHaveBeenCalled();
+    });
+
+    it("drops an unanswered Save As question when Open replaces its project with a copy of it", async () => {
+      const api = mount(beta1(false));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      await press(screen.getByRole("button", { name: en.projectSaveAs }));
+      expect(document.querySelector("[data-project-upgrade]")).toBeTruthy();
+
+      // The same durable project id, from another file: a replacement all the same.
+      api.set({ ...beta1(false), name: "Copy of the same project" });
+      await press(screen.getByRole("button", { name: en.projectOpen }));
+      await waitFor(() => expect(screen.getByText("Copy of the same project")).toBeTruthy());
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(api.saveProjectAs).not.toHaveBeenCalled();
+    });
+
+    it("asks before Save As even with nothing unsaved, which can write over beta 1's file", async () => {
+      const api = mount(beta1(false));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      const saveAs = screen.getByRole("button", { name: en.projectSaveAs });
+      await press(saveAs);
+      expect(api.saveProjectAs).not.toHaveBeenCalled();
+      await press(screen.getByRole("button", { name: en.projectUpgradeCancel }));
+      expect(document.activeElement).toBe(saveAs);
+      expect(api.saveProjectAs).not.toHaveBeenCalled();
+      await press(saveAs);
+      await press(screen.getByRole("button", { name: en.projectUpgradeSave }));
+      expect(api.saveProjectAs).toHaveBeenCalledTimes(1);
+      expect(api.saveProject).not.toHaveBeenCalled();
+    });
+
+    it("does not ask for a Save that writes nothing", async () => {
+      const api = mount(beta1(false));
+      await waitFor(() => expect(screen.getByText(en.projectReferences)).toBeTruthy());
+      await press(screen.getByRole("button", { name: en.projectSave }));
+      expect(document.querySelector("[data-project-upgrade]")).toBeNull();
+      expect(api.saveProject).toHaveBeenCalledTimes(1);
+    });
+
+    it("says it in Simplified Chinese", async () => {
+      mount(beta1(true), "zh-CN");
+      const save = await screen.findByRole("button", { name: zh.projectSave });
+      await press(save);
+      expect(document.querySelector("[data-project-upgrade]")?.textContent).toContain(zh.projectUpgradeWarning);
+      expect(zh.projectUpgradeWarning).not.toEqual(en.projectUpgradeWarning);
+    });
+  });
 });

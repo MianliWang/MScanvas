@@ -23,9 +23,10 @@
  * is running rather than leaving silence to stand for it.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 
 import { useListWindow, type ListWindowRow } from "../mzml-preview/conversionListWindow";
+import { NotVerifiedTag } from "../mzml-preview/NotVerifiedTag";
 
 import { Button, Icon, IconButton } from "../../components/ui";
 import type { PreviewError } from "../mzml-preview/contracts";
@@ -370,6 +371,16 @@ const BUSY_ID = "project-busy-line";
 const SAVE_LOCATION_ID = "project-save-location";
 /** Why Check linked files and Capture file facts wait: nothing is referenced. */
 const NO_REFERENCES_ID = "project-no-references";
+/** The question before the Save that upgrades a beta-1 project. */
+const UPGRADE_ID = "project-upgrade-question";
+/** Which write asked, in which project, and the control the keyboard goes back to. */
+interface UpgradeQuestion {
+  readonly kind: "save" | "saveAs";
+  readonly projectId: string | null;
+  /** `session.replacements` when asked: an Open of a copy keeps the id but not this. */
+  readonly replacement: number;
+  readonly from: RefObject<HTMLButtonElement | null>;
+}
 
 export function ProjectPanel({
   session,
@@ -709,6 +720,63 @@ export function ProjectPanel({
     if (!detailsPresent) onRevealDetails?.();
   }, [inspecting, detailsPresent, onRevealDetails]);
 
+  /**
+   * Asks before the Save that upgrades a beta-1 project (ADR 0055, risks).
+   *
+   * Only a write: a Save with nothing unsaved leaves beta 1's file as it is,
+   * so a warning there would be false. Save As is asked whenever the bound
+   * file is beta 1's, because choosing that file again writes schema 5 over
+   * it even with nothing unsaved. Every Save and Save As goes through here,
+   * so neither the head's nor the unsaved question's can skip it.
+   */
+  const saveRef = useRef<HTMLButtonElement | null>(null);
+  const saveAsRef = useRef<HTMLButtonElement | null>(null);
+  const saveFirstRef = useRef<HTMLButtonElement | null>(null);
+  const upgradeRef = useRef<HTMLButtonElement | null>(null);
+  const [upgradeAsked, setUpgradeAsked] = useState<UpgradeQuestion | null>(null);
+  const upgrades = state.savingUpgradesSchema === true;
+  // A question belongs to the open project it was asked in, which another copy
+  // with the same identifiers is not.
+  const asked =
+    upgradeAsked !== null &&
+    state.open &&
+    upgradeAsked.projectId === state.projectId &&
+    upgradeAsked.replacement === session.replacements
+      ? upgradeAsked
+      : null;
+  const upgradeShown = asked !== null && upgrades && (asked.kind === "saveAs" || state.dirty);
+  // One that stops being shown is gone: a closed, replaced or saved project
+  // never brings it back on its own.
+  useEffect(() => {
+    if (upgradeAsked !== null && !upgradeShown) setUpgradeAsked(null);
+  }, [upgradeAsked, upgradeShown]);
+  const save = (from: RefObject<HTMLButtonElement | null> = saveRef) => {
+    if (upgrades && state.dirty)
+      setUpgradeAsked({ kind: "save", projectId: state.projectId, replacement: session.replacements, from });
+    else void session.saveProject();
+  };
+  const saveAs = (from: RefObject<HTMLButtonElement | null> = saveAsRef) => {
+    if (upgrades)
+      setUpgradeAsked({ kind: "saveAs", projectId: state.projectId, replacement: session.replacements, from });
+    else void session.saveProjectAs();
+  };
+  // The question takes the keyboard when it appears, on Cancel: a held or
+  // repeated Enter on Save must not land on the write it warns about. Cancel
+  // hands it back to the control that asked, or to the head's own where that
+  // one has gone.
+  useLayoutEffect(() => {
+    if (upgradeShown) upgradeRef.current?.focus();
+  }, [upgradeShown]);
+  const cancelUpgrade = () => {
+    const from = asked?.from.current;
+    setUpgradeAsked(null);
+    (from?.isConnected === true ? from : (asked?.kind === "saveAs" ? saveAsRef : saveRef).current)?.focus();
+  };
+  const confirmUpgrade = () => {
+    setUpgradeAsked(null);
+    void (asked?.kind === "saveAs" ? session.saveProjectAs() : session.saveProject());
+  };
+
   return (
     <div
       ref={surfaceRef}
@@ -759,20 +827,22 @@ export function ProjectPanel({
           {state.open ? (
             <>
               <Button
+                ref={saveRef}
                 variant={headPrimary === "save" ? "primary" : "secondary"}
                 size="sm"
                 refused={working || !state.published}
                 reasonId={working ? BUSY_ID : SAVE_LOCATION_ID}
-                onClick={() => void session.saveProject()}
+                onClick={() => save()}
               >
                 {t("projectSave")}
               </Button>
               <Button
+                ref={saveAsRef}
                 variant={headPrimary === "saveAs" ? "primary" : "secondary"}
                 size="sm"
                 refused={working}
                 reasonId={BUSY_ID}
-                onClick={() => void session.saveProjectAs()}
+                onClick={() => saveAs()}
               >
                 {t("projectSaveAs")}
               </Button>
@@ -789,6 +859,27 @@ export function ProjectPanel({
           ) : null}
         </div>
       </header>
+
+      {/* Before the write, never after it: beta 1 cannot open what this Save
+          writes, and reinstalling beta 1 does not undo it. */}
+      {upgradeShown ? (
+        <div className="project-unsaved" role="group" aria-labelledby={UPGRADE_ID} data-project-upgrade="">
+          <p id={UPGRADE_ID}>{t("projectUpgradeWarning")}</p>
+          <Button
+            variant="secondary"
+            size="sm"
+            refused={working}
+            reasonId={BUSY_ID}
+            data-project-upgrade-save=""
+            onClick={confirmUpgrade}
+          >
+            {t("projectUpgradeSave")}
+          </Button>
+          <Button ref={upgradeRef} variant="secondary" size="sm" data-project-upgrade-cancel="" onClick={cancelUpgrade}>
+            {t("projectUpgradeCancel")}
+          </Button>
+        </div>
+      ) : null}
 
       {/* Mounted from the first render and empty until there is something to
           say, so what arrives is announced rather than appearing silently. */}
@@ -835,11 +926,12 @@ export function ProjectPanel({
           {/* Answered only while nothing else is out: a save or a discard
               started under a running operation would settle over it. */}
           <Button
+            ref={saveFirstRef}
             variant="secondary"
             size="sm"
             refused={working}
             reasonId={BUSY_ID}
-            onClick={() => void (state.published ? session.saveProject() : session.saveProjectAs())}
+            onClick={() => (state.published ? save(saveFirstRef) : saveAs(saveFirstRef))}
           >
             {t("projectUnsavedSaveFirst")}
           </Button>
@@ -1079,6 +1171,9 @@ export function ProjectPanel({
                               {t("projectMemberCount", { count: input.members.length })}
                             </span>
                           ) : null}
+                          {/* Recorded with the reference (project schema 5),
+                              so it reads as unverified wherever it is reopened. */}
+                          <NotVerifiedTag label={input.notVerifiedByMscanvas} />
                         </p>
                       </div>
                       <div className="project-row-actions">

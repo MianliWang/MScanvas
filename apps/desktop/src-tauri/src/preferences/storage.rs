@@ -59,11 +59,17 @@ impl PreferenceRoot {
 
     /// The published record's full path.
     ///
-    /// Private, and there is deliberately no accessor for the directory either:
-    /// nothing outside this module needs the location, and a getter is how an
-    /// absolute path ends up in a message, a log or a transfer object.
+    /// Private. The directory's one accessor is [`Self::directory`], visible to
+    /// the preference module alone: a getter is how an absolute path ends up in
+    /// a message, a log or a transfer object.
     fn file(&self) -> PathBuf {
         self.directory.join(PREFERENCE_FILE_NAME)
+    }
+
+    /// The bound directory, for the conversion preset store that lives beside
+    /// this record under the same binding. Never sent anywhere.
+    pub(super) fn directory(&self) -> &std::path::Path {
+        &self.directory
     }
 }
 
@@ -146,8 +152,9 @@ impl WriteError {
     }
 }
 
-/// How the shared mechanism's refusals read in this store's vocabulary.
-const fn from_write_refusal(failure: PublishFailure) -> WriteFailure {
+/// How the shared mechanism's refusals read in this store's vocabulary. Also
+/// the conversion preset store's, which shares the vocabulary.
+pub(crate) const fn from_write_refusal(failure: PublishFailure) -> WriteFailure {
     WriteFailure {
         error: match failure.refusal {
             WriteRefusal::UnsafeTarget => WriteError::UnsafeTarget,
@@ -160,7 +167,7 @@ const fn from_write_refusal(failure: PublishFailure) -> WriteFailure {
 
 /// The same, for a read. `Oversized` keeps its own name here because the
 /// interface says something different about it than about an unreadable file.
-const fn from_read_refusal(refusal: ReadRefusal) -> RecordProblem {
+pub(crate) const fn from_read_refusal(refusal: ReadRefusal) -> RecordProblem {
     match refusal {
         ReadRefusal::Unreadable => RecordProblem::Unreadable,
         ReadRefusal::Oversized => RecordProblem::Oversized,

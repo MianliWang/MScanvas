@@ -60,6 +60,10 @@ mod figure;
 #[cfg(test)]
 pub(crate) mod idle_provider;
 mod installation;
+/// Small mzML documents written in memory, for this module's suite, the QC
+/// suite and the rendered tests' seed. Never in a shipped build.
+#[cfg(any(test, feature = "e2e"))]
+pub(crate) mod mzml_fixture;
 mod operation;
 mod output_opening;
 /// What a spectrum viewport may know about a retained spectrum: whether it has
@@ -69,6 +73,10 @@ mod output_opening;
 /// the complete spectrum Rust retained -- never the complete arrays, never a
 /// path -- and no scientific export is ever taken from one. See ADR 0037.
 mod projection;
+/// The one-click view of a Thermo RAW row through the view cache (ADR 0060):
+/// the operation's state in the conversion slot, its transfer objects and its
+/// refusals. The work is the service's.
+pub mod raw_view;
 /// A saved figure specification: a recipe that names its source by locator and
 /// recorded bytes, and regenerates the figure through the export's own
 /// builders. No interface reaches it yet. See ADR 0062.
