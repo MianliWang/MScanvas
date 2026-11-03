@@ -127,6 +127,10 @@ function scientificLabel(integer: number, exponent: number): string {
  * `svg.rs` `axis_ends`, for a range the rule has no ticks for: one tick at the
  * only value of a range with no width, and two numbers that read as two
  * otherwise. Fixed point while it states them, else the shortest exponent form.
+ *
+ * ponytail: `toFixed` rounds an exact tie up and the figure rounds it to even, so
+ * `12.0078125` reads `12.007813` here and `12.007812` there. Port the rounding if
+ * a real axis ever lands on one.
  */
 function endTicks(low: number, high: number): readonly AxisTick[] {
   const span = high - low;
