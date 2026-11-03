@@ -140,7 +140,7 @@ describe("the restore notice", () => {
       groups: [{ name: null, handles: ["file-1", "restored-1"] }],
       checked: [],
     }]));
-    expect(document.querySelector('[data-live-region="workspace"]')).toHaveTextContent(/^Added 1 file again\. It was not verified against the last session\./u);
+    expect(document.querySelector('[data-live-region="workspace"]')).toHaveTextContent("Added 1 file again. It was not verified against the last session.");
     expect(screen.queryByRole("button", { name: en.restoreAction })).not.toBeInTheDocument();
     expect(api.calls()).not.toContain("openPreview");
   });
