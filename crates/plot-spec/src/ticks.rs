@@ -223,6 +223,32 @@ mod shared_table {
         (0.0, 2625.0),
         (0.0, 9450.0),
         (200.0, 300.0),
+        // The domains and value ranges the rendered QA drew, fit-all and zoomed.
+        (0.0, 7.0),
+        (1.4, 5.6),
+        (100.0, 650.0),
+        (210.0, 540.0),
+        (0.0125, 0.05),
+        (10.0, 27.5),
+        (13.5, 24.0),
+        (100.0, 1970.0),
+        (474.0, 1596.0),
+        (0.0, 69.3),
+        (0.0, 84.0),
+        (0.0, 105.0),
+        (0.0, 260.4),
+        (0.0, 299.25),
+        (0.0, 5250.0),
+        (0.0, 8190.0),
+        (0.0, 8925.0),
+        (0.0, 4_504_500.0),
+        (0.0, 5_460_000.0),
+        (-2_176_500.0, 1_706_500.0),
+        (-2_202_000.0, 2_242_000.0),
+        (0.0, 3.3075e-4),
+        (0.0, 3.465e-4),
+        (0.0, 4.2e-4),
+        (0.0, 4.41e-4),
         // Signs.
         (-10.0, 10.0),
         (-45.0, 63.0),
@@ -271,7 +297,12 @@ mod shared_table {
             .iter()
             .map(|&(low, high)| {
                 let ticks = nice_ticks(Domain::new(low, high).expect("a table range"), |_| true)
-                    .map(|ticks| ticks.into_iter().map(|tick| (tick.at, tick.label)).collect());
+                    .map(|ticks| {
+                        ticks
+                            .into_iter()
+                            .map(|tick| (tick.at, tick.label))
+                            .collect()
+                    });
                 serde_json::to_string(&Row { low, high, ticks }).expect("a row")
             })
             .collect();
