@@ -1,4 +1,4 @@
-import { announceConversion } from "./conversionMessages";
+import { adoptionInFlightKey, announceConversion } from "./conversionMessages";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
@@ -447,6 +447,7 @@ export function PreviewWorkspace() {
     conversionStatus: workspace.conversion.state.status === "running" && workspace.conversion.stopping
       ? "stopping"
       : workspace.conversion.state.status,
+    conversionAdopting: workspace.conversion.adopting ? adoptionInFlightKey(workspace.conversion.adoptingOutput) : null,
   }, t);
   /**
    * Why adding, re-reading or changing the list waits: the visible reason the

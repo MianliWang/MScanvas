@@ -606,6 +606,19 @@ describe("adding one converted output", () => {
     await within(panel).findByRole("group", { name: "Locate run-1.mzML" });
     expect(group(panel, "run-1.mzML").querySelector("[data-not-verified]")?.textContent).toBe(UI_RESOURCES.en.m74CnvNotVerified);
     expect(group(panel, "run-2.mzML").querySelector("[data-not-verified]")).toBeNull();
+    // Not a Tab stop of its own, so the action it is about describes it.
+    expect(addIn(panel, "run-1.mzML")).toHaveAccessibleDescription(UI_RESOURCES.en.m74CnvNotVerified);
+    expect(addIn(panel, "run-2.mzML")).not.toHaveAccessibleDescription();
+  });
+
+  it("stops saying an output is ready to add once one has its own answer", async () => {
+    const api = apiWith(terminalOf([offered("file-1", "run-1.raw")]));
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await within(panel).findByText(UI_RESOURCES.en.m74CnvOneReady);
+    fireEvent.click(addIn(panel, "run-1.mzML"));
+    await within(group(panel, "run-1.mzML")).findByText(UI_RESOURCES.en.outputAdded);
+    expect(within(panel).queryByText(UI_RESOURCES.en.m74CnvOneReady)).toBeNull();
   });
 
   it("keeps the opening actions but offers no Add where Rust offers none", async () => {
@@ -653,12 +666,12 @@ describe("adding one converted output", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(await waitFor(() => addIn(panel, "run-1.mzML")));
 
-    await within(group(panel, "run-1.mzML")).findByText("run-1.mzML was not added: it could not be verified.");
+    await within(group(panel, "run-1.mzML")).findByText("run-1.mzML was not added: this queue no longer offers it.");
     expect(within(panel).queryByText(/whole queue words/u)).toBeNull();
     expect(within(panel).queryByText(UI_RESOURCES.en.m74ErrorNotAdoptable)).toBeNull();
   });
 
-  it("says why when the workspace is full, and any other refusal goes where the queue-wide one does", async () => {
+  it("says every refusal on that output's line, because the queue's notice can be out of sight", async () => {
     const full: WorkspaceOutputAdoptionResult = {
       operationId: "1", retryRound: 0, roster: { datasets: DATASETS, capacity: 2 },
       outcomes: [{ kind: "refused", itemIndex: 0, memberIndex: 0, sourceHandle: "file-1", outputFileName: "run-1.mzML", reason: "workspace_full" }],
@@ -672,7 +685,10 @@ describe("adding one converted output", () => {
 
     answer = () => Promise.reject(previewError({ kind: "adoption_superseded", summary: "moved", retryable: true }));
     fireEvent.click(addIn(panel, "run-1.mzML"));
-    await within(panel).findByText(new RegExp(UI_RESOURCES.en.m74ErrorAdoptionChanged.replace(/[.]/gu, "\\."), "u"));
+    await within(group(panel, "run-1.mzML")).findByText(UI_RESOURCES.en.m74ErrorAdoptionChanged);
+    expect(panel.querySelector(".conversion-notice")).toBeNull();
+    // And it can be pressed again, which is the whole of the recovery.
+    expect(addIn(panel, "run-1.mzML")).not.toHaveAttribute("aria-disabled");
   });
 
   it("refuses every Add while one is out, keeps it a Tab stop and points at the visible reason", async () => {
@@ -686,9 +702,15 @@ describe("adding one converted output", () => {
     fireEvent.click(first);
     expect(first).toHaveFocus();
     await waitFor(() => { expect(first).toHaveAttribute("aria-disabled", "true"); });
+    // Its own line says it, and the others point at the status bar, which is on
+    // screen however far down the list they are.
+    expect(within(group(panel, "run-1.mzML")).getByRole("status")).toHaveTextContent(UI_RESOURCES.en.outputAdding);
+    expect(first).toHaveAccessibleDescription(UI_RESOURCES.en.outputAdding);
     const second = addIn(panel, "run-2.mzML");
     expect(second).toHaveAttribute("aria-disabled", "true");
-    expect(second).toHaveAccessibleDescription(UI_RESOURCES.en.m74CnvAdoptInFlight);
+    expect(second).toHaveAccessibleDescription(`In progress: ${UI_RESOURCES.en.m74CnvAdoptOneInFlight}`);
+    expect(within(group(panel, "run-2.mzML")).getByRole("status")).toBeEmptyDOMElement();
+    expect(panel.querySelector(".conversion-adoption-summary")).toHaveTextContent(UI_RESOURCES.en.m74CnvAdoptOneInFlight);
     fireEvent.click(second);
     expect(api.outputAdoptionRequests).toHaveLength(1);
 

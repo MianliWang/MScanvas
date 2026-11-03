@@ -1,6 +1,7 @@
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { ownedErrorDetail } from "./ownedErrorMessages";
-import { conversionCountParts, conversionErrorMessage, conversionJudgedOutputOnly, conversionNoticeMessage } from "./conversionMessages";
+import { STATUS_BUSY_ID } from "../workbench/StatusBar";
+import { adoptionInFlightKey, conversionCountParts, conversionErrorMessage, conversionJudgedOutputOnly, conversionNoticeMessage } from "./conversionMessages";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
 import { useListWindow, type ListWindowRow } from "./conversionListWindow";
 
@@ -348,11 +349,13 @@ export function ConversionPanel({
     if (node === null) return;
     // Only the controls whose leaving the status line explains: Convert, and
     // the queue's own (Stop, Retry, Skip, Add…). A plan-side link that leaves
-    // under a finished queue is not answered by the old queue's status.
+    // under a finished queue is not answered by the old queue's status. Describe
+    // again is a plan-side control with no queue to speak for it: it hands on to
+    // Convert, a Tab stop beside it that is described by the plan's answer.
     const record = (event: FocusEvent) => {
       const target = event.target;
       lastFocused.current =
-        target instanceof HTMLElement && (target === convertButton.current || target.closest(".conversion-running") !== null)
+        target instanceof HTMLElement && (target === convertButton.current || target.closest(".conversion-running") !== null || target.hasAttribute("data-describe-again"))
           ? target
           : null;
     };
@@ -373,7 +376,8 @@ export function ConversionPanel({
     // that window with the slot still `terminal`.
     if (restoreAfterPicker.current &&
       (conversion.converting || state.status === "awaitingDestination" || state.status === "idle")) return;
-    const status = panel.current?.querySelector<HTMLElement>(`#${QUEUE_STATUS_ID}`) ?? null;
+    const status = left.hasAttribute("data-describe-again") ? convertButton.current
+      : panel.current?.querySelector<HTMLElement>(`#${QUEUE_STATUS_ID}`) ?? null;
     if (status === null) return;
     lastFocused.current = null;
     status.focus();
@@ -657,7 +661,7 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
           only while there is nothing to say. */}
       <p aria-live="polite" className="conversion-adoption-summary" id={ADOPT_STATUS_ID}>
         {conversion.adopting
-          ? t("m74CnvAdoptInFlight")
+          ? t(adoptionInFlightKey(conversion.adoptingOutput))
           : adoption === null
             ? ""
             : t("m74CnvAdoptionSummary", { added: String(added.length), duplicates: String(duplicates.length), refused: String(refused.length) })}
@@ -673,7 +677,9 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
           recognises the file -- so the action stays rather than sending them to
           `Add files…` for something MSCanvas can still identify. */}
       <>
-        {adoption === null ? (
+        {/* Not beside a per-output answer: "ready to add" under an output that
+            says it was just added is two answers to one question. */}
+        {adoption === null && conversion.outputAnswers.size === 0 && conversion.adoptingOutput === null ? (
           <p>
             {eligibleOutputCount === 1
               ? t("m74CnvOneReady")
@@ -1035,7 +1041,7 @@ function PlanStart(props: PlanProps & {
           for the session over one lost reply. A refusal Rust calls final is
           not offered it: the same question gets the same answer. */}
       {plan.retryOffered ? (
-        <Button variant="secondary" size="sm" icon={<Icon name="refresh" />} onClick={plan.retry}>{t("m74CnvDescribeAgain")}</Button>
+        <Button variant="secondary" size="sm" icon={<Icon name="refresh" />} data-describe-again="" onClick={plan.retry}>{t("m74CnvDescribeAgain")}</Button>
       ) : null}
     </div>
   );
@@ -1601,11 +1607,15 @@ function QueueState({
                   ) : null}
                   {item.finalizedOutputs.map(output => {
                     const answer = conversion.outputAnswers.get(output.outputId) ?? null;
-                    const live = answer !== null && answer.kind !== "refused" && liveDatasetHandles?.has(answer.handle) === true;
+                    const live = answer !== null && "handle" in answer && liveDatasetHandles?.has(answer.handle) === true;
                     return <OutputOpenActions key={output.outputId} output={output} add={addOffered ? {
                       onAdd: () => conversion.adopt(output.outputId),
                       refused: !conversion.canAdopt,
-                      refusedBy: refusedBy.adopt,
+                      // Down a long list the summary column is out of sight, so
+                      // an adoption under way is said in the status bar as well
+                      // and these point there. Its own Add has its own line.
+                      refusedBy: conversion.adopting ? STATUS_BUSY_ID : refusedBy.adopt,
+                      adding: conversion.adoptingOutput === output.outputId,
                       answer,
                       notVerified: itemNotVerified(item),
                       onShow: live ? onShowInWorkbench ?? null : null,

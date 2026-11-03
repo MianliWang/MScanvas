@@ -91,7 +91,8 @@ export interface ConversionPlanOptions {
 /** What the latest Add of one output did (ADR 0052). */
 export type OutputAdoptionAnswer =
   | { readonly kind: "added" | "alreadyInWorkspace"; readonly handle: string }
-  | { readonly kind: "refused"; readonly reason: string };
+  | { readonly kind: "refused"; readonly reason: string }
+  | { readonly kind: "failed"; readonly error: PreviewError };
 
 /** The per-output answers of one settling of one queue. */
 interface OutputAnswers {
@@ -104,7 +105,7 @@ const NO_OUTPUT_ANSWERS: ReadonlyMap<string, OutputAdoptionAnswer> = new Map();
 
 function outputAnswerOf(result: WorkspaceOutputAdoptionResult): OutputAdoptionAnswer {
   const [outcome] = result.outcomes;
-  return outcome === undefined ? { kind: "refused", reason: "" }
+  return outcome === undefined ? { kind: "refused", reason: "outputs_not_adoptable" }
     : outcome.kind === "refused" ? { kind: "refused", reason: outcome.reason }
     : { kind: outcome.kind, handle: outcome.dataset.handle };
 }
@@ -282,6 +283,8 @@ export interface ConversionOperation {
   readonly canAdopt: boolean;
   /** Whether an adoption this document asked for has not been answered. */
   readonly adopting: boolean;
+  /** The one output that adoption names, or `null` for the queue-wide Add and for none. */
+  readonly adoptingOutput: string | null;
   /** How many of this queue's items finalized an output. */
   readonly eligibleOutputCount: number;
   /**
@@ -621,6 +624,7 @@ export function useConversionOperation(
   // because every workspace action has to stop being offered for the whole of
   // that window rather than only once Rust answers.
   const [adopting, setAdopting] = useState(false);
+  const [adoptedOutput, setAdoptedOutput] = useState<string | null>(null);
   // Paired with the state above and read by the handler, like every other gate
   // here: a click handler that read the rendered value could start a second
   // adoption inside the render that has not committed the first one yet.
@@ -1445,10 +1449,11 @@ export function useConversionOperation(
     // Marked before the request leaves, like every other gate here: the actions
     // this closes must close on the press rather than on the reply.
     setAdopting(true);
+    setAdoptedOutput(outputId ?? null);
     setFailure(null);
     const { operationId } = state;
     const { retryRound } = state.queue;
-    const count = outputId === undefined ? state.queue.adoptableOutputCount : 1;
+    const count = state.queue.adoptableOutputCount;
     // One answer per output, and the two kinds of answer never stand together:
     // a queue-wide summary and a per-output line about the same rows could
     // disagree (ADR 0052 decision 5).
@@ -1500,13 +1505,15 @@ export function useConversionOperation(
         }
         setAdopting(false);
         const error = toPreviewError(cause);
-        // This refusal's own copy speaks of the whole queue, which is wrong for
-        // one output of a queue that still offers others (ADR 0052 decision 3).
-        if (outputId !== undefined && error.kind === "outputs_not_adoptable") {
-          rememberOutput(outputId, { kind: "refused", reason: error.kind });
-        } else {
+        if (outputId === undefined) {
           setFailure({ request: "adopt", count, error });
+          return;
         }
+        // On the output's own line, always. The queue's notice is at the head of
+        // a list this output may be far down, out of sight of the press. And
+        // this refusal's own copy speaks of the whole queue, which is wrong for
+        // one output of a queue that still offers others (ADR 0052 decision 3).
+        rememberOutput(outputId, error.kind === "outputs_not_adoptable" ? { kind: "refused", reason: error.kind } : { kind: "failed", error });
       });
   }, [api, onOutputsAdopted, readState, state]);
 
@@ -1607,6 +1614,7 @@ export function useConversionOperation(
     outputAnswers: outputAnswers?.byOutput ?? NO_OUTPUT_ANSWERS,
     canAdopt,
     adopting,
+    adoptingOutput: adopting ? adoptedOutput : null,
     eligibleOutputCount,
     adoption,
     exportDiagnostics,

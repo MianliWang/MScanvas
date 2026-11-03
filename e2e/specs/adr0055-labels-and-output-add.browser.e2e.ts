@@ -104,9 +104,9 @@ function labelledViewerWorld(locale: Locale, fileName: string): Record<string, u
   return table;
 }
 
-async function open(table: Record<string, unknown>, locale: Locale, width: number, height: number) {
+async function open(table: Record<string, unknown>, locale: Locale, width: number, height: number, hold: readonly string[] = []) {
   await metrics(width, height);
-  await installIpcBoundary(table);
+  await installIpcBoundary(table, { hold });
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
   await browser.waitUntil(() => browser.execute((lang: string) => document.documentElement.lang === lang, locale));
@@ -132,6 +132,7 @@ async function unexpectedConsole(): Promise<string[]> {
 const group = (locale: Locale, name: string) =>
   `.output-open-actions[aria-label="${BUNDLES[locale].outputOpenGroup.replace("{{name}}", name)}"]`;
 const OUTPUT_ADD = "button:nth-of-type(3)";
+const EVERY_SIZE = [["en", 1366, 768], ["en", 960, 640], ["zh-CN", 1366, 768], ["zh-CN", 960, 640]] as const;
 
 describe("A0055 and ADR 0052, rendered", () => {
   for (const [locale, width, height] of [["en", 1366, 768], ["zh-CN", 960, 640]] as const) {
@@ -289,10 +290,159 @@ describe("A0055 and ADR 0052, rendered", () => {
     const scope = group("en", OUTPUT_NAME);
     await browser.$(`${scope} ${OUTPUT_ADD}`).waitForExist({ timeout: 30_000 });
     await browser.$(`${scope} ${OUTPUT_ADD}`).click();
-    const sentence = en.m74CnvNotAdded.replace("{{name}}", OUTPUT_NAME).replace("{{reason}}", en.m74CnvAdoptUnverified);
+    const sentence = en.m74CnvNotAdded.replace("{{name}}", OUTPUT_NAME).replace("{{reason}}", en.cnvAdoptionReasonNotOffered);
     await browser.waitUntil(async () => (await browser.$(`${scope} [role="status"]`).getText()) === sentence, { timeout: 15_000 });
     expect(await browser.$(".conversion-notice").isExisting()).toBe(false);
     await shot("output-refused-en-960");
+  });
+
+  for (const [locale, width, height] of EVERY_SIZE) {
+    const size = `${locale} ${String(width)}x${String(height)}`;
+    /** Member 20 of 24, far enough down that the head of the list has scrolled away. */
+    const pressMemberTwenty = async () => {
+      const add = `${group(locale, SET_NAMES[19]!)} ${OUTPUT_ADD}`;
+      await browser.$(add).waitForExist({ timeout: 30_000 });
+      await browser.$(add).scrollIntoView({ block: "center" });
+      await browser.$(add).click();
+    };
+
+    it(`says a failed Add on that member's line, in view, down a long set, ${size}`, async () => {
+      const table = conversionWorld(locale, [WIFF], setFinished());
+      table.adopt_workspace_conversion_output = { __reject: { kind: "adoption_superseded", summary: "moved", detail: null, retryable: true } };
+      await open(table, locale, width, height);
+      await showConversion();
+      await pressMemberTwenty();
+      const line = `${group(locale, SET_NAMES[19]!)} [role="status"]`;
+      const sentence = BUNDLES[locale].m74ErrorAdoptionChanged;
+      await browser.waitUntil(async () => (await browser.$(line).getText()) === sentence, { timeout: 15_000 });
+      const seen = await browser.execute((css: string) => {
+        const box = document.querySelector(css)!.getBoundingClientRect();
+        return {
+          inView: box.height > 0 && box.top >= 0 && box.bottom <= document.querySelector(".workbench-status")!.getBoundingClientRect().top,
+          queueNotice: document.querySelector(".conversion-notice") !== null,
+          overflowX: document.documentElement.scrollWidth - innerWidth,
+        };
+      }, line);
+      await shot(`set-member-failed-${locale}-${String(width)}`);
+      expect(seen).toEqual({ inView: true, queueNotice: false, overflowX: 0 });
+      expect(await browser.$(`${group(locale, SET_NAMES[19]!)} ${OUTPUT_ADD}`).getAttribute("aria-disabled")).toBeNull();
+    });
+
+    it(`says an Add under way on that member's line and in the status bar, ${size}`, async () => {
+      await open(conversionWorld(locale, [WIFF], setFinished()), locale, width, height, ["adopt_workspace_conversion_output"]);
+      await showConversion();
+      await pressMemberTwenty();
+      const pressed = group(locale, SET_NAMES[19]!);
+      await browser.waitUntil(async () => (await browser.$(`${pressed} [role="status"]`).getText()) === BUNDLES[locale].outputAdding, { timeout: 15_000 });
+      const seen = await browser.execute((button: string, one: string, other: string) => {
+        const reason = (css: string) => {
+          const add = document.querySelector<HTMLElement>(css)!;
+          const said = document.getElementById(add.getAttribute("aria-describedby")!)!;
+          const box = said.getBoundingClientRect();
+          const text = said.querySelector<HTMLElement>(".status-item-text") ?? said;
+          return {
+            refused: add.getAttribute("aria-disabled"),
+            text: said.textContent,
+            inView: box.height > 0 && box.top >= 0 && box.bottom <= innerHeight,
+            clipped: text.scrollWidth > text.clientWidth + 1,
+          };
+        };
+        return { pressed: reason(`${one} ${button}`), other: reason(`${other} ${button}`) };
+      }, OUTPUT_ADD, pressed, group(locale, SET_NAMES[2]!));
+      await shot(`set-member-adding-${locale}-${String(width)}`);
+      const line = BUNDLES[locale].outputAdding;
+      const bar = BUNDLES[locale].shellContextActivity.replace("{{activity}}", BUNDLES[locale].m74CnvAdoptOneInFlight);
+      expect(seen).toEqual({
+        pressed: { refused: "true", text: line, inView: true, clipped: false },
+        other: { refused: "true", text: bar, inView: true, clipped: false },
+      });
+    });
+
+    for (const length of [100, 165]) {
+      it(`wraps a refused output's name of ${String(length)} characters inside the results, ${size}`, async () => {
+        const name = `${"Q".repeat(length - 5)}.mzML`;
+        const finished = {
+          ...LABELLED_FINISHED,
+          queue: queueOf(LABELLED_FINISHED.queue.items.map((item) => ({ ...item, finalizedOutputs: [{ outputId: "output-1", fileName: name }] }))),
+        };
+        const table = conversionWorld(locale, [RAW], finished);
+        table.adopt_workspace_conversion_output = {
+          operationId: OPERATION,
+          retryRound: 0,
+          roster: { datasets: [RAW], capacity: 1024 },
+          outcomes: [{ kind: "refused", itemIndex: 0, memberIndex: 0, sourceHandle: RAW.handle, outputFileName: name, reason: "output_changed" }],
+        };
+        await open(table, locale, width, height);
+        await showConversion();
+        const scope = group(locale, name);
+        await browser.$(`${scope} ${OUTPUT_ADD}`).waitForExist({ timeout: 30_000 });
+        await browser.$(`${scope} ${OUTPUT_ADD}`).click();
+        const sentence = BUNDLES[locale].m74CnvNotAdded.replace("{{name}}", name).replace("{{reason}}", BUNDLES[locale].cnvAdoptionReasonChanged);
+        await browser.waitUntil(async () => (await browser.$(`${scope} [role="status"]`).getText()).replace(/\s/gu, "") === sentence.replace(/\s/gu, ""), { timeout: 15_000 });
+        const seen = await browser.execute((css: string) => {
+          const panel = document.querySelector(".conversion-run-list")!.getBoundingClientRect().right;
+          const surface = document.querySelector<HTMLElement>(".workbench-conversion")!;
+          const tag = document.querySelector<HTMLElement>(`${css} [data-not-verified]`)!;
+          return {
+            line: document.querySelector(`${css} [role="status"]`)!.getBoundingClientRect().right <= panel + 1,
+            tag: tag.getBoundingClientRect().right <= panel + 1,
+            tagWhole: tag.scrollWidth <= tag.clientWidth + 1,
+            sideways: surface.scrollWidth > surface.clientWidth,
+            overflowX: document.documentElement.scrollWidth - innerWidth,
+          };
+        }, scope);
+        await shot(`output-refused-long-${String(length)}-${locale}-${String(width)}`);
+        expect(seen).toEqual({ line: true, tag: true, tagWhole: true, sideways: false, overflowX: 0 });
+      });
+    }
+
+    it(`keeps the figure dialog's head and label in place under a long name, ${size}`, async () => {
+      await open(labelledViewerWorld(locale, `${"Q".repeat(160)}.mzML`), locale, width, height);
+      await revealRosterRow(MZML_ROW.handle);
+      await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+      await selectTheSpectrum(0);
+      await answerFigurePreviews();
+      await openFigureDialog(".spectrum-panel");
+      await waitForFigurePreview();
+      const seen = await browser.execute(() => {
+        const dialog = document.querySelector<HTMLElement>(".figure-export-dialog")!;
+        const { left, right } = dialog.getBoundingClientRect();
+        const tag = document.querySelector<HTMLElement>(".figure-export-heading [data-not-verified]")!.getBoundingClientRect();
+        const source = document.querySelector<HTMLElement>(".figure-export-source")!;
+        const close = document.querySelector(".figure-export-head button")!.getBoundingClientRect();
+        return {
+          scrolled: dialog.scrollLeft,
+          wider: dialog.scrollWidth - dialog.clientWidth,
+          tagInside: tag.left >= left && tag.right <= right,
+          sourceCut: source.scrollWidth > source.clientWidth,
+          closeWhole: close.right <= right && Math.abs(close.width - close.height) <= 1,
+        };
+      });
+      await shot(`figure-dialog-long-${locale}-${String(width)}`);
+      expect(seen).toEqual({ scrolled: 0, wider: 0, tagInside: true, sourceCut: true, closeWhole: true });
+    });
+  }
+
+  it("hands the keyboard to Convert when Describe again leaves for a final refusal", async () => {
+    const table = conversionWorld("en", [RAW], { status: "idle" });
+    table.describe_workspace_conversion_queue = { __reject: { kind: "plan_unreadable", summary: "The plan was not read.", detail: null, retryable: true } };
+    await open(table, "en", 960, 640);
+    await showConversion();
+    await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+    const again = ".conversion-start-actions [data-describe-again]";
+    await browser.$(again).waitForExist({ timeout: 30_000 });
+
+    await setInvokeResult("describe_workspace_conversion_queue", { __reject: { kind: "dataset_not_convertible", summary: "That row is already mzML, so there is nothing to convert.", detail: null, retryable: false } });
+    await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), again);
+    await browser.keys(["Enter"]);
+    await browser.waitUntil(async () => !(await browser.$(again).isExisting()) && (await browser.$(".conversion-plan-pending").getText()).length > 0
+      && !(await browser.$(".conversion-plan-pending").getText()).includes("The plan was not read."), { timeout: 15_000 });
+    await browser.pause(200);
+    expect(await browser.execute(() => {
+      const convert = document.querySelector<HTMLElement>(".conversion-start")!;
+      return { onConvert: document.activeElement === convert, refused: convert.getAttribute("aria-disabled") };
+    })).toEqual({ onConvert: true, refused: "true" });
+    await shot("describe-again-final-en-960");
   });
 
   for (const [retryable, buttons] of [[false, 1], [true, 2]] as const) {

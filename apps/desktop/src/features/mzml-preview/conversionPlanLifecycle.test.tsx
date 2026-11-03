@@ -611,6 +611,41 @@ describe("the plan the panel is showing", () => {
     );
   });
 
+  it("hands the keyboard to Convert when Describe again leaves, through a final refusal", async () => {
+    const plans = controlledPlans();
+    await mount({ conversionPlan: plans.conversionPlan });
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => {
+      expect(plans.asked).toHaveLength(1);
+    });
+    await act(async () => {
+      plans.fail(0, previewError({ kind: "plan_unreadable", summary: "The plan was not read." }));
+      await Promise.resolve();
+    });
+    const again = await within(panel).findByRole("button", { name: "Describe again" });
+    again.focus();
+    fireEvent.click(again);
+    await waitFor(() => {
+      expect(plans.asked).toHaveLength(2);
+    });
+    const convert = within(panel).getByRole("button", { name: /^Convert/ });
+    await waitFor(() => {
+      expect(convert).toHaveFocus();
+    });
+
+    await act(async () => {
+      plans.fail(1, previewError({ kind: "queue_output_name_collision", retryable: false }));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveAccessibleDescription(
+        expect.stringContaining("This conversion could not be described."),
+      );
+    });
+    expect(within(panel).queryByRole("button", { name: "Describe again" })).toBeNull();
+    expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveFocus();
+  });
+
   it("renders the plan's own semantic rather than whatever the controls now say", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [FIRST, SECOND],

@@ -264,15 +264,15 @@ const SET_FINISHED = {
 };
 
 /** What the per-output command answers for an output `name` of the first item. */
-function outputAnswer(rows: readonly SelectedFile[], sourceHandle: string, name: string, outcome: "added" | "refused") {
+function outputAnswer(rows: readonly SelectedFile[], sourceHandle: string, name: string, outcome: "added" | "alreadyInWorkspace" | "refused") {
   const dataset: SelectedFile = { handle: "added-output", fileName: name, byteLength: 1_048_576, sourceKind: "mzml", relativeContext: null, notVerifiedByMscanvas: LABEL };
   return {
     operationId: OPERATION,
     retryRound: 0,
-    roster: { datasets: outcome === "added" ? [...rows, dataset] : rows, capacity: 1024 },
-    outcomes: [outcome === "added"
-      ? { kind: "added", itemIndex: 0, memberIndex: 0, sourceHandle, outputFileName: name, dataset }
-      : { kind: "refused", itemIndex: 0, memberIndex: 0, sourceHandle, outputFileName: name, reason: "workspace_full" }],
+    roster: { datasets: outcome === "refused" ? rows : [...rows, dataset], capacity: 1024 },
+    outcomes: [outcome === "refused"
+      ? { kind: "refused", itemIndex: 0, memberIndex: 0, sourceHandle, outputFileName: name, reason: "workspace_full" }
+      : { kind: outcome, itemIndex: 0, memberIndex: 0, sourceHandle, outputFileName: name, dataset }],
   };
 }
 
@@ -287,6 +287,23 @@ async function addTheFirstOutput() {
   await browser.$(OUTPUT_ADD).click();
   await frames();
 }
+
+/** The conversion surface, then the Add of member 20 of 24, with the list's head scrolled away. */
+async function addMemberTwenty() {
+  const add = `.output-open-actions[aria-label*="${SET_NAMES[19]!}"] button:nth-of-type(3)`;
+  await go(2);
+  await browser.$(add).waitForExist({ timeout: 30_000 });
+  await browser.$(add).scrollIntoView({ block: "center" });
+  await browser.$(add).click();
+  await frames();
+}
+
+/** A finished queue whose one labelled output has a name near the filesystem's limit. */
+const LONG_OUTPUT_NAME = `${"Plasma_QC_batch_08_replicate_04_".repeat(5)}.mzML`;
+const FINISHED_LONG_NAME = {
+  ...FINISHED_LABELLED,
+  queue: queueOf(FINISHED_LABELLED.queue.items.map((item) => ({ ...item, finalizedOutputs: [{ outputId: "long-name-output", fileName: LONG_OUTPUT_NAME }] }))),
+};
 
 /** The project's Details on that reference. */
 async function inspectLabelledReference() {
@@ -656,6 +673,23 @@ const STOPS: readonly Stop[] = [
   {
     name: "export-figure-not-verified",
     table: labelledMzmlRow,
+    drive: async () => {
+      await answerFigurePreviews();
+      await openSpectrum();
+      await openFigureDialog(".spectrum-panel");
+      await waitForFigurePreview();
+    },
+    anchor: ".figure-export-heading [data-not-verified]",
+  },
+  {
+    // Under a name far too long for its line: the head stays where it is.
+    name: "export-figure-not-verified-long",
+    table: (locale) => {
+      const table: Record<string, unknown> = labelledMzmlRow(locale);
+      const roster = table.get_workspace_roster as { datasets: SelectedFile[]; capacity: number };
+      table.get_workspace_roster = { ...roster, datasets: roster.datasets.map((row) => row.handle === MZML_ROW.handle ? { ...row, fileName: LONG_OUTPUT_NAME } : row) };
+      return table;
+    },
     drive: async () => {
       await answerFigurePreviews();
       await openSpectrum();
@@ -1069,6 +1103,37 @@ const STOPS: readonly Stop[] = [
     anchor: '.output-open-actions [role="status"]:not(:empty)',
   },
   {
+    // Already a row: its own line and Show in Workbench, nothing else said.
+    name: "conversion-output-already",
+    table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)), adopt_workspace_conversion_output: outputAnswer(ROWS, FIRST.handle, "QC_pool_01.mzML", "alreadyInWorkspace") }),
+    drive: addTheFirstOutput,
+    anchor: ".output-open-actions button:nth-of-type(4)",
+  },
+  {
+    // A refusal naming a long output: its line wraps inside the results.
+    name: "conversion-output-refused-long-name",
+    table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LONG_NAME)), adopt_workspace_conversion_output: outputAnswer(ROWS, FIRST.handle, LONG_OUTPUT_NAME, "refused") }),
+    drive: addTheFirstOutput,
+    anchor: '.output-open-actions [role="status"]:not(:empty)',
+  },
+  {
+    // Member 20 of 24 pressed: its line says so, and the status bar for the rest.
+    name: "conversion-set-member-adding",
+    table: (locale) => conversionWorld(locale, SET_FINISHED, [SET_ROW]),
+    hold: ["adopt_workspace_conversion_output"],
+    keepFocus: true,
+    drive: addMemberTwenty,
+    anchor: '.output-open-actions [role="status"]:not(:empty)',
+  },
+  {
+    // Member 20 of 24 refused: on its line, where the press was, and not above.
+    name: "conversion-set-member-failed",
+    table: (locale) => ({ ...conversionWorld(locale, SET_FINISHED, [SET_ROW]),
+      adopt_workspace_conversion_output: { __reject: { kind: "adoption_superseded", summary: "The workspace changed.", detail: null, retryable: true } } }),
+    drive: addMemberTwenty,
+    anchor: '.output-open-actions [role="status"]:not(:empty)',
+  },
+  {
     // ADR 0052's rendered check: a large SCIEX set, one Add per member.
     name: "conversion-set-finished",
     table: (locale) => conversionWorld(locale, SET_FINISHED, [SET_ROW]),
@@ -1107,6 +1172,23 @@ const STOPS: readonly Stop[] = [
       await browser.$(".conversion-start-actions button:nth-of-type(2)").waitForExist({ timeout: 30_000 });
     },
     anchor: ".conversion-start-actions button:nth-of-type(2)",
+  },
+  {
+    // Describe again answered with a final refusal: the keyboard is on Convert.
+    name: "conversion-plan-refused-after-describe-again",
+    table: (locale) => ({ ...conversionWorld(locale, { status: "idle" }), describe_workspace_conversion_queue: { __reject: { kind: "plan_unreadable", summary: "The plan was not read.", detail: null, retryable: true } } }),
+    keepFocus: true,
+    drive: async () => {
+      await go(2);
+      await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+      await browser.$("[data-describe-again]").waitForExist({ timeout: 30_000 });
+      await setInvokeResult("describe_workspace_conversion_queue", { __reject: { kind: "dataset_not_convertible", summary: "That row is already mzML, so there is nothing to convert.", detail: null, retryable: false } });
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-describe-again]")?.focus());
+      await browser.keys("Enter");
+      await browser.$("[data-describe-again]").waitForExist({ reverse: true, timeout: 15_000 });
+      await frames();
+    },
+    anchor: ".conversion-start:focus",
   },
   {
     // Its results at the queue's full size: windowed, every row labelled.

@@ -1,7 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Button, Icon } from "../../components/ui";
+import { joinSentences } from "../preferences/i18n";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { usePreviewApi } from "./api";
+import { conversionErrorMessage } from "./conversionMessages";
+import { ownedErrorDetail } from "./ownedErrorMessages";
 import type { FinalizedOutput, NotVerifiedByMscanvas, OutputOpenAction, OutputOpenOutcome, OutputOpenRefusal } from "./contracts";
 import { notAddedSentence } from "./ConversionItemJudgements";
 import { NotVerifiedTag } from "./NotVerifiedTag";
@@ -20,6 +23,8 @@ export interface OutputAddOffer {
   readonly refused: boolean;
   /** What says why Add is refused, while it is. */
   readonly refusedBy: string | null;
+  /** Whether the adoption under way is this output's. */
+  readonly adding: boolean;
   /** What the latest Add of this output did. */
   readonly answer: OutputAdoptionAnswer | null;
   readonly notVerified: NotVerifiedByMscanvas | null;
@@ -34,7 +39,7 @@ export function OutputOpenActions({ output, add = null }: { readonly output: Fin
   const [answer, setAnswer] = useState<OutputOpenOutcome | "failed" | null>(null);
   // The one status line says the action pressed last.
   const [openedLast, setOpenedLast] = useState(false);
-  const claimed = useRef(false); const live = useRef(true); const statusId = useId();
+  const claimed = useRef(false); const live = useRef(true); const statusId = useId(); const labelId = useId();
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const open = (action: OutputOpenAction) => {
     if (claimed.current) return;
@@ -46,10 +51,13 @@ export function OutputOpenActions({ output, add = null }: { readonly output: Fin
   };
   const opened = working !== null ? t("outputOpening") : answer === "failed" ? t("outputPlatformFailure") : answer?.status === "accepted" ? t("outputOpenAccepted") : answer?.status === "refused" ? t(REFUSAL[answer.reason]) : "";
   const last = add?.answer ?? null;
-  const added = last === null ? "" : last.kind === "refused" ? notAddedSentence(output.fileName, last.reason, t)
+  const added = last === null ? ""
+    : last.kind === "refused" ? notAddedSentence(output.fileName, last.reason, t)
+    : last.kind === "failed" ? joinSentences(t, [conversionErrorMessage(last.error, t), ownedErrorDetail(last.error, t) ?? ""])
     : t(last.kind === "added" ? "outputAdded" : "outputAlreadyInWorkspace");
   const show = add?.onShow ?? null;
-  const shown = last !== null && last.kind !== "refused" && show !== null ? { handle: last.handle, show } : null;
+  const shown = last !== null && "handle" in last && show !== null ? { handle: last.handle, show } : null;
+  const adding = add?.adding === true;
   // Both stay Tab stops while one request is out; the status line below says
   // why they are refused ("Opening…").
   return <div className="output-open-actions" role="group" aria-label={t("outputOpenGroup", { name: output.fileName })}>
@@ -58,13 +66,14 @@ export function OutputOpenActions({ output, add = null }: { readonly output: Fin
       icon={<Icon name={action} />} refused={working !== null} reasonId={statusId}
       onClick={() => open(action)}>{t(action === "file" ? "outputOpenFile" : "outputOpenFolder")}</Button>)}
     {add === null ? null : <>
-      <Button variant="secondary" size="sm" icon={<Icon name="plus" />} refused={add.refused} reasonId={add.refusedBy ?? undefined}
+      <Button variant="secondary" size="sm" icon={<Icon name="plus" />} refused={add.refused} reasonId={adding ? statusId : add.refusedBy ?? undefined}
         aria-label={t("outputAddNamed", { name: output.fileName })}
+        aria-describedby={add.notVerified === null ? undefined : labelId}
         onClick={() => { setOpenedLast(false); add.onAdd(); }}>{t("outputAdd")}</Button>
-      <NotVerifiedTag label={add.notVerified} />
+      <NotVerifiedTag label={add.notVerified} id={labelId} />
     </>}
     {shown === null ? null : <Button variant="secondary" size="sm" aria-label={t("projectShowInWorkbenchNamed", { name: output.fileName })}
       onClick={() => shown.show(shown.handle)}>{t("projectShowInWorkbench")}</Button>}
-    <p role="status" id={statusId}>{openedLast ? opened || added : added || opened}</p>
+    <p role="status" id={statusId}>{adding ? t("outputAdding") : openedLast ? opened || added : added || opened}</p>
   </div>;
 }
