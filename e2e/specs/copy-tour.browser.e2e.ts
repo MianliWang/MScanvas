@@ -426,7 +426,8 @@ async function openRestoreSettings(section: string) {
   await browser.$("[data-settings-entry]").click();
   await browser.$("[data-settings-dialog]").waitForDisplayed();
   await browser.$(section).waitForExist();
-  await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "center" }), section);
+  // Nearest, as focus scrolls: centring also scrolls the dialog's own clipped box.
+  await browser.execute((css: string) => document.querySelector(css)?.scrollIntoView({ block: "nearest" }), section);
 }
 
 const DECLARED_UNITS = { mzUnit: { state: "declared", accession: "MS:1000040" }, intensityUnit: { state: "declared", accession: "MS:1000131" } };
@@ -1297,9 +1298,12 @@ const STOPS: readonly Stop[] = [
     name: "run-history-band",
     table: runHistoryWorld(listed(MANY_RUNS.slice(0, 20)), found(MANY_RUNS[15]!, ENDED_ITEMS)),
     narrowOnly: true,
+    keepFocus: true,
     drive: async () => {
       await openRunHistory();
       await browser.$(`[data-run-row="${MANY_RUNS[15]!.runId}"]`).click();
+      // The keyboard's ring on the row chosen, whole inside the rail's box.
+      await tabFrom("[data-run-history-refresh]", 16);
     },
     anchor: `[data-run-detail="${MANY_RUNS[15]!.runId}"] [data-run-item]`,
   },
@@ -1407,7 +1411,7 @@ const STOPS: readonly Stop[] = [
   {
     name: "settings-run-history-refused",
     table: runHistoryWorld(REQUEST_REFUSED),
-    drive: openSettings,
+    drive: () => openSettings("[data-run-history-setting-retry]"),
     anchor: "[data-run-history-setting-retry]",
   },
   // Workspace restore (ADR 0061): what the start-up read found, over a first run.
@@ -1494,9 +1498,9 @@ async function clearRunHistory() {
   await browser.$("[data-run-history-forget]").click();
 }
 
-async function openSettings() {
-  await browser.$("[data-settings-entry]").click();
-  await browser.$("[data-settings-dialog]").waitForDisplayed();
+/** Settings, at the history's switch: workspace restore sits above it, and the dialog scrolls in a short window. */
+function openSettings(section = "[data-run-history-setting]") {
+  return openRestoreSettings(section);
 }
 
 async function expandBackend() {
