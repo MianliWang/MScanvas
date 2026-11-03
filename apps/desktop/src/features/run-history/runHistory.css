@@ -5,13 +5,10 @@
 .run-history > .conversion-side { grid-area: 1 / 2; }
 .run-history h2 { outline: none; }
 .run-history .conversion-main > .notice:first-child { margin-top: 12px; }
-.run-history .conversion-side { min-height: 0; }
 .run-history-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .run-history-list {
   display: flex;
-  min-height: 0;
-  flex: 0 1 auto;
   flex-direction: column;
   gap: 6px;
   margin: 0;
@@ -44,8 +41,7 @@
 .run-history-when { min-width: 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .run-history-counts { color: var(--color-text-secondary); font-size: 12px; font-weight: 400; }
 
-[data-run-state="running"] > * > .run-history-state,
-[data-run-state="running"] > .conversion-column-head > .run-history-state {
+[data-run-state="running"] > * > .run-history-state {
   background: var(--color-surface-selected);
   color: var(--color-accent-hover);
 }
@@ -78,7 +74,7 @@
 
 /* What the record says of an item whose outcome no one knows: not a failure. */
 .conversion-run-list > li[data-item-state="interrupted"] > .conversion-run-symbol {
-  border-color: #e6cf9a;
+  border-color: var(--color-warning);
   background: var(--color-warning-soft);
   color: var(--color-warning);
 }

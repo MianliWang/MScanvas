@@ -226,7 +226,7 @@ function RunDetail({ run, read: answer, catalog }: {
   return (
     <div className="conversion-running conversion-run-rows" data-run-detail={shown.runId} data-run-state={shown.state}>
       <div className="conversion-column-head">
-        <h3 id="run-history-run-heading">{t("runHistoryRunTitle", { when: formatRunTime(shown.startedAtMs, locale) })}</h3>
+        <h3>{t("runHistoryRunTitle", { when: formatRunTime(shown.startedAtMs, locale) })}</h3>
         <span className="conversion-queue-status run-history-state">{t(RUN_STATE_LABEL[shown.state])}</span>
       </div>
       <dl className="metadata-list conversion-summary-dl run-history-facts">
