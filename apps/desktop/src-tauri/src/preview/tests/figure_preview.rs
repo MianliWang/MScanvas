@@ -261,6 +261,9 @@ fn a_labelled_row_s_figures_say_so_in_the_preview_and_in_every_saved_document() 
             outcomes: Vec::new(),
         },
         &pair.handle,
+        service
+            .dataset_object_identities(&pair.handle)
+            .expect("a row")[0],
         crate::project::record::NotVerifiedByMscanvas::of(false, Some(RELEASE.to_owned()))
             .expect("a label"),
     );
@@ -372,6 +375,9 @@ fn labelled_session(release: &str) -> (TestFile, PreviewService, LinkedSession) 
             outcomes: Vec::new(),
         },
         &pair.handle,
+        service
+            .dataset_object_identities(&pair.handle)
+            .expect("a row")[0],
         crate::project::record::NotVerifiedByMscanvas::of(false, Some(release.to_owned()))
             .expect("a label"),
     );

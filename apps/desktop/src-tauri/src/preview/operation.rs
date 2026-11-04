@@ -1578,14 +1578,18 @@ impl ConversionSlot {
         self.object_labels.get(&identity).cloned()
     }
 
-    /// Keeps the whole label of a row's object. A row took what this table held
-    /// when it was registered, so nothing here says more than `label` does.
+    /// Gains a label for an object, merged with any this table holds: what
+    /// either says stays said, as on a row.
     pub(super) fn remember_object_label(
         &mut self,
         identity: (u64, [u8; 16]),
         label: NotVerifiedByMscanvas,
     ) {
-        self.object_labels.insert(identity, label);
+        let whole = match self.object_labels.remove(&identity) {
+            Some(held) => held.merged(label),
+            None => label,
+        };
+        self.object_labels.insert(identity, whole);
     }
 
     pub(super) fn attach_staging_recovery(

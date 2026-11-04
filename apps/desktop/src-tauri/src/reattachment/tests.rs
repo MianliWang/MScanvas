@@ -459,6 +459,77 @@ fn a_label_a_reference_brought_outlives_the_row_it_was_brought_to() {
     assert_eq!(next_reference_records(), label, "from the row added back");
 }
 
+/// Two references that say different things of one object leave the whole of it
+/// known once the row has left, not one reference's half (ADR 0055: as built in
+/// PR #201, 2026-11-03, not an owner decision).
+#[cfg(windows)]
+#[test]
+fn what_two_references_brought_outlives_the_row_whole() {
+    let settings = NotVerifiedByMscanvas::of(true, None);
+    let build = NotVerifiedByMscanvas::of(false, Some("3.0.26204".to_owned()));
+    let scratch = Scratch::new("reattach-labelled-two");
+    let path = scratch.write("converted.mzML", b"<mzML/>");
+    let service = workspace();
+    let mut handle = String::new();
+    for label in [settings, build] {
+        let project = ProjectStore::new();
+        project
+            .create("Labelled".to_owned(), false)
+            .expect("a new project");
+        let id = project
+            .register_input_labelled(&path, |_| label.clone())
+            .expect("register the labelled reference");
+        let result = add(&project, &service, id).expect("admitted");
+        admitted_handle(&result)
+            .expect("a row")
+            .clone_into(&mut handle);
+    }
+    service
+        .remove_datasets(std::slice::from_ref(&handle))
+        .expect("remove the row");
+
+    service
+        .add_files(std::slice::from_ref(&path))
+        .expect("the object added back");
+
+    assert_eq!(
+        service.roster().datasets[0].not_verified_by_mscanvas,
+        NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()))
+    );
+}
+
+/// A row removed in the moment before its label is given does not forget that
+/// label: the project proved the object, whether or not the row is still there
+/// (ADR 0055: as built in PR #201, 2026-11-03, not an owner decision).
+#[cfg(windows)]
+#[test]
+fn a_label_that_finds_its_row_gone_is_still_known_to_the_object() {
+    let label = NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    let scratch = Scratch::new("reattach-labelled-gone");
+    let path = scratch.write("converted.mzML", b"<mzML/>");
+    let service = workspace();
+    let mut result = service
+        .add_files(std::slice::from_ref(&path))
+        .expect("the ordinary import");
+    let handle = admitted_handle(&result).expect("a row").to_owned();
+    let primary = service.dataset_object_identities(&handle).expect("a row")[0];
+    service
+        .remove_datasets(std::slice::from_ref(&handle))
+        .expect("remove the row");
+
+    service.label_admitted_row(
+        &mut result,
+        &handle,
+        primary,
+        label.clone().expect("a label"),
+    );
+
+    service
+        .add_files(std::slice::from_ref(&path))
+        .expect("the object added back");
+    assert_eq!(service.roster().datasets[0].not_verified_by_mscanvas, label);
+}
+
 // ---------------------------------------------------------------------------
 // Lifetime: neither collection owns the other
 // ---------------------------------------------------------------------------

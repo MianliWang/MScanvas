@@ -1751,13 +1751,18 @@ impl PreviewService {
     /// brings it to the row (ADR 0055: as built, review of 2026-10-31 (PR #161),
     /// not an owner decision). Called only once the project has claimed `handle`,
     /// which is what proves the row is the object the label was recorded for.
+    /// `identity` is the object that claim was of. The table hears first and is
+    /// let go of, so a row that has left by now does not forget it either.
     /// Memory only.
     pub(crate) fn label_admitted_row(
         &self,
         result: &mut WorkspaceAddResultDto,
         handle: &str,
+        identity: (u64, [u8; 16]),
         label: NotVerifiedByMscanvas,
     ) {
+        self.conversion_slot()
+            .remember_object_label(identity, label.clone());
         let Some(id) = DatasetId::parse(handle) else {
             return;
         };
@@ -1767,16 +1772,8 @@ impl PreviewService {
             return;
         };
         result.roster = roster_of(&workspace);
-        let primary = workspace
-            .registry
-            .get(id)
-            .and_then(|row| row.object_identities().first().copied());
         drop(workspace);
         drop(gate);
-        if let Some(identity) = primary {
-            self.conversion_slot()
-                .remember_object_label(identity, held.clone());
-        }
         for outcome in &mut result.outcomes {
             if let WorkspaceAddOutcomeDto::Added { dataset }
             | WorkspaceAddOutcomeDto::Duplicate { existing: dataset } = outcome
