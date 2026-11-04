@@ -147,7 +147,7 @@ removes its block.
 named apart from the roster's own row groups. Ids make a
 rename one edit and keep a statistic's group identity stable. No two groups share
 a label and no two batches do, compared without regard to ASCII case
-(`studyDuplicateLabel` otherwise), so a label names one group in the interface
+(`duplicateLabel` otherwise), so a label names one group in the interface
 and in the CSV of decision 11. Validation refuses a block or an imported sample
 that names an entry the project does not list (`danglingReference`), so an entry
 still named cannot be removed.
@@ -173,7 +173,7 @@ study with unclassified samples takes B-6.3's "otherwise" or is refused.
 layers (among layers with no batch, for a layer with none) when a block is
 written, and again when a revision is computed, over every sample the revision
 lists, because a layer-backed and an imported sample can meet there. A repeat is
-refused, naming the samples.
+refused, naming the samples. A `null` order is not compared, so it never repeats.
 
 The study is **current state**, edited in place like layers, not history. What
 a run used is pinned by the revision it was given (decision 2), so editing a
@@ -587,7 +587,9 @@ a reserved slot. This closes, for study runs, the M9 closure's limit that
 - **Reuse.** A later run of a per-sample step can reuse a completed output whose
   **key** is equal. The key is the SHA-256 of the canonical per-sample request
   (recipe binding, parameters, and every upstream input the invocation is
-  given) together with the consumed content's digest. The key holds nothing
+  given) together with the consumed content's digest. For U1, CK-6 keeps the
+  thread count in the key, as a parameter, until real files prove the result does
+  not change. The key holds nothing
   else of the study: not the revision digest, and not the sample's role,
   group, batch or order, so editing the study or a layer's block, or adding
   samples, changes no detection key. Gap filling's key does change when the cross-sample result it
@@ -693,9 +695,11 @@ of decisions 1, 4, 5, 7, 9 and 12 that treats an import as a study step or names
 its review or plan. Those are decision 1's import review adding samples as a study
 edit; decision 4's single input and no attempt for an import; decision 5's import
 as a Rust step, with its failure codes; decision 7's plan that records the
-declarations (B-6.12 and B-6.13 themselves are answered); decision 9's polarity at
-the import's review; and decision 12's first consumer of the study words. Decision
-11's sample CSV import is a different import and does not rest on it.
+declarations (B-6.12 and B-6.13 themselves are answered) and its sentence on a
+sample whose import failed; decision 9's polarity at the import's review; and
+decision 12's first consumer of the study words. Decision 11's sample CSV import is
+a different import: its rows that address layers do not rest on it, and its rows
+that address imported samples do, because only that import review creates them.
 
 **Imported tables** (Track A) are written into the same format when they are
 imported. The table file is first a project reference; how it becomes one is
@@ -720,7 +724,7 @@ The cell state is a closed vocabulary, one byte a cell. It belongs to the
 | --- | --- | --- |
 | `measured` | detected in that sample by the per-sample step | yes |
 | `reintegrated` | found again in that sample's raw data by gap filling; a different quantity from a detection: the engine's raw point sum (B-7.2), a sum of points, not an area in intensity × time | yes, not used by a test for now (CK-3) |
-| `engineImputed` | the engine's fit failed for that cell, and the intensity it returned is imputed, not measured (M9.0: a failed fit imputed by regression). A backfilled cell of this state holds the raw point sum instead (the dated line below) | yes, never used by a test |
+| `engineImputed` | the engine's fit failed for that cell, and the intensity it returned is imputed, not measured (M9.0: a failed fit imputed by regression). The matrix does not keep that intensity: the cell holds the raw point sum (the dated line below) | yes, never used by a test |
 | `engineDiscarded` | the engine discarded every feature of the request because no fit in it was valid (`ENGINE_DISCARDED_NO_VALID_FIT`). The legend says this is a failure of the whole fit, not a finding about one feature | none; the state is its own reason |
 | `undecided` | the step could not decide for that sample; never an absence (M9 closure §3.2) | none; a reason code in the block's reason file |
 | `missing` | not found in that sample, which is not proof of absence | none |
@@ -731,8 +735,14 @@ cell holds, and M9.0 found a peak's raw area the same in a run where its fit fai
 and a run where it was valid. So a backfilled cell whose fit failed holds the raw
 point sum, not the imputed number, and is `engineImputed`, not `reintegrated`. That
 keeps the failed fit visible and keeps the cell out of tests even if A-22 lets
-`reintegrated` in. The state's legend and the export's state column say that such a
-value is a raw point sum, not an imputed number.
+`reintegrated` in. One state byte cannot say which of two quantities a cell holds,
+and nothing else in the format says so per cell, so this is a rule of
+`mscanvas.studyMatrix/1`: an `engineImputed` value is always the raw point sum, and
+the engine's imputed number is never stored in a matrix. A step that could supply
+only the imputed number needs a new version of the format with a state word of its
+own, which B-6.5's seven do not include and the owner would have to add. The state's
+legend and the export's state column say that the value is a raw point sum, not an
+imputed number.
 
 - **A failure is not a missing value.** A cell is `undecided` where the step
   could not decide: the M9 `FAILED` reasons `EXTRACTION_AT_SPECTRUM_EDGE`,
@@ -789,10 +799,12 @@ value is a raw point sum, not an imputed number.
   source state. If imputation is admitted, its state word is added then, as a
   new version of the matrix format; the document schema does not change.
 
-### 8. Derived files are new artifacts, never overwrites
+### 8. Derived files never overwrite
 
 Every intermediate a step makes is a new artifact, or a member of the step's
-artifact, published by a no-replace rename. Nothing is written to a source, to
+artifact, published by a no-replace rename. The one exception is an
+acquisition-scale derived file, which goes in the application cache (B-6.14,
+below). Nothing is written to a source, to
 an input's file or to an earlier artifact.
 
 **Acquisition-scale derived files** (a centroided or RT-transformed mzML, 1–2 GiB)
@@ -811,7 +823,7 @@ are not produced in the first build:
   chosen here. The gap-filling recipe's record must show on a fixture that it
   matches requantification of an aligned file. If the transformation is not
   invertible, or the result does not match, an aligned-file route needs its
-  own record, and its file is a new artifact.
+  own record, and its file goes in the application cache (B-6.14, below).
 
 If a later record needs such a file, it goes in the application cache, an
 MSCanvas-owned cache like ADR 0060's, and the result records its digest (B-6.14).
@@ -1099,8 +1111,9 @@ outcomes.
   memory multiplied by the worker count, contention for work-area copies, and
   peak memory per worker is unmeasured for untargeted detection. Decision 3
   keeps the records ready for it.
-- **Writing an aligned mzML per sample.** A new multi-GB file per sample, and
-  an overwrite risk; decision 8's inverse mapping is tried first.
+- **Writing an aligned mzML per sample as the first route.** A new multi-GB file
+  per sample, and an overwrite risk; decision 8's inverse mapping is tried first,
+  and only if it fails does such a file exist, in the application cache (B-6.14).
 - **Ignoring unknown CSV columns.** A column the user meant to import would be
   lost without a word; a refusal that names it is one edit to fix.
 - **Zero for a missing value**, in any file or table. It is a value, and a
@@ -1165,7 +1178,7 @@ No answer approves a dependency.*
 | 7 | B-6.8 `accept` | Long runs | Losing an unpublished run to a crash or a failed publication is accepted for the first build, with its staging kept and not recovered, and this is said plainly | Decision 5 |
 | 8 | B-6.14 `cache` | Acquisition-scale derived files | In the application cache, and the result records its digest | Decision 8 |
 | 9 | B-6.15 `generic`, S-6.2 (a) | The schema window and generic words | One generic step record. Schema 5 stays open until a release ships it; if a release ships first, these records take schema 6 under the same read-and-upgrade rule. Accepted cost: test projects written by development builds may later be refused | Decision 12 |
-| 10 | B-6.9 `share`, with CK-6 | The parallel worker count | Computed per run from free memory, once measurements exist. The first build stays at one worker. CK-6 sets the thread range: default 1, from 1 to the logical core count. Accepted cost: one method's speed differs between runs; another program taking memory midway needs a guard; parallel work pushes files near the limit towards the 600 s timeout, so count × threads must stay within the logical core count. Decision 3's commit limit and the count's place are a reading, not an owner decision | Decision 3 |
+| 10 | B-6.9 `share`, with CK-6 | The parallel worker count | Computed per run from free memory, once measurements exist. The first build stays at one worker. CK-6 sets the thread range: default 1, from 1 to the logical core count, and keeps U1's thread count in the reuse key. Accepted cost: one method's speed differs between runs; another program taking memory midway needs a guard; parallel work pushes files near the limit towards the 600 s timeout, so count × threads must stay within the logical core count; a changed thread count reruns the sample until real files prove the result does not change. Decision 3's commit limit and the count's place are a reading, not an owner decision | Decisions 3, 5 |
 | - | CK-3 `no` | Do backfilled cells enter tests | Not for now. A-22 measures on real files, then the owner decides. They are still shown and exported, with their state | Decision 7 |
 | - | B-7.2 `raw` | The quantity in a backfilled cell | The engine's raw point sum. A-22 confirms | Decision 7 |
 | - | B-5 `both` | Negative mode | Both polarities from the first untargeted function | Decision 9 |
@@ -1184,8 +1197,8 @@ No answer approves a dependency.*
   columns and 2^27 cells were not asked separately.
 - **Question 10's reading:** the commit limit and the worker count's place (decision
   3) were not asked.
-- **A backfilled cell whose fit failed:** its state and its value are a reading
-  (decision 7).
+- **A backfilled cell whose fit failed:** its state, its value and the rule that an
+  `engineImputed` value is always the raw point sum are a reading (decision 7).
 - **For U2's recipe record:** which QC is the reference when several are marked,
   what B-6.3 does with a `null` role (decision 1), the LOWESS span, and KD's
   internal warp.
