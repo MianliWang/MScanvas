@@ -658,10 +658,15 @@ writer and Rust's ownership of files.
     and, with the box checked, removed the parent, when it finds nothing to do.
     It removes `view-cache` only where Rust would open it: spelled so, a plain
     directory under a parent that is no reparse point, with the marker byte for
-    byte, and with no reparse point anywhere below; otherwise nothing. It never
-    fails the uninstall and never prompts: a locked file stays with the marker,
-    so the root is still recognized and the next uninstall finishes it. A test in
-    `view_cache/tests.rs` pins its names to Rust's constants;
+    byte; and, narrower than Rust, with no reparse point anywhere below and every
+    folder listable; otherwise nothing. The cases where it removes nothing are not
+    an owner decision. It never fails the uninstall and never prompts: a locked
+    file stays with the marker, and the marker comes back if something holds the
+    root itself, so the root is still recognized and the next uninstall finishes
+    it. A test in `view_cache/tests.rs` pins its names to Rust's constants and
+    refuses any comparison by collation, which ignores some bytes and names;
+    `scripts/build_candidate.ps1` lists the hook among a candidate's inputs and
+    refuses a build whose generated script does not call it;
     `.github/workflows/uninstall-view-cache.yml`, not a required check, installs
     and uninstalls a debug build for real on a GitHub-hosted runner, and drives
     the interactive pages by window messages. With the box not checked the cache
@@ -674,15 +679,19 @@ writer and Rust's ownership of files.
     checked path does (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not
     changed; read with that run, not run itself: with the box checked, a junction
     under that folder loses its target's contents.
-  - *2026-11-03, read from `PageReinstall` and run on that runner (the same build,
-    with the recorded version set to 0.0.1), not an owner decision:* an installer
-    passes `/UPDATE` on to the old uninstaller only when it was given `/UPDATE`
-    itself. A person who runs a newer installer and keeps the page's first choice,
-    Uninstall before installing, therefore runs the old uninstaller without it,
-    and once that uninstaller carries the hook the cache goes; each file's next
-    View converts again. Presets and preferences stay. Installing over an install
-    with `/S` or `/S /UPDATE` runs no uninstaller and keeps the cache. The hook
-    cannot tell these apart by its switches.
+  - *2026-11-03, read from `PageLeaveReinstall` and run on that runner (the same
+    build, with the recorded version set to 0.0.1), not an owner decision:* no
+    installer passes `/UPDATE` to the old uninstaller. One given `/UPDATE` jumps
+    past the uninstall, so the template's line that appends the switch is never
+    reached, and the exception in DEF-2 counts only for someone who runs
+    `uninstall.exe /UPDATE` directly. A person who runs a newer installer and keeps
+    the page's first choice, Uninstall before installing, runs the old uninstaller
+    without it, and once that uninstaller carries the hook the cache goes; each
+    file's next View converts again. Presets and preferences stay. Installing over
+    an install with `/S` or `/S /UPDATE` runs no uninstaller and keeps the cache.
+    `/P` over the same version runs the uninstaller and the cache goes; `/P` over
+    an older version runs none and the cache stays. The hook cannot tell these
+    apart by its switches.
   - *2026-11-03, run on that runner and read from `MUI_UNGETLANGUAGE`, not an owner
     decision:* a `/P` uninstall after a silent install had not finished when the
     job stopped it after five minutes. A silent install records no language, so

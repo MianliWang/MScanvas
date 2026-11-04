@@ -21,9 +21,10 @@ All notable changes will be documented here once versioned releases begin.
 
 - **Uninstalling removes the view cache.** Every uninstall, silent and passive
   included, removes MSCanvas's view cache folder, up to 10 GiB of converted copies
-  that can be made again. Only `/UPDATE` keeps it, so installing a newer version
-  with its default, **Uninstall before installing**, removes it too, and each
-  file's next View converts again. Presets and preferences stay unless you select
+  that can be made again. Only the uninstaller's own `/UPDATE` switch keeps it, and
+  no installer passes that, so installing a newer version with its default,
+  **Uninstall before installing**, removes it too, and each file's next View
+  converts again. Presets and preferences stay unless you select
   **Delete the application data**. A folder MSCanvas would not recognize as its
   cache, or one with a link inside it, is left as found
   ([ADR 0060](docs/architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).

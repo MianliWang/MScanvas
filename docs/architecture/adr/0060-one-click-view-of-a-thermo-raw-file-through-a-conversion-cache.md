@@ -388,7 +388,8 @@ under the `e2e` feature it is the same task-owned QA root.
     uninstall removes the cache folder, including `/S` and `/P`, except on
     `/UPDATE`. Presets and preferences stay opt-in behind "Delete the application
     data". As built in `apps/desktop/src-tauri/installer-hooks.nsh`, and what ran
-    and did not: plan section 7.2.
+    and did not: plan section 7.2. The cases where it removes nothing are not an
+    owner decision.
 
 **Ownership marker.** The marker, `.mscanvas-view-cache-owner`, holds a
 constant, `mscanvas-view-cache\n`, as the staging marker does: it proves which
