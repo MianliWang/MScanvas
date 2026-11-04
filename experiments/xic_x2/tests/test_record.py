@@ -47,6 +47,14 @@ class Record(unittest.TestCase):
         beside = (REPO / "experiments/xic_x2").glob("*.py")
         self.assertEqual({path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in beside}, runner_table())
 
+    def test_the_record_names_this_trees_source_manifest(self) -> None:
+        # As harness_x2.identity() lists it. A merge that changes one of these files owes a rerun.
+        paths = [REPO / "Cargo.toml", REPO / "Cargo.lock", REPO / "crates/proteowizard/Cargo.toml"]
+        paths += sorted((REPO / "crates/proteowizard/src").rglob("*.rs"))
+        paths += [REPO / "crates/proteowizard/examples/xic_candidate.rs"]
+        lines = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(REPO).as_posix()}\n" for path in paths)
+        self.assertIn(f"`{hashlib.sha256(lines.encode()).hexdigest()}`", X2_TEXT)
+
     def test_window_width_is_stated_set_by_set_from_the_table(self) -> None:
         narrow = timings("R0 profile file, narrow window")
         whole = timings("R0 profile file, whole scan range")
@@ -107,7 +115,7 @@ class RetainedRuns(unittest.TestCase):
     def test_read_back_counts_and_digests(self) -> None:
         table = runner_table()
         self.assertEqual(len(table), 5)
-        records = [self.records(f"final-3/{folder}") for folder in ("main", "supplement", "integer-scored")]
+        records = [self.records(f"final-4/{folder}") for folder in ("main", "supplement", "integer-scored")]
         self.assertEqual([len(group) for group in records], [143, 10, 34])
         for group in records:
             for record in group:
@@ -115,6 +123,16 @@ class RetainedRuns(unittest.TestCase):
         for folder in ("observations", "observations-2"):
             summary = json.loads(pathlib.Path(EVIDENCE, "final-3", folder, "OBSERVATIONS.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["runners"], table)
+
+    def test_the_scored_build_is_the_records_and_its_science_is_the_previous_runs(self) -> None:
+        identity = json.loads(pathlib.Path(EVIDENCE, "final-4/build/identity.json").read_text(encoding="utf-8"))
+        self.assertIn(f"`{identity['binary_sha256']}`", X2_TEXT)
+        self.assertIn(f"`{identity['source_manifest_sha256']}`", X2_TEXT)
+        scored = [path for folder in ("main", "supplement", "integer-scored") for path in pathlib.Path(EVIDENCE, "final-4", folder).glob("*/science.json")]
+        self.assertEqual(len(scored), 187)
+        for path in scored:
+            earlier = pathlib.Path(EVIDENCE, "final-3", *path.parts[-3:])
+            self.assertEqual(path.read_bytes(), earlier.read_bytes(), path)
 
     def test_unsampled_sets_are_all_listed(self) -> None:
         for folder, build in (("superseded-1", "02690522"), ("superseded-2", "541880b9"), ("superseded-3", "73266bea")):

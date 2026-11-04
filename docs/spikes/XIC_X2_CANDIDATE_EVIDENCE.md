@@ -19,8 +19,8 @@ spec ran.
 
 | Binding | Exact identity |
 | --- | --- |
-| Scored executable, `xic_candidate.exe` | `a7c6705c95d1bd7165fa8a69342188ca735e85ebf38e4ceb578833571e201ad8` |
-| Source manifest, listing `Cargo.toml`, `Cargo.lock`, `crates/proteowizard/Cargo.toml`, every `crates/proteowizard/src/**/*.rs` and the example | `6784450639e98e0d83f266d5bbbf7a134d8e282eced5bb92a4dbd3eb5794116e` |
+| Scored executable, `xic_candidate.exe` | `4f86fe1de4d264abb82fb4581e936c3a7fa24b4e78d1d558513a25f4480d177d` |
+| Source manifest, listing `Cargo.toml`, `Cargo.lock`, `crates/proteowizard/Cargo.toml`, every `crates/proteowizard/src/**/*.rs` and the example | `aea7431ab6dec8696c675c9656fb103f9cc845f0c8708c4b6b689ed43fd06734` |
 | Build | `cargo build -p mscanvas-proteowizard --release --example xic_candidate --locked --target-dir target`, rustc 1.97.1 (8bab26f4f 2026-07-14), cargo 1.97.1 (c980f4866 2026-06-30), `x86_64-pc-windows-msvc`, release |
 | `experiments/xic_x2/harness_x2.py` | `94782e519e0167f66b3f2e7acdf87b23d64ac782207705d0172d4fa55f2872ff` |
 | `experiments/xic_x2/run_supplement_x2.py` | `6f00be3dac21c6943134932444d4d2c48d29e45ee6c1ac5255d14ead93f94398` |
@@ -30,18 +30,27 @@ spec ran.
 
 `harness_x2.py identity` runs the build itself, refusing a tree whose sources or runners
 are uncommitted, so this binary is the one these sources make. It ran at commit
-`abc6b443`, on this branch. The manifest binds the build to its source by content, so a
-later documentation commit does not unbind it. A reader recomputes it at the PR's head,
-by the listing `identity` writes. A rebuild need not reproduce the executable's digest, so
-compare the manifest and `science.json` and not the executable. One from the same sources,
-into another target directory, gave `5ec5451b…`: the same length with 25 bytes different, all
-in the COFF timestamp, the debug directory's timestamps and the PDB identifier, and `.text`
-the same. Its 187 `science.json` files equal the scored ones byte for byte. That check's
-output is not retained. `rust-toolchain.toml` pins the channel to 1.97.1, and the
-manifest does not list that file. Read back after the run: the 187 per-invocation records
-under `final-3/` (143 main, 10 supplement, 34 integer) and its two `OBSERVATIONS.json` state
-the runner digests in this table, and its four summaries state this executable. The 24
-per-run records beside the two `OBSERVATIONS.json` state none.
+`520ea2de`, on this branch, after `cargo clean -p mscanvas-proteowizard --release`, so the
+library and the example were compiled again. The manifest binds the build to its source by
+content, so a later documentation commit does not unbind it. A reader recomputes it at the
+PR's head, by the listing `identity` writes. `rust-toolchain.toml` pins the channel to 1.97.1,
+and the manifest does not list that file.
+
+**Why this build and not the one before it.** Merging #190 into this branch changed the root
+`Cargo.toml` and `Cargo.lock`, which the manifest lists, so the matrix and the integer rows ran
+again here. #190 adds `crates/stats` and its packages, 172 lines added and none removed: no
+package changed version, and one existing entry, `num-traits`, lists one more dependency. The
+previous complete run is `final-3/`, build `a7c6705c…`, manifest `67844506…`.
+`COMPARISON-TO-FINAL-3.json` holds the result: those two manifest lines differ and no other;
+the executables have the same length and 25 bytes differ, all in the COFF timestamp, the debug
+directory's timestamps and the PDB identifier, with `.text` the same; all 187 `science.json`
+files are equal byte for byte. So a rebuild need not reproduce the executable's digest:
+compare the manifest and `science.json` and not the executable.
+
+Read back after the run: the 187 per-invocation records under `final-4/` (143 main, 10
+supplement, 34 integer) state the runner digests in this table, and its four summaries state
+this executable. So do the two `OBSERVATIONS.json` under `final-3/`, for runners and for build
+`a7c6705c…`. The 24 per-run records beside them state none.
 
 **The comparator is byte-identical.** Before anything else, every digest in
 [PX.3's frozen artifact table](PX_3_XIC_COMPARATIVE_EVIDENCE.md#s3-and-s4-were-frozen-before-scoring)
@@ -104,15 +113,15 @@ they are.
 
 The 73 rows of `harness_x2.py` and the 4 of `run_supplement_x2.py` ran on the same
 executable, and `combine_x2.py` refuses two builds. No result from an earlier build is
-in this matrix. Four earlier complete runs, while the example and runners were being
-written and reviewed, on builds `46509d36…`, `02690522…`, `541880b9…` and `73266bea…`, also
-passed 77 of 77. They are retained as superseded and are not part of this result. Their
-source differs from this build's in the example only: where the pass is timed, one `match`
-arm, how the echo reads a number with spaces around it, how a read failure exits and one
-helper's body. Each manifest shows `crates/proteowizard/src` is the same in all five. The
-first, `46509d36…`, built an uncommitted example and its source was not kept, only that
-digest, so "where the pass is timed" cannot be checked. The other three are at `6fef86a0`,
-`bfa5a762` and `8c9b8ec6`.
+in this matrix. Five earlier complete runs also passed 77 of 77. They are retained and are
+not part of this result. `a7c6705c…`, at `abc6b443`, differs from this build in the two Cargo
+files only. Four came before it, while the example and runners were being written and
+reviewed, on builds `46509d36…`, `02690522…`, `541880b9…` and `73266bea…`. Their source differs
+from `a7c6705c…`'s in the example only: where the pass is timed, one `match` arm, how the echo
+reads a number with spaces around it, how a read failure exits and one helper's body. Each
+manifest shows `crates/proteowizard/src` is the same in all six. The first, `46509d36…`, built
+an uncommitted example and its source was not kept, only that digest, so "where the pass is
+timed" cannot be checked. The other three are at `6fef86a0`, `bfa5a762` and `8c9b8ec6`.
 
 | Ledger row | ADR named case | Subjects | Status | Runs |
 | --- | --- | --- | --- | --- |
@@ -219,7 +228,8 @@ Both stay `Evaluated`, so `must_disagree` scores a scientific disagreement.
 Four mutations of `mzml_xic.rs`, each built and run alone over the 73 rows and the 17
 integer rows in a throwaway worktree and undone before the next, with the tree checked
 clean each time. None is in this PR or in the matrix above. The supplement's 4 rows were
-not part of these runs.
+not part of these runs. They were built from `abc6b443`, before #190, and were not run again:
+#190 changes neither `mzml_xic.rs` nor any package version.
 
 | Mutation | 73 rows, PASS / FAIL | 17 integer rows, PASS / FAIL | Rows it fails, among others |
 | --- | --- | --- | --- |
@@ -293,9 +303,11 @@ warm-cache numbers. A cold read was not measured.
 **The machine was never idle, and the time rose with the processor's load.** Other work ran
 throughout. A separate loop over `Win32_Processor.LoadPercentage`, about one sample every
 3 s, ran beside each set. It ran longer than the sets did, so the table counts only the
-samples inside each set's own run, and they are few. The first two sets are this build. The
-third is build `73266bea…`, about an hour earlier. Its `crates/proteowizard/src` is the same,
-and its example differs only in how a read failure exits and in one helper's body.
+samples inside each set's own run, and they are few. The first two sets are build
+`a7c6705c…`, which differs from the scored build in the two Cargo files only, and they were not
+taken again. The third is build `73266bea…`, about an hour before them. Its
+`crates/proteowizard/src` is the same, and its example differs only in how a read failure exits
+and in one helper's body.
 
 | Set | Build | Run (UTC) | Processor load in the run, mean (lowest–highest), samples | Memory load |
 | --- | --- | --- | --- | --- |
@@ -313,7 +325,7 @@ and its example differs only in how a read failure exits and in one helper's bod
 | R0 profile file, narrow window | 546,327,287 | MS1 `[524.259257355, 524.269742645]` | 43,878 / 2,748 | 1,988 | 3.274 / 3.411 / 3.229 | 3.884 / 4.137 / 3.827 | 8.394 / 8.568 / 8.219 |
 | R0 profile file, whole scan range | 546,327,287 | MS1 `[360, 1300]` | 43,878 / 2,748 | 24,744,260 | 3.354 / 3.349 / 3.275 | 3.993 / 3.919 / 3.932 | 8.127 / 11.850 / 11.014 |
 
-In the scored build's two sets, 1,988 points and 24,744,260 points in the window took the same
+In `a7c6705c…`'s two sets, 1,988 points and 24,744,260 points in the window took the same
 time within the runs' own spread, by means of 3.305 against 3.326 s and 3.949 against 3.948 s.
 The third set, at a mean of 84% load, reads 8.39 and 10.33 s, which moves too much to tell
 width from load. Unsampled sets in the retained evidence, on builds with the same library, lie
@@ -331,7 +343,7 @@ PX.3 read it, in the first set, in bytes. Across the three sets each target stay
 | R0, narrow window | 20,807,680 / 20,750,336 / 20,844,544 |
 | R0, whole scan range | 20,828,160 / 20,824,064 / 20,869,120 |
 
-The whole evidence invocation of this build, from process launch to exit: the snapshot
+The whole evidence invocation of `a7c6705c…`, from process launch to exit: the snapshot
 copy, both passes, the echo and the JSON.
 
 | Row | Wall (s) | Peak (bytes) | stdout (bytes) |
@@ -384,13 +396,13 @@ no acquisition bytes are in this repository.
 
 ## Retained evidence
 
-Local, as PX.3's is, and not published. `D:/MSCanvas-X2-20261104/`: `final-3/` holds the
+Local, as PX.3's is, and not published. `D:/MSCanvas-X2-20261104/`: `final-4/` holds the
 build, each invocation's stdout, stderr, snapshot, canonical science and diagnostics,
-the combined ledger, the scored integer rows and two sets of observations of this build;
-`integer/`, `integer-2/` and `integer-3/` hold the three freezes; `discrimination/` the four
+the combined ledger, the scored integer rows and `COMPARISON-TO-FINAL-3.json`; `final-3/` the
+same for build `a7c6705c…`, with its two sets of observations; `integer/`, `integer-2/` and `integer-3/` hold the three freezes; `discrimination/` the four
 mutations; `superseded-0/` to `superseded-3/` the earlier runs, the third set of
 observations in `superseded-3/observations-2/`; `superseded-discrimination/` and
 `superseded-discrimination-2/` earlier runs of the mutations; `xic-d5/` the throwaway
 rendering, with its patch. `MANIFEST.json` lists every file's length and SHA-256, and its
 own digest is
-`956f0ecfbd571994cab622841f010315d6959dc338e8da8d5a39cd40725499a1`.
+`22962aa78c4a935ba236d63611525482371e9c6fbb136560385704e57b14718d`.
