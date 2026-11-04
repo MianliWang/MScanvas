@@ -67,6 +67,12 @@ free to drift apart.
 
 **A truncated viewer has no chromatogram and no chromatogram export.**
 
+*Owner decision, 2026-11-03 (R-2), not built:* Rust sends the chromatogram from its
+retained rows, so every run length gets a chromatogram export, a run above 100,000
+spectra included. It takes effect when lane `viewer-n-b2-rework-154` (N-B2) merges,
+and that lane writes what landed; until then the sentence above holds
+([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+
 ## The snapshot, and its token
 
 One retained `ChromatogramSnapshot` per session: an opaque token, the dataset

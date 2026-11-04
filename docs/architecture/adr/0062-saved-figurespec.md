@@ -7,6 +7,8 @@ implemented, with no interface. The owner asked on 2026-10-30 for every
 backend item that can be done now to start in parallel; where this feature
 needed a decision the owner had not made, the recommendation below is what was
 implemented, and each one is listed under [Open questions](#open-questions).
+*Owner decisions, 2026-11-03:* question 8 is answered (A0062.8) and the open locator
+question is settled (VIEW-B), each noted where it stands.
 Related: [0028](0028-figure-renderer-and-semantic-specification.md) (the
 renderer and the semantic specification),
 [0030](0030-png-copy-plot-and-figure-settings.md) (PNG and figure settings),
@@ -316,6 +318,10 @@ artifact and a target; that belongs with decision 8.
 - **Thermo RAW viewed through the conversion cache (ADR 0060).** The locator
   names an mzML file, and a source in the view cache is refused on saving.
   What a saved figure of a cached RAW view should name is an open question.
+  *Owner decision, 2026-11-03 (VIEW-B):* keep refusing, as built, which settles
+  that open locator question. Converting, adding and saving is the route. Accepted
+  cost: a figure viewed from a RAW cannot be saved directly for reopening, two more
+  steps ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 - **Cancellation.** `save` and `reopen` hold and hash the whole source with no
   way to stop them. The interface passes its command's `Cancellation` to both
   when it wires them.
@@ -404,6 +410,9 @@ Still open: what a saved figure of a cached RAW view should name (question 7's
 alternatives). The decision keeps the refusal until that is decided and does
 not choose one.
 
+*Owner decision, 2026-11-03 (VIEW-B):* keep refusing, as built, which settles this
+([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+
 ## Note, 2026-10-30: review round 1, after A0062
 
 A review of PR #180 after the owner's decision changed three things and
@@ -453,3 +462,8 @@ under [Owner decision](#owner-decision-2026-10-30). Question 8 is Proposed.
    document is saved elsewhere. Alternatives: refuse every network source
    wherever the document is, or accept a network path as an absolute locator,
    which changes the project document's rule too.
+
+   *Owner decision, 2026-11-03 (A0062.8):* answered: allowed on the same share,
+   otherwise refused, as built. Accepted cost: with data on a mapped drive, saving
+   the figure to a local folder is refused, and the user must save it to that share
+   ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).

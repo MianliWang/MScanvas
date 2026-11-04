@@ -88,6 +88,13 @@ then a selected spectrum is an `msaccess` process, and it stays refused with
     this lane one spectrum at a time, never for a whole pass, and checks
     cancellation and supersession between spectra, so a selected-spectrum read
     interleaves with it.
+  - *Owner decision, 2026-11-03 (MAP-1.7), amending this decision, not built:* the
+    RT x m/z map pass runs on its own worker, one pass at a time, beside
+    selected-spectrum reads, and does not hold the native-read lane. Reads share no
+    cursor, and memory stays one map and one spectrum. Accepted cost: two reads at
+    once may slow each other on a slow disk (not measured)
+    ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+    Its record is ADR 0068, on PR #183, not yet on `main`.
 
 **What does not change:**
 
@@ -116,6 +123,15 @@ It waits for one of:
   0056 decision 3's follow-up, after which an open runs no process;
 - a measurement of `msaccess` beside `msconvert` under a bounded release of the
   ProteoWizard hold, and an amendment of ADR 0005's one-process rule.
+
+*Owner decision, 2026-11-03 (R-3), not built:* allowed once the open runs no process,
+subject to the BPI match (HR-1.6). If the reader's times do not match `msaccess`'s,
+the refusal stays, and may hold for long
+([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+The refusal stands until the second PR of lane `viewer-open-without-msaccess` (N-B4),
+which amends beside this note. *Owner decision, 2026-11-04 (R-3-RAW, option
+`refuse`):* that answer does not reach a Thermo RAW: View stays refused during a
+conversion (ADR 0060 decision 5).
 
 The roster mutations ADR 0012 refuses during a conversion stay refused.
 
