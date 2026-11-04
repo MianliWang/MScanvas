@@ -2,8 +2,8 @@
 
 Status: **Accepted (2026-10-30)** by the owner: decisions X-1 and X-2 of
 [the v5.11 owner decisions](../../development/OWNER_DECISIONS_V511.md#x-1-xic-re-entry-and-its-evidence-gates)
-([owner decision](#owner-decision-2026-10-30)). Accepted as documentation
-only, with nothing implemented. XIC (VIEW-007) stays unavailable with its stated
+([owner decision](#owner-decision-2026-10-30)). Documentation only. Nothing
+here is implemented, and XIC (VIEW-007) stays unavailable with its stated
 reason until the X3 decision admits a candidate. The questions still open are
 listed [at the end](#open-questions).
 Related: [0005](0005-mzml-preview-boundary.md),
@@ -24,7 +24,8 @@ Evidence: [M5.4](../../spikes/M5_XIC_SOURCE_EVIDENCE.md),
 evaluation of 2026-10-30 with its critic pass (`XIC_EVALUATION.md`, planning
 workspace, not committed; cited below as "the evaluation, §n").
 
-*Note, 2026-11-03, a status and not an owner decision:* PR #207 lands X1's
+*Note, 2026-11-03, a status and not an owner decision:* the status above is the
+text accepted on 2026-10-30, and it speaks of that date. PR #207 lands X1's
 library, `crates/proteowizard/src/mzml_xic.rs`. Nothing calls it, and VIEW-007
 stays unavailable. X1's gate, the integer-array question, is answered, and the
 owner's answer is noted at [open question 2](#open-questions). ADR 0070's own
