@@ -1873,3 +1873,397 @@ fn a_history_directory_that_is_a_junction_is_refused() {
     // Only the link, never its target's contents.
     fs::remove_dir(&link).expect("remove the junction");
 }
+
+// ADR 0065 section 7, item 5: a crashed write's old private sibling.
+
+const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+/// Far longer than a test takes between setting a time and a sweep reading it.
+const MINUTE: Duration = Duration::from_secs(60);
+const LONG_AGO: Duration = Duration::from_secs(48 * 60 * 60);
+const SIBLING_BYTES: &[u8] = b"a whole record, paths included";
+const SWEPT: RunHistoryWriteDto = RunHistoryWriteDto::Done {
+    kept_in_progress: 0,
+};
+/// Clear and Off, which share `sweep`.
+const CLEAR_AND_OFF: [fn(&ConversionHistory) -> RunHistoryWriteDto; 2] =
+    [ConversionHistory::clear, |history| {
+        history.set_enabled(false)
+    }];
+
+/// Exactly the name a write gives its private sibling.
+fn sibling_name(attempt: u32) -> String {
+    local_document::temporary_name(TEMPORARY_PREFIX, attempt)
+}
+
+/// Sets a name's own last-write time, never that of what a link at it points to.
+fn set_written(path: &Path, written: SystemTime) {
+    let mut options = fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_WRITE_ATTRIBUTES; FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT.
+        options
+            .access_mode(0x0100)
+            .custom_flags(0x0200_0000 | 0x0020_0000);
+    }
+    #[cfg(not(windows))]
+    options.read(true);
+    options
+        .open(path)
+        .expect("open the name itself")
+        .set_modified(written)
+        .expect("set its time");
+}
+
+/// A file at `name`, last written `age` ago.
+fn left_behind(directory: &Path, name: &str, age: Duration) -> PathBuf {
+    let path = directory.join(name);
+    fs::write(&path, SIBLING_BYTES).expect("write");
+    set_written(&path, SystemTime::now() - age);
+    path
+}
+
+#[test]
+fn clear_and_off_remove_a_sibling_past_a_day_and_keep_one_short_of_it() {
+    assert_eq!(SIBLING_MAX_AGE, DAY, "the owner's 24 hours");
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-age");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        // The last attempt a write makes.
+        let old = left_behind(&directory, &sibling_name(7), LONG_AGO);
+        // What a crash leaves: another process's name, and that process is gone.
+        let another_process = format!(
+            "{TEMPORARY_PREFIX}{}-0.tmp",
+            std::process::id().wrapping_add(1)
+        );
+        let crashed = left_behind(&directory, &another_process, LONG_AGO);
+        let just_past = left_behind(&directory, &sibling_name(1), DAY + MINUTE);
+        let just_short = left_behind(&directory, &sibling_name(2), DAY - MINUTE);
+        let fresh = left_behind(&directory, &sibling_name(3), Duration::ZERO);
+        write_stored(&scratch, 1, RunState::Completed, Some(2));
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(!old.exists(), "an old sibling goes");
+        assert!(!crashed.exists(), "whichever process wrote it");
+        assert!(!just_past.exists(), "just past a day goes");
+        assert_eq!(fs::read(&just_short).expect("kept"), SIBLING_BYTES);
+        assert_eq!(fs::read(&fresh).expect("kept"), SIBLING_BYTES);
+        assert!(run_files(&scratch).is_empty(), "runs go as before");
+    }
+}
+
+#[test]
+fn a_sibling_whose_last_write_lies_in_the_future_is_kept() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-future");
+        let history = open(&scratch);
+        let path = history_directory(&scratch).join(sibling_name(0));
+        fs::write(&path, SIBLING_BYTES).expect("write");
+        set_written(&path, SystemTime::now() + LONG_AGO);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert_eq!(fs::read(&path).expect("kept"), SIBLING_BYTES);
+    }
+}
+
+/// Clear and Off only, so no start-up cleanup and no list while recording. While
+/// Off holds its sweep runs at every start and list, and that takes one that has
+/// aged since.
+#[test]
+fn only_clear_and_off_take_a_sibling_and_off_goes_on_taking_them() {
+    let scratch = Scratch::new("history-sibling-when");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let old = left_behind(&directory, &sibling_name(0), LONG_AGO);
+
+    let _ = history.list();
+    drop(open(&scratch));
+    assert!(old.exists(), "neither a list nor a start takes it");
+
+    assert_eq!(history.set_enabled(false), SWEPT);
+    assert!(!old.exists());
+
+    let later = left_behind(&directory, &sibling_name(0), Duration::ZERO);
+    let _ = history.list();
+    assert!(later.exists(), "written just now");
+    set_written(&later, SystemTime::now() - LONG_AGO);
+    let _ = history.list();
+    assert!(!later.exists(), "aged while Off holds");
+}
+
+#[test]
+fn a_name_that_only_looks_like_a_sibling_is_kept_however_old() {
+    // No two of these may differ by case alone: the file system would make them
+    // one file.
+    let names = [
+        ".mscanvas-run-history",
+        ".mscanvas-run-history-",
+        ".mscanvas-run-history-1",
+        ".mscanvas-run-history-1-0",
+        ".mscanvas-run-history-1-.tmp",
+        ".mscanvas-run-history--0.tmp",
+        ".mscanvas-run-history-a-0.tmp",
+        ".mscanvas-run-history-1-a.tmp",
+        ".mscanvas-run-history-1-0-0.tmp",
+        ".mscanvas-run-history-1-0.tmp.bak",
+        // Past the attempts a write makes.
+        ".mscanvas-run-history-1-8.tmp",
+        // No number prints like these.
+        ".mscanvas-run-history-007-0.tmp",
+        ".mscanvas-run-history-1-00.tmp",
+        ".mscanvas-run-history-+1-0.tmp",
+        ".mscanvas-run-history-1-+0.tmp",
+        // Past what a process identifier can hold.
+        ".mscanvas-run-history-4294967296-0.tmp",
+        ".mscanvas-run-history-1-1.TMP",
+        ".MSCANVAS-RUN-HISTORY-1-2.tmp",
+        "x.mscanvas-run-history-1",
+        "x.mscanvas-run-history-1-3.tmp",
+        ".mscanvas-workspace-restore-1-0.tmp",
+        ".mscanvas-conversion-presets-1-0.tmp",
+        ".mscanvas-ui-preferences-1-0.tmp",
+        ".mscanvas-project-1-0.tmp",
+        ".owner-pending-1",
+        ".owner-pending-1-0.tmp",
+    ];
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-names");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        for name in names {
+            left_behind(&directory, name, LONG_AGO);
+        }
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        for name in names {
+            assert_eq!(
+                fs::read(directory.join(name)).expect(name),
+                SIBLING_BYTES,
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_directory_with_a_siblings_name_is_kept_with_its_contents() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-directory");
+        let history = open(&scratch);
+        let path = history_directory(&scratch).join(sibling_name(0));
+        fs::create_dir(&path).expect("a folder at the name");
+        fs::write(path.join("inside"), SIBLING_BYTES).expect("write");
+        // After the write, which sets the folder's time.
+        set_written(&path, SystemTime::now() - LONG_AGO);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert_eq!(fs::read(path.join("inside")).expect("kept"), SIBLING_BYTES);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_or_a_link_with_a_siblings_name_is_kept_and_its_target_untouched() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-junction");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let elsewhere = scratch.join("elsewhere");
+        fs::create_dir_all(&elsewhere).expect("the target");
+        let canary = elsewhere.join("canary");
+        fs::write(&canary, SIBLING_BYTES).expect("write");
+        // Old, so that a stat that followed the link would see a file to remove.
+        set_written(&canary, SystemTime::now() - LONG_AGO);
+        let junction = directory.join(sibling_name(0));
+        let made = std::process::Command::new("cmd.exe")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&elsewhere)
+            .output()
+            .expect("run mklink");
+        assert!(made.status.success(), "the disposable junction must exist");
+        set_written(&junction, SystemTime::now() - LONG_AGO);
+        // A file link needs a privilege an ordinary session may not have. CI has it,
+        // so this part cannot go unrun there unnoticed.
+        let link = directory.join(sibling_name(1));
+        let linked = std::os::windows::fs::symlink_file(&canary, &link).is_ok();
+        assert!(linked || std::env::var_os("CI").is_none(), "no link in CI");
+        if linked {
+            set_written(&link, SystemTime::now() - LONG_AGO);
+        }
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(
+            fs::symlink_metadata(&junction).is_ok(),
+            "the junction stays"
+        );
+        assert!(
+            !linked || fs::symlink_metadata(&link).is_ok(),
+            "the link stays"
+        );
+        assert_eq!(fs::read(&canary).expect("untouched"), SIBLING_BYTES);
+        assert_eq!(entries(&elsewhere), ["canary"]);
+        // Only the links, never their target.
+        fs::remove_dir(&junction).expect("remove the junction");
+        if linked {
+            fs::remove_file(&link).expect("remove the link");
+        }
+    }
+}
+
+/// An AF_UNIX socket's file: a reparse point whose tag has no name-surrogate bit,
+/// so std's `is_file()` says yes. It takes no privilege, and it stays because the
+/// child kills itself before .NET can remove it, so its exit status means nothing.
+#[cfg(windows)]
+fn reparse_file_without_name_surrogate(directory: &Path, name: &str) -> PathBuf {
+    use std::os::windows::fs::MetadataExt as _;
+    // By bare name from the folder: a socket's path has a limit of 108 bytes.
+    let script = format!(
+        "$s = [Net.Sockets.Socket]::new('Unix', 'Stream', 'Unspecified'); \
+         $s.Bind([Net.Sockets.UnixDomainSocketEndPoint]::new('{name}')); \
+         Stop-Process -Id $PID -Force"
+    );
+    let made = std::process::Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .current_dir(directory)
+        .output()
+        .expect("run pwsh");
+    let path = directory.join(name);
+    let metadata = fs::symlink_metadata(&path).unwrap_or_else(|error| {
+        panic!(
+            "the disposable socket file must exist: {error}: {}",
+            String::from_utf8_lossy(&made.stderr)
+        )
+    });
+    // Not through the code under test. Should a later Windows mark this tag a name
+    // surrogate, `is_file()` turns false and this says so instead of passing idly.
+    assert_ne!(metadata.file_attributes() & 0x400, 0, "a reparse point");
+    assert!(metadata.is_file(), "no name-surrogate bit");
+    path
+}
+
+#[cfg(windows)]
+#[test]
+fn a_reparse_file_that_is_no_link_with_a_siblings_name_is_kept() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-reparse-file");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let path = reparse_file_without_name_surrogate(&directory, &sibling_name(0));
+        set_written(&path, SystemTime::now() - LONG_AGO);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(fs::symlink_metadata(&path).is_ok(), "the file stays");
+        fs::remove_file(&path).expect("remove the socket file");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_sibling_that_cannot_be_removed_is_counted_and_the_sweep_goes_on() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-held");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let held = left_behind(&directory, &sibling_name(0), LONG_AGO);
+        let other = left_behind(&directory, &sibling_name(1), LONG_AGO);
+        write_stored(&scratch, 1, RunState::Completed, Some(2));
+        let holder = hold(&held, SHARES_ALL_BUT_DELETE);
+
+        assert_eq!(sweep(&history), NOT_REMOVED_ONE);
+
+        assert!(held.exists(), "the holder keeps it");
+        assert!(!other.exists(), "the sweep went on");
+        assert!(run_files(&scratch).is_empty(), "the sweep went on");
+
+        drop(holder);
+        assert_eq!(sweep(&history), SWEPT);
+        assert!(!held.exists());
+    }
+}
+
+/// A holder that allows deletion stops nothing: the name goes, so Done is true.
+#[cfg(windows)]
+#[test]
+fn a_holder_that_allows_deletion_does_not_keep_a_sibling() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-held-shared");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let held = left_behind(&directory, &sibling_name(0), LONG_AGO);
+        let holder = hold(&held, SHARES_DELETE_ONLY);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(!held.exists(), "its name is gone");
+        drop(holder);
+    }
+}
+
+/// `notRemoved` is about the sibling. The run this session is recording is told
+/// and written as if the sibling were not there.
+#[cfg(windows)]
+#[test]
+fn a_sibling_that_cannot_be_removed_changes_nothing_for_a_run_in_progress() {
+    let scratch = Scratch::new("history-sibling-held-run");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let id = active_id(&history);
+    let held = left_behind(&directory, &sibling_name(0), LONG_AGO);
+    let _holder = hold(&held, SHARES_ALL_BUT_DELETE);
+
+    assert_eq!(history.clear(), NOT_REMOVED_ONE);
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+
+    let stored = read_record(&directory.join(file_name_of(&id)))
+        .expect("readable")
+        .expect("still there");
+    assert_eq!(stored.state, RunState::Completed);
+    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert_eq!((runs.len(), problem), (1, None));
+}
+
+/// A session suspended for over a day between creating its sibling and publishing
+/// it, through the very handle a write holds. It shares reading only, so on Windows
+/// the sibling cannot go while the writer lives: Clear and Off say so, and the write
+/// lands when the session wakes.
+#[cfg(windows)]
+#[test]
+fn a_write_suspended_for_over_a_day_keeps_its_sibling_and_still_publishes() {
+    use std::io::Write as _;
+
+    let scratch = Scratch::new("history-sibling-suspended");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let name = write_stored(&scratch, 1, RunState::Completed, Some(2));
+    let target = directory.join(&name);
+    let document = fs::read(&target).expect("read");
+    fs::remove_file(&target).expect("not yet published");
+    let (mut writer, path) =
+        local_document::create_private_sibling(&directory, TEMPORARY_PREFIX).expect("the sibling");
+    writer.write_all(&document).expect("fill");
+    writer
+        .set_modified(SystemTime::now() - LONG_AGO)
+        .expect("a day passes");
+
+    assert_eq!(history.clear(), NOT_REMOVED_ONE);
+    assert_eq!(history.set_enabled(false), NOT_REMOVED_ONE);
+    assert_eq!(history.set_enabled(true), SWEPT);
+    assert!(path.exists());
+
+    local_document::replace_with(&writer, &path, &target, true).expect("it publishes");
+    drop(writer);
+
+    assert!(!path.exists(), "the sibling became the document");
+    assert_eq!(runs(&history).len(), 1);
+}
