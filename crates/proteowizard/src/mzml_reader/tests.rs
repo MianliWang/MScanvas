@@ -1055,6 +1055,12 @@ fn a_binary_element_elsewhere_in_the_array_is_not_its_payload() {
     let after = |nested: &str| mz.replace("</binary>", &format!("</binary>{nested}"));
     let before = |nested: &str| mz.replace("<binary>", &format!("{nested}<binary>"));
     let long = "A".repeat(64 * 1024);
+    // A path that ends the way the array's own does, terms and all: only `spectrum`
+    // directly above the list makes a `binary` the array's own.
+    let nested_array = format!(
+        "<binaryDataArrayList><binaryDataArray>{}<binary>{other}</binary></binaryDataArray></binaryDataArrayList>",
+        plain_mz.concat()
+    );
 
     // A good file reads to exactly its stored bits, and each of these reads to the
     // same bits: what is in the nested element is neither joined on nor judged.
@@ -1063,6 +1069,8 @@ fn a_binary_element_elsewhere_in_the_array_is_not_its_payload() {
         after(&format!("<other><binary>{other}</binary></other>")),
         before(&format!("<other><binary>{other}</binary></other>")),
         after("<other><binary/></other>"),
+        after(&nested_array),
+        before(&nested_array),
         after("<other><binary>&amp;<y/></binary></other>"),
         after("<other><binary>&#42;</binary></other>"),
         after(&format!("<other><binary>{long}</binary></other>")),
@@ -1089,16 +1097,16 @@ fn a_binary_element_elsewhere_in_the_array_is_not_its_payload() {
         &plain_intensity,
         &b64(&le_f64(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0])),
     );
-    assert_eq!(
-        ms1_refusal(
-            6,
-            &[
-                after(&format!("<other><binary>{other}</binary></other>")),
-                six
-            ]
-        ),
-        refused(ArrayRole::Mz, ArrayProblem::DecodedShorterThanDeclared)
-    );
+    for nested in [
+        format!("<other><binary>{other}</binary></other>"),
+        nested_array,
+    ] {
+        assert_eq!(
+            ms1_refusal(6, &[after(&nested), six.clone()]),
+            refused(ArrayRole::Mz, ArrayProblem::DecodedShorterThanDeclared),
+            "{nested}"
+        );
+    }
 
     // A limit tripped in there is the document's, not that array's. Only a table
     // read with other limits can get this far.
