@@ -41,9 +41,9 @@
    cannot give the dialog's clipped box a scroll of its own. */
 .settings-dialog-body { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
 .settings-fields { min-width: 0; padding: 18px 22px 20px; }
-/* Section heads; the second section sits below a divider. */
+/* Section heads; each after the first sits below a divider. */
 .settings-section-title { margin: 0 0 4px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
-.settings-fields > :is(.setting-field, .settings-restore-answers) + .settings-section-title { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--color-border); }
+.settings-fields > .settings-section-title:not(:first-child) { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--color-border); }
 /* v5.11 settings rows: label left, control right, a divider between rows. */
 .settings-fields > .setting-field { padding: 12px 0; }
 .settings-fields > .setting-field + .setting-field { border-top: 1px solid var(--color-border); }
@@ -123,6 +123,31 @@
 /* Wraps rather than shrinking, so a long Chinese or English action label keeps
    a usable target instead of being squeezed out of one. */
 .settings-storage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* "Reading…" beside the label, so a read in flight moves neither the row nor what is below it. */
+.settings-diagnostics-field .setting-field-copy { flex-direction: row; align-items: baseline; gap: 8px; }
+/* The diagnostics text, as Copy will take it, with Copy beside it. */
+.settings-diagnostics-preview { display: flex; align-items: flex-start; gap: 8px; }
+.settings-diagnostics-preview textarea {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 200px;
+  padding: 6px 8px;
+  resize: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-input);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.settings-diagnostics-preview textarea:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.settings-diagnostics-actions { display: flex; flex: none; flex-direction: column; align-items: flex-end; gap: 6px; }
+/* As wide empty as with "已复制。", so a new reading clearing it does not rewrap the text. */
+.settings-diagnostics-actions p { min-width: 4em; margin: 0; color: var(--color-text-secondary); font-size: 12px; }
+.settings-diagnostics-problem { margin: 0 0 8px; }
 
 @media (max-width: 520px) {
   .settings-fields { padding-inline: 16px; }
