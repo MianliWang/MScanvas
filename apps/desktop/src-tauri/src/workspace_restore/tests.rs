@@ -1020,6 +1020,74 @@ fn a_row_no_longer_offered_leaves_the_document_only_after_a_read_reported_it() {
     assert_eq!(rows[0].members[0].path, b.to_str().expect("Unicode"));
 }
 
+/// One row, offered and not taken: the next session's first read reports it as
+/// no longer offered if it still matches.
+fn declined_once(scratch: &Scratch, path: &Path) {
+    assert_eq!(
+        reopen(scratch).save(&ungrouped(&["file-0"]), vec![live("file-0", path)]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let declining = reopen(scratch);
+    let _ = restored(&declining);
+    assert_eq!(
+        declining.save(&ungrouped(&["restored-0"]), Vec::new()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+}
+
+#[track_caller]
+fn expired_count(store: &WorkspaceRestoreStore) -> u32 {
+    match store.read() {
+        WorkspaceRestoreReadDto::Restored { expired, .. } => expired,
+        other => panic!("expected restored rows, got {other:?}"),
+    }
+}
+
+// Start fresh and Off end the "no longer offered" line this way: the webview has
+// no reset of its own for it.
+#[test]
+fn a_clear_leaves_no_row_reported_as_no_longer_offered() {
+    let scratch = Scratch::new("restore-expired-clear");
+    declined_once(&scratch, &scratch.write("a.mzML", b"<mzML/>"));
+    let store = reopen(&scratch);
+    assert_eq!(expired_count(&store), 1);
+    assert_eq!(store.clear(), WorkspaceRestoreWriteDto::Saved);
+    assert_eq!(expired_count(&store), 0);
+}
+
+#[test]
+fn off_then_on_leaves_no_row_reported_as_no_longer_offered() {
+    let scratch = Scratch::new("restore-expired-switch");
+    declined_once(&scratch, &scratch.write("a.mzML", b"<mzML/>"));
+    let store = reopen(&scratch);
+    assert_eq!(expired_count(&store), 1);
+    assert_eq!(store.set_enabled(false), WorkspaceRestoreWriteDto::Saved);
+    assert_eq!(store.set_enabled(true), WorkspaceRestoreWriteDto::Saved);
+    assert_eq!(expired_count(&store), 0);
+}
+
+#[test]
+fn only_the_first_read_of_a_session_decides_what_is_no_longer_offered() {
+    let scratch = Scratch::new("restore-expired-decided-once");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let away = scratch.join("a.away");
+    declined_once(&scratch, &a);
+    fs::rename(&a, &away).expect("a goes away");
+    let store = reopen(&scratch);
+    assert_eq!(
+        states(&restored(&store)),
+        vec![("a.mzML".to_owned(), RowState::Missing)]
+    );
+
+    // Marked at the first read, so offered this session; back, it stays offered.
+    fs::rename(&away, &a).expect("a comes back, the same object");
+    assert_eq!(
+        states(&restored(&store)),
+        vec![("a.mzML".to_owned(), RowState::Matching)]
+    );
+    assert_eq!(expired_count(&store), 0);
+}
+
 #[cfg(windows)]
 #[test]
 fn a_document_held_by_another_program_refuses_a_save_for_now_and_latches_nothing() {
@@ -1744,6 +1812,7 @@ fn restore_puts_back_no_row_this_session_no_longer_offers() {
         panic!("expected restored rows");
     };
     assert_eq!(expired, 1);
+    assert!(!store.dismiss("restored-0"), "no read offers it");
     let service = workspace();
     let answer = store.put_back(&service).expect("the batch runs");
     assert!(answer.placed.is_empty(), "{:?}", answer.placed);
