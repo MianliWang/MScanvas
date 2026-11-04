@@ -6,7 +6,7 @@ one given build and writes elsewhere. compare(), peak() and js() are harness.py'
 own, and canonical() is oracle.py's, imported unchanged after their digests are
 checked. Nothing in the archive is written, bytecode included: run with python -B.
 
-  harness_x2.py identity --exe EXE --repo REPO --out BUILD
+  harness_x2.py identity --repo REPO --out BUILD [--mutation NAME]
   harness_x2.py run --px3 PX3 --build BUILD --out EVIDENCE
 """
 import argparse
@@ -29,6 +29,13 @@ FROZEN_HARNESS_SHA256 = "ae03b603b045337e4c12d30ef610e79633b943d53b1d4ef63bf4c35
 FROZEN_ORACLE_SHA256 = "61743961ad7462e136163bb198d15590027ede50bd04c1bbd143409ade4b635f"
 WATCHDOG_SECONDS = 300
 HERE = pathlib.Path(__file__).resolve().parent
+BUILD = ["cargo", "build", "-p", "mscanvas-proteowizard", "--release", "--example", "xic_candidate", "--locked"]
+
+
+def require(condition, reason):
+    """Refuses in every mode of Python, where an assert would vanish under -O."""
+    if not condition:
+        raise SystemExit(f"refused: {reason}")
 
 
 def sha(path):
@@ -45,9 +52,9 @@ def dump(path, value):
 
 def load_frozen(px3):
     """The frozen comparator, from the archive, byte-identical or not at all."""
-    assert sha(px3 / "harness.py") == FROZEN_HARNESS_SHA256, "harness.py changed"
-    assert sha(px3 / "oracle.py") == FROZEN_ORACLE_SHA256, "oracle.py changed"
-    sys.path.insert(0, str(px3))
+    require(sha(px3 / "harness.py") == FROZEN_HARNESS_SHA256, "harness.py changed")
+    require(sha(px3 / "oracle.py") == FROZEN_ORACLE_SHA256, "oracle.py changed")
+    sys.path.insert(0, str(px3.resolve()))
     return importlib.import_module("harness"), importlib.import_module("oracle")
 
 
@@ -99,18 +106,26 @@ def host():
 
 
 def identity(args):
-    """Binds a build to its source by content, so a later docs commit does not unbind it."""
+    """Builds, and binds the build to its source by content.
+
+    It runs the build itself, from a clean tree, so the binary is the one these
+    sources make, and a later docs commit does not unbind it. A mutation control
+    alone may build from a changed tree, and combine_x2.py refuses that build.
+    """
     repo = args.repo.resolve()
-    sources = [repo / "Cargo.toml", repo / "Cargo.lock", repo / "crates/proteowizard/Cargo.toml"]
-    sources += sorted((repo / "crates/proteowizard/src").rglob("*.rs"))
-    sources += [repo / "crates/proteowizard/examples/xic_candidate.rs"]
-    lines = "".join(f"{sha(path)}  {path.relative_to(repo).as_posix()}\n" for path in sources)
     git = lambda *argv: subprocess.run(
         ["git", "-C", str(repo), *argv], capture_output=True, text=True, check=True
     ).stdout.strip()
     tool = lambda *argv: subprocess.run(argv, capture_output=True, text=True, check=True).stdout.strip()
+    uncommitted = git("status", "--porcelain", "--", "Cargo.toml", "Cargo.lock", "crates/proteowizard", "experiments/xic_x2")
+    require(not uncommitted or args.mutation, "uncommitted source: " + uncommitted)
     args.out.mkdir(parents=True, exist_ok=False)
-    shutil.copy2(args.exe, args.out / "xic_candidate.exe")
+    subprocess.run(BUILD, cwd=repo, check=True)
+    sources = [repo / "Cargo.toml", repo / "Cargo.lock", repo / "crates/proteowizard/Cargo.toml"]
+    sources += sorted((repo / "crates/proteowizard/src").rglob("*.rs"))
+    sources += [repo / "crates/proteowizard/examples/xic_candidate.rs"]
+    lines = "".join(f"{sha(path)}  {path.relative_to(repo).as_posix()}\n" for path in sources)
+    shutil.copy2(repo / "target/release/examples/xic_candidate.exe", args.out / "xic_candidate.exe")
     (args.out / "source-manifest.txt").write_text(lines, encoding="utf-8", newline="\n")
     dump(
         args.out / "identity.json",
@@ -118,9 +133,10 @@ def identity(args):
             binary_sha256=sha(args.out / "xic_candidate.exe"),
             source_manifest_sha256=hashlib.sha256(lines.encode()).hexdigest(),
             built_at_commit=git("rev-parse", "HEAD"),
-            uncommitted_source=git("status", "--porcelain", "--", "Cargo.toml", "Cargo.lock", "crates/proteowizard"),
+            uncommitted_source=uncommitted,
+            mutation=args.mutation,
             profile="release",
-            command="cargo build -p mscanvas-proteowizard --release --example xic_candidate --locked",
+            command=" ".join(BUILD),
             rustc=tool("rustc", "-vV"),
             cargo=tool("cargo", "-V"),
             created_utc=datetime.now(timezone.utc).isoformat(),
@@ -132,13 +148,14 @@ def identity(args):
 def load_build(build):
     identity_record = json.loads((build / "identity.json").read_text(encoding="utf-8"))
     exe = build / "xic_candidate.exe"
-    assert sha(exe) == identity_record["binary_sha256"], "the build changed"
+    require(sha(exe) == identity_record["binary_sha256"], "the build changed")
     return exe, identity_record
 
 
 def invoke(harness, exe, path, query, capture, mode, folder):
     """One candidate process, as the frozen runners time and measure it."""
-    argv = [str(exe), str(path), *query, str(capture), mode]
+    # Absolute: the child's working directory is the run's own folder.
+    argv = [str(exe.resolve()), str(pathlib.Path(path).resolve()), *query, str(pathlib.Path(capture).resolve()), mode]
     started = time.perf_counter()
     timed_out = False
     observed = []
@@ -178,11 +195,11 @@ def run(args):
     exe, build = load_build(args.build)
     freeze = json.loads((R / "protocol/FROZEN.json").read_text(encoding="utf-8"))
     for name, digest in freeze["files"].items():
-        assert sha(R / name) == digest, (name, "protocol changed")
+        require(sha(R / name) == digest, (name, "protocol changed"))
     ledger = json.loads((R / "protocol/case-ledger.json").read_text())
     answers = json.loads((R / "protocol/oracle-answers.json").read_text())
     # File-specific later acquisitions have separately frozen answers and operand binding.
-    assert sha(R / "protocol/acquisitions.json") == freeze["acquisition_reference_sha256"]
+    require(sha(R / "protocol/acquisitions.json") == freeze["acquisition_reference_sha256"], "acquisitions.json changed")
     entries = json.loads((R / "protocol/acquisitions.json").read_text())
     for row in ledger:
         if row["id"] in entries:
@@ -291,9 +308,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
     make = commands.add_parser("identity")
-    make.add_argument("--exe", type=pathlib.Path, required=True)
     make.add_argument("--repo", type=pathlib.Path, required=True)
     make.add_argument("--out", type=pathlib.Path, required=True)
+    make.add_argument("--mutation")
     make.set_defaults(handler=identity)
     score = commands.add_parser("run")
     score.add_argument("--px3", type=pathlib.Path, required=True)

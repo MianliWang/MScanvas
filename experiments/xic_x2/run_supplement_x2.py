@@ -23,8 +23,8 @@ def main(args):
     exe, build = x2.load_build(args.build)
     freeze = json.loads((R / "protocol/SUPPLEMENT-FROZEN.json").read_text())
     for name, digest in freeze["files"].items():
-        assert x2.sha(R / name) == digest, (name, "frozen binding changed")
-    assert freeze["candidate_supplement_invocations_before_freeze"] == 0
+        x2.require(x2.sha(R / name) == digest, (name, "frozen binding changed"))
+    x2.require(freeze["candidate_supplement_invocations_before_freeze"] == 0, "the supplement was run before its freeze")
     rows = json.loads((R / "protocol/supplement-ledger.json").read_text())
     answers = json.loads((R / "protocol/supplement-answers.json").read_text())
     out = args.out
@@ -33,7 +33,7 @@ def main(args):
     allruns = []
     for row in rows:
         path = R / "inputs" / row["file"]
-        assert x2.sha(path) == row["sha256"]
+        x2.require(x2.sha(path) == row["sha256"], (row["id"], "source identity changed"))
         sciences = []
         runs = []
         for repeat in range(row["repeats"]):
@@ -66,7 +66,8 @@ def main(args):
                 operational_errors.append("Candidate nonzero exit " + str(diagnostics["exit_code"]))
             try:
                 actual = json.loads((folder / "stdout.json").read_text(encoding="utf-8"))
-                assert isinstance(actual, dict)
+                if not isinstance(actual, dict):
+                    raise ValueError("candidate_not_object")
                 scientific_errors = harness.compare(answers[row["id"]], actual, row["expectation"])
                 canonical = harness.js(oracle.canonical(actual))
                 (folder / "science.json").write_bytes(canonical)

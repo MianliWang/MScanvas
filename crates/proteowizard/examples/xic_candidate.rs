@@ -649,7 +649,7 @@ fn visit(
             let attributes = attributes(start)?;
             let number = |key| {
                 attribute(&attributes, key)
-                    .and_then(|value| value.parse().ok())
+                    .and_then(|value| value.trim().parse().ok())
                     .ok_or_else(|| format!("spectrum without {key}"))
             };
             *open_scan = Some(OpenScan {
@@ -764,6 +764,7 @@ fn push_scan(out: &mut String, scan: &OpenScan) -> Result<(), String> {
     match first(&scan.spectrum, &["MS:1000511"]).and_then(|param| param.get("value")) {
         Some(value) => {
             let level: u64 = value
+                .trim()
                 .parse()
                 .map_err(|_| "an MS level the pass admitted is not a number")?;
             write!(out, "{level}").map_err(|error| error.to_string())?;

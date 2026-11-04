@@ -35,7 +35,7 @@ def main(args):
             folder = args.out / f"{name}-{repeat + 1}"
             folder.mkdir()
             diagnostics = x2.invoke(harness, exe, path, source["query"], folder / "unused", "observe", folder)
-            assert diagnostics["exit_code"] == 0, (name, (folder / "stderr.txt").read_text(encoding="utf-8"))
+            x2.require(diagnostics["exit_code"] == 0, (name, (folder / "stderr.txt").read_text(encoding="utf-8")))
             result = json.loads((folder / "stdout.json").read_text(encoding="utf-8"))
             record = dict(source=source, repeat=repeat + 1, wall_seconds=diagnostics["wall_seconds"], peak_working_set_final_bytes=diagnostics["peak_working_set_final_bytes"], result=result, host=x2.host(), created_utc=datetime.now(timezone.utc).isoformat())
             x2.dump(folder / "result.json", record)

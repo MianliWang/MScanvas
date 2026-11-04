@@ -11,7 +11,7 @@ state and sum by hand, and `freeze` refuses to write answers that disagree with 
 hand. The rule that a value is judged by its magnitude, so that -(2^53 + 1) and 2^60
 are refused too, is the reading built into #207: as built, not an owner decision.
 
-  integer_rows.py freeze --out DIR
+  integer_rows.py freeze --out DIR [--supersedes EARLIER/INTEGER-FROZEN.json]
   integer_rows.py run --px3 PX3 --build BUILD --dir DIR --out EVIDENCE
 """
 import argparse
@@ -211,7 +211,7 @@ def derive(data, query):
                 else:
                     positions = [at for at, value in enumerate(mz) if low <= value <= high]
                     total = sum((exact(intensity[at]) for at in positions), Fraction(0))
-                    assert abs(total) <= MAX
+                    x2.require(abs(total) <= MAX, "an integer row beyond the finite range")
                     value = float(total) if total else 0.0
                     state = "Measured"
                     observation.update(sum=value, sum_bits=bits(value), points_in_window=len(positions), positions=positions, intensity_unit=next(a["unit"] for a in arrays if a["role"] == "Intensity"), quantity="point_sum")
@@ -244,14 +244,20 @@ def freeze(args):
         path = out / "inputs" / (row_id + ".mzML")
         path.write_bytes(data)
         answer, unread = derive(data, QUERY)
-        assert agrees_with_hand(answer, unread, hand), (row_id, answer["rows"], hand)
+        x2.require(agrees_with_hand(answer, unread, hand), (row_id, answer["rows"], hand))
         answers[row_id] = dict(answer=answer, unreadable=unread)
         ledger.append(dict(id=row_id, file=path.name, sha256=hashlib.sha256(data).hexdigest(), bytes=len(data), query=QUERY, expectation="semantic", mode="normal", repeats=2))
     x2.dump(out / "integer-ledger.json", ledger)
     x2.dump(out / "integer-answers.json", answers)
     files = {name: x2.sha(out / name) for name in ["integer-ledger.json", "integer-answers.json"]}
     files.update({"inputs/" + r["file"]: r["sha256"] for r in ledger})
-    x2.dump(out / "INTEGER-FROZEN.json", dict(frozen_utc=datetime.now(timezone.utc).isoformat(), candidate_runs_before_freeze=0, reference_sha256=x2.sha(__file__), files=files))
+    record = dict(frozen_utc=datetime.now(timezone.utc).isoformat(), reference_sha256=x2.sha(__file__), files=files)
+    if args.supersedes:
+        # A revision of the runner only: every input and answer is the first freeze's.
+        earlier = json.loads(args.supersedes.read_text(encoding="utf-8"))
+        x2.require(earlier["files"] == files, "the revision changes an input or an answer")
+        record["supersedes_sha256"] = x2.sha(args.supersedes)
+    x2.dump(out / "INTEGER-FROZEN.json", record)
     print(json.dumps(dict(rows=len(ledger), frozen_sha256=x2.sha(out / "INTEGER-FROZEN.json"))))
 
 
@@ -260,8 +266,8 @@ def run(args):
     exe, build = x2.load_build(args.build)
     frozen = json.loads((args.dir / "INTEGER-FROZEN.json").read_text(encoding="utf-8"))
     for name, digest in frozen["files"].items():
-        assert x2.sha(args.dir / name) == digest, (name, "frozen binding changed")
-    assert frozen["reference_sha256"] == x2.sha(__file__), "the reference changed after its freeze"
+        x2.require(x2.sha(args.dir / name) == digest, (name, "frozen binding changed"))
+    x2.require(frozen["reference_sha256"] == x2.sha(__file__), "the reference changed after its freeze")
     ledger = json.loads((args.dir / "integer-ledger.json").read_text(encoding="utf-8"))
     answers = json.loads((args.dir / "integer-answers.json").read_text(encoding="utf-8"))
     args.out.mkdir(parents=True, exist_ok=False)
@@ -306,6 +312,7 @@ if __name__ == "__main__":
     commands = parser.add_subparsers(dest="command", required=True)
     make = commands.add_parser("freeze")
     make.add_argument("--out", type=pathlib.Path, required=True)
+    make.add_argument("--supersedes", type=pathlib.Path)
     make.set_defaults(handler=freeze)
     score = commands.add_parser("run")
     score.add_argument("--px3", type=pathlib.Path, required=True)

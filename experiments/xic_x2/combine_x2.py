@@ -15,18 +15,20 @@ import harness_x2 as x2
 
 
 def main(args):
+    x2.require(not (args.out / "COMBINED.json").exists(), "a combined ledger is already there")
     first = json.loads((args.main / "SUMMARY.json").read_text(encoding="utf-8"))
     second = json.loads((args.supplement / "SUMMARY.json").read_text(encoding="utf-8"))
-    assert first["identity"]["binary_sha256"] == second["identity"]["binary_sha256"], "two builds"
+    x2.require(first["identity"]["binary_sha256"] == second["identity"]["binary_sha256"], "two builds")
+    x2.require(not first["identity"]["uncommitted_source"], "a build from uncommitted source")
     filled = {row["id"]: row for row in second["rows"]}
     rows = []
     for row in first["rows"]:
         if row["id"] in filled:
-            assert row["status"] == "MISSING", row["id"]
+            x2.require(row["status"] == "MISSING", row["id"])
             row = {**row, **filled.pop(row["id"])}
             row.pop("reason", None)
         rows.append(row)
-    assert not filled, sorted(filled)
+    x2.require(not filled, sorted(filled))
     counts = dict(
         rows=len(rows),
         named_cases=sum(bool(row.get("named_case")) for row in rows),
