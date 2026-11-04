@@ -544,7 +544,7 @@ Settings row exists for them; the lanes that add the rows bring the behaviour.
 | `display.contrast` | `normal` \| `high` | `normal` | the one contrast |
 | `display.motion` | `system` \| `reduce` | `system` | motion follows the system |
 | `display.wheelHabit` | `draw` \| `figma` | `draw` | the wheel zooms |
-| `display.crosshair` | `true` \| `false` | `false` | no plot draws a crosshair; the chromatogram's hover rule and the crosshair cursor are not this switch |
+| `display.crosshair` | `true` \| `false` | `false` | no plot draws a crosshair; the crosshair cursor is not this switch, and whether the chromatogram's hover rule answers to it is N-V4's to decide |
 | `display.grid` | `true` \| `false` | `true` | gridlines are drawn |
 | `display.remember` | `true` \| `false` | `true` | every commit is written |
 
@@ -588,7 +588,7 @@ decision:
 - `display.crosshair` defaults to off, because no plot draws a crosshair today.
   The chromatogram does draw a dashed rule at the hovered scan, and the spectrum
   draws no pointer line. Whether that rule answers to this switch is N-V4's to
-  decide, and off must not hide it. The v5.11 demo defaults the switch on.
+  decide, and the default must not hide it. The v5.11 demo defaults the switch on.
 - `display` is a new root group rather than part of `appearance`, and whether
   Reset defaults reaches it belongs to the lanes that add the rows.
 

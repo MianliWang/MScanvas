@@ -161,10 +161,9 @@ pub enum WheelHabit {
 /// A group of its own rather than more of [`AppearancePreferences`], which the
 /// webview uses as its session state. Every default keeps what a build without
 /// these fields does, which is why `crosshair` is off: no plot draws a crosshair
-/// today. The chromatogram's dashed rule at the hovered scan and the crosshair
-/// cursor style are not this switch; whether that rule answers to it is N-V4's to
-/// decide, and off must not hide it. That default is a reading, not an owner
-/// decision.
+/// today. That default is a reading, not an owner decision. The crosshair cursor
+/// style is not this switch. Whether the chromatogram's dashed rule at the hovered
+/// scan answers to it is N-V4's to decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DisplayPreferences {
