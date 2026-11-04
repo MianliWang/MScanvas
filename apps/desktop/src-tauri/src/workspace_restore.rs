@@ -672,9 +672,11 @@ struct Lane {
     /// refilled within a session, so positions stay meaningful.
     presented: HashSet<usize>,
     /// The rows a press of Restore workspace handed to admission because its
-    /// re-check found them matching. One still waiting after that was refused,
-    /// so a save does not count it and a later read presenting it changes
-    /// nothing (accepted by the owner on 2026-11-03: ADR 0061, decision 10's note).
+    /// re-check found them matching. A save does not count one still waiting
+    /// after that, and a later read presenting it changes nothing: accepted by
+    /// the owner on 2026-11-03 for a row admission refused (ADR 0061, decision
+    /// 10's note), as built and not an owner decision for a file replaced since
+    /// the re-check.
     asked: HashSet<usize>,
     /// The restored rows this session no longer offers (decision 10), decided
     /// once, by this session's first read: `None` before it, when nothing is
@@ -989,11 +991,12 @@ impl WorkspaceRestoreStore {
     /// only if the row admission answered with is the recorded objects; a file
     /// replaced since the re-check stays in the Workbench as any file added
     /// there, and its restored row reads `changed` at the next read. A marked
-    /// row, or one admission refused, stays where it is, and a row the press
-    /// handed to admission is not counted as declined, whatever became of it
-    /// (accepted by the owner on 2026-11-03: ADR 0061, decision 10's note). Nothing
-    /// is previewed and nothing is written here: the webview's next save records
-    /// the result.
+    /// row, or one admission refused, stays where it is. A row the press handed
+    /// to admission and still waiting is not counted as declined: accepted by the
+    /// owner on 2026-11-03 for one admission refused (ADR 0061, decision 10's
+    /// note), as built and not an owner decision for a file replaced since the
+    /// re-check. Nothing is previewed and nothing is written here: the webview's
+    /// next save records the result.
     ///
     /// # Errors
     ///

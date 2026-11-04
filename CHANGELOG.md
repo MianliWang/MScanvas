@@ -17,8 +17,8 @@ All notable changes will be documented here once versioned releases begin.
   hashing each file, previews nothing and says they were added again, not verified
   against the last session. **Start fresh** forgets them, one marked file can be
   dismissed, and Settings turns restore off, saying that kept-aside copies remain.
-  A file not taken is offered at the next start only, except one a press could
-  not place, accepted by the owner on 2026-11-03; a marked file waits
+  A file not taken is offered at the next start only, except one the workspace
+  refused at a press, accepted by the owner on 2026-11-03; a marked file waits
   ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md), decision 10).
 - **Spreadsheet CSV on a stored targeted result's table.** The results table has
   a third export, spreadsheet CSV / 电子表格 CSV, beside CSV and TSV. It is a
