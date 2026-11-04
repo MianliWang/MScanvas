@@ -70,6 +70,8 @@ interface slice, so only the `MAX_OFFERS` doc comment changed on
 exception, set out under [decision 10](#10-how-long-a-row-that-is-not-put-back-is-offered).
 The owner has not answered it.
 
+*Owner decision, 2026-11-03 (Q8-exception):* accepted: a row pressed for Restore and refused by admission (for example a full workspace) is not counted as declined, so a row refused every session never expires. The direction is conservative: such rows stay longer, and nothing is lost ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the workspace
 boundary, its *Persistence exclusion* and its collision-only relative context),
 [0057](0057-conversion-capacity-and-viewing-during-conversion.md) (capacity
@@ -494,6 +496,13 @@ user pressed Restore workspace; its source file is untouched, and the next start
 whose first read finds it matching reports it as no longer offered. The owner has
 not answered this.
 
+*As built (2026-11-04), not an owner decision:* a row whose file was replaced
+after the press's re-check is not counted either, and it was not refused. The
+re-check found it matching, so the press handed it to admission; admission adds
+the new file, the row stays waiting because that is not its recorded object
+(decision 4), and a save does not count it. It reads `changed` at the next read,
+and a marked row never expires. Q8-exception names a row refused by admission.
+
 Which rows are no longer offered is decided once per session, by its first
 read, from what that read finds, never at load: a row whose count has reached
 `MAX_OFFERS` and that the read finds `matching` is no longer offered, and every
@@ -559,6 +568,13 @@ answer is a one-line change.
   they are live. Nothing is lost. `ae14765e` and `main` do the same, so a revert
   does not change this. The order of groups does hold. The owner has not answered
   this.
+- *As built (2026-11-04), not an owner decision:* a row still waiting joins the
+  group at its stored group's place among the groups of its name (decision 4), so
+  a group renamed or dissolved while a duplicate of its name holds waiting rows
+  can shift which group of that name those rows join. Stored `Batch` holding x
+  with m waiting and `Batch` holding y with n waiting: with the first renamed, the
+  save puts m beside y and n in a new group of that name. It needs two groups of
+  one name, marked rows and that edit; nothing is lost.
 - The webview must save after every roster answer and organization change; a
   crash between a change and its save restores the previous arrangement. A
   row removed just before a crash can therefore come back as a restored row,
