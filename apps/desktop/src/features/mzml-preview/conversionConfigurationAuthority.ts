@@ -54,6 +54,8 @@ export interface ProbeAdmissionFacts {
    * read without waiting for anything to answer.
    */
   readonly laneClaimed: boolean;
+  /** A one-click view holds the slot: its worker takes the gate for its own reads. */
+  readonly rawViewRunning: boolean;
   /** A preview run or scan is being read. */
   readonly previewReading: boolean;
   /** Another configuration probe is already in flight. */
@@ -62,7 +64,7 @@ export interface ProbeAdmissionFacts {
 
 /** Why a probe may not begin now, in the order the facts are consulted. */
 export type ProbeRefusal =
-  "backendQuarantined" | "backendChanging" | "laneClaimed" | "previewReading" | "probeInFlight" | "reclaimingStaging";
+  "backendQuarantined" | "backendChanging" | "laneClaimed" | "rawViewRunning" | "previewReading" | "probeInFlight" | "reclaimingStaging";
 
 /**
  * The one order these facts are consulted in.
@@ -77,6 +79,7 @@ const REFUSAL_ORDER: readonly ProbeRefusal[] = [
   "backendQuarantined",
   "backendChanging",
   "laneClaimed",
+  "rawViewRunning",
   "previewReading",
   "reclaimingStaging",
   "probeInFlight",

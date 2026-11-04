@@ -34,6 +34,13 @@ All notable changes will be documented here once versioned releases begin.
   reads with nothing lost and is written as schema 2 at its next change. After
   that, an earlier build says the saved file was written by a newer version, runs
   on its defaults and leaves the file alone.
+- **A Thermo RAW row can be viewed in two presses.** Highlighting it shows **View**
+  and starts nothing. View converts it with the verified default into MSCanvas's
+  view cache, never beside your file, shows each phase with Cancel, and opens it in
+  the same viewer; a second View of the same file finds the cached copy. The view
+  says which RAW file and conversion it came from. Its exports are refused until
+  they can say so too; **Convert this file…** is the route to an output you can
+  export ([ADR 0060](docs/architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).
 - **Conversion runs are now remembered, and you can see and forget them.**
   Conversion → **Conversion history** lists every run with when it started and
   ended, or that it was cut short, and reads one run's files, outputs and checks

@@ -200,8 +200,10 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   choose lasts, what each recovery control does, and which Windows the first
   beta is supported on.
 
-Not implemented yet: vendor RAW preview; XIC — refused on measured evidence for
-the ProteoWizard build MSCanvas was tested against, not merely pending;
+Not implemented yet: viewing any vendor format but Thermo RAW, whose **View**
+converts it into MSCanvas's view cache and whose exports wait for a later slice
+(**Convert this file…** is the route to an output that can be exported); XIC —
+refused on measured evidence for the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
 anything other than filename; reopening a saved project as a
 Workbench session -- a saved project records references and history, but

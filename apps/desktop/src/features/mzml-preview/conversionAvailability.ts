@@ -44,6 +44,8 @@ export interface ConversionLane {
    * until it is restarted.
    */
   readonly backendQuarantined: boolean;
+  /** Whether a one-click view holds the conversion slot (ADR 0060 decision 5), named so it is not called a read. */
+  readonly rawViewRunning: boolean;
   /** Whether a run or a scan is being read over the one backend lane. */
   readonly previewReading: boolean;
   /**
@@ -124,6 +126,7 @@ export type ConversionUnavailableReason =
   | "backend-changing"
   | "backend-unavailable"
   | "conversion-running"
+  | "raw-view-running"
   | "preview-running"
   | "configuration-probing"
   | "adoption-running"
@@ -223,6 +226,9 @@ function unavailableReason(
   }
   if (lane.laneClaimed) {
     return "conversion-running";
+  }
+  if (lane.rawViewRunning) {
+    return "raw-view-running";
   }
   if (lane.previewReading) {
     return "preview-running";

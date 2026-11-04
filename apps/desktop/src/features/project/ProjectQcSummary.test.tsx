@@ -591,6 +591,7 @@ describe("what a refused capture or removal says", () => {
   it("names each refusal in its own words and records nothing", async () => {
     const cases: readonly [string, string][] = [
       ["previewNotCurrent", en.projectRefusedPreviewNotCurrent],
+      ["viewed_through_cache", en.errViewedThroughCache],
       ["producerUnidentified", en.projectRefusedProducerUnidentified],
       ["summaryTooLarge", en.projectRefusedSummaryTooLarge],
       // The shared identifiers, said as a capture means them.

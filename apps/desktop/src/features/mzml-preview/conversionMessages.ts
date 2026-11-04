@@ -42,6 +42,8 @@ const NOTICE_MESSAGE = {
   "backend-changing": "m74CnvNoticeBackendChanging",
   "backend-unavailable": "m74CnvNoticeBackendUnavailable",
   "conversion-running": "m74CnvNoticeConversionRunning",
+  // The panel names the file where it knows it; this is the moment before the answer.
+  "raw-view-running": "rawViewBusyUnnamed",
   "preview-running": "m74CnvNoticePreviewRunning",
   "configuration-probing": "m74CnvNoticeConfigurationProbing",
   "adoption-running": "m74CnvNoticeAdoptionRunning",
