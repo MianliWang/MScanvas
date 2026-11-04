@@ -658,12 +658,15 @@ writer and Rust's ownership of files.
     and, with the box checked, removed the parent, when it finds nothing to do.
     It removes `view-cache` only where Rust would open it: spelled so, a plain
     directory under a parent that is no reparse point, with the marker byte for
-    byte; and, narrower than Rust, with no reparse point anywhere below and every
-    folder listable; otherwise nothing. The cases where it removes nothing are not
-    an owner decision. It never fails the uninstall and never prompts: a locked
-    file stays with the marker, and the marker comes back if something holds the
-    root itself, so the root is still recognized and the next uninstall finishes
-    it. A test in `view_cache/tests.rs` pins its names to Rust's constants and
+    byte; and, narrower than Rust, with no reparse point anywhere below, every
+    folder listable, which a path past `MAX_PATH` is not, and no name ending in a
+    space or a dot, which Win32 reads as another name; otherwise nothing. The cases
+    where it removes nothing are not an owner decision. It never fails the uninstall
+    and never prompts. With the box not checked, a locked file stays with the
+    marker, and the marker comes back if something holds the root itself, so the
+    root is still recognized and the next uninstall finishes it. A test in
+    `view_cache/tests.rs` pins its names to Rust's constants, the probe that reads
+    a name's attributes through `\\?\`, and the refusal of those names, and
     refuses any comparison by collation, which ignores some bytes and names;
     `scripts/build_candidate.ps1` lists the hook among a candidate's inputs and
     refuses a build whose generated script does not call it;
@@ -673,12 +676,22 @@ writer and Rust's ownership of files.
     goes and the rest stays. With it checked, the local folder, the roaming folder
     and the registry key go, which answers "not observed" above for those three.
     No person has looked at those pages with the hook in place.
-  - *2026-11-03, run against scratch folders with NSIS 3.11, not an owner
-    decision:* `RMDir /r` follows a junction, as the folder named or inside it,
-    and deletes what the target holds. The hook never uses it. The template's
-    checked path does (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not
-    changed; read with that run, not run itself: with the box checked, a junction
-    under that folder loses its target's contents.
+  - *2026-11-03, run against scratch folders with NSIS 3.11 and with 3.13, which
+    Tauri CLI 2.12.4 pins, not an owner decision:* `RMDir /r` follows a junction,
+    as the folder named or inside it, and deletes what the target holds. The hook
+    never uses it. The template's checked path does
+    (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not changed; read with
+    that run, not run itself: with the box checked, a junction under that folder
+    loses its target's contents.
+  - *2026-11-03, run on that runner and read from `view_cache.rs`, not an owner
+    decision:* with the box checked and a file locked, that `RmDir /r` takes the
+    marker first and leaves the locked file in a root with no marker. The hook then
+    recognizes nothing, on that uninstall or on a later one with the box not
+    checked, and after a reinstall Rust refuses the root as unrecognized (read, not
+    run), so no View is served from it until a person removes the folder or checks
+    the box again with nothing locked. Clear view cache is in the next slice
+    (A0060-split). Only converted copies are at stake, and no one has been asked
+    about this state.
   - *2026-11-03, read from `PageLeaveReinstall` and run on that runner (the same
     build, with the recorded version set to 0.0.1), not an owner decision:* no
     installer passes `/UPDATE` to the old uninstaller. One given `/UPDATE` jumps
