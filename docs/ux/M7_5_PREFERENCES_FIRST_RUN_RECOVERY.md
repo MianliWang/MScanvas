@@ -591,7 +591,8 @@ decision:
   the user asked for this by turning remembering off, so a moved panel goes back at
   the next launch with no word on screen. A panel reset is announced only to
   assistive technology, through visually hidden live regions. On screen the Panels
-  row reads "Already the default." and the panels move back. None of these says this
+  row reads "Already the default.", and the panels move back where that differs from
+  the default at the window's width. Neither the announcement nor the row says this
   lasts only for the session. The commit that turns it off writes that
   switch and no other change. The commit that turns it on is written whole, and so
   is a confirmed replacement of an unusable record, because that confirmation says

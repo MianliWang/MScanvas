@@ -179,12 +179,12 @@ impl UiPreferenceStore {
         }
     }
 
-    /// Commits one half of the record, merged onto what is actually stored.
+    /// Commits the groups a request names, merged onto what is actually stored.
     ///
     /// The merge base is read from disk inside the same lock that publishes, so
-    /// a layout commit and a Settings apply cannot overwrite each other's newer
-    /// fields: each one only ever changes the group it names, and the other
-    /// group comes from the record as it stands.
+    /// a layout commit, a Settings apply and a folder commit cannot overwrite
+    /// each other's newer fields: each one only ever changes what it names, and
+    /// the other groups and the folder come from the record as it stands.
     ///
     /// An unusable stored record refuses unless the caller passes the explicit
     /// replacement confirmation, so nothing about ordinary use -- a startup
