@@ -498,11 +498,15 @@ pub(crate) fn temporary_name(prefix: &str, attempt: u32) -> String {
 /// process and at any attempt.
 #[must_use]
 pub fn is_temporary_name(name: &str, prefix: &str) -> bool {
-    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    // As a `u32` prints: no sign, no leading zero, nothing past its range.
+    let number = |part: &str| part.parse::<u32>().ok().filter(|n| n.to_string() == part);
     name.strip_prefix(prefix)
         .and_then(|rest| rest.strip_suffix(".tmp"))
         .and_then(|rest| rest.split_once('-'))
-        .is_some_and(|(process, attempt)| digits(process) && digits(attempt))
+        .is_some_and(|(process, attempt)| {
+            number(process).is_some()
+                && number(attempt).is_some_and(|attempt| attempt < TEMPORARY_ATTEMPTS)
+        })
 }
 
 /// Opens one `CREATE_NEW` sibling under a name only this writer would choose.

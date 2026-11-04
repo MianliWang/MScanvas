@@ -1437,7 +1437,9 @@ fn kept_aside(directory: &Path, name: &str) -> bool {
 /// A private sibling a crashed write left: exactly the name a write gives one, an
 /// ordinary file, last written more than [`SIBLING_MAX_AGE`] ago. Nothing is read
 /// from it. A younger one may be another instance's write in progress, and a time
-/// that cannot be read or lies in the future says nothing, so those stay.
+/// that cannot be read or lies in the future says nothing, so those stay. An older
+/// one a live writer still holds is not protected by its age: on Windows its handle
+/// refuses the removal, which `sweep` counts.
 fn is_abandoned_sibling(name: &str, path: &Path) -> bool {
     local_document::is_temporary_name(name, TEMPORARY_PREFIX)
         && fs::symlink_metadata(path).is_ok_and(|metadata| {

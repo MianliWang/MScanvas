@@ -1929,7 +1929,8 @@ fn clear_and_off_remove_a_sibling_past_a_day_and_keep_one_short_of_it() {
         let scratch = Scratch::new("history-sibling-age");
         let history = open(&scratch);
         let directory = history_directory(&scratch);
-        let old = left_behind(&directory, &sibling_name(0), LONG_AGO);
+        // The last attempt a write makes.
+        let old = left_behind(&directory, &sibling_name(7), LONG_AGO);
         let just_past = left_behind(&directory, &sibling_name(1), DAY + MINUTE);
         let just_short = left_behind(&directory, &sibling_name(2), DAY - MINUTE);
         let fresh = left_behind(&directory, &sibling_name(3), Duration::ZERO);
@@ -2000,6 +2001,15 @@ fn a_name_that_only_looks_like_a_sibling_is_kept_however_old() {
         ".mscanvas-run-history-1-a.tmp",
         ".mscanvas-run-history-1-0-0.tmp",
         ".mscanvas-run-history-1-0.tmp.bak",
+        // Past the attempts a write makes.
+        ".mscanvas-run-history-1-8.tmp",
+        // No number prints like these.
+        ".mscanvas-run-history-007-0.tmp",
+        ".mscanvas-run-history-1-00.tmp",
+        ".mscanvas-run-history-+1-0.tmp",
+        ".mscanvas-run-history-1-+0.tmp",
+        // Past what a process identifier can hold.
+        ".mscanvas-run-history-4294967296-0.tmp",
         ".mscanvas-run-history-1-1.TMP",
         ".MSCANVAS-RUN-HISTORY-1-2.tmp",
         "x.mscanvas-run-history-1",
@@ -2068,9 +2078,11 @@ fn a_junction_or_a_link_with_a_siblings_name_is_kept_and_its_target_untouched() 
             .expect("run mklink");
         assert!(made.status.success(), "the disposable junction must exist");
         set_written(&junction, SystemTime::now() - LONG_AGO);
-        // A file link needs a privilege an ordinary session may not have.
+        // A file link needs a privilege an ordinary session may not have. CI has it,
+        // so this part cannot go unrun there unnoticed.
         let link = directory.join(sibling_name(1));
         let linked = std::os::windows::fs::symlink_file(&canary, &link).is_ok();
+        assert!(linked || std::env::var_os("CI").is_none(), "no link in CI");
         if linked {
             set_written(&link, SystemTime::now() - LONG_AGO);
         }
