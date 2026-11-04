@@ -17,6 +17,7 @@ const FREE: ProbeAdmissionFacts = {
   backendChanging: false,
   laneClaimed: false,
   reclaimingStaging: false,
+  rawViewRunning: false,
   previewReading: false,
   probeInFlight: false,
 };
@@ -69,6 +70,7 @@ describe("probe admission", () => {
       backendChanging: true,
       laneClaimed: true,
       reclaimingStaging: false,
+      rawViewRunning: true,
       previewReading: true,
       probeInFlight: true,
     };
@@ -103,6 +105,7 @@ describe("what admission deliberately does not consult", () => {
       "backendChanging",
       "laneClaimed",
       "reclaimingStaging",
+      "rawViewRunning",
       "previewReading",
       "probeInFlight",
     ]);

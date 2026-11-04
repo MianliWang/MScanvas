@@ -271,6 +271,15 @@ export async function ipcCalls(): Promise<IpcCall[]> {
   ) as Promise<IpcCall[]>;
 }
 
+/**
+ * Every invocation but the view's state read, for a spec proving a gesture asks
+ * Rust nothing. Highlighting a Thermo RAW row asks that one question by design
+ * (ADR 0060 decision 12), and it reads no file and starts no work.
+ */
+export async function ipcCallsButViewState(): Promise<IpcCall[]> {
+  return (await ipcCalls()).filter((call) => call.command !== "get_raw_view_state");
+}
+
 /** Every console entry and unhandled failure this document has produced. */
 export async function consoleEntries(): Promise<ConsoleEntry[]> {
   return browser.execute(

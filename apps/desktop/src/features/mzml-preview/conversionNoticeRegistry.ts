@@ -57,6 +57,7 @@ export const CONVERSION_LANE_FACTS = [
   "backend-changing",
   "backend-unavailable",
   "conversion-running",
+  "raw-view-running",
   "preview-running",
   "configuration-probing",
   "adoption-running",
@@ -80,6 +81,7 @@ const NOTICE_ORDER: Readonly<Record<ConversionUnavailableReason, number>> = {
   "backend-changing": 1,
   "backend-unavailable": 2,
   "conversion-running": 3,
+  "raw-view-running": 3.5,
   "preview-running": 4,
   "configuration-probing": 5,
   "adoption-running": 6,
@@ -120,6 +122,8 @@ export function probeRefusalFact(refusal: ProbeRefusal): ConversionAvailabilityF
       return "backend-changing";
     case "laneClaimed":
       return "conversion-running";
+    case "rawViewRunning":
+      return "raw-view-running";
     case "previewReading":
       return "preview-running";
     case "reclaimingStaging":

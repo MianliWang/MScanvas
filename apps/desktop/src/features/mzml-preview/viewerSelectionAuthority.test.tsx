@@ -645,6 +645,7 @@ describe("the global spectrum-selection lane", () => {
     backendUsable: true,
     backendBusy: false,
     conversionBusy: false,
+    rawViewBusy: false,
   } as const;
 
   it("is available with a loaded run, a usable backend and both lanes free", () => {
@@ -657,6 +658,7 @@ describe("the global spectrum-selection lane", () => {
       { name: "backend not usable", lane: { ...FREE, backendUsable: false } },
       { name: "backend lane busy", lane: { ...FREE, backendBusy: true } },
       { name: "conversion lane busy", lane: { ...FREE, conversionBusy: true } },
+      { name: "a view holds the slot", lane: { ...FREE, rawViewBusy: true } },
     ];
 
     for (const blocker of blockers) {
@@ -673,6 +675,7 @@ describe("the global spectrum-selection lane", () => {
       { lane: { ...FREE, backendBusy: true }, reason: "backend-changing" },
       { lane: { ...FREE, backendUsable: false }, reason: "backend-unavailable" },
       { lane: { ...FREE, conversionBusy: true }, reason: "conversion-running" },
+      { lane: { ...FREE, rawViewBusy: true }, reason: "raw-view-running" },
     ] as const;
 
     for (const { lane, reason } of cases) {
@@ -716,6 +719,7 @@ describe("the global spectrum-selection lane", () => {
       backendUsable: false,
       backendBusy: true,
       conversionBusy: true,
+      rawViewBusy: true,
     };
     const reasonOf = (lane: typeof everything) => {
       const availability = spectrumSelectionAvailability(lane);
@@ -743,7 +747,7 @@ describe("the global spectrum-selection lane", () => {
       for (const backendUsable of [true, false]) {
         for (const backendBusy of [true, false]) {
           for (const conversionBusy of [true, false]) {
-            const lane = { hasLoadedPreview, backendUsable, backendBusy, conversionBusy };
+            const lane = { hasLoadedPreview, backendUsable, backendBusy, conversionBusy, rawViewBusy: conversionBusy };
             expect(canStartSpectrumSelection(lane), JSON.stringify(lane)).toBe(
               spectrumSelectionAvailability(lane).status === "available",
             );
