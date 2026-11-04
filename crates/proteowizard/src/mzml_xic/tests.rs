@@ -232,6 +232,11 @@ fn a_query_refuses_what_is_not_one_level_and_one_closed_window() {
         XicQuery::from_ppm(1, f64::MAX, 1e9),
         XicQuery::from_ppm(1, f64::NAN, 10.0),
         XicQuery::from_ppm(0, 100.0, 10.0),
+        // A negative operand is refused however small, so rounding cannot turn it
+        // into a zero-width window, and a negative centre cannot turn it around.
+        XicQuery::from_half_width(1, 1000.0, -1e-14),
+        XicQuery::from_ppm(1, 1000.0, -1e-11),
+        XicQuery::from_ppm(1, -500.0, -10.0),
     ] {
         assert_eq!(query, Err(XicRefusal::InvalidQuery));
     }
@@ -253,6 +258,10 @@ fn a_zero_width_window_is_legal() {
     );
     let zero = XicQuery::from_ppm(1, 101.0, 0.0).unwrap();
     assert_eq!((zero.low(), zero.high()), (101.0, 101.0));
+    // Negative zero is zero.
+    let negative = XicQuery::from_half_width(1, 101.0, -0.0).unwrap();
+    assert_eq!((negative.low(), negative.high()), (101.0, 101.0));
+    assert!(XicQuery::from_ppm(1, 101.0, -0.0).is_ok());
 }
 
 #[test]
@@ -432,6 +441,29 @@ fn an_empty_zlib_payload_at_length_zero_is_empty_as_the_reader_reads_it() {
             points_in_window: 0
         }
     );
+}
+
+#[test]
+fn an_empty_payload_at_a_declared_length_is_lengths_that_disagree() {
+    // As built 2026-11-03, not an owner decision. The oracle says `Unreadable`
+    // for zlib, because an empty string is not a zlib stream. The reader's rule
+    // leaves it to the length check, which is this state.
+    let mz = mz_role(MZ_UNIT);
+    let intensity = intensity_role(INTENSITY_UNIT);
+    for compression in [ZLIB, NO_COMPRESSION] {
+        for arrays in [
+            [array(&[&mz, F64, compression], ""), intensity_array(&[1.0])],
+            [
+                mz_array(&[101.0]),
+                array(&[&intensity, F64, compression], ""),
+            ],
+        ] {
+            assert_eq!(
+                only_state(&[spectrum(0, 1, &level(1), &scan_list(60.0), &arrays)]),
+                XicScanState::NoUsableArrays
+            );
+        }
+    }
 }
 
 #[test]
@@ -990,6 +1022,15 @@ fn the_unit_rules_compare_the_raw_triple_so_a_synonym_is_a_mix() {
         ]),
         XicRefusal::MixedUnit(XicAxis::RetentionTime)
     );
+    // And under another vocabulary reference.
+    let elsewhere = r#"unitAccession="UO:0000031" unitName="minute" unitCvRef="XX""#;
+    assert_eq!(
+        refuse(&[
+            with_units(0, 1, MZ_UNIT, minute, INTENSITY_UNIT),
+            with_units(1, 1, MZ_UNIT, elsewhere, INTENSITY_UNIT),
+        ]),
+        XicRefusal::MixedUnit(XicAxis::RetentionTime)
+    );
 }
 
 #[test]
@@ -1241,6 +1282,43 @@ fn a_faims_voltage_that_cannot_be_read_or_conflicts_is_not_one_value() {
             XicRefusal::MixedFaimsCompensationVoltage
         );
     }
+
+    // Across the elements of one spectrum, too. Both scans state one start time,
+    // so the voltage is all that differs.
+    let arrays = [mz_array(&[101.0]), intensity_array(&[1.0])];
+    let with_voltage =
+        |voltage: &str| scan_list(60.0).replace("</scan>", &format!("{}</scan>", faims(voltage)));
+    let two_scans = |first: &str, second: &str| {
+        let scan = |voltage| {
+            with_voltage(voltage)
+                .replace(r#"<scanList count="1">"#, "")
+                .replace("</scanList>", "")
+        };
+        format!(
+            r#"<scanList count="2">{}{}</scanList>"#,
+            scan(first),
+            scan(second)
+        )
+    };
+    let on_spectrum = format!("{}{}", level(1), faims("-45"));
+    for (terms, scans) in [
+        (level(1), two_scans("-45", "-60")),
+        (on_spectrum.clone(), with_voltage("-60")),
+    ] {
+        assert_eq!(
+            refuse(&[spectrum(0, 1, &terms, &scans, &arrays)]),
+            XicRefusal::MixedFaimsCompensationVoltage
+        );
+    }
+    for (terms, scans) in [
+        (level(1), two_scans("-45", "-45.0")),
+        (on_spectrum, with_voltage("-45.0")),
+    ] {
+        assert_eq!(
+            evaluate(&[spectrum(0, 1, &terms, &scans, &arrays)]).faims_compensation_voltage(),
+            Some(-45.0)
+        );
+    }
 }
 
 #[test]
@@ -1334,6 +1412,10 @@ fn with_scan_windows(index: u64, ms_level: u32, windows: &[(f64, f64)]) -> Strin
             )
         })
         .collect();
+    with_scan_window_elements(index, ms_level, &windows)
+}
+
+fn with_scan_window_elements(index: u64, ms_level: u32, windows: &str) -> String {
     let list = if windows.is_empty() {
         String::new()
     } else {
@@ -1400,6 +1482,40 @@ fn differing_scan_windows_and_one_beside_none_are_disclosed_in_scope_only() {
     );
 }
 
+#[test]
+fn a_limit_that_cannot_be_read_or_is_not_stated_leaves_no_window() {
+    let lower = |value| cv("MS:1000501", value);
+    let upper = |value| cv("MS:1000500", value);
+    let one = |limits: String| format!("<scanWindow>{limits}</scanWindow>");
+    // The query is [100, 102], and every limit that can be read misses it, so a
+    // window made up from any of these would count the scan as outside.
+    let no_window = [
+        one(format!("{}{}", lower("low"), upper("90"))),
+        one(format!("{}{}", lower("500"), upper("high"))),
+        one(lower("500")),
+        one(upper("90")),
+        // Two halves in two windows are not one window.
+        format!("{}{}", one(lower("500")), one(upper("600"))),
+    ];
+    for windows in &no_window {
+        let result = evaluate(&[with_scan_window_elements(0, 1, windows)]);
+        assert_eq!(result.scans_outside_scan_window(), 0, "{windows}");
+        assert!(!result.scan_windows_differ(), "{windows}");
+        // No window is what a scan with none declares, and differs from a window.
+        let beside_none = evaluate(&[
+            with_scan_window_elements(0, 1, windows),
+            with_scan_windows(1, 1, &[]),
+        ]);
+        assert!(!beside_none.scan_windows_differ(), "{windows}");
+        let beside_one = evaluate(&[
+            with_scan_window_elements(0, 1, windows),
+            with_scan_windows(1, 1, &[(360.0, 1300.0)]),
+        ]);
+        assert!(beside_one.scan_windows_differ(), "{windows}");
+        assert_eq!(beside_one.scans_outside_scan_window(), 1, "{windows}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Whole-query refusals of the document and its metadata
 // ---------------------------------------------------------------------------
@@ -1451,6 +1567,10 @@ fn a_term_stated_two_ways_refuses_the_query_at_any_level() {
             r#"{}<cvParam cvRef="MS" accession="MS:1000511" name="other" value="1"/>"#,
             level(1)
         ),
+        format!(
+            r#"{}<cvParam cvRef="XX" accession="MS:1000511" name="ms level" value="1"/>"#,
+            level(1)
+        ),
     ] {
         assert_eq!(
             refuse(&[with_terms(0, &terms)]),
@@ -1473,12 +1593,16 @@ fn a_level_and_a_start_time_must_be_readable_when_stated() {
         refuse(&[with_terms(0, &level(0))]),
         XicMetadataProblem::MsLevelNotPositive.into()
     );
-    let not_a_number =
-        r#"<cvParam cvRef="MS" accession="MS:1000511" name="ms level" value="one"/>"#;
-    assert_eq!(
-        refuse(&[with_terms(0, not_a_number)]),
-        MzmlScanError::Malformed(MzmlMalformedKind::InvalidNumber).into()
-    );
+    // Strict decimal, and a level past `u32` never wraps round into the range.
+    for value in ["one", "+1", "-1", "4294967297"] {
+        let term = format!(
+            r#"<cvParam cvRef="MS" accession="MS:1000511" name="ms level" value="{value}"/>"#
+        );
+        assert_eq!(
+            refuse(&[with_terms(0, &term)]),
+            MzmlScanError::Malformed(MzmlMalformedKind::InvalidNumber).into()
+        );
+    }
 
     let arrays = [mz_array(&[101.0]), intensity_array(&[1.0])];
     let no_value = format!(
@@ -1787,6 +1911,140 @@ fn two_payloads_in_one_array_are_refused_and_never_joined() {
 }
 
 #[test]
+fn an_element_inside_a_payload_refuses_the_array_and_is_never_joined_around() {
+    let refused = |role| XicScanState::Unreadable {
+        role,
+        reason: XicUnreadableReason::ElementInPayload,
+    };
+    let values = plain(&le_f64(&[101.0]));
+    let (head, tail) = values.split_at(4);
+    let mz_role = mz_role(MZ_UNIT);
+    let intensity_role = intensity_role(INTENSITY_UNIT);
+    for payload in [
+        format!("{head}<x/>{tail}"),
+        format!("{head}<x>QUJD</x>{tail}"),
+        format!("{head}{ZLIB}{tail}"),
+        format!("{head}<binary>{tail}</binary>"),
+        // Not a spectrum of the run, and its text is no more this payload's.
+        format!(r#"{head}<spectrum index="9" id="in-payload" defaultArrayLength="0"/>{tail}"#),
+        // The whole payload is there, on one side. The oracle reads only the text
+        // before the first child, so it measures these two and finds the third
+        // empty (as built 2026-11-03, not an owner decision).
+        format!("{values}<x/>"),
+        format!("{values}<x/>{values}"),
+        format!("<x/>{values}"),
+    ] {
+        let mz = array(&[&mz_role, F64, NO_COMPRESSION], &payload);
+        assert_eq!(
+            only_state(&[two_array_scan(1, mz, intensity_array(&[101.0]))]),
+            refused(ArrayRole::Mz),
+            "{payload}"
+        );
+        let intensity = array(&[&intensity_role, F64, NO_COMPRESSION], &payload);
+        assert_eq!(
+            only_state(&[two_array_scan(1, mz_array(&[101.0]), intensity)]),
+            refused(ArrayRole::Intensity),
+            "{payload}"
+        );
+    }
+    // An array refused already keeps its first reason, and the pass goes on.
+    let result = evaluate(&[
+        two_array_scan(
+            1,
+            array(
+                &[&mz_role, F64, NO_COMPRESSION, &cv("MS:1002312", "")],
+                &format!("{values}<x/>"),
+            ),
+            intensity_array(&[1.0]),
+        ),
+        ms1(1, &[101.0], &[1.0]),
+    ]);
+    assert_eq!(
+        result.rows()[0].state(),
+        unreadable(ArrayRole::Mz, ArrayProblem::Numpress)
+    );
+    assert!(matches!(
+        result.rows()[1].state(),
+        XicScanState::Measured { .. }
+    ));
+    // A comment is no element: the text around it is one text, for the oracle too.
+    assert_eq!(
+        only_state(&[two_array_scan(
+            1,
+            array(
+                &[&mz_role, F64, NO_COMPRESSION],
+                &format!("{head}<!-- a note -->{tail}"),
+            ),
+            intensity_array(&[8.0]),
+        )]),
+        XicScanState::Measured {
+            sum: 8.0,
+            points_in_window: 1
+        }
+    );
+}
+
+#[test]
+fn a_binary_element_elsewhere_in_the_array_is_not_its_payload() {
+    let terms = format!("{}{F64}{NO_COMPRESSION}", mz_role(MZ_UNIT));
+    let first = plain(&le_f64(&[100.0, 100.5, 101.0]));
+    let second = plain(&le_f64(&[101.0, 101.5, 102.0]));
+    let mz = format!(
+        r#"<binaryDataArray encodedLength="0">{terms}<binary>{first}</binary><other><binary>{second}</binary></other></binaryDataArray>"#
+    );
+    // Its own three values are the array, and the other three are never joined on.
+    assert_eq!(
+        only_state(&[two_array_scan(
+            3,
+            mz.clone(),
+            intensity_array(&[1.0, 2.0, 4.0])
+        )]),
+        XicScanState::Measured {
+            sum: 7.0,
+            points_in_window: 3
+        }
+    );
+    assert_eq!(
+        only_state(&[two_array_scan(
+            6,
+            mz,
+            intensity_array(&[1.0, 2.0, 4.0, 8.0, 16.0, 32.0])
+        )]),
+        XicScanState::NoUsableArrays
+    );
+    // And what is in there cannot refuse the array.
+    let quiet = format!(
+        r#"<binaryDataArray encodedLength="0">{terms}<binary>{first}</binary><other><binary>&amp;<y/></binary></other></binaryDataArray>"#
+    );
+    assert_eq!(
+        only_state(&[two_array_scan(3, quiet, intensity_array(&[1.0, 2.0, 4.0]))]),
+        XicScanState::Measured {
+            sum: 7.0,
+            points_in_window: 3
+        }
+    );
+}
+
+#[test]
+fn a_payloads_base64_is_read_as_strictly_as_the_reader_reads_it() {
+    // One double with trailing bits set after its last whole byte. The oracle's
+    // decoder ignores them, and the reader's refuses them (as built 2026-11-03,
+    // not an owner decision).
+    assert_eq!(plain(&le_f64(&[1.0])), "AAAAAAAA8D8=");
+    assert_eq!(
+        only_state(&[two_array_scan(
+            1,
+            mz_array(&[101.0]),
+            array(
+                &[&intensity_role(INTENSITY_UNIT), F64, NO_COMPRESSION],
+                "AAAAAAAA8D9="
+            ),
+        )]),
+        unreadable(ArrayRole::Intensity, ArrayProblem::CorruptBase64)
+    );
+}
+
+#[test]
 fn a_reference_in_a_payload_joins_it_or_refuses_the_array() {
     let values = plain(&le_f64(&[101.0]));
     let role = mz_role(MZ_UNIT);
@@ -1819,6 +2077,14 @@ fn a_reference_in_a_payload_joins_it_or_refuses_the_array() {
     assert_eq!(
         state(&format!("{values}&amp;"), &cv("MS:1002312", "")),
         unreadable(ArrayRole::Mz, ArrayProblem::Numpress)
+    );
+    // A CDATA section is text.
+    assert_eq!(
+        state(&format!("<![CDATA[{values}]]>"), ""),
+        XicScanState::Measured {
+            sum: 1.0,
+            points_in_window: 1
+        }
     );
 }
 
@@ -1895,11 +2161,22 @@ fn param_groups_are_read_at_their_use_site_and_refused_as_the_reader_refuses_the
         refuse(&[with_terms(0, &group_ref("missing"))]),
         MzmlOpenError::UndefinedParamGroup.into()
     );
-    let nested = group("outer", &group_ref("outer"));
-    assert!(matches!(
+    // A group's own id is not defined until it closes.
+    let own = group("outer", &group_ref("outer"));
+    assert_eq!(
+        run(&document_with_groups(&own, &[]), window(100.0, 102.0)),
+        Err(MzmlOpenError::UndefinedParamGroup.into())
+    );
+    // A defined one is still not expanded inside a group, and is never dropped.
+    let nested = format!(
+        r#"<referenceableParamGroupList count="2"><referenceableParamGroup id="inner">{}</referenceableParamGroup><referenceableParamGroup id="outer">{}</referenceableParamGroup></referenceableParamGroupList>"#,
+        level(1),
+        group_ref("inner")
+    );
+    assert_eq!(
         run(&document_with_groups(&nested, &[]), window(100.0, 102.0)),
-        Err(XicRefusal::Document(_))
-    ));
+        Err(MzmlScanError::Malformed(MzmlMalformedKind::NotWellFormed).into())
+    );
     let no_id = r#"<referenceableParamGroupList count="1"><referenceableParamGroup/></referenceableParamGroupList>"#;
     assert_eq!(
         run(&document_with_groups(no_id, &[]), window(100.0, 102.0)),
@@ -1909,6 +2186,55 @@ fn param_groups_are_read_at_their_use_site_and_refused_as_the_reader_refuses_the
     assert_eq!(
         run(&document_with_groups(repeated, &[]), window(100.0, 102.0)),
         Err(MzmlOpenError::AmbiguousParamGroup.into())
+    );
+}
+
+#[test]
+fn a_second_scan_list_or_array_list_refuses_even_after_an_empty_first() {
+    let arrays = [mz_array(&[101.0]), intensity_array(&[1.0])];
+    let second_scan_list = format!(r#"<scanList count="0"></scanList>{}"#, scan_list(60.0));
+    assert_eq!(
+        refuse(&[spectrum(0, 1, &level(1), &second_scan_list, &arrays)]),
+        XicMetadataProblem::MoreThanOneScanList.into()
+    );
+    let first_array_list = format!(
+        r#"{}<binaryDataArrayList count="0"></binaryDataArrayList>"#,
+        scan_list(60.0)
+    );
+    assert_eq!(
+        refuse(&[spectrum(0, 1, &level(1), &first_array_list, &arrays)]),
+        XicMetadataProblem::MoreThanOneArrayList.into()
+    );
+}
+
+#[test]
+fn the_param_group_caps_are_the_readers() {
+    let list = |groups: &str| {
+        format!(r#"<referenceableParamGroupList count="1">{groups}</referenceableParamGroupList>"#)
+    };
+    let groups = |count: usize| {
+        let groups: String = (0..count)
+            .map(|index| format!(r#"<referenceableParamGroup id="g{index}"/>"#))
+            .collect();
+        list(&groups)
+    };
+    // Only a term this pass reads is kept, so only one counts.
+    let terms = |count: usize| {
+        list(&format!(
+            r#"<referenceableParamGroup id="g">{}</referenceableParamGroup>"#,
+            level(1).repeat(count)
+        ))
+    };
+    let read = |groups: String| run(&document_with_groups(&groups, &[]), window(100.0, 102.0));
+    assert!(read(groups(MAX_PARAM_GROUPS)).is_ok());
+    assert_eq!(
+        read(groups(MAX_PARAM_GROUPS + 1)),
+        Err(MzmlOpenError::ReaderLimit(ReaderLimitKind::ParamGroups).into())
+    );
+    assert!(read(terms(MAX_TERMS_PER_PARAM_GROUP)).is_ok());
+    assert_eq!(
+        read(terms(MAX_TERMS_PER_PARAM_GROUP + 1)),
+        Err(MzmlOpenError::ReaderLimit(ReaderLimitKind::TermsPerParamGroup).into())
     );
 }
 
@@ -2010,6 +2336,9 @@ fn an_iso_8859_1_declaration_is_read_when_every_byte_is_ascii() {
         run(other_label.as_bytes(), query),
         Err(MzmlOpenError::NotUtf8.into())
     );
+    // A byte order mark comes before the first event, so the rule does not see it.
+    let marked = [b"\xef\xbb\xbf".as_slice(), &declared_iso_8859_1(&uniform)].concat();
+    assert!(run(&marked, query).is_ok());
 }
 
 #[test]
@@ -2073,17 +2402,30 @@ fn elements_outside_the_namespace_are_not_the_documents() {
 #[test]
 fn the_inspectors_limits_stay_the_outer_bound() {
     let spectra = [ms1(0, &[101.0], &[1.0]), ms1(1, &[101.0], &[1.0])];
-    let limited = read_xic_from(
-        Cursor::new(document(&spectra)),
-        &window(100.0, 102.0),
-        MzmlScanLimits::default().with_max_spectra(1),
-        &mut XicIdentity,
-        || false,
-    );
-    assert_eq!(
-        limited,
-        Err(MzmlScanError::LimitExceeded(MzmlLimitKind::Spectra).into())
-    );
+    let limits = MzmlScanLimits::default();
+    for (limits, kind) in [
+        (limits.with_max_spectra(1), MzmlLimitKind::Spectra),
+        (limits.with_max_elements(3), MzmlLimitKind::Elements),
+        (limits.with_max_depth(2), MzmlLimitKind::Depth),
+        (limits.with_max_name_bytes(4), MzmlLimitKind::NameBytes),
+        (
+            limits.with_max_attributes_per_element(1),
+            MzmlLimitKind::AttributesPerElement,
+        ),
+        (
+            limits.with_max_attribute_value_bytes(4),
+            MzmlLimitKind::AttributeValueBytes,
+        ),
+    ] {
+        let limited = read_xic_from(
+            Cursor::new(document(&spectra)),
+            &window(100.0, 102.0),
+            limits,
+            &mut XicIdentity,
+            || false,
+        );
+        assert_eq!(limited, Err(MzmlScanError::LimitExceeded(kind).into()));
+    }
 }
 
 #[test]
@@ -2245,34 +2587,86 @@ fn a_transform_is_applied_between_decode_and_sum_in_source_order() {
 
 #[test]
 fn no_array_is_decoded_once_a_refusal_is_certain() {
-    let spectra = [
-        with_terms(0, &format!("{}{POSITIVE}", level(1))),
-        with_terms(1, &format!("{}{NEGATIVE}", level(1))),
-        // This scan's integer would otherwise end the pass with another reason.
-        spectrum(
-            2,
+    let good = with_units(0, 1, MZ_UNIT, RT_UNIT, INTENSITY_UNIT);
+    let other = r#"unitAccession="X:1" unitName="other" unitCvRef="X""#;
+    let incomplete = r#"unitName="m/z""#;
+    let terms = |index, term: String| with_terms(index, &format!("{}{term}", level(1)));
+    let cases = [
+        (
+            [terms(0, POSITIVE.into()), terms(1, NEGATIVE.into())],
+            XicRefusal::MixedPolarity,
             1,
-            &format!("{}{POSITIVE}", level(1)),
-            &scan_list(60.0),
-            &[
-                array(
-                    &[&mz_role(MZ_UNIT), I64, ZLIB],
-                    &zlib(&((1_i64 << 53) + 1).to_le_bytes()),
-                ),
-                intensity_array(&[1.0]),
+        ),
+        (
+            [
+                good.clone(),
+                with_units(1, 1, other, RT_UNIT, INTENSITY_UNIT),
             ],
+            XicRefusal::MixedUnit(XicAxis::Mz),
+            1,
+        ),
+        (
+            [
+                good.clone(),
+                with_units(1, 1, MZ_UNIT, other, INTENSITY_UNIT),
+            ],
+            XicRefusal::MixedUnit(XicAxis::RetentionTime),
+            1,
+        ),
+        (
+            [good, with_units(1, 1, MZ_UNIT, RT_UNIT, other)],
+            XicRefusal::MixedUnit(XicAxis::Intensity),
+            1,
+        ),
+        // Certain from its first scan, though every scan states it the same way.
+        (
+            [
+                with_units(0, 1, MZ_UNIT, RT_UNIT, incomplete),
+                with_units(1, 1, MZ_UNIT, RT_UNIT, incomplete),
+            ],
+            XicRefusal::IncompleteUnit(XicAxis::Intensity),
+            0,
+        ),
+        (
+            [terms(0, faims("-45")), terms(1, faims("-60"))],
+            XicRefusal::MixedFaimsCompensationVoltage,
+            1,
+        ),
+        (
+            [
+                terms(0, PROFILE_TERM.into()),
+                terms(1, CENTROID_TERM.into()),
+            ],
+            XicRefusal::MixedRepresentation,
+            1,
         ),
     ];
-    let mut transform = Narrowing::default();
-    let refused = read_xic_from(
-        Cursor::new(document(&spectra)),
-        &window(100.0, 102.0),
-        MzmlScanLimits::default(),
-        &mut transform,
-        || false,
+    // This scan's integer would otherwise end the pass with another reason.
+    let integer = spectrum(
+        2,
+        1,
+        &level(1),
+        &scan_list(60.0),
+        &[
+            array(
+                &[&mz_role(MZ_UNIT), I64, ZLIB],
+                &zlib(&((1_i64 << 53) + 1).to_le_bytes()),
+            ),
+            intensity_array(&[1.0]),
+        ],
     );
-    assert_eq!(refused, Err(XicRefusal::MixedPolarity));
-    assert_eq!(transform.seen.len(), 1);
+    for ([first, second], expected, decoded) in cases {
+        let mut transform = Narrowing::default();
+        let refused = read_xic_from(
+            Cursor::new(document(&[first, second, integer.clone()])),
+            &window(100.0, 102.0),
+            MzmlScanLimits::default(),
+            &mut transform,
+            || false,
+        );
+        assert_eq!(refused, Err(expected));
+        assert_eq!(transform.seen.len(), decoded);
+    }
 }
 
 // ---------------------------------------------------------------------------

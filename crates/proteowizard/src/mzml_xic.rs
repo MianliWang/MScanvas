@@ -25,9 +25,10 @@
 //! 0071 decision 1 does not carry the viewer's refusal of a document that is not
 //! UTF-8 over to this pass, and the frozen row `inherited_tiny.pwiz.1.1.mzML`
 //! declares ISO-8859-1 on bytes that are all ASCII, which read the same under
-//! either encoding. So that one label is read when every byte is ASCII, and any
-//! other byte is the reader's `NotUtf8`. In the product the viewer's open refuses
-//! such a file first (decision 7).
+//! either encoding. So that one label is read when every byte after the
+//! declaration is ASCII, and any other byte there is the reader's `NotUtf8`. A byte
+//! order mark comes before the declaration and is not read as text. In the product
+//! the viewer's open refuses such a file first (decision 7).
 //!
 //! This is a library only. Nothing calls it, and VIEW-007 stays unavailable
 //! until the X3 decision admits the candidate.
@@ -119,13 +120,16 @@ impl XicQuery {
         Self::resolved(ms_level, low, high, XicWindowInput::Bounds)
     }
 
-    /// `[centre - half_width, centre + half_width]`. A negative half-width
-    /// reverses the window and is refused with it.
+    /// `[centre - half_width, centre + half_width]`. A negative half-width is
+    /// refused however small, before rounding can make it a legal window.
     pub fn from_half_width(
         ms_level: u32,
         centre: f64,
         half_width: f64,
     ) -> Result<Self, XicRefusal> {
+        if half_width < 0.0 {
+            return Err(XicRefusal::InvalidQuery);
+        }
         Self::resolved(
             ms_level,
             centre - half_width,
@@ -135,8 +139,12 @@ impl XicQuery {
     }
 
     /// `half = centre * ppm / 1e6`, then `low = centre - half` and
-    /// `high = centre + half`, in binary64 and in that order.
+    /// `high = centre + half`, in binary64 and in that order. A negative ppm is
+    /// refused the same way.
     pub fn from_ppm(ms_level: u32, centre: f64, ppm: f64) -> Result<Self, XicRefusal> {
+        if ppm < 0.0 {
+            return Err(XicRefusal::InvalidQuery);
+        }
         let half = centre * ppm / 1e6;
         Self::resolved(
             ms_level,
@@ -358,6 +366,9 @@ pub enum XicUnreadableReason {
     /// The array has more than one `binary` element, so no one payload is its
     /// stored values, and two are never joined.
     PayloadStatedTwice,
+    /// An element starts inside the `binary` element, so its text is not one
+    /// run of stored values, and the text around the element is never joined.
+    ElementInPayload,
     /// A term follows the payload, whose bound depends on the terms.
     TermAfterPayload,
     /// The stored bytes are not a whole number of values.
@@ -371,6 +382,7 @@ impl XicUnreadableReason {
             Self::Array(problem) => problem.stable_id(),
             Self::PayloadAbsent => "payload_absent",
             Self::PayloadStatedTwice => "payload_stated_twice",
+            Self::ElementInPayload => "element_in_payload",
             Self::TermAfterPayload => "term_after_payload",
             Self::NotWholeValues => "not_whole_values",
         }
@@ -1054,7 +1066,7 @@ impl<T: XicSpectrumTransform, C: FnMut() -> bool> EventPass for XicPass<'_, T, C
     /// the tokenizer stays under the document's own text-run limit, and only
     /// what fits the declared length is kept.
     fn text(&mut self, bytes: &[u8]) -> Result<(), XicRefusal> {
-        if self.stack.last() != Some(&El::Binary) {
+        if !self.in_payload() {
             return Ok(());
         }
         let Some(array) = self.open_array() else {
@@ -1080,7 +1092,7 @@ impl<T: XicSpectrumTransform, C: FnMut() -> bool> EventPass for XicPass<'_, T, C
     }
 
     fn reference(&mut self, reference: &BytesRef<'_>) -> Result<(), XicRefusal> {
-        if self.stack.last() != Some(&El::Binary) {
+        if !self.in_payload() {
             return Ok(());
         }
         if let Ok(Some(character)) = reference.resolve_char_ref() {
@@ -1134,6 +1146,14 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
         self.spectrum.as_mut()?.array.as_mut()
     }
 
+    /// Directly inside the open array's own `binary` element. A `binary` nested
+    /// anywhere else in the array is not its payload.
+    fn in_payload(&self) -> bool {
+        self.stack
+            .split_last()
+            .is_some_and(|(&last, path)| last == El::Binary && path.ends_with(SPECTRUM_ARRAY))
+    }
+
     /// Whether the query is already certain to be refused, whatever follows.
     fn refusal_is_certain(&self) -> bool {
         self.mz_units.refused()
@@ -1164,6 +1184,13 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
                 }
             }
             return Ok(el);
+        }
+        // Ahead of the match, some of whose arms return. The match still runs, so a
+        // param-group reference in here is checked like any other.
+        if self.in_payload()
+            && let Some(array) = self.open_array()
+        {
+            array.refuse(XicUnreadableReason::ElementInPayload);
         }
         let in_spectrum = self.stack.last() == Some(&El::Spectrum);
         match el {
