@@ -271,11 +271,55 @@ jobs:
           Check "exit status 0 ($code)" ($code -eq 0)
           Check-CacheWhole $root
 
+          # The cases above fail on the size and on the content alike. These fail on one.
+          foreach ($case in @(@('the same size, other bytes', "MSCANVAS-VIEW-CACHE`n"), @('the right line, then more', "mscanvas-view-cache`nmore"))) {
+            $null = Start-Case "a marker with $($case[0]) is kept"
+            New-Neighbours; New-Cache $root
+            [IO.File]::WriteAllBytes("$root\$marker", [Text.Encoding]::ASCII.GetBytes($case[1]))
+            $code = Uninstall-InPlace @('/S')
+            Check "exit status 0 ($code)" ($code -eq 0)
+            Check-CacheWhole $root
+          }
+
+          $outside = Start-Case 'a marker that is a symbolic link to a file that reads right is kept, and the tree whole'
+          New-Neighbours; New-Cache $root
+          [IO.File]::WriteAllBytes("$outside\marker", [Text.Encoding]::ASCII.GetBytes("mscanvas-view-cache`n"))
+          Remove-Item -LiteralPath "$root\$marker" -Force
+          New-Item -ItemType SymbolicLink -Path "$root\$marker" -Target "$outside\marker" | Out-Null
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the file it points to' (Test-Path -LiteralPath "$outside\marker")
+          Check-CacheWhole $root
+
           $null = Start-Case 'the name spelled otherwise on disk is kept'
           New-Neighbours; New-Cache "$data\VIEW-CACHE"
           $code = Uninstall-InPlace @('/S')
           Check "exit status 0 ($code)" ($code -eq 0)
           Check-CacheWhole "$data\VIEW-CACHE"
+
+          # Rust refuses these shapes, and no later step of the hook would: a walk takes
+          # a plain file or a plain folder under any spelling.
+          foreach ($name in 'entries', 'staging') {
+            $other = if ($name -eq 'entries') { "staging\$attempt\owner.json" } else { "entries\$key\view.mzML" }
+            $null = Start-Case "$name as a plain file keeps the tree whole"
+            New-Neighbours; New-Cache $root
+            Remove-Item -LiteralPath "$root\$name" -Recurse -Force
+            Set-Content "$root\$name" 'x'
+            $code = Uninstall-InPlace @('/S')
+            Check "exit status 0 ($code)" ($code -eq 0)
+            foreach ($kept in $marker, $name, $other) {
+              Check "kept view-cache\$kept" (Test-Path -LiteralPath "$root\$kept")
+            }
+
+            $spelled = $name.ToUpperInvariant()
+            $null = Start-Case "$spelled spelled otherwise on disk keeps the tree whole"
+            New-Neighbours; New-Cache $root
+            [IO.Directory]::Move("$root\$name", "$root\renaming")
+            [IO.Directory]::Move("$root\renaming", "$root\$spelled")
+            $code = Uninstall-InPlace @('/S')
+            Check "exit status 0 ($code)" ($code -eq 0)
+            Check-CacheWhole $root
+          }
 
           $outside = Start-Case 'a cache root that is a junction leaves its target untouched'
           New-Neighbours; New-Cache $outside

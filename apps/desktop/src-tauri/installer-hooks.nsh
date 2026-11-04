@@ -5,7 +5,9 @@
 ;
 ; It is no looser than src/view_cache.rs, whose tests pin the names below: the
 ; root must be one Rust would open, with Rust's marker byte for byte, and a tree
-; with a link or other reparse point anywhere in it is left whole.
+; with a symbolic link, junction or other reparse point anywhere in it is left whole.
+; A hard link is none of these: its name goes with the tree, its content stays
+; under its other names, and they lose the read-only bit they share (run 2026-11-03).
 ;
 ; RMDir /r is never used here. In NSIS 3.11 and in 3.13, which Tauri CLI 2.12.4
 ; pins, it follows a junction, as the root or inside the tree, and deletes what its
@@ -82,7 +84,8 @@ FunctionEnd
 ; without its trailing spaces and dots, and NUL as a device, while a middle name
 ; keeps its spaces: a junction named ". " looks like its folder here and is walked
 ; through below. So the attributes come through "\\?\", and a name ending so counts
-; as one it cannot describe, which leaves every other path meaning what it says.
+; as one it cannot describe. A file named NUL still reads as the device when it is
+; deleted: it will not go, so it stays with the marker, and the rest of the tree goes.
 ; Only this probe is extended: past MAX_PATH the listing fails, which also keeps
 ; every path clear of NSIS's 1023 characters, where a folder lists as its own child.
 Function un.MscanvasViewCacheWalk
