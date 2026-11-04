@@ -66,7 +66,7 @@ limits below are the owner's to weigh, and a different reading of them lands on
 **4. Its runtime placement is settled, so it is not `ARCHITECTURE_DECISION_REQUIRED`.**
 In process, in Rust, behind the existing boundary, on the native-read lane one spectrum
 at a time (ADR 0071 decisions 7 and 10, ADR 0046 §4). That is a decision and not yet a
-measurement: nothing calls the library.
+measurement: no product code calls the library.
 
 **5. One candidate survives, so XIC-D4 is not invoked.** No governance choice between
 candidates arises.
@@ -129,8 +129,9 @@ The bytes are in the
 - any file larger than R0. If time follows bytes, ADR 0056's 4 GiB document cap, 7.9
   times R0, would take about 25–93 s over the same range. That is arithmetic, not a
   measurement;
-- the digest the owner's answer to A0071-Q3 asks for. It adds a read of the whole file to
-  every XIC, and its cost is unmeasured;
+- the digest the owner's answer to A0071-Q3 asks for. It adds at least one more read of the
+  whole file to every XIC, two if it is taken separately before and after, and no record
+  settles which. Its cost is unmeasured;
 - the lane handoffs and cancellation latency of X4;
 - a real file with FAIMS, or any real integer array.
 
@@ -153,8 +154,10 @@ recommended").
 chromatogram panel in the `.viewer-view` grid, in real Chrome over Vite with the backend
 mocked at the IPC boundary. Its trace is a synthetic curve on a six-scan fixture, and its
 heading is a sample: it shows the form and the height, and no result. Page metrics were
-set exactly, with Details and the roster as the app chooses at each size. Its patch is in
-the retained evidence, and none of it is merged.
+set exactly, with Details and the roster as the app chooses at each size. Both panels follow
+one range, but each draws its own time axis, label and toolbar, so X-3.2's single shared axis
+was not rendered and these heights are for this form. Its patch is in the retained evidence,
+and none of it is merged.
 
 | Page | Viewer column | Chromatogram panel | XIC panel | Lower row, no panel → panel | Spectrum plot, no panel → panel | Spectrum plot on screen before scrolling, with the panel | Free before the lower row hits its floor | Column scroll with the panel |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -265,7 +268,7 @@ records require, not a design.
   else, and X5 after X4. VIEW-007 stays unavailable until X5.
 - **Refused, as impractical or otherwise:** XIC stays unavailable with a stated reason, under
   ADR 0046's `XIC_PROVIDER_REFUSED`. ADR 0071's other decisions, the merged library and this
-  evidence stay as they are, and nothing calls the library.
+  evidence stay as they are, and no product code calls the library.
 
 Either way this changes no frozen artifact, no shipped behaviour, and no earlier record's
 outcome for its own candidate.
@@ -287,7 +290,9 @@ None is answered. X-1 and X-2 authorized this record, not its outcome.
    border. By the arithmetic above, the column would not scroll at 1920×1080, would scroll
    about 75 px at 1366×768 with about 115 px of the spectrum's plot on screen, and about 143 px
    at 960×640 with about 47 px on screen. No such height was rendered, so X4 must render it to
-   confirm these, and the 100 px floor is this record's suggestion and no measured limit.
+   confirm these, and the 100 px floor is this record's suggestion and no measured limit. The
+   81 px is the rendering's form, with an axis of its own: one shared axis would change it and
+   the figures from it, by an amount not measured.
 4. **ADR 0070 decision 3, item 5, and the empty window.** The row for ADR 0070's question 1
    left open whether item 5's "an empty window … is not zero" binds every record. ADR 0046 and
    the frozen answers make an XIC's empty window `Measured` with sum `+0` and 0 points.
@@ -295,4 +300,5 @@ None is answered. X-1 and X-2 authorized this record, not its outcome.
    window" where the count is 0.
 5. **The integer readings.** A value above 2^53 that `f64` can represent, and the negative side.
    They stay as built until asked. Recommended: as built, since refusing is the conservative
-   reading and no intensity of that size has been seen.
+   reading, and the owner's answer judges that intensities are not expected to reach that size,
+   a judgment and not a measurement.

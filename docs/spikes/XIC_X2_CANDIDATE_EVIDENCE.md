@@ -32,10 +32,16 @@ spec ran.
 are uncommitted, so this binary is the one these sources make. It ran at commit
 `abc6b443`, on this branch. The manifest binds the build to its source by content, so a
 later documentation commit does not unbind it. A reader recomputes it at the PR's head,
-by the listing `identity` writes. `rust-toolchain.toml` pins the channel to 1.97.1, and the
-manifest does not list that file. Read back after the run: all 189 run records under
-`final-3/` state the runner digests in this table, and its four summaries state this
-executable.
+by the listing `identity` writes. A rebuild need not reproduce the executable's digest, so
+compare the manifest and `science.json` and not the executable. One from the same sources,
+into another target directory, gave `5ec5451b…`: the same length with 25 bytes different, all
+in the COFF timestamp, the debug directory's timestamps and the PDB identifier, and `.text`
+the same. Its 187 `science.json` files equal the scored ones byte for byte. That check's
+output is not retained. `rust-toolchain.toml` pins the channel to 1.97.1, and the
+manifest does not list that file. Read back after the run: the 187 per-invocation records
+under `final-3/` (143 main, 10 supplement, 34 integer) and its two `OBSERVATIONS.json` state
+the runner digests in this table, and its four summaries state this executable. The 24
+per-run records beside the two `OBSERVATIONS.json` state none.
 
 **The comparator is byte-identical.** Before anything else, every digest in
 [PX.3's frozen artifact table](PX_3_XIC_COMPARATIVE_EVIDENCE.md#s3-and-s4-were-frozen-before-scoring)
@@ -60,10 +66,13 @@ argv `[exe, source, ms_level, low, high, snapshot_path, mode]`.
   cannot be opened or read exits non-zero, because that says nothing about the document
   and must not score as an honest refusal of one.
 - **`positions`.** The frozen answers state each measured row's point positions, which
-  the product has no use for and `XicResult` does not hold. A second pass over the same
-  bytes records them, through a `XicSpectrumTransform` that changes nothing. Its result
-  must equal the production result, and each row's count must equal its positions, or
-  the process exits non-zero. Time and memory for the pass alone are below.
+  the product has no use for and `XicResult` does not hold. The engine's `window_sum`
+  returns a count and a sum, not its members. So a second pass over the same bytes, through
+  a `XicSpectrumTransform` that changes nothing, hands the decoded m/z to the example,
+  which selects them again by the same closed interval: the positions the comparator reads
+  are the example's. That pass's result must equal the production result, and each row's
+  count must equal its positions, or the process exits non-zero. Time and memory for the
+  pass alone are below.
 - **`source_metadata`** comes from the example's own small walk over the snapshot, with
   raw attributes and origins, on an evaluated result and on a unit or mixed refusal. It
   judges nothing. Its scans must match the production rows by index and native ID, in
@@ -99,8 +108,11 @@ in this matrix. Four earlier complete runs, while the example and runners were b
 written and reviewed, on builds `46509d36…`, `02690522…`, `541880b9…` and `73266bea…`, also
 passed 77 of 77. They are retained as superseded and are not part of this result. Their
 source differs from this build's in the example only: where the pass is timed, one `match`
-arm, how the echo reads a number with spaces around it, and how a read failure exits.
-`crates/proteowizard/src` is the same in all five.
+arm, how the echo reads a number with spaces around it, how a read failure exits and one
+helper's body. Each manifest shows `crates/proteowizard/src` is the same in all five. The
+first, `46509d36…`, built an uncommitted example and its source was not kept, only that
+digest, so "where the pass is timed" cannot be checked. The other three are at `6fef86a0`,
+`bfa5a762` and `8c9b8ec6`.
 
 | Ledger row | ADR named case | Subjects | Status | Runs |
 | --- | --- | --- | --- | --- |
@@ -190,8 +202,9 @@ Three rows, by name:
 - **`inherited_tiny.pwiz.1.1.mzML`**, the ISO-8859-1 row, passes on both repeats with
   its frozen answer, `Refused`, `MixedUnit:RT`, under the owner's answer of 2026-11-04,
   option `narrow`: a file declaring that label is read when every later byte is ASCII.
-  This file has none above 127. The run is the rerun that answer asks for, on the final
-  build.
+  This file has none above 127. It ran on the final build with the other 76 rows, as ADR
+  0071 decision 8 requires. The answer changed nothing about the row, because option
+  `narrow` is the reading #207 already built.
 - **`inherited_BBM_506_P110_31_MIA_004_30_calibrated.mzML`**, all MS2 under an MS1
   query, passes with `complete: true`, no gaps and 36,319 `ExcludedByMsLevel` rows with
   no decode attempt, the answer ADR 0071 decision 3 names.
@@ -214,6 +227,11 @@ not part of these runs.
 | No rounding up in the final binary64 | 72 / 1 | 16 / 1 | `arithmetic`, `int64_at_limit_sum_rounds_up` |
 | Retention-time units not read | 35 / 38 | 0 / 17 | `mixed_rt_different`, `incomplete_rt_empty`, every integer row |
 | The size rule on 64-bit integers not applied | 73 / 0 | 9 / 8 | `int64_above_limit_even`, `int64_two_to_60`, `int64_min`, `int64_mz_above_limit` |
+
+The first mutation never reaches `compare()`. All its failed invocations, 43 and 14, exit 3
+from the example's cross-check, `recorded positions disagree with the row's count`, because
+the example's closed interval still takes the point at the bound and the engine no longer
+does. The other three exit 0, and the runners score their failures from the output.
 
 The last row shows why the new rows are needed: no frozen row notices that mutation. Of the
 9 integer rows it leaves passing, 5 stay within the limit, 1 is excluded and never decoded,
@@ -295,10 +313,12 @@ and its example differs only in how a read failure exits and in one helper's bod
 | R0 profile file, narrow window | 546,327,287 | MS1 `[524.259257355, 524.269742645]` | 43,878 / 2,748 | 1,988 | 3.274 / 3.411 / 3.229 | 3.884 / 4.137 / 3.827 | 8.394 / 8.568 / 8.219 |
 | R0 profile file, whole scan range | 546,327,287 | MS1 `[360, 1300]` | 43,878 / 2,748 | 24,744,260 | 3.354 / 3.349 / 3.275 | 3.993 / 3.919 / 3.932 | 8.127 / 11.850 / 11.014 |
 
-The window's width barely matters: 24,744,260 points in the window cost no more than 1,988.
-Unsampled sets in the retained evidence, on builds with the same library, lie between these:
-R0 took 4.287–6.166 s on `541880b9…` and 7.744–8.908 s on `73266bea…`. No idle machine was
-available, so no number here is a best case.
+In the scored build's two sets, 1,988 points and 24,744,260 points in the window took the same
+time within the runs' own spread, by means of 3.305 against 3.326 s and 3.949 against 3.948 s.
+The third set, at a mean of 84% load, reads 8.39 and 10.33 s, which moves too much to tell
+width from load. Unsampled sets in the retained evidence, on builds with the same library, lie
+between these: R0 took 4.353–5.387 s on `02690522…`, 4.287–6.166 s on `541880b9…` and
+7.744–8.908 s on `73266bea…`. No idle machine was available, so no number here is a best case.
 
 Memory did not move with the time: the process's final Windows `PeakWorkingSetSize`, as
 PX.3 read it, in the first set, in bytes. Across the three sets each target stays within
@@ -350,11 +370,17 @@ no acquisition bytes are in this repository.
   `missing_required_value` (`rt_missing_value`), `not_well_formed` (`truncated`,
   `px2_truncated`), `count_disagrees` (`inventory_count_mismatch`), `conflicting_term`
   (`px2_contradictory`) and `undefined_param_group` (`px2_unresolved`). None is a cap.
+- **Which points the engine chose.** PX.3 compares membership positions exactly, and here
+  they are the example's, as above. The engine's own choice is held only by what it reports:
+  the count, which the example checks against the positions, and the exact bits of the sum,
+  which `compare()` checks. Two selections with an equal count and an equal sum would not be
+  told apart.
 - **`Missing`.** No row expects it, and the pass never produces it (ADR 0071 decision 3).
 - **Larger files, a cold read, or another host.** R0 is the largest file measured, and it
   is one acquisition on one instrument. Scaling past it is not measured.
 - **X4's costs.** Lane handoffs, cancellation latency, and the digest the owner's
-  A0071-Q3 answer asks for, which adds a read of the whole file, were not measured.
+  A0071-Q3 answer asks for were not measured. That digest takes at least one more read of the
+  whole file, two if it is taken separately before and after, and no record settles which.
 
 ## Retained evidence
 
