@@ -16,6 +16,7 @@ import { ipcTable } from "../support/fixtures";
 import { selectedFile, unavailableBackend, availableBackend, chosenFolderWithoutTools, quarantinedBackend } from "../../apps/desktop/src/test/previewFixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION, type DisplayPreferences } from "../../apps/desktop/src/features/preferences/storedPreferences";
 import { showBackendBanner } from "../support/backendBanner";
 
 /**
@@ -35,8 +36,9 @@ let output = "";
 function record(
   appearance: { locale: "en" | "zh-CN"; density: "comfortable" | "compact" },
   layout: { roster: string; details: string } = { roster: "automatic", details: "automatic" },
+  display: DisplayPreferences = DISPLAY_DEFAULTS,
 ) {
-  return { schemaVersion: 1, appearance, layout };
+  return { schemaVersion: PREFERENCE_SCHEMA_VERSION, appearance, layout, display };
 }
 
 async function openSettings() {
@@ -400,6 +402,54 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     expect(replaced.preferenceRegion).toBe(zh.storedReplaced);
     const requests = (await ipcCalls()).filter(call => call.command === "save_ui_preferences");
     expect((requests.at(-1)?.args as { request: { replaceUnusable?: boolean } }).request.replaceUnusable).toBe(true);
+  });
+
+  it("keeps a choice for this session while remembering is off, and calls nothing wrong", async () => {
+    for (const [label, width, height] of [["1366x768", 1366, 768], ["960x640", 960, 640]] as const) {
+      for (const [locale, copy] of [["en", en], ["zh-CN", zh]] as const) {
+        await metrics(width, height, 1);
+        const table = ipcTable();
+        // No row turns remembering off yet, so the record says it and the store
+        // answers as Rust does: nothing written, nothing wrong.
+        table.load_ui_preferences = {
+          outcome: "loaded",
+          revision: 1,
+          preferences: record({ locale, density: "compact" }, { roster: "shown", details: "automatic" }, { ...DISPLAY_DEFAULTS, remember: false }),
+        };
+        table.save_ui_preferences = { outcome: "notRemembered", revision: 1 };
+        await installIpcBoundary(table);
+        await browser.url("/");
+        await browser.$("[data-settings-entry]").waitForDisplayed();
+        await browser.waitUntil(() => browser.execute(want => document.documentElement.lang === want, locale));
+
+        await openSettings();
+        await choose("comfortable");
+        await browser.waitUntil(async () => (await browser.$("[data-storage-note]").getText()) === copy.sessionOnlyNote);
+        const settings = await capture(`remember-off-settings-${label}-${locale}`);
+        expect(settings.density).toBe("comfortable");
+        expect(settings.storedRecordAlert).toBeNull();
+        expect(settings.saveFailure).toBeNull();
+        expect(settings.saveRefused).toBeNull();
+        expect(settings.storageNote?.clipped).toBe(false);
+        // The keyboard path through the same choice, and out of the dialog.
+        await browser.keys("ArrowDown");
+        await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-density]")?.getAttribute("data-density") === "compact"));
+        await browser.keys("Escape");
+        await returned();
+        const applied = await capture(`remember-off-applied-${label}-${locale}`);
+        expect(applied.density).toBe("compact");
+        expect(applied.preferenceRegion).toBe(copy.sessionOnlyApplied);
+
+        // A panel toggle stays on screen and is not reported as lost.
+        await browser.$(`button=${copy.rosterToggle}`).click();
+        await browser.waitUntil(() => browser.execute(() => document.querySelector(".workbench-shell")?.getAttribute("data-roster-open") === "false"));
+        await browser.waitUntil(async () => (await ipcCalls()).filter(call => call.command === "save_ui_preferences").length === 3);
+        const toggled = await capture(`remember-off-panel-${label}-${locale}`);
+        expect(toggled.layoutUnsaved).toBeNull();
+        expect(toggled.layoutRegion).toBe("");
+      }
+    }
+    await metrics(1920, 1080, 1);
   });
 
   it("holds the gated startup state, and settles when the read answers", async () => {

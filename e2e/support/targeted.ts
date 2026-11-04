@@ -12,6 +12,7 @@
  */
 
 import { ipcTable } from "./fixtures";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
 
 export type Locale = "en" | "zh-CN";
 
@@ -349,9 +350,10 @@ export function targetedTable(locale: Locale = "en", state: unknown = project())
   // A working native drop subscription, as the PM9 scenarios answer it.
   answers.subscribe_workspace_drop_updates = { reservationId: "pm95-browser-reservation" };
   const preferences = {
-    schemaVersion: 1,
+    schemaVersion: PREFERENCE_SCHEMA_VERSION,
     appearance: { locale, density: "comfortable" },
     layout: { roster: "automatic", details: "automatic" },
+    display: DISPLAY_DEFAULTS,
   };
   // Saved preferences are read back, so a Chinese session stays Chinese.
   if (locale !== "en") answers.load_ui_preferences = { outcome: "loaded", revision: 1, preferences };

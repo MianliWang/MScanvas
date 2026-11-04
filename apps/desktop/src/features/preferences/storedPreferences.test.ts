@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { bindUiMessages, UI_RESOURCES } from "./i18n";
 import type { UiMessage } from "./i18n";
 import {
+  DISPLAY_DEFAULTS,
   PREFERENCE_SCHEMA_VERSION,
   isStoredPreferences,
   isStoredRecordProblem,
@@ -28,23 +29,46 @@ const valid = {
   schemaVersion: PREFERENCE_SCHEMA_VERSION,
   appearance: { locale: "zh-CN", density: "compact" },
   layout: { roster: "hidden", details: "automatic" },
+  display: DISPLAY_DEFAULTS,
 };
 
 describe("what this side will consume from the store", () => {
   it("accepts a record of exactly the enumerated domains", () => {
     expect(isStoredPreferences(valid)).toBe(true);
     expect(isStoredPreferences({
-      schemaVersion: 1,
+      schemaVersion: 2,
       appearance: { locale: "en", density: "comfortable" },
       layout: { roster: "shown", details: "shown" },
+      display: { textSize: "large", contrast: "high", motion: "reduce", wheelHabit: "figma", crosshair: true, grid: false, remember: false },
     })).toBe(true);
   });
 
+  it("has the defaults Rust has, so a build without the fields behaves as before", () => {
+    expect(DISPLAY_DEFAULTS).toEqual({
+      textSize: "standard", contrast: "normal", motion: "system", wheelHabit: "draw", crosshair: false, grid: true, remember: true,
+    });
+  });
+
   it("refuses another schema version rather than reading the fields beside it", () => {
-    expect(isStoredPreferences({ ...valid, schemaVersion: 2 })).toBe(false);
-    expect(isStoredPreferences({ ...valid, schemaVersion: "1" })).toBe(false);
+    expect(isStoredPreferences({ ...valid, schemaVersion: 1 })).toBe(false);
+    expect(isStoredPreferences({ ...valid, schemaVersion: 3 })).toBe(false);
+    expect(isStoredPreferences({ ...valid, schemaVersion: "2" })).toBe(false);
     const { schemaVersion: _omitted, ...versionless } = valid;
     expect(isStoredPreferences(versionless)).toBe(false);
+  });
+
+  it("refuses a record with no display group, or a display field outside its domain", () => {
+    const { display: _omitted, ...withoutTheGroup } = valid;
+    expect(isStoredPreferences(withoutTheGroup)).toBe(false);
+    expect(isStoredPreferences({ ...valid, display: null })).toBe(false);
+    for (const [field, value] of [
+      ["textSize", "huge"], ["contrast", "low"], ["motion", "off"], ["wheelHabit", "touch"],
+      ["crosshair", "on"], ["grid", 1], ["remember", null],
+    ] as const) {
+      expect(isStoredPreferences({ ...valid, display: { ...DISPLAY_DEFAULTS, [field]: value } })).toBe(false);
+      const { [field]: _missing, ...partial } = DISPLAY_DEFAULTS;
+      expect(isStoredPreferences({ ...valid, display: partial })).toBe(false);
+    }
   });
 
   it("refuses a value outside its domain, and a shape that is not a record", () => {

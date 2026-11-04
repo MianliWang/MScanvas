@@ -28,6 +28,7 @@ import {
 } from "../support/harness";
 import { showProjectSurface } from "../support/shell";
 import { ipcTable } from "../support/fixtures";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
 
 let output = "";
 const evidence: unknown[] = [];
@@ -260,9 +261,10 @@ async function preferencesAnswer(details: "shown" | "hidden") {
     outcome: "saved",
     revision: 1,
     preferences: {
-      schemaVersion: 1,
+      schemaVersion: PREFERENCE_SCHEMA_VERSION,
       appearance: { locale: "en", density: "comfortable" },
       layout: { roster: "automatic", details },
+      display: DISPLAY_DEFAULTS,
     },
   });
 }
