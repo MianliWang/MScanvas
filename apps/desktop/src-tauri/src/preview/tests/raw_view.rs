@@ -1902,17 +1902,20 @@ fn operation_of(state: &RawViewStateDto) -> u64 {
 
 /// Whatever it answers, asking leaves nothing in the recent-error ring: a refusal
 /// carried in an `Ok` outcome is not in it (ADR 0063, decision 5), and this answer
-/// is polled.
+/// is polled. Read whole, not through `noted_during`: a look at a path here would
+/// build `file_not_resolvable` on every poll, and that filter would hide it.
 fn availability(session: &Viewing, handle: &str) -> RawViewAvailabilityDto {
-    let (answer, noted) = noted_during(|| {
-        session
-            .service
-            .raw_view_snapshot(&RawViewStateRequestDto {
-                handle: Some(handle.to_owned()),
-            })
-            .availability
-            .expect("a row was named")
-    });
+    use crate::environment_diagnostics::NOTED_ON_THIS_THREAD;
+
+    NOTED_ON_THIS_THREAD.take();
+    let answer = session
+        .service
+        .raw_view_snapshot(&RawViewStateRequestDto {
+            handle: Some(handle.to_owned()),
+        })
+        .availability
+        .expect("a row was named");
+    let noted = NOTED_ON_THIS_THREAD.take();
     assert!(noted.is_empty(), "{answer:?} noted {noted:?}");
     answer
 }
