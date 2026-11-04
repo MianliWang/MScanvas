@@ -1209,9 +1209,14 @@ describe("a stored result reused (M9.2)", () => {
     // The pressed control's own "Exporting" stays with the target it was for.
     expect(button("svg").textContent).toBe("Export SVG…");
 
+    // This figure's export opened too: only the chosen row keeps the sentence
+    // off its line.
+    await press(screen.getByRole("button", { name: en.targetedFigureExports, expanded: false }));
+    expect(status("figure").textContent).toBe("");
+    expect(status("table").textContent).toBe(reason);
+
     // Its own target chosen again, its evidence being read: no figure line yet,
     // still a reason. Once drawn, the figure's line says it again.
-    await press(screen.getByRole("button", { name: en.targetedFigureExports, expanded: false }));
     const evidence = api.holdOnce("readTargetedMs1Evidence");
     await press(query(`[data-targeted-choose="${DETECTED}"]`));
     expect(document.querySelector("[data-targeted-figure-export]")).toBeNull();
