@@ -1,12 +1,13 @@
 # Owner decisions for the v5.11 backend roadmap
 
-Status: **Partly decided: the owner answered the 21 decisions of section 3 on 2026-10-30 (section 1b) and the follow-up questions of 2026-10-31 (section 1c); the other 32 stay open** ([OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md)). Nothing here authorizes a release, an upload, a dependency change or outbound contact; each keeps its own approval.
+Status: **Answered, with named items open: the owner answered the 21 decisions of section 3 on 2026-10-30 (section 1b), the follow-up questions of 2026-10-31 (section 1c), and the other 32 with every later question on 2026-11-03 (section 1d). Open: ADR 0070's two questions, asked after the table and still unanswered; and what section 1d lists as open** ([OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md)). Nothing here authorizes a release, an upload, a dependency change or outbound contact; each keeps its own approval.
 
 Date 2026-10-30. This document consolidates every decision the owner still has
 to make before or during the roadmap in `ROADMAP_V511_AND_ANALYSIS.md`. Nothing in it is decided
 until the owner answers; each recommendation is the working default until then.
 *2026-10-30:* the owner answered all 21 decisions of section 3 as recommended; section 1b gives each answer and what it leaves open. The 32 in sections 4 and 5 stay open.
 *2026-10-31:* the owner answered the questions that reviews and the restore and run-history records added since, all as recommended; section 1c gives each answer. None of the 32 open decisions was among them.
+*2026-11-03:* the owner answered twelve further ids and CK-1 to CK-8 in chat, then the decision page's full table (version 2026-11-03.2, 139 rows, 16 picks that differ from or have no recommendation, everything else as recommended); section 1d gives each answer and what it leaves open. All 53 decisions now have an answer: 21 in section 1b and 32 in section 1d. No answer approves a new dependency. A later answer in chat settled HIST-1.2: item 5 of A0065-section-7 stands, with no leftover count (section 1d).
 
 Re-checked again at about 23:00 UTC. Since 15:45 UTC, #185 opened for
 `fix/backend-defects-1030` (ready, nine checks green), #187 for `be/run-history`
@@ -162,11 +163,242 @@ A0055, INST-1 and M198 are new ids. They came after section 2 was written and ga
 | INST-1 | While the start-up installation check runs, Add files… and Add mzML folder… stay refused, with the visible reason "Checking the installation…" (正在检查该安装…). The comment above `canAcquire` in `PreviewWorkspace.tsx` names that reason | Work: the comment. Today it says that curating the workspace stays available when no ProteoWizard is installed, and does not name the check, although `canAcquire` requires `!backendBusy` and the check sets it. No behaviour changes |
 | M198 | Approved ("批准"): #198 (`fix/m72-bulk-move-flake`) and #199 (`fix/app-autopreview-flake`), the two test-only fixes, merge | None. #198 merged on 2026-10-31 as `1bf38ac5` and #199 on 2026-11-03 as `d44b77ae` |
 
+### 1d. Decided on 2026-11-03
+
+The owner answered in two steps on 2026-11-03, and a later answer in chat settled one overlap (HIST-1.2's row).
+
+First, in chat. The owner was shown twelve ids (F-177, P177, P204, Q8-exception, A0006-amendment, P201, P202, DEF-2, A0060-split, P203, A0071-Q2 and A0065-section-7) and CK-1 to CK-8, the follow-ups to the owner's picks on the decision page, each with its recommendation. The owner replied, verbatim: "全部按推荐" ("all as recommended"). That reply covers those ids and nothing else.
+
+Then, later the same day, the decision page's full table, version 2026-11-03.2, with its 139 questions. The owner sent two pastes from the page's "copy my selections" button. The first is superseded: it read "还没选：B-2.1、B-4.6、B-7.2 / 其余按推荐。" ("not chosen yet: B-2.1, B-4.6, B-7.2 / the rest as recommended"), was copied before the page had loaded the saved answers, and has no picks and no notes. The second is the answer, verbatim:
+
+```text
+MSCanvas 决策表（2026-11-03.2 版）
+和推荐不同：
+B-2.1：发布前升到 3.6.0（探针通过时）
+B-2.2：改用无 Qt 的 3.6.0
+B-4.6：按仪器：Orbitrap 1e4，QTOF 1e3
+B-5：两种同时做
+B-6.4：现在就加 LOWESS 第二步
+B-6.5：七种：引擎丢弃单列一种
+B-6.9：每次按当时空闲内存计算
+B-6.11：Arrow 或 Parquet
+B-11.2：接受 EMBL-EBI 条款，只本地测
+B-7.2：原始点加和
+B-8.1：余弦和熵（matchms，新依赖）
+B-10.3：确认，MassCube 改许可后复查
+S-4.2：加 RF 和 QRILC，按缺失类型选
+C-2：加 HDF5 读取依赖做深查
+U1-1：让用户设置线程数
+U1-2.3：先测更低阈值，再定下限
+没有推荐的题，我选：
+B-2.1：发布前升到 3.6.0（探针通过时）
+B-4.6：按仪器：Orbitrap 1e4，QTOF 1e3
+B-7.2：原始点加和
+先不定：CK-1
+备注：
+B-8.1：余弦和熵相似度能不能都做？
+CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
+其余按推荐。
+```
+
+**The counts.** The paste lists 16 picks that differ from a recommendation or have none: 13 differ (B-2.2, B-5, B-6.4, B-6.5, B-6.9, B-6.11, B-8.1, B-10.3, B-11.2, S-4.2, C-2, U1-1, U1-2.3) and 3 had no recommendation (B-2.1, B-4.6, B-7.2). Of the other 123 rows, 10 are picks equal to the recommendation, which the paste does not list (B-8.2, B-11.4, CK-1 to CK-8), and 113 are "其余按推荐" ("the rest as recommended"). HIST-1.2 is one of those 113; a later answer in chat replaced what that resolved it to (its row below). DEF-2 is in both the chat list and the page, with the same answer, so 139 page rows and 12 chat ids make 150 rows. Each row gives the chosen option as the owner saw it, with every cost it names. Where a pick differs, the row says what the recommendation was.
+
+**How to read them:**
+
+- **CK-1.** The paste's "先不定：CK-1" ("not decided yet: CK-1") is a page artifact, not a deferral. CK-1's recommended option has the key `later`, and the page's copy text treats that key as undecided. The owner chose it in chat, and CK-1's note says so.
+- **B-6.11 and CK-4.** CK-4 governs: an in-house chunked store plus a Parquet export, not Arrow internally. The owner was told so and did not object. B-6.11 is read as "a standard format is available", through that export.
+- **B-8.1 and CK-1.** Cosine and entropy, through matchms, arrive with A-25's runtime. The first analysis runtime has no matchms.
+- **B-2.1 and CK-2.** 3.6.0 if the probe passes before release. If it fails, 3.5.0 first and a legal opinion on Qt first, with no release until then.
+- **S-4.2 and CK-5.** RF and QRILC are the direction only, scheduled after A-22's backfill results.
+- **HR-1.1, HR-1.4, HR-1.6, HR-1.8 and HR-1.7.** Granted in principle, and HR-1.7 says each window is approved separately when its turn comes. No ProteoWizard run starts on this table alone: the owner is asked when the step is reached.
+- **Dependencies. No answer here approves a new dependency.** matchms, hdf5-reader, parquet, pyOpenMS 3.6.0 and its backend (`nanobind-backend`), and scikit-learn are each asked for when the work starts.
+- **B-10.4.** Nothing is sent outside the project. A draft is shown to the owner when that step is reached.
+
+**What this section does not do.** It records answers. No answer here means the work is built, and the costs are the page's, not new measurements. The records an answer names (ADR 0055, ADR 0060, ADR 0061, ADR 0063, ADR 0065, ADR 0066, ADR 0067, ADR 0068, ADR 0069, ADR 0071 and others) take it in their own PRs. On 2026-11-04, ADR 0066, ADR 0067, ADR 0068 and ADR 0069 are still on their open branches, which have taken it (#188, #184, #183, #190), and #201, #203, #202 and #207 carry it for ADR 0055, ADR 0060, ADR 0063 and ADR 0071. None of this has merged, and the rest waits for a later records PR, after #201 to #204 merge (#205 has); ADR 0065 takes its notes with item 5's PR.
+
+**New ids.** They came after section 2 was written, so sections 2 and 9 still count 53 decisions. An id with a dotted suffix belongs to the decision before the dot. The others belong as follows: F-177, P177, P204, Q8-exception and A0006-amendment to A0061; P201 to A0055; P202 to A0063; A0060-split, P203, VIEW-A and VIEW-B to A0060; A0062.8 to A0062; A0071-Q2 to X-2 (ADR 0071); A0065-section-7 and HIST-1.1 and HIST-1.2 to RUN-1; RT-1 and RT-3 to B-1 (ADR 0066 questions 3 and 9); RO-1 to S-6; XML-1 to N-C2 (ADR 0055 decision 6); U1-1 and U1-2.1 to U1-2.3 to U1's recipe (A-15, B-4, B-11); CK-1 to B-8, CK-2 to B-2, CK-3 to B-7, CK-4 to B-6, CK-5 to S-4, CK-6 to U1-1, CK-7 to B-4 and B-11, CK-8 to C-2.
+
+**The twelve chat ids:**
+
+| Id | Answer | Left open, or work that follows |
+| --- | --- | --- |
+| F-177 | #177 merged by accident. Go forward: merge #204, after its review is dry and its checks are green. #177 is not reverted | Work: #204 |
+| P177 | Marker rows of a restore stay in the notice, as built, not in the list as ADR 0061 says. Accepted cost: about 154 px at 960x640, up to 256 px while a warning, failure or refusal stands beside the offer, not collapsible; with three refusals at once the marked list needs scrolling | Work: ADR 0061 takes the answer in a later records PR |
+| P204 | Accepted: user-made empty groups no longer survive a restart | Work: as P177 |
+| Q8-exception | Accepted: a row pressed for Restore and refused by admission (for example a full workspace) is not counted as declined, so a row refused every session never expires. The direction is conservative: such rows stay longer, and nothing is lost | Work: as P177 |
+| A0006-amendment | Accepted as written on `main`: ADR 0006's text on collision-only parent folders for restored rows, approved in principle on 2026-10-31 and not shown until now. Only on a name collision, at most three folders, at most 128 characters, never a drive, share or root | None |
+| P201 | Draw "Not verified by MSCanvas" on exported figures. #201 as built stands, and its revert recipe is withdrawn | Work: #201 |
+| P202 (ADR 0063 question 8) | Do not show "nothing was sent, read it before sharing" beside Copy diagnostics. #202 as built stands. ADR 0063 decision 10's sentence is not shown, and question 8 is answered | Work: #202 |
+| DEF-2 | Option (b), in chat and on the page alike: always remove the cache folder on uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets and preferences stay opt-in behind "Delete the application data". The cache can be regenerated, and no large files stay behind without an owner. Cost: a release-path change, an NSIS hook; after a reinstall a file must be converted again to be viewed; a silent uninstall deletes this folder too | Work: #211 |
+| A0060-split | View with… and Clear view cache (the Settings row) both move to the next slice. Accepted cost: until then only the 10 GiB cap evicts, and a person has no way to clear the cache by hand | Work: that slice, after #203 |
+| P203 | All four departures in #203 accepted: (1) a highlighted RAW row temporarily covers an open preview; (2) decision 1's one-line explanation is not shown; (3) Try again appears after a failure of the build once the cause has gone; (4) "Convert this file…" adds the row to the checked set, so the Conversion page lists every checked file, until N-C3, which comes right after | Work: #203, then N-C3 |
+| A0071-Q2 | Integer arrays above 2^53: refuse them as `Unreadable`. No exact 64-bit integer summation. Intensities are not expected to reach that size (a judgment, not a measurement). New rows with an independent reference are still needed, as the ADR says | Work: those rows, before X1's fixtures. ADR 0071 question 3 is carried to X4 and was not asked |
+| A0065-section-7 | The five edge cases of run history shown on 2026-11-03 (#205 added a sixth, in the open list below). Items 1 to 4 are accepted as documented. Item 5, the owner's answer: to change, so that Clear and Off also remove private siblings (`.mscanvas-run-history-*`) untouched for over 24 hours, with the Residue lines of ADR 0065 checked first. **Item 5 disagreed with HIST-1.2, and a later answer settled it:** item 5 stands, with no leftover count, see HIST-1.2 | Work: item 5, not built: one small PR after #205 (merged as `2ca8562e`) and #212, not estimated |
+
+**CK-1 to CK-8, the follow-ups to the owner's picks:**
+
+| Id | Answer | Left open, or work that follows |
+| --- | --- | --- |
+| CK-1 | matchms against "the release carries no Pillow". The first analysis runtime does not carry matchms and stays free of Pillow, so B-3.1 and B-3.3 do not change. matchms arrives with the runtime of library matching (A-25). That release grows about 122 MB compressed and 487 MB unpacked (measured as a separate programme, not an installer delta), existing targeted MS1 plans must rebind to it, and Pillow fixes need a new release from then on | Work: matchms and its closure are asked for when A-25 starts. The work of that runtime's release is not estimated |
+| CK-2 | The 3.6.0 probe fails. Fall back to shipping 3.5.0 first and obtain a legal opinion on Qt first. This is the rule already recorded. No release without that opinion; its time and cost are unknown | Open: whether the probe passes (A-03) |
+| CK-3 | Do backfilled cells enter statistical tests: not for now. A-22 measures on real files, then decide. Backfilled cells are still shown and exported, with their state. Cost: a feature with many missing values still cannot be tested, and what backfilling does for a test waits for the measurement | Open: the decision after A-22's measurement |
+| CK-4 | Arrow or Parquet. Keep the in-house chunked store, with its manifest and per-file SHA-256. Add a Parquet export later; its dependency (parquet, 16 crates, about 8.5 MB, measured as a separate programme) is asked for separately when that work starts. A-09's slice 2-3 estimate holds. Cost: one more export format to maintain; this route was proposed at review and is in no record | Work: the export, not scheduled. Not asked separately: ADR 0067 question 3's bounds (chunks of at most 8 MiB, binary64, 1,000,000 rows, 1,024 columns, 2^27 cells) |
+| CK-5 | S-4.2's RF and QRILC. Record the direction only. Schedule after A-22's backfill results. No effort and no dependency now. Cost: no RF or QRILC in the near term, and one more unscheduled item in the roadmap | Open: the scheduling, after A-22 |
+| CK-6 | U1 thread count. Default 1, range 1 to the logical core count. The thread count is in the reuse key until real files prove the result does not change. Pin `OPENBLAS_NUM_THREADS=1`. Cost: no data on any speed-up above 4 threads; a changed thread count reruns the sample until then | Work: A-15, A-20-UI |
+| CK-7 | QTOF files over about 1.47 GiB at the default 1e3. Accept the refusal. Its message says the threshold can be changed to 1e4. Never adjust the threshold automatically. Cost: at 1e4 features fall sharply (measured 4,840 to 475), and a large QTOF file is refused the first time | Work: A-15 |
+| CK-8 | How far the HDF5 deep check compares. Read every data block and compare counts and IDs; mzMLb first, with Fletcher-32 on the way. No value comparison, so the label changes only in part. Library: hdf5-reader 0.12.1 (11 crates), a dependency asked for separately when that work starts | Work: not estimated and not scheduled |
+
+**The page table, in page order, without DEF-2 and CK-1 to CK-8:**
+
+| Id | Answer | Left open, or work that follows |
+| --- | --- | --- |
+| R-2 | **Rust sends the chromatogram directly.** Every run length gets a TIC/BPC and a chromatogram export, and the scan rows need not all pass through React. Cost: two accepted records change (ADR 0033, ADR 0034); 1 slice, in the rework after reader metadata; the list stays a prefix, so a scan picked on the chromatogram may not be in the table | Work: N-B2 |
+| R-3 | **Allow it once the open runs no process.** No second process, so the reason for the refusal is gone, and an mzML not yet opened can be opened during a conversion. Cost: the reader's BPI times must first match `msaccess` (HR-1.6); if they do not, the refusal stays and may hold for long; 2 slices and two records change, after reader metadata and open-preview reads | Work: N-B4. Open: whether the times match |
+| V-1 | **Select the MS1 at the TIC apex.** The first view has signal, it is picked only from the file's declared TIC with no array computed, and the readout names the scan. Cost: the apex may be a solvent or contaminant peak, not the target; an all-MS2 file has no MS1 and needs another rule; a numpress file likewise shows its refusal on opening | Open: the rule for an all-MS2 file. Work: N-V3 |
+| V-2 | **The list always follows the chromatogram's RT range.** One RT range drives plot and table; numbers enter through the existing Set range, 1 slice. Cost: zooming the chromatogram shortens the list, which can look as if rows have gone; the whole list cannot be seen while zoomed; above 100,000 spectra there is no chromatogram, so R-2 is needed for a range to follow | Work: N-V3 |
+| V-3 | **The base is the largest value of the full spectrum or chromatogram.** The percentage does not change while zooming; screen and export share one option, the caption names the base, and the data CSV stays absolute. Cost: beside a strong peak, small peaks read low when zoomed in; plot spec, renderer and a toggle all change, about 1 slice; possibly one short record too | Open: whether that short record is needed. Work: N-V4 |
+| V-4 | **Build it whole: 40 steps per plot, with shortcuts.** As in v5.11, a mistaken zoom goes back in one step; interface state only, no scientific risk; its entry is in the plot's ⋯ menu. Cost: Alt+Left must be kept from triggering WebView2's own Back; about 1 slice, in the plot-menu batch | Work: N-V1 |
+| V-5 | **After a confirmation, fill the RT step with the current range.** No copying of numbers, the program converts minutes and seconds; the summary marks it as dropping scans, labelled under ADR 0055. Cost: zoom to the range first, one more step; it waits for the advanced editor; the roadmap's 2 slices were estimated on the selection route; a file with an undeclared RT unit can only be refused | Work: N-C5, after N-04 |
+| V-7.1 | **One bump, carrying every new setting.** Earlier builds pay once, and their message is accurate: written by a newer version. Cost: about 2 slices; the new build must also read beta 1's record; every field must be settled at the bump; a setting added later bumps again | Work: N-S7 |
+| V-7.2 | **Add the setting; the default stays wheel zoom.** Figma users can switch, as in v5.11; default behaviour does not change; in Figma style a trackpad pinch zooms the plot. Cost: in Figma style, Ctrl+wheel on a plot no longer zooms the window; that ownership change must be tested fully; one preference field, about 1 slice with crosshair and grid | Work: N-V4 |
+| V-7.3 | **Remember by default, with an off switch.** No change for existing users. Cost: a field and a switch, about 1 slice with motion; where "turned off" itself is stored needs a rule | Open: that rule. Work: N-S2 |
+| V-7.4 | **Wait until someone reports touch use.** Saves 1 slice; existing touch selection does not change. Cost: a pinch on a touch screen does not zoom a plot's axes; one v5.11 gesture fewer | Open: until a report comes. VW-04 leaves N-V4 |
+| V-7.5 | **Build all five.** The settings page matches v5.11; interface only, no scientific risk. Cost: the first three about 3 slices (motion and "remember" share 1), the last two in plot preferences; the crosshair must exist before its switch means anything | Work: N-S2, N-V4 |
+| C-1.1 | **In the advanced settings, labelled "not verified".** Adds this `msconvert` option; the output check reads through gzip, so validation does not relax; no new dependency. Cost: the roadmap estimates 3 slices, more than the recorded S–M; it waits for the advanced editor; the output cannot be viewed directly in MSCanvas (C-1.2) | Work: N-C7, after N-04 |
+| C-1.2 | **Not addable in the first version; Open folder works.** The reader is untouched, as with the two-step formats; revisit when someone asks. Cost: to view it, decompress it and add it by hand; in the program this output is just a file | None |
+| X-3.1 | **All of them: CSV, TSV, SVG, PNG, Copy plot.** Figures are a core job, so the XIC makes figures from its first day; the caption names the exact window and the quantity; it uses the existing snapshot and no-overwrite flow. Cost: a new data document and version; the runtime stage (2–3 slices) must fit the exports, not estimated separately | Work: N-X2 |
+| X-3.2 | **Its own panel under the chromatogram, sharing the RT axis.** TIC and XIC are seen together and aligned; each has its own intensity axis, so neither misleads; the plot spec already supports several panels. Cost: it takes vertical room, not yet measured; to be measured with a temporary render on the v5.11 layout at three screen sizes | Work: N-X2, with that measurement |
+| X-3.3 | **Keep the differences; a refusal states the reason.** The frozen engine evidence is untouched, and the user learns why a file opens here and not there. Cost: a chromatogram may be fine while its XIC is refused; each case needs a refusal message in both languages | Work: N-X2 |
+| FE-3.1 | **Bundle none; use system faces.** No new asset or licence text, so this question closes; the code already turns on tabular figures; same as v5.11. Cost: glyphs differ slightly between Windows versions; another face later needs a new decision | None |
+| FE-3.2 | **Never bundle one; use the system's YaHei.** The installer does not grow; same as v5.11; not asked again. Cost: Chinese display depends entirely on system fonts | None |
+| HR-1.1 | **Grant; run it when the interface is ready.** Real timing and cancel behaviour get evidence, and nothing runs before the interface is ready. Cost: an idle-desktop window; about 1 slice; if no suitable large file is found, only the search can be recorded | Work: N-R3. The window is approved when its turn comes (HR-1.7). This answers ADR 0060 Q6 |
+| HR-1.2 | **Grant when parallel conversion is on the plan.** The roadmap has not scheduled it, so it takes no time and an approval would not sit waiting. Cost: conversion stays serial, so large batches take as long as now; the roadmap says "only after measuring", so the two wait for each other until the owner speaks | Open: until the owner schedules parallel conversion |
+| HR-1.3 | **Fallback only: grant it only if no public file is found.** Public centroided data comes first, with no conversion, in line with B-11 and the roadmap. Cost: a public 1–2 GiB Orbitrap file must be looked for first; none may be found, and then the window is needed after all | Work: A-13. B-11.2's cost makes this fallback likely. If it comes to that, the window is still asked for when its turn comes (HR-1.7) |
+| HR-1.4 | **A separate window.** Clear authority, because the 2026-10-20 release says it covers that occasion only; adds real-machine evidence after the reader changed path. Cost: an idle-desktop window | Work: #175's four native specs, when the window is approved (HR-1.7) |
+| HR-1.5 | **Wait until Thermo is done.** In line with Thermo first, and it takes no window. Cost: Shimadzu and SCIEX users cannot use vendor centroiding here for now | Open: until then |
+| HR-1.6 | **Grant one run, when this step is reached.** One short run on a public mzML, kept with the file's digest; the precondition of R-3's route. Cost: if the values do not match, `msaccess` stays in the open | Work: N-B1, when the window is approved (HR-1.7) |
+| HR-1.7 | **Separately, each when its turn comes.** The smallest scope each time and a clear record; items not due do not run early. Cost: the owner is asked more often; the idle desktop may have to be given up several times | Each window is asked for when its step is reached |
+| HR-1.8 | **Grant one, at M10's closure.** Cancel evidence is retaken on the changed launch; 7 slices are developed on a simulated backend, and only the closure waits. Cost: one window, after the rest of M10 | Work: M10's closure, when the window is approved (HR-1.7). This answers ADR 0064 question 7's window |
+| S-6.1 | **Four fields: group, type, batch, injection order.** One pass covers v5.11's row classification and statistics groups; injection-order plots and grouping by batch work directly; far below the project document's 4 MiB limit. Cost: this step is L (5 slices); computations that need injection order refuse while it is empty; v5.11 only shows injection order, and here it must also be edited | Work: N-A3 |
+| S-6.2 | **Hold schema 5 open; join before a release.** Users go through one one-way upgrade; the same window rule as B-6's study records; if B-6 is answered first, one write, saving at most 2 slices. Cost: test projects written by development builds may not open later; if a release ships first, these records go to schema 6 | Work: N-A2. Answers ADR 0067 question 9's schema window, with B-6.15 for its generic record |
+| S-6.3 | **Confirm first, listing each row's old and new value.** As in v5.11's dialog, and the change to a scientific class is seen first. Cost: one more step per batch of moves; confirmation and its acceptance about 1 slice (inside the metadata's 5) | Work: N-A3 |
+| S-6.4 | **On the data layer; each study revision stores a copy.** Classified once in the list, as in v5.11; editing a class does not change a finished study; a revision already lists these fields. Cost: one file cannot be grouped differently in two designs; departs from ADR 0067's recommendation, so the record changes; columns of an imported table have no data layer and need another home | Open: that home. Work: ADR 0067 question 2's answer, on its branch |
+| S-6.5 | **Add the row to the project first, then classify it.** Every class has a lasting identity, and the file can still be checked on another machine. Cost: classifying waits for the hash; one more explicit add to the project | Work: N-A3 |
+| S-6.6 | **Type fixed, group name free (ADR 0067).** Several groups, dose groups and time points can be told apart; statistics can compare any two groups, which the statistics crate supports; QC and blank follow from type. Cost: differs from v5.11's fixed list; the volcano must let the user choose the two groups and the direction; the type list must be settled, as ADR 0067 has a standard that v5.11 lacks | Open: the type list. Work: N-A3 |
+| S-2.1 | **The difference of the group log2 means.** Tests are on log2 too, so both volcano axes share a scale; same as v5.11, and the statistics crate implements it; one very high value matters less. Cost: the numbers differ from MZmine's; read as a ratio of mean intensities it is biased | Work: N-12, N-A8 |
+| S-2.2 | **Two-sided Welch t test.** It assumes no equal variances; the worst difference from scipy is about 1e-13; the crate implements it, same as v5.11. Cost: low power with few replicates; it relies on rough normality after log2 | Work: N-12, N-A8 |
+| S-2.3 | **Fewer than 2: refuse. Fewer than 3: mark low power.** A small pilot runs, with a mark; the refusal is the crate's as it stands. Cost: p values from two replicates are unstable and can be misread; the mark must show in the interface and in exports | Work: N-12, N-A8 |
+| S-2.4 | **Every valid test of this run, after the recorded filters.** q does not move with interface filters; same as v5.11's code, and the crate supports it; the family is kept with the result, so it can be reproduced. Cost: changing a QC threshold recomputes q; q values from different thresholds cannot be compared directly | Work: N-12, N-A8 |
+| S-2.14 | **Benjamini-Hochberg (BH).** The crate implements it, matching scipy and statsmodels, and it is the same as v5.11. Cost: with correlated features its guarantee is less strict than BY's | Work: N-12, N-A8 |
+| S-2.5 | **n−1.** Matches scipy and R; implemented in the crate and checked on NIST data. Cost: defined only with at least 2 values | Work: N-12 |
+| S-2.6 | **Observed values only; a missing value stays out and is counted.** No invented value, so p comes only from what was measured; the crate implements it and reports the observed count. Cost: a feature with many missing values cannot be tested; a low-abundance feature keeps only its detected high values, so a difference may be underestimated | Work: N-12, N-A8 |
+| S-2.7 | **Refuse the whole run, naming the feature and sample (ADR 0069).** Nothing is judged for the user, and the meaning must be stated first; the crate as it stands; it pairs with ADR 0067's import declaration. Cost: one zero or negative value hides the whole volcano; the user must go back to the import and declare again | Work: N-12. This replaces S-2's earlier "treated as missing" (section 4) |
+| S-2.8 | **Complete features by default; a labelled 1/5-minimum as an option.** Nothing is invented by default, and v5.11's ability stays; the number of replaced cells is on the plot and in exports. Cost: not implemented in the crate, so a little more work; it is the value-inventing class: choosing it approves it, and a record must still be written; it assumes every missing value is below the detection limit | Work: that record, N-12, N-A7 |
+| S-2.9 | **Auto by default; Pareto and none as options.** The default is v5.11's, and the crate implements all three; weak peaks are not drowned by strong ones. Cost: noisy weak features gain weight too | Work: N-A7 |
+| S-2.10 | **Exclude and count, by the rounding-error bound (the crate as it stands).** Auto scaling cannot blow rounding noise up into a feature; implemented and tested, and the excluded count is visible. Cost: a very narrow difference goes too, such as 1 at 1e15; a feature that is zero for PCA is still tested by Welch | Work: N-A7 |
+| S-2.11 | **On the raw scale: 100·sd/mean.** Same as Broadhurst 2018 equation 1 and v5.11; the literature's 20 % and 30 % thresholds apply directly; the crate implements it. Cost: one high value moves it easily; a mean that is not positive is recorded as unavailable | Work: N-A9 |
+| S-2.12 | **Fixed: the loading of largest magnitude is positive.** Reruns and exports keep their direction; implemented, the same rule as scikit-learn. Cost: the direction has no biological meaning of its own; comparing with other software may still need a flip | Work: N-A7 |
+| S-2.13 | **No clustering in the first version; sort by group and q.** Same as v5.11, no dependency, and the row order is explainable and reproducible. Cost: features with similar patterns do not sit together; a clustered heatmap needs an export to other software | None. `kodama` is not needed, which closes S-1's open item |
+| S-3.1 | **Four: sum, median, PQN and internal standard; none by default.** Covers common practice, more than v5.11; the default changes no value; it lifts the gate on PCA and the volcano. Cost: this step is M (3 slices), not split by method; more options for the user to judge; internal standard needs a user-chosen feature, and a sample without it is refused | Work: N-12, N-A10 |
+| S-3.2 | **An absolute-intensity overlay is enough, marked not normalised on the plot.** It lifts the overlay's gate; TIC and BPC overlays do not need the XIC. Cost: a difference in loading can read as a difference in signal; L (5 slices), with the whole item after the XIC in the roadmap; the group-mean EIC still waits for the XIC | Work: N-A12 |
+| S-3.3 | **With at least 3 QCs, their median; otherwise all non-blank samples.** The reference is steadiest with QCs, and an experiment without QCs can still use it. Cost: the reference switches by QC count, so it must be written into the result | Work: N-A10 |
+| S-3.4 | **Sum-normalise first, then take the median of the quotients.** The research's advice: remove the total difference, then read the quotients. Cost: the sum must be limited to features present in all samples; the source's own steps have not been checked | Open: that check. Work: N-A10 |
+| S-5.1 | **Rust computes five metrics, with read-only plots.** It does not wait for the Python runtime and works on an imported table; a changed threshold shows at once; RT drift, mass error and injection-order plots are display only. Cost: M (4 slices); D-ratio and blank ratio must be added to the crate; the catalog's "isolated worker" wording must change | Work: N-A9 |
+| S-5.2 | **Exclude, keeping a list and a reason per feature.** Every excluded feature can be traced; v5.11 has "keep excluded items" too, on by default. Cost: the literature says up to 40 % of metabolites may go; a changed threshold changes the BH family and q; v5.11 has a switch and no list, so the interface is new | Work: N-A9 |
+| S-5.3 | **Detection >70 %, RSD <30 %, D-ratio <50 %.** From Broadhurst 2018; RSD is v5.11's 30 %. Cost: the literature calls 50 % a ceiling and lower better; together the three can remove many features | Work: N-A9 |
+| S-5.4 | **As v5.11: ratio ≥5, missing ≤30 %, on by default.** Same as the demo, and obvious blank contamination goes by default. Cost: with the maximum as reference it is stricter than the demo; the record has no literature basis | Work: N-A9 |
+| S-5.5 | **The maximum of the detected blanks (MZmine's default).** Conservative: a signal in any blank counts; comparable with MZmine. Cost: one contaminated blank excludes more features; the numbers differ from v5.11's | Work: N-A9 |
+| S-5.6 | **Keep them.** No signal in the blanks is what a clean feature looks like; matches MZmine. Cost: the numbers differ from the demo's | Work: N-A9 |
+| S-5.7 | **Ratio of standard deviations: 100·sd_QC/sd_sample.** The definition in the research's table, and the same statistic as QC RSD, so the simplest. Cost: the source says non-Gaussian data should be transformed first or use MAD; one high value moves it easily | Work: N-A9 |
+| S-5.8 | **The observed mean of control and treatment samples (v5.11).** Same as the demo; one number and a simple rule. Cost: with one group high and one low, the mean falls and contamination may be misjudged | Work: N-A9 |
+| S-7.1 | **Select now, for the targeted table and the future feature table.** Targeted results do not wait for the Features page; the exported file names its filter; the scan table's sorter can be reused. Cost: the targeted table's part has no estimate of its own; a partial export may be taken for the whole table | Work: N-A5, N-A6; the targeted table's part has no roadmap item yet |
+| S-7.2 | **With the feature table, stored in the project and exported with the CSV.** Note and feature sit in one place; no measured value changes; inside N-A6's 3 slices. Cost: it waits for the Features page; it counts against the project document's 4 MiB limit | Work: N-A6 |
+| S-7.3 | **With the library candidates.** It appears with the candidate it marks, so its meaning is clear; the same step as choosing a candidate, M (2 slices). Cost: at the end of the critical path, about 39 slices then (42 in the roadmap now); it depends on the Python track's annotation | Work: A-26 |
+| MAP-1.1 | **Both, each when ready.** Neither waits for the XIC or Python. Cost: 3 and 4 slices; both wait for the new plot kinds (6 slices); the two maps are easily confused and must be labelled clearly | Work: N-F4, N-X3, N-X4 |
+| MAP-1.2 | **The greatest intensity per cell.** The same rule for profile and centroid, not affected by sampling density; the library implements it, and the caption says so. Cost: weak signals in the same cell are hidden; on an ion trap, profile and centroid still cannot be compared | Work: N-14 |
+| MAP-1.3 | **log10 only; ≤0 in its own colour.** Weak signals and the base peak both show; no extra control; ≤0 stands apart from the empty background. Cost: differences in strength look compressed; no linear scale for looking at the base peak | Work: N-14, N-X4 |
+| MAP-1.4 | **Vector cells, merging adjacent cells of one colour.** No dependency change, and no bitmap in the figure. Cost: with many cells the file can be large, so it needs a cap | Open: the cap. Work: N-X4 |
+| MAP-1.5 | **The user enters it, with the reason stated.** No extra pass; the range is explicit, and the number of points outside it is still stated. Cost: one more step on opening; a user who does not know the range may enter too narrow a one | Work: N-X4 |
+| MAP-1.6 | **One map per polarity; a partly declared file is refused.** Polarities do not mix; the same thinking as the XIC's mixed-polarity refusal. Cost: a partly declared file has no map; library and ADR 0068 must follow | Work: N-X4 |
+| MAP-1.7 | **Its own thread, one at a time, beside spectrum selection.** Spectra can be clicked while the map is computed; reads share no cursor, and memory stays one map and one spectrum. Cost: ADR 0057 is amended; two reads at once may slow each other on a slow disk (not measured) | Work: N-14, N-X4 |
+| MAP-1.8 | **One map per representation; a partly declared file is refused.** Different scales do not mix, both kinds can be seen, and the rule is the polarity rule. Cost: a partly declared file has no map; the library must change | Work: #183's library. Answers ADR 0068 question 7 |
+| MAP-1.9 | **The reader reports the type; narrow windows stay out, with a count.** No strips of narrow windows on the map, and the count is stated, so nothing is dropped silently. Cost: the reader must add a scan type or window, which R-1 did not include, work not estimated; signals in narrow windows do not show on the map | Work: not estimated, no roadmap item yet. Answers ADR 0068 question 8 |
+| B-2.1 | *Pick; there was no recommendation.* **Move to 3.6.0 before release, when the probes pass.** No Qt, so the Qt LGPL-3 question ends; KD linking is fixed, and a failed adduct solve reports an error; every function is verified once, on the released version. Cost: the Thermo folder must be excluded; port and re-qualification 3–5 slices; a new dependency, `nanobind-backend` 1.0.0, needs approval (PyPI has no licence field, only a BSD classifier); curl, the AWS SDK and OpenSSL 3.6.4 (13 advisories) are linked in. If the probe fails: CK-2 | Open: the probes (A-03), and whether libiconv is linked. Work: A-07 |
+| B-2.2 | *Pick; the recommendation was to keep the refusal and obtain a legal opinion first.* **Use 3.6.0, which has no Qt.** The question goes away with no reading of the terms; checked: the 3.6.0 wheel has no Qt DLL, and the OpenMS DLL imports no Qt. Cost: all of 3.6.0's cost (B-2.1); this answer does not hold if the probes fail (CK-2); whether libiconv (LGPL-2.1) is linked is not settled | Answers ADR 0066 questions 5 and 7 with B-2.1 and CK-2, on its branch |
+| B-2.3 | **CPython 3.14, the latest embeddable.** Official binaries until about 2027-10, so security fixes keep up; OpenSSL 3.5.9, supported until 2030-04; pyOpenMS 3.5.0, numpy and pandas all have 3.14 wheels. Cost: whether targeted MS1 runs on 3.14 is untested and needs full verification; by 2027-10 it must move to the next line and be verified again | Work: A-07, or its own slice on CK-2's branch. Answers ADR 0066 question 10 |
+| B-3.1 | **Also leave out sources and tests (1,790 files).** 150 MB, about 35.5 MB compressed (HMDB and Modomics already out); checking takes about 3–4 s (development machine, measured on the same tier). Cost: agreement was tested on one synthetic file and two targets only; compressed, only about 8 MB smaller than the tier before; the exclusion list is longer, and each entry must be retested on a new version or interpreter | Work: A-03, A-05. Answers ADR 0066 question 4 with B-3.2 and B-3.3. Open: the terms of `brenda.obo`, on which shipping this tier depends, and of the data files that state none (ADR 0066's licence slice, in A-05) |
+| B-3.2 | **Leave them out.** No commercial redistribution limit is touched; targeted MS1 results do not change (measured on one file). Cost: accurate-mass search needs a database the user chooses; no metabolite library out of the box | Work: A-05 |
+| B-3.3 | **Do not ship them, and delete the experiment lock.** The shipped package has no Pillow, so 41 alerts close; about 49 MB of packages that never load go. Cost: departs from the recorded Pillow 13.0.0 route; pyOpenMS declares matplotlib, so it must be excluded by hand; a development environment can no longer be reproduced from the old lock. CK-1 keeps matplotlib and Pillow out until A-25's runtime | Work: A-03, A-05. Open: whether every planned class runs without them, on which this rests; only the targeted MS1 path was measured (A-03) |
+| B-4.1 | **Drop it now; add a display preview after the XIC ships.** No field that cannot change a result; the chromatographic FWHM parameter really does; smoothing can still be seen after the XIC. Cost: the first workflow has one step fewer than the demo; the preview waits for the XIC and needs its own decision | Work: A-20. Open: that decision |
+| B-4.2 | **Drop it; only OpenMS's peak width and signal-to-noise.** Every field takes effect, with no extra engine or dependency. Cost: MZmine users will not find ADAP; OpenMS has only upper and lower FWHM limits and signal-to-noise, not the demo's peak width; OpenMS uses seconds and the demo minutes, so the interface converts | Work: A-20-UI |
+| B-4.3 | **Drop them; pose clustering with KD, fixed.** The route of the pyOpenMS tutorials and UmetaFlow, and KD copes with large sample counts. Cost: only an affine correction, so non-linear drift relies on LOWESS at linking; 3.5.0's KD has a charge-conflict defect (OpenMS #10157) | Work: A-21 |
+| B-4.4 | **Drop the field; use OpenMS's grouping.** GNPS IIMN files can still be exported, with no extra engine. Cost: grouping ignores peak shape, so results differ from MZmine's; the demo's field is gone | Work: A-23 |
+| B-4.5 | **Centroided data only; OpenMS centroiding later.** Thermo takes the verified route, and a refusal says where to convert; about 1 slice (at most 1 day). Cost: open-format profile data cannot enter; Shimadzu and SCIEX centroiding is unverified and waits | Work: A-16 |
+| B-4.6 | *Pick; there was no recommendation.* **By instrument: Orbitrap 1e4, QTOF 1e3.** The two intensity scales differ, and the measurements support separate defaults. Cost: the file's declared analyzer must be read; real files declare a combination, so the rule must be written on CV terms, and an unclear declaration must be entered by hand; the QTOF basis is one file; the 1e3 tier's admission falls to 80 million MS1 peaks | Work: A-15, A-20-UI |
+| B-5 | *Pick; the recommendation was positive first, negative in the next step.* **Both at once.** Negative-mode users can use it from the start. Cost: U1's verification doubles; adduct grouping (U4) needs a negative adduct set, which U1 does not; negative mode's time and memory are not measured | Work: A-20, A-23, A-13. A-17 folds into A-20 and A-23 |
+| B-6.1 | **One study record per step, with the details in result files.** About 37 passes for 300 samples (arithmetic); a stop or one sample's failure loses nothing already done. Cost: sample-level detail can be read only while the result files exist; new record kinds, about 3–4 slices in the project format | Work: A-08, A-08-KINDS. Answers ADR 0067 question 1 |
+| B-6.2 | **On the acquisition, with a copy in each study.** Classified once in the list, as in the demo; a change does not affect finished results. Cost: one grouping design per project, a second needs an override later; samples of an imported table have no acquisition and are stored elsewhere | Work: A-08. Answers ADR 0067 question 2, with S-6.4 |
+| B-6.3 | **The pooled QC if there is one, otherwise the map with the most features.** It uses the design and runs without a QC, with no user choice. Cost: samples must be classified first; which QC, when there are several, is still to be set | Open: which QC. Work: A-21 |
+| B-6.4 | *Pick; the recommendation was to wait for a measurement.* **Add the LOWESS second stage now.** It corrects non-linear drift; the LOWESS class is in both 3.5.0 and 3.6.0, so no dependency. Cost: not measured, so it needs a written decision; `invert()` is only an approximation, with a round-trip error up to 18 s on synthetic drift, so a numerical inverse is used instead (at most 0.0023 s on the same data); the default span cannot follow fast drift (median error 12–41 s), so the span goes in the recipe record | Work: that decision, A-21. Open: KD's internal warp, on or off |
+| B-6.5 | *Pick; the recommendation was six states.* **Seven: the engine's discard is a state of its own.** A batch the engine discards shows at a glance. Cost: a discard is a whole fit's failure, not a verdict on one feature; one more state and one more legend entry | Work: ADR 0067 question 4, on its branch; A-09, A-22-UI |
+| B-6.6 | **Refuse, naming the unknown column.** No column is dropped silently, and editing the header fixes it. Cost: a lab's existing table must lose columns first | Work: N-A3. Answers ADR 0067 question 5 |
+| B-6.7 | **Reuse by default; review can switch to running every sample.** Only the remainder runs, saving hours; reused only when the request and input bytes are the same. Cost: a reused result comes from an older run; a damaged reuse source fails that sample, which reruns next time | Work: A-21. Answers ADR 0067 question 6, with B-6.10 |
+| B-6.8 | **Accept it for the first version, and say so.** The simplest first build; a manual stop still keeps finished samples. Cost: a crash or a failed publish loses the whole run; intermediate files use disk and are neither reclaimed nor resumed | Work: A-21. Answers ADR 0067 question 7 |
+| B-6.9 | *Pick; the recommendation was one recorded constant per step.* **Compute it each time from the memory free at that moment.** It adapts to different computers. Cost: one method's speed differs between runs; another program taking memory midway needs a guard; parallel work pushes files near the limit towards the 600 s timeout, so parallel count × threads must also stay within the logical core count | Open: one worker at a time still holds until a per-recipe measurement exists (ADR 0067 decision 3). Answers ADR 0067 question 10 |
+| B-6.10 | **Copy the files.** Each result folder is whole on its own, with no disk-volume limit. Cost: about 2.4 GB more each time (300 samples, an estimate) | Work: A-21 |
+| B-6.11 | *Pick; the recommendation was the project's own chunked format.* **Arrow or Parquet.** A standard columnar format other tools can read. Cost: a new dependency to approve: Arrow IPC 13 crates, about 2.9 MB more; Parquet 16, about 8.5 MB more (differences between separate programmes); it saves none of the own design, since `matrix.json`, chunks, the state plane, per-file SHA-256 and window reads all stay; neither format checks content, so a changed byte can read as a doubled value with no error; the work is not estimated and A-09's 2–3 slices are void; Arrow's NOTICE must be reproduced. **CK-4 governs:** an in-house store plus a Parquet export, and A-09's estimate holds | Work: as CK-4. ADR 0067 question 3's format is answered through CK-4, on its branch; its bounds were not asked separately (CK-4) |
+| B-6.12 | **The user declares it at import.** Its meaning is in the import plan, so it can be traced, and nothing is guessed. Cost: one more question per import | Work: N-A4. ADR 0067 question 4 |
+| B-6.13 | **Refuse, naming the row and column, unless declared.** A bad value cannot enter the matrix silently; declared text counts as missing and is in the import plan. Cost: an existing table may need a declaration or an edit | Work: N-A4. ADR 0067 question 4 |
+| B-6.14 | **In the application cache, with a digest in the result.** Saving a project elsewhere need not copy gigabytes; the same as the RAW view's cache. Cost: the cache may be cleared, and the file is then regenerated and checked against the digest | Answers ADR 0067 question 8 |
+| B-6.15 | **One generic step record.** A new step with valid parameters needs no format bump, so fewer one-way upgrades. Cost: an older build shows it as history only and refuses to run that step; departs from the existing rule "refuse to open on an unimplemented operation" | Work: A-08, A-08-KINDS. Answers ADR 0067 question 9's generic record, with S-6.2 for its schema window |
+| B-11.1 | **Approve; probe the runner first.** Heavy work stays off the owner's computer, in a clean environment with hash-locked dependencies. Cost: 2–3 slices (about 1–3 days); the runner is unknown, and numbers are trusted only after the probe | Work: A-04, smaller now: B-11.2 moves the measurements off it |
+| B-11.2 | *Pick; the recommendation was CC0 or CC-BY data, already centroided.* **Accept the EMBL-EBI terms; measure locally only.** #191 already measured on such data, and MetaboLights has centroided files. Cost: not an open-data licence, so files are neither committed nor redistributed; whether they may go on Actions is unconfirmed; the 1–2 GiB Orbitrap files checked are all profile, and the usable large file is QTOF (MTBLS449, about 1.6 GiB), so a large Orbitrap file probably takes the hold-release fallback | Work: A-13, A-14, run locally under the memory gate. HR-1.3 stays the fallback |
+| B-11.3 | **One 1–2 GiB Orbitrap run is still needed.** Extrapolation becomes measurement, so the budget is more credible, and a large Orbitrap file is covered. Cost: first estimated at 2 slices, of which #191 did part, the rest not estimated; B-11.2's data question comes first | Work: A-13 |
+| B-11.4 | **4 GiB, with two admission tiers by MS1 peak count.** The existing limit, so no more memory is asked of users; both tiers keep a 19–20 % margin, and anything over is refused plainly. Cost: the 1e3 tier's ceiling is 80 million peaks, so a 2 GiB file is refused; the precondition is that the source check no longer keeps an MS1 copy | Work: A-15, A-20 |
+| B-7.1 | **OpenMS targeted requantification, labelled "experimental".** The UmetaFlow route, the same algorithm class as targeted MS1, and no new engine. Cost: the slowest step: about 34 times preprocessing in UmetaFlow; it inherits measured defects, and upstream labels it experimental too; 4–6 slices (about 1–6 days) | Work: A-22, A-22-UI |
+| B-7.2 | *Pick; there was no recommendation.* **The raw point sum.** Not affected by other targets in the batch, and the M9.0 record lists it as the main quantity. Cost: not the same quantity as a detected value (trace area); it is a point sum, not an area of intensity × time. CK-3 keeps such cells out of tests for now | Work: A-22 |
+| B-8.1 | *Pick; the recommendation was entropy similarity through `ms_entropy`.* **Cosine and entropy (matchms, a new dependency).** One package computes cosine, modified cosine and entropy (measured on 0.33.1); a GNPS-style modified cosine gives comparable numbers; it has its own library-cleaning steps. Cost: a new dependency to approve, 32 wheels more than 3.6.0 itself, about 487 MB more unpacked and about 122 MB compressed; it cannot go without matplotlib and Pillow, which conflicts with B-3.1 and B-3.3 (CK-1); its entropy is not `ms_entropy`'s score, 0.86739 against 0.88352 with a close doublet, so results must name the algorithm; `requests` and `pubchempy` load at import, so the worker's network must be blocked at system level; adding it after the first release also needs a new runtime. The owner's note, verbatim: "余弦和熵相似度能不能都做？" ("can cosine and entropy similarity both be done?"): this option does both. **CK-1 governs when it arrives** | Work: A-25, A-25-UI. The dependency is asked for when A-25 starts |
+| B-8.2 | **Only MSP and MGF files the user brings.** No library's terms are touched, and an in-house library works. Cost: on first use there is no library, so the function is empty | Work: A-25 |
+| B-9.1 | **A project-owned MZmine-2-style CSV and MGF.** GNPS2 explicitly accepts MZMINE; it writes a format, not an algorithm, about 1 slice; it need not read every mzML at once. Cost: GNPS format changes must be followed by hand; it needs charge from the reader | Work: A-24 |
+| B-9.2 | **The label; the file name only where there is no label.** No locator, and the user's own name appears in the table. Cost: where label and file name differ, the GNPS metadata table must follow | Work: A-24 |
+| B-10.1 | **After library annotation, driving the user's own install only.** It brings formula and structure annotation, and that order is safe. Cost: about 5 slices (about 2–5 days); the user installs 501 MiB, and its online steps are for academic use only | Work: A-30, optional |
+| B-10.2 | **Both last, each decided on its own.** The OpenMS main line comes first, and user need decides then. Cost: no second engine to compare with for now; both together 10–15 slices | Work: A-31, A-32, optional. Open: each one's decision |
+| B-10.3 | *Pick; the recommendation was to confirm the whole list.* **Confirm the avoid list; re-check MassCube after its licence changes.** Its repository is now Apache-2.0, so a release that follows may be usable. Cost: 1.2.22 is still CC BY-NC and needs numpy<2; someone must watch its releases | Open: the re-check. The record's own reading, not an owner decision: a release qualifies when its licence is permissive and it supports numpy 2 and the current Python |
+| B-10.4 | **Not now; a draft is shown to the owner when the step is reached.** The question is sharpest then, and it takes no time from the owner now. Cost: answers come late, so the choice of an MZmine driver may slip | Nothing is sent outside the project. Each message keeps its own go-ahead |
+| S-4.1 | **Diagnostics only; correction when a user asks.** No measured value changes, so no separate approval; injection-order plots, QC RSD and PCA are enough to see drift. Cost: drift can be seen but not corrected, so it must be exported to other tools; it needs S-6's batch and injection-order fields; the plots sit in the QC metrics item (4 slices) | Work: N-A9 |
+| S-4.2 | *Pick; the recommendation was none, with gap filling first.* **Add RF and QRILC, chosen by missing type.** Wei 2018: RF suits values missing at random, QRILC left-censored ones; Kokla 2019 also supports RF. Cost: QRILC has no permissive implementation to package (imputeLCMD and pyimputelcmd are GPL), so it needs project code under a written decision; RF can use scikit-learn, whose interface is experimental; missForest is GPL; extrapolated from small matrices, 100,000 features over 3 rounds take about 11–19 hours (single thread, arithmetic); the missing type cannot be read from data, only declared by the user; with S-2.6's observed values only, imputed values do not help the volcano; the research judged it out of the first version. **CK-5 governs: the direction only** | Open: the scheduling, after A-22. No effort and no dependency now |
+| C-2 | *Pick; the recommendation was no dependency, keeping the minimal checks and the label.* **Add an HDF5 reader dependency for a deep check.** The final file can be compared with the intermediate, one real guarantee beyond the label. Cost: a new production dependency to approve: hdf5-reader 0.12.1 (11 crates) or hdf5-pure 0.47.0 (1, but it did not read mz5's ID field), both MIT OR Apache-2.0 and created only in 2026; the C-library route did not build here; the library only opens the container, and the comparison needs its own parser per format; work not estimated (CK-8 sets how far it compares) | Work: as CK-8. Not built. N-C2 ships with the label meanwhile |
+| V-6 | **Start empty, until a lawful small file is found.** No change and no licence risk; a public-domain or CC-BY small file can be added when found, about 2 slices. Cost: a new user's first screen has nothing to see; finding a file has no deadline | Work: N-S6, once a file is found |
+| VIEW-A | **Keep allowing it (as built).** No change, and tests pin it; an add does not end a view, and a finished queue holds no conversion slot. Cost: at one moment Add files is refused while this add works, so the rule is not uniform | None |
+| VIEW-B | **Keep refusing (as built).** No document is saved that cannot reopen later; converting, adding and saving is the existing route, with no new work. Cost: a figure viewed from a RAW cannot be saved directly for reopening; two more steps | None. This settles A0062's open locator question |
+| A0062.8 | **Allowed on the same share, otherwise refused (as built).** It keeps the project's locator rule, and works when figure and data sit on one share. Cost: with data on a mapped drive, saving the figure to a local folder is refused; the user must save the figure to that share | None |
+| RT-1 | **Require elevation; add a route when needed.** Only administrators can write, so there is no gap between check and start, and an administrator installs once for every account. Cost: while unsigned, UAC shows an unknown publisher, and a site's policy may refuse; without an administrator there is no analysis | Answers ADR 0066 question 3, on its branch |
+| RT-3 | **Wait for the reading, then release (as set).** The lowest legal risk, consistent with B-1; it can be asked with the Qt reading. Cost: who gives it and how long it takes are not recorded; without a reading the runtime cannot ship | Open: the reading itself, which blocks A-05 |
+| U1-1 | *Pick; the recommendation was 1 thread, as targeted MS1.* **Let the user set the thread count.** MZmine's command line has this option, and a large machine can go faster. Cost: real files were tested only at 1 and 4 threads; on a synthetic file 1, 4, 8 and 20 threads gave the same features, and above 4 there is no speed-up data; OpenBLAS takes about 32 MiB more per thread, so the worker sets `OPENBLAS_NUM_THREADS=1`; v5.11 has no such field, one more parameter to record. CK-6 sets default and range | Work: A-15, A-20-UI |
+| U1-2.1 | **Keep 600 s.** The measured files' worst total is about 300 s, twice the margin, and a timeout is a plain failure, never a wrong result. Cost: a file near the limit may time out on a busy machine; the user waits until then to know | Work: A-15 |
+| U1-2.2 | **4 GiB, two tiers.** A noise threshold of 1e4 or more admits 150 million peaks, below it 80 million; both tiers keep about 20 % margin, and the limit is targeted MS1's. Cost: at 1e3 a 2 GiB file is refused, and v5.11's default noise of 1000 is in this tier; the precondition is no MS1 copy, so a new source check must be written, of which only one item was measured | Work: A-15, A-20 |
+| U1-2.3 | *Pick; the recommendation was to refuse until measured.* **Measure lower thresholds first, then set the floor.** The floor then has data and can be set with B-4's question 6. Cost: it needs lawful data and a measuring window, the roadmap's measurement item does not include it, not estimated; until then this field's range cannot be set; lower thresholds take more memory, about 2.1–9.9 GiB with every peak above the threshold (ceiling arithmetic, not a prediction), so 4 GiB may need a third tier | Work: that measurement, not estimated, no roadmap item yet. The record's own reading, not an owner decision: below 1e3 stays refused until it is measured |
+| HIST-1.1 | **Accept them and write them down.** No work and no store change; the windows are narrow, and one clears itself at the next start or list. Cost: after Off, one record may land for a moment and stay if recording is on again; it differs a little from "Off forgets" | None. It agrees with items 1 to 4 of A0065-section-7 |
+| HIST-1.2 | **Item 5 of A0065-section-7 stands, with no leftover count.** "其余按推荐" first resolved this row to its recommended option, "不删，显示残留个数（同恢复工作区）" ("do not delete; show a leftover count, as restore does"), whose text says Clear and Off cannot delete these files. A0065-section-7 item 5, answered in chat the same day, says Clear and Off also remove `.mscanvas-run-history-*` siblings untouched for over 24 hours. These disagreed, so the owner was asked, and answered in chat after the table, verbatim: "HIST和ADR0065就按照推荐来即可". The recommendation it answers: item 5 stands, so Clear and Off also remove private siblings (`.mscanvas-run-history-*`) untouched for over 24 hours, and there is no leftover count, because the file holds full paths and the 24-hour rule removes the reason for not deleting (a live write from another instance does not stay untouched that long). It is not HIST-1.2's own page recommendation, whose option is not taken. The owner was told this reading and can correct it. What is given up is that option, which on the page agrees with the owner's answer of 2026-10-31 on restore and does not delete a file another instance is writing. The cost the page names for the count: the paths stay on this machine for the user to handle; a count and one interface mark, work not estimated; a file being written is counted too | Work: item 5, not built: one small PR after #205 (merged as `2ca8562e`) and #212, not estimated. No count is built |
+| RO-1 | **Yes: all three count as planned, under the sample metadata item.** In line with G3 and the roadmap, so only the gap table changes; PCA colouring, injection-order plots and statistics all rest on it. Cost: 5 slices of work, waiting for S-6's fields and version; a row with no layer must join the project before it is classified | Work: N-A3. The roadmap's appendix B carries RO-17, RO-22 and RO-23 as planned |
+| XML-1 | **Wire the comparison and open it as an advanced format.** It keeps the accepted decision and v5.11's format list; comparing the spectrum count with the intermediate catches the dropped spectra that were measured; about 1 slice of the non-mzML item. Cost: no value comparison and no chromatograms, labelled a legacy format; it cannot be added to the workspace or previewed; a multi-source file is refused; it has not run on a real `msconvert` | Work: N-C2 |
+
+**Still open after these answers:**
+
+- **ADR 0070's two open questions were asked after the table and are still open.** Neither the later answer on HIST-1.2 nor U7 answers them:
+  1. Decision 3's list: is it the minimum that each record states? Recommended: yes.
+  2. The crate's guidance: keep the two lines of `crates/proteowizard/AGENTS.md` ("only the m/z and intensity arrays of one selected spectrum"; never "compute from the arrays") until the first record's code lands, and change them in that slice? Recommended: yes.
+- **"As built, not an owner decision".** Text marked so stays dated and marked so. In ADR 0065 on `main`, since #205, that is the lines so marked in sections 2, 6 and 10, with section 6's `schemaVersion` line; open PRs may carry more. No answer here accepts them. Section 7's items 3 and 4 say "Shipped 2026-11-03, not an owner decision", and the owner accepted them as documented (A0065-section-7); its sixth bullet says the same, and no answer here accepts it.
+- **Three questions #205 left, which no row asked.** ADR 0065 section 7's sixth bullet, "A retry of a run Off could not remove": should such a retry go on writing its record, paths included? That bullet was not among the cases shown to the owner on 2026-11-03. Should the history and the queue agree on Details for a file a retry has not reached? Should the list itself say that a holder blocked a removal?
+- **Answers that depend on a result not yet in:** the 3.6.0 probes (A-03, which decide between B-2.1 and CK-2), whether the planned classes run without matplotlib and Pillow (A-03, B-3.3), the Qt opinion on CK-2's branch, the MSVC reading (RT-3), the BPI match (R-3, HR-1.6), and CK-3's decision after A-22.
+- **Open questions no row asked:** ADR 0071 question 3 (carried to X4); the roster in the project file, which section 1b says "comes back with S-6" and S-6's rows do not cover; the per-scan analyzer term and filter string from R-1 (#154's columns); which item reads the file's declared analyzer for B-4.6, since #182, as R-1 accepted it, widens instrument configurations for the library only; the open items each row names above.
+- **Not approved by any of this:** a new dependency, any hold-release window (each is approved separately when its step is reached, HR-1.7), a release, an upload and outbound contact. Each keeps its own approval.
+
 ---
 
 ## 2. Summary
 
-Ordered: work blocked now first, then by the slice each decision gates. Counts: 21 now, 25 before-its-slice, 7 later (53). The 21 now were decided on 2026-10-30, as recommended (section 1b); the other 32 stay open.
+Ordered: work blocked now first, then by the slice each decision gates. Counts: 21 now, 25 before-its-slice, 7 later (53). The 21 now were decided on 2026-10-30, as recommended (section 1b); the other 32 were decided on 2026-11-03 (section 1d), and none of the 53 waits for an answer as a whole. B-2, B-4, B-5, B-6, B-7, B-8, B-10, B-11, S-4 and C-2 carry a pick that differs from or had no recommendation. What stays open is listed at the end of section 1d. The Urgency column stays as asked.
 
 | # | Id | Decision | Recommendation | Kind | Urgency |
 | --- | --- | --- | --- | --- | --- |
@@ -191,38 +423,38 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 | 19 | R-1 | The reader-metadata amendment: polarity, charge and run metadata; PRJ-006's BPI times; #154's terms; #182's five choices | Decided 2026-10-30: accept it and #182's five choices; BPI times stay with `msaccess` in #182, then are computed from declared values under a short record, matched to `msaccess` first; analyzer and filter string only with #154's columns | choice | now |
 | 20 | S-1 | `nalgebra` and `statrs` as production crates; scipy and statsmodels for fixtures only | Decided 2026-10-30: approve; `kodama` only with clustering | choice | now |
 | 21 | B-1 | How the Python analysis runtime is distributed: ADR 0066 questions 1–3, 6, 8 and 9 | Decided 2026-10-30: a separate, verified runtime package (ADR 0066 decision 1), per machine under Program Files; every runtime fix is an app release; confinement a release blocker only if A-06 shows it can be enforced; approve the shipped wheels at the first runtime release | choice | now |
-| 22 | R-2 | A chromatogram above 100,000 spectra | Rust sends the chromatogram from its retained rows | choice | before-its-slice |
-| 23 | R-3 | Open a new preview during a conversion (ADR 0057 decision 2) | Yes, once the open runs no process | choice | before-its-slice |
-| 24 | V-1 | Show a spectrum on open (VW-33) | Select the TIC-apex MS1 scan | choice | before-its-slice |
-| 25 | S-6 | Sample metadata fields and schema version | Four fields. Hold schema 5 open until a release ships it, otherwise schema 6 | choice | before-its-slice |
-| 26 | S-2 | Statistics definitions | Use the stats lane's table. Missing values in PCA: complete features by default, 1/5-min opt-in. No clustering | choice | before-its-slice |
-| 27 | S-3 | Admit normalisation, with "none" as the default | Yes. An absolute overlay is the minimum for VW-48 | choice | before-its-slice |
-| 28 | S-5 | What ANA-002 (QC) contains | Track A metrics and class-C filters with a rejected list; blank reference = maximum | choice | before-its-slice |
-| 29 | S-7 | Select sorting, filtering, view-scoped export, review marks and notes | Select them | choice | before-its-slice |
-| 30 | MAP-1 | The 2D map's forms, and ADR 0068's six questions on the MS1 map | Both forms, each when ready; ADR 0068 as recommended (greatest intensity, log10, vector cells, own worker) | choice | before-its-slice |
-| 31 | V-2 | RT filter on the scan list (VW-26) | Link the list to the chromatogram's committed RT range | choice | before-its-slice |
-| 32 | V-3 | Relative intensity in percent (VW-22) | A shared FigureSpec option; base = the full spectrum's largest value | choice | before-its-slice |
-| 33 | V-4 | View history back and forward (VW-14) | Build it: per plot, 40 deep | choice | before-its-slice |
-| 34 | V-5 | Use a plot RT selection as the conversion RT window (VW-47) | Yes, after #161's interface, with a confirmation | choice | before-its-slice |
-| 35 | V-7 | Preference-level settings (SET-05, SET-12, VW-04) and the preference schema bump | One bump for every new preference; remembering stays on, with an off switch | choice | before-its-slice |
-| 36 | C-1 | gzip output (`-g`) and whether `.mzML.gz` is adoptable | Allow it with the existing `flate2`. Not adoptable in the first slice | choice | before-its-slice |
-| 37 | FE-3 | Bundled fonts for the new look | Decide with FE-2. v5.11 uses system faces, so its look bundles nothing; never a CJK face | choice | before-its-slice |
-| 38 | DEF-2 | Uninstall and the view cache | Always remove the cache folder; everything else stays opt-in | choice | before-its-slice |
-| 39 | HR-1 | ProteoWizard hold releases for the pending measurements | Grant each as a bounded window when its slice is ready | choice | before-its-slice |
-| 40 | X-3 | XIC exports and panel | Include exports; give the trace its own panel under the chromatogram | choice | before-its-slice |
-| 41 | B-2 | pyOpenMS version (and the Qt6 LGPL question); ADR 0066 questions 5 and 7 | Decide after A-03's probes, before ADR 0066 is accepted: 3.6.0 if the probes pass, which ends the Qt question; otherwise 3.5.0 as ADR 0066 decision 8 recommends, with the Qt reading before release | choice | before-its-slice |
-| 42 | B-3 | What the shipped runtime leaves out: HMDB files, matplotlib and Pillow; ADR 0066 question 4 | Strip HMDB (ADR 0066 measured no effect); drop matplotlib and Pillow from the shipped lock if A-03 shows the planned classes run without them | choice | before-its-slice |
-| 43 | B-4 | v5.11 fields with no OpenMS equivalent; smoothing; centroided input | Drop the fields with no effect; require centroided input | choice | before-its-slice |
-| 44 | B-5 | Negative mode in the first untargeted domain | Positive first; negative as the next slice | choice | before-its-slice |
-| 45 | B-6 | The study model for cross-sample work; ADR 0067's ten questions | Study-level runs as ADR 0067 writes them, with pruning; sample metadata on layers, copied into each study revision | choice | before-its-slice |
-| 46 | B-11 | Measurement infrastructure for Track B: a non-required runtime workflow and the public datasets | Approve the workflow; public CC0/CC-BY data, already centroided | choice | before-its-slice |
-| 47 | S-4 | Drift and batch correction; other imputation | Diagnostics only, then each tier by its own ADR | choice | later |
-| 48 | B-7 | Gap filling | FFMI requantification, labelled experimental, with typed cells | choice | later |
-| 49 | B-8 | Library similarity metric and library sources | Entropy similarity (`ms_entropy`); user-supplied libraries only | choice | later |
-| 50 | B-9 | GNPS/MGF export writer, and sample names in export columns | A project-owned MZmine-2-style CSV and MGF writer; the layer label, never a path | choice | later |
-| 51 | B-10 | External engines and outbound messages | Drive only; no message without a per-message go-ahead | choice | later |
-| 52 | C-2 | A deeper HDF5 check for mzMLb and mz5 | No new dependency; keep the minimal checks and the label | choice | later |
-| 53 | V-6 | Open on example data (SH-16) | Start empty until a small, lawful file is found | choice | later |
+| 22 | R-2 | A chromatogram above 100,000 spectra | Decided 2026-11-03: Rust sends the chromatogram from its retained rows | choice | before-its-slice |
+| 23 | R-3 | Open a new preview during a conversion (ADR 0057 decision 2) | Decided 2026-11-03: yes, once the open runs no process | choice | before-its-slice |
+| 24 | V-1 | Show a spectrum on open (VW-33) | Decided 2026-11-03: select the TIC-apex MS1 scan | choice | before-its-slice |
+| 25 | S-6 | Sample metadata fields and schema version | Decided 2026-11-03: four fields, on the layer and copied into each study revision; hold schema 5 open until a release ships it, otherwise schema 6; confirm a move across groups; type fixed, group name free | choice | before-its-slice |
+| 26 | S-2 | Statistics definitions | Decided 2026-11-03: the stats lane's table, except that a zero or negative value reaching a test refuses the whole run (S-2.7). Missing values in PCA: complete features by default, labelled 1/5-minimum opt-in. No clustering | choice | before-its-slice |
+| 27 | S-3 | Admit normalisation, with "none" as the default | Decided 2026-11-03: yes, four methods. An absolute overlay is the minimum for VW-48 | choice | before-its-slice |
+| 28 | S-5 | What ANA-002 (QC) contains | Decided 2026-11-03: Track A metrics in Rust and class-C filters with a rejected list; blank reference = maximum | choice | before-its-slice |
+| 29 | S-7 | Select sorting, filtering, view-scoped export, review marks and notes | Decided 2026-11-03: sorting, filtering and view-scoped export on the targeted table and the future feature table (S-7.1); notes with the feature table (S-7.2); review marks with the library candidates (S-7.3) | choice | before-its-slice |
+| 30 | MAP-1 | The 2D map's forms, and ADR 0068's six questions on the MS1 map | Decided 2026-11-03: both forms, each when ready; ADR 0068 as recommended (greatest intensity, log10, vector cells, own worker); one map per representation; narrow windows stay out, counted | choice | before-its-slice |
+| 31 | V-2 | RT filter on the scan list (VW-26) | Decided 2026-11-03: the list follows the chromatogram's committed RT range | choice | before-its-slice |
+| 32 | V-3 | Relative intensity in percent (VW-22) | Decided 2026-11-03: a shared FigureSpec option; base = the full spectrum's or chromatogram's largest value | choice | before-its-slice |
+| 33 | V-4 | View history back and forward (VW-14) | Decided 2026-11-03: build it: per plot, 40 deep | choice | before-its-slice |
+| 34 | V-5 | Use a plot RT selection as the conversion RT window (VW-47) | Decided 2026-11-03: yes, with a confirmation, once the advanced editor is mounted | choice | before-its-slice |
+| 35 | V-7 | Preference-level settings (SET-05, SET-12, VW-04) and the preference schema bump | Decided 2026-11-03: one bump for every new preference; remembering stays on, with an off switch; the wheel habit and the other five will be built; touch waits for a report | choice | before-its-slice |
+| 36 | C-1 | gzip output (`-g`) and whether `.mzML.gz` is adoptable | Decided 2026-11-03: allow it with the existing `flate2`. Not adoptable in the first version | choice | before-its-slice |
+| 37 | FE-3 | Bundled fonts for the new look | Decided 2026-11-03: none: system faces, and never a CJK face | choice | before-its-slice |
+| 38 | DEF-2 | Uninstall and the view cache | Decided 2026-11-03: always remove the cache folder, except on `/UPDATE`; everything else stays opt-in | choice | before-its-slice |
+| 39 | HR-1 | ProteoWizard hold releases for the pending measurements | Decided 2026-11-03: HR-1.1, HR-1.4, HR-1.6 and HR-1.8 granted in principle, each window approved when its turn comes (HR-1.7); HR-1.2 waits for a plan, HR-1.3 is a fallback, HR-1.5 waits for Thermo. No run starts on this alone | choice | before-its-slice |
+| 40 | X-3 | XIC exports and panel | Decided 2026-11-03: include exports; the trace has its own panel under the chromatogram; the divergences stay, each with its reason | choice | before-its-slice |
+| 41 | B-2 | pyOpenMS version (and the Qt6 LGPL question); ADR 0066 questions 5 and 7 | Decided 2026-11-03: 3.6.0 before release if the probes pass, which ends the Qt question; if they fail, 3.5.0 first and a legal opinion on Qt first, with no release until then (CK-2). CPython 3.14 | choice | before-its-slice |
+| 42 | B-3 | What the shipped runtime leaves out: HMDB files, matplotlib and Pillow; ADR 0066 question 4 | Decided 2026-11-03: tier 3 without HMDB and Modomics; matplotlib and Pillow not shipped until A-25's runtime (CK-1), if A-03 shows the planned classes run without them; the experiment lock deleted | choice | before-its-slice |
+| 43 | B-4 | v5.11 fields with no OpenMS equivalent; smoothing; centroided input | Decided 2026-11-03: drop the fields with no effect; require centroided input; noise default by instrument: Orbitrap 1e4, QTOF 1e3 | choice | before-its-slice |
+| 44 | B-5 | Negative mode in the first untargeted domain | Decided 2026-11-03: both modes at once; the recommendation was positive first | choice | before-its-slice |
+| 45 | B-6 | The study model for cross-sample work; ADR 0067's ten questions | Decided 2026-11-03: study-level runs, with metadata on layers copied into each study revision; a LOWESS second stage now; seven cell states; the in-house chunked store plus a later Parquet export (CK-4); parallel count from free memory once measured | choice | before-its-slice |
+| 46 | B-11 | Measurement infrastructure for Track B: a non-required runtime workflow and the public datasets | Decided 2026-11-03: approve the workflow, with a runner probe; EBI-terms data, measured locally only; one 1–2 GiB Orbitrap run is still needed; 4 GiB with two tiers | choice | before-its-slice |
+| 47 | S-4 | Drift and batch correction; other imputation | Decided 2026-11-03: diagnostics only; RF and QRILC are a direction, scheduled after A-22's backfill results (CK-5) | choice | later |
+| 48 | B-7 | Gap filling | Decided 2026-11-03: FFMI requantification, labelled experimental; the raw point sum in backfilled cells, which stay out of tests for now (CK-3) | choice | later |
+| 49 | B-8 | Library similarity metric and library sources | Decided 2026-11-03: cosine and entropy through matchms, arriving with A-25's runtime (CK-1); user-supplied libraries only | choice | later |
+| 50 | B-9 | GNPS/MGF export writer, and sample names in export columns | Decided 2026-11-03: a project-owned MZmine-2-style CSV and MGF writer; the label, the file name only where there is none | choice | later |
+| 51 | B-10 | External engines and outbound messages | Decided 2026-11-03: drive only, SIRIUS after U6, MZmine 4 and MS-DIAL last; MassCube re-checked after its licence changes; no message now | choice | later |
+| 52 | C-2 | A deeper HDF5 check for mzMLb and mz5 | Decided 2026-11-03: add a deep check with hdf5-reader, reading every block and comparing counts and IDs, mzMLb first (CK-8). The dependency is asked for when that work starts. Not built | choice | later |
+| 53 | V-6 | Open on example data (SH-16) | Decided 2026-11-03: start empty until a small, lawful file is found | choice | later |
 
 ---
 
@@ -282,6 +514,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 ### FE-2. The new look
 
 *Decided 2026-10-30: (a), as recommended (section 1b).*
+
+*Answered 2026-11-03, see 1d (FE-3.1, FE-3.2): FE-3, which this left open.*
 
 *2026-10-31:* after viewing the draft (#197, the Workbench in the v5.11 look), the owner wrote, verbatim: "我感觉你外观改得挺好" ("I think you changed the look quite well"). (a) is confirmed for this screen and the look goes ahead. The draft's open layout questions take the answers it shipped with, as interim defaults the owner may still change ([DESIGN_SYSTEM's record](../ux/DESIGN_SYSTEM.md#fe-2-accepted-2026-10-31)).
 
@@ -405,6 +639,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: (a), as recommended (section 1b).*
 
+*Answered 2026-11-03, see 1d (V-1, V-4, V-5, HR-1.5, X-3.1 to X-3.3): the rows this left to their own decisions.*
+
 - **Question.** The direction asks for every v5.11 function. 40 rows are refused or deferred by a record. Which refusals stand?
 - **Options:**
   - (a) the split below;
@@ -479,6 +715,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: as recommended (section 1b). FE-1 was answered (a), so the Q8 answer holds. Q6 stays with HR-1.*
 
+*Answered 2026-11-03, see 1d (A0060-split, P203, VIEW-A, VIEW-B, DEF-2, and HR-1.1 for Q6).*
+
 - **Question.** ADR 0060 open questions 1 and 8 gate slice 3, the interface (VW-49):
   - **Q1:** a View button, or converting on row activation?
   - **Q8:** the interface direction. The ADR still recommends direction A, which the owner withdrew on 2026-10-30 (section 1a). Decision 1's pane, the narrow-width keyboard path and the progress forms were written for direction A, and the progress forms amend LOCKED CNV-D8 for the view pane.
@@ -509,6 +747,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: as recommended (section 1b). 2026-10-31: Q1 is one explicit Restore workspace action, replacing "automatic", and Q10 is no (section 1b); later that day both were confirmed again and Q5–Q9, added to ADR 0061 after A0061, answered as recommended, so ADR 0061 is Accepted (section 1c).*
 
+*Answered 2026-11-03, see 1d (F-177, P177, P204, Q8-exception, A0006-amendment).*
+
 - **Question.** ADR 0061 asks four questions:
   1. put matching rows back automatically, or only through an explicit Restore action;
   2. restore on by default;
@@ -528,6 +768,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: as recommended, with Q5's help sentence dropped (section 1b).*
 
+*Answered 2026-11-03, see 1d (VIEW-B, A0062.8).*
+
 - **Question.** ADR 0062 asks seven questions, and the Rust side implements every recommendation:
   1. a standalone `.msfigure` JSON file;
   2. a changed source is refused, with no relink and no redraw;
@@ -545,6 +787,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: as recommended (section 1b). 2026-10-31: questions 6 and 7, added to ADR 0063 after A0063, answered as recommended (section 1b), and confirmed again later that day (section 1c).*
 
+*Answered 2026-11-03, see 1d (P202).*
+
 - **Question.** ADR 0063 asks five questions:
   1. name only the known root of the ProteoWizard folder;
   2. record the error ring at `PreviewErrorDto::new`;
@@ -559,6 +803,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 ### A0064. M10 automation route (#176)
 
 *Decided 2026-10-30: as recommended, with ADR 0058 amended in the same step (section 1b). 2026-10-31: question 3 confirmed again with the corrected cost (section 1b), and once more later that day (section 1c).*
+
+*Answered 2026-11-03, see 1d (HR-1.8, for question 7's window).*
 
 - **Question.** ADR 0064 asks eight questions on `origin/docs/m10-route` (`7f91c05b`). The sixth to eighth, and narrower wording for the second and third, come from the review answers since the PR opened:
   1. route A1, a small CLI package over the desktop library, now; A2 only on a measured need;
@@ -586,6 +832,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 ### RUN-1. Conversion run history (RUN-007 for conversion; ADR 0065)
 
 *Decided 2026-10-30: as recommended (section 1b).*
+
+*Answered 2026-11-03, see 1d (A0065-section-7, HIST-1.1 and HIST-1.2: item 5 stands, with no leftover count, not built yet). #187 merged on 2026-11-03 as `f2321b73`, with its interface; the draft state named below and in sections 1b and 1c is that of the day they were written.*
 
 - **Question.** v5.11 keeps a run history: each run's method version, inputs, steps, results and frozen parameters (EXP-23). It also downloads one run's frozen snapshot as JSON (EXP-25). Conversion runs are session-only on `main`, and RUN-007 covers project operations only (FEATURE_CATALOG.md:436). ADR 0065 (Proposed; draft PR #187, Rust side, stacked on `be/integrate`) writes the history as the first version of this document recommended: app-local and per user, one bounded, versioned JSON document per run, no path in either direction, and failures by stable code only. It asks five questions:
   1. Is history on by default, or off until the user turns it on?
@@ -633,6 +881,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: (a), as recommended (section 1b).*
 
+*2026-11-04:* ADR 0070's two open questions were asked after the table of 2026-11-03 and had no answer as of this note (section 1d).
+
 - **Question.** ADR 0056 decision 7 says: "Any computation over the decoded arrays is an algorithm, and it needs its own record." The reader keeps offsets, "never arrays" (:394). The XIC and the MS1 map both compute over the arrays of many spectra. Should one written decision:
   - admit project-owned computations over the reader's decoded arrays, each with its own per-algorithm record (XIC per-scan sum; MS1 map binning; later a summed spectrum);
   - and amend the retention invariant, so that a bounded, cancellable full pass may run and keep only its result?
@@ -649,6 +899,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 ### X-1. XIC re-entry and its evidence gates
 
 *Decided 2026-10-30: option 2 with those gates, as recommended (section 1b).*
+
+*Answered 2026-11-03, see 1d (X-3.1 to X-3.3): X-3, which this left open.*
 
 - **Question.** Should the XIC re-enter as the evaluation's option 2? That means a full XIC with stated profile semantics, through a new scope record (X0) for a sibling pass over ADR 0056's reader, with these gates:
   - **§11.6:** the frozen PX.3 comparator, byte-identical, with new hashed runner revisions;
@@ -675,6 +927,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: all accepted, as recommended (section 1b).*
 
+*Answered 2026-11-03, see 1d (A0071-Q2).*
+
 - **Question.** Should these XIC semantics be accepted for the first scope?
   - **§11.2, four departures from ADR 0046 §1:**
     - ppm input (also against ADR 0037 XIC-D1's default);
@@ -695,6 +949,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 ### R-1. The reader-metadata amendment (ADR 0056 decisions 1 and 3)
 
 *Decided 2026-10-30: as recommended (section 1b).*
+
+*Answered 2026-11-03, see 1d (HR-1.6, for the recorded `msaccess` pair). Analyzer and filter string were not asked.*
 
 - **Question.** The reader-metadata lane is now draft PR #182 (`be/reader-meta`, library only, stacked on #175): nothing calls the new readings yet, and the open still asks `msaccess` for metadata and the run summary. Whether it runs is not in question. What its amendment admits is, in four parts:
   1. **Accept the amendment.** The reader takes polarity (MS:1000130 and MS:1000129), charge (MS:1000041), run-level metadata, and the run summary from the table pass.
@@ -729,6 +985,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: (a), approved by the owner: "批准" ("approved") (section 1b).*
 
+*Answered 2026-11-03, see 1d (S-2.13): no clustering, so no `kodama`.*
+
 - **Question.** Approve two production dependencies of a new pure crate, `crates/stats`?
   - `nalgebra =0.35.0`: Apache-2.0, `default-features = false, features = ["std"]`, MSRV 1.89 (the toolchain is 1.97.1);
   - `statrs =0.19.1`: MIT, `default-features = false`.
@@ -754,6 +1012,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 ### B-1. How the Python analysis runtime is distributed
 
 *Decided 2026-10-30: as recommended (section 1b). ADR 0066 question 3 stays open, with its working default.*
+
+*Answered 2026-11-03, see 1d (RT-1, for question 3; RT-3, for question 9, whose reading stays open; B-2 and B-3).*
 
 - **Question.** The runtime is 4,628 files and 348.7 MB, about 54 times the 6.47 MB installer. The NSIS install is per-user, so a Chinese user name puts it under a non-ASCII path, and a non-ASCII runtime path is a measured failure. How should the runtime reach users? ADR 0066 (Proposed, draft PR #188) now writes the options and asks nine questions. This decision carries its questions 1–3, 6, 8 and 9; B-2 carries 5 and 7, and B-3 carries 4.
 - **Options** (ADR 0066, "Distribution"):
@@ -785,6 +1045,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### R-2. A chromatogram above 100,000 spectra
 
+*Answered 2026-11-03, see 1d.*
+
 - **Question.** Above `MAX_SPECTRUM_TABLE_ROWS` (100,000), a table opens as a prefix with no chromatogram on screen or in export (ADR 0056:434–438). What should change?
 - **Options:**
   - keep today's state;
@@ -797,6 +1059,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### R-3. Open a new preview during a conversion (ADR 0057 decision 2)
 
+*Answered 2026-11-03, see 1d.*
+
 - **Question.** On 2026-10-29 the owner decided that "opening a new preview during a conversion stays refused for now, because it would run `msaccess` beside `msconvert`". Once the open starts no process (R-1), should ADR 0057 decision 2 and ADR 0005's one-process wording be amended, so that `open_preview` no longer answers `conversion_busy`?
 - **Recommendation:** yes, once the open is process-free. That needs R-1 and its BPI-times record. It finishes C55 for files that were not open when the run started, and the reason for the refusal is gone.
 - **Blocks:** C55, the second half. Size: M, 2 slices (the non-runtime draft's N-B4).
@@ -804,6 +1068,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** AFTER_BETA1_PLAN section 2 (2026-10-29, item 3); ADR 0057 decision 2; GAP C55; the non-runtime draft's ND-10.
 
 ### V-1. Show a spectrum on open (VW-33)
+
+*Answered 2026-11-03, see 1d.*
 
 - **Question.** slice-03.md:166–167 refused a pre-selected scan as "a source read the reader did not ask for". With #175 the read is in-process. What should be selected on open?
 - **Options:**
@@ -816,6 +1082,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** GAP VW-33; slice-03.md:166–167; PR #175 body.
 
 ### S-6. Sample metadata and its schema version
+
+*Answered 2026-11-03, see 1d (S-6.1 to S-6.6, RO-1).*
 
 - **Question.** Three parts:
   1. **Fields.** Which fields come first: group (Control, Treatment, QC, Blank), sample type, batch, injection order? They would be keyed by `LayerId` (PRJ-005).
@@ -836,6 +1104,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §6.1 P1, §5.2 (sample metadata); internal.md §5 item 7; PR #161 body ("Project schema 5", "Resolved"); GAP RO-07, RO-17, RO-22, RO-23; the non-runtime draft's ND-05 and ND-06.
 
 ### S-2. Statistics definitions
+
+*Answered 2026-11-03, see 1d (S-2.1 to S-2.14).*
 
 - **Question.** These definitions change the numbers, so the statistics ADR must fix them. Accept the stats lane's table?
 - **Recommendation:** accept these definitions:
@@ -864,6 +1134,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### S-3. Admit normalisation, with "none" as the default
 
+*Answered 2026-11-03, see 1d (S-3.1 to S-3.4).*
+
 - **Question.** Should normalisation be admitted as class D?
   - It is opt-in per run.
   - "none" is the default, recorded as a labelled choice.
@@ -877,6 +1149,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §2 C6, §6.2 A6; stats.md §3 (class D) and §9; FEATURE_CATALOG.md:74; GAP VW-48, MOD-10.
 
 ### S-5. What ANA-002, the QC recipe, contains
+
+*Answered 2026-11-03, see 1d (S-5.1 to S-5.8).*
 
 - **Question.** ANA-002's content is undesigned (MOD-08). Should it be defined as follows?
   - **Track A metrics in Rust** over a feature table:
@@ -893,6 +1167,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §5.2 (Blank/QC), §7 D9 (blank ratio); stats.md §3 (class C) and §8; FEATURE_CATALOG.md:483; GAP MOD-08.
 
 ### S-7. Table functions that were "reversible, not selected"
+
+*Answered 2026-11-03, see 1d (S-7.1 to S-7.3).*
 
 - **Question.** AFTER_BETA1_PLAN 7.6 lists "on-screen result sorting and filtering", "view-scoped export" and "history notes" as reversible, not selected. v5.11's feature table has:
   - search and filter (FA-02);
@@ -911,6 +1187,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** AFTER_BETA1_PLAN 7.6 (:566–567); GAP FA-02, FA-03, EXP-14, FA-11, FA-12.
 
 ### MAP-1. The 2D map (二维特征分布)
+
+*Answered 2026-11-03, see 1d (MAP-1.1 to MAP-1.9).*
 
 - **Question.** VW-38 (decorative in v5.11) is in the owner's direction. Since the first version of this document, the MS1 map has its record and library: ADR 0068 (Proposed) in draft PR #183 (`be/map2d`, stacked on #175), with slice 1 (`crates/proteowizard/src/rt_mz_map.rs`) implemented and measured. On the R0 546 MB Orbitrap profile file a full-extent map of 1,024 × 2,048 cells took 3.8–4.8 s and a tenth of each axis 0.3 s, with a peak working set of 36–37 MB. The questions:
   1. **First form.** An MS2 precursor map (RT × precursor m/z from the scan table, UI only, no array computation), the MS1 intensity map, or both.
@@ -934,6 +1212,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### V-2. RT filter on the scan list (VW-26)
 
+*Answered 2026-11-03, see 1d.*
+
 - **Question.** Should the scan list get the separate from/to RT fields v5.11 has?
 - **Options:**
   - (a) separate fields on the list;
@@ -945,6 +1225,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** GAP VW-26, VW-12.
 
 ### V-3. Relative intensity in percent (VW-22)
+
+*Answered 2026-11-03, see 1d.*
 
 - **Question.** Should intensity be offered as 0–100 %?
 - **Options:**
@@ -962,6 +1244,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### V-4. View history (VW-14)
 
+*Answered 2026-11-03, see 1d.*
+
 - **Question.** Build back and forward through committed ranges, per plot, 40 deep, with Alt+Left and Alt+Right?
 - **Recommendation:** yes. It is UI only and carries no scientific risk. It belongs in the plot's ⋯ menu (VW-16). Alt+Left must not trigger WebView2's own Back.
 - **Blocks:** VW-14. Size: S–M (GAP).
@@ -969,6 +1253,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** GAP VW-14, VW-16; slice-03.md:623 and :791.
 
 ### V-5. A plot RT selection as the conversion window (VW-47)
+
+*Answered 2026-11-03, see 1d.*
 
 - **Question.** Should a "Use this RT range in conversion…" action, after a confirmation, fill #161's typed ScanTime step for the viewed file?
 - **Recommendation:** yes, after #161's interface and the advanced editor (`ui/conversion-advanced`) are mounted.
@@ -979,6 +1265,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** GAP VW-47; slice-03.md:624; `crates/proteowizard/src/chain.rs`:863 on `origin/be/integrate`.
 
 ### V-7. Preference-level settings and the preference schema bump
+
+*Answered 2026-11-03, see 1d (V-7.1 to V-7.5).*
 
 - **Question.** Several v5.11 settings are preferences:
   - SET-05: the wheel habit, draw style (the wheel zooms) or Figma style (the wheel pans, Ctrl+wheel zooms). The rebuild SPEC 3.7 and 11.1 did not adopt it;
@@ -1001,6 +1289,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### C-1. gzip output (`-g`)
 
+*Answered 2026-11-03, see 1d (C-1.1, C-1.2).*
+
 - **Question.** ADR 0055 held back `-g` "after a dependency decision", because the conversion crate had no gzip reader (:336–339, :513, :581). Since ADR 0056 slice 1, `crates/proteowizard` depends on `flate2 =1.1.10` (`rust_backend`), which includes a gzip decoder, so no package is added. ADR 0055 still reserved the call to the owner.
 
   Also: a `.mzML.gz` output cannot be opened by the reader, which needs offsets into plain mzML. Should it be adoptable?
@@ -1013,6 +1303,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** ADR 0055:336–339, :513, :581; `Cargo.toml`:21 and `crates/proteowizard/Cargo.toml`:21 on `origin/main`; GAP C23.
 
 ### FE-3. Bundled fonts for the new look
+
+*Answered 2026-11-03, see 1d (FE-3.1, FE-3.2).*
 
 - **Question.** May the app bundle font files as production assets (OFL faces, with their licence texts and a source pin)? The rejected themes would each have bundled 76–112 KiB of Latin faces. Should a CJK face ever ship?
 - **Recommendation:**
@@ -1027,6 +1319,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### DEF-2. Uninstall and the view cache
 
+*Answered 2026-11-03, see 1d.*
+
 - **Question.** Today only an interactive uninstall with "Delete the application data" checked deletes `%LOCALAPPDATA%\org.mscanvas.desktop`, cache included. `/S`, `/P` and `/UPDATE` never do. ADR 0060's cache holds up to 10 GiB of derived files. Should uninstall always remove the cache folder alone?
 - **Options:**
   - (a) as today;
@@ -1038,6 +1332,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** the AFTER_BETA1_PLAN 7.2 diff in #185 (`fix/backend-defects-1030`, "Uninstall paths"); ADR 0060 Q2 (10 GiB).
 
 ### HR-1. ProteoWizard hold releases
+
+*Answered 2026-11-03, see 1d (HR-1.1 to HR-1.8). Each window is approved when its turn comes.*
 
 - **Question.** Should bounded hold releases be granted for these measurements?
   1. ADR 0060 decision 14 native QA: `msconvert` and `msaccess` on two public files and on the largest public Thermo RAW under 1.5 GiB, plus a cancel and a two-process eviction check (Q6).
@@ -1064,6 +1360,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### X-3. XIC exports and panel
 
+*Answered 2026-11-03, see 1d (X-3.1 to X-3.3).*
+
 - **Question.** Three items:
   - **§11.9, exports.** Include CSV/TSV, SVG, PNG and Copy plot in the first scope? That is an explicit extension of ADR 0046 §5.
   - **§11.10, XIC-D5.** Give the trace its own panel under the chromatogram, sharing the RT axis, with its own value axis, no dual axis and no normalisation, and the height measured on the v5.11 layout?
@@ -1074,6 +1372,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** XIC §11.9, .10, .13; ADR 0046 §5; ADR 0037 XIC-D5.
 
 ### B-2. pyOpenMS version (with the Qt6 LGPL question)
+
+*Answered 2026-11-03, see 1d (B-2.1 to B-2.3, CK-2).*
 
 - **Question (D4 and D6).** Which pyOpenMS ships in the first released runtime?
   - **A: 3.5.0 throughout.** This leaves Qt6 LGPL-3 §4(d)(1) open, because the manifest check refuses a modified DLL. That needs legal review.
@@ -1099,6 +1399,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### B-3. What the shipped runtime leaves out: HMDB files, matplotlib and Pillow
 
+*Answered 2026-11-03, see 1d (B-3.1 to B-3.3, CK-1).*
+
 - **Question.** Two parts.
   - The runtime ships HMDB mapping files: `HMDBMappingFile.tsv` in 3.5.0, which is already in ANA-004's runtime, and `HMDB2StructMapping.tsv` in 3.6.0. Strip them, or keep them with attribution?
   - pyOpenMS 3.5.0 declares matplotlib in `Requires-Dist`, so the lock keeps Pillow, and the Pillow alerts close only when the lock changes. May the shipped runtime's lock drop matplotlib and Pillow, if A-03 shows every planned class imports and runs without them? The alternative is #168's bump together with a new manifest pin (A-05). Pruning files alone stops Pillow from shipping but does not close the alerts.
@@ -1119,6 +1421,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §7 D5, §3 item 5, §4.5, §8 (HMDB row); openms.md §8 Q3; analysis.md section 2 (Pillow) and A-03; ADR 0066 "Measurements", decision 4 and open question 4 (PR #188).
 
 ### B-4. v5.11 fields with no OpenMS equivalent
+
+*Answered 2026-11-03, see 1d (B-4.1 to B-4.6, U1-1, U1-2.1 to U1-2.3, CK-6, CK-7).*
 
 - **Question.** Six parts:
   1. **Smoothing (MOD-03).** (a) a display-only S-G preview on an extracted trace (v5.11: "不改写原始轨迹"), or (b) drop the step and expose `chrom_fwhm`.
@@ -1142,6 +1446,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### B-5. Negative mode in the first untargeted domain
 
+*Answered 2026-11-03, see 1d.*
+
 - **Question.** Today `adapter_v1.py`:303 refuses with `SOURCE_POLARITY_UNSUPPORTED`. Should the first untargeted domain include negative mode?
 - **Options:**
   - positive first;
@@ -1152,6 +1458,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §7 D12 and §1 (positive-only row); AFTER_BETA1_PLAN 7.4.
 
 ### B-6. The study model for cross-sample work
+
+*Answered 2026-11-03, see 1d (B-6.1 to B-6.15, CK-4).*
 
 - **Question.** Alignment, linking, gap filling and statistics are multi-acquisition. Three constraints stand in the way:
   - ADR 0050 decision 1 gives no algorithm more than one acquisition;
@@ -1187,6 +1495,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### B-11. Measurement infrastructure for Track B
 
+*Answered 2026-11-03, see 1d (B-11.1 to B-11.4, U1-1, U1-2.1 to U1-2.3, CK-6, CK-7).*
+
 - **Question.** Two parts, from the analysis plan's A-04, A-13 and A-14:
   - May a new GitHub Actions workflow run the analysis runtime? It is `workflow_dispatch` on Windows, provisions the runtime from the hash-locked wheels, checks the manifest digest against the compiled pin, runs the `#[ignore]`d real-engine tests and hosts the measurement harnesses. It is not one of the nine required checks and not the release workflow.
   - Which public data do the two gates use? A-13 needs one Thermo Orbitrap mzML of 1–2 GiB, already centroided; A-14 needs 20–50 real runs from one public study. Each licence is recorded.
@@ -1204,6 +1514,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### S-4. Drift and batch correction (class F); further imputation (class E)
 
+*Answered 2026-11-03, see 1d (S-4.1, S-4.2, CK-5).*
+
 - **Question.** Which correction tiers come, and when? Tier 1 is diagnostics only: injection-order plots, QC RSD before and after, and PCA with the QCs. Tier 2 is batch alignment by the QC median. Tier 3 is QC-RLSC, which refuses fewer than 8 QCs per batch and must name one LOESS. Tier 4 is a spline or SERRF. Separately: kNN, RF or QRILC imputation.
 - **Recommendation:**
   - Build tier 1 in Track A; it needs no approval.
@@ -1213,6 +1525,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §7 D9 (drift tier); stats.md §3 (classes E and F), §10, §11, §14 Q4.
 
 ### B-7. Gap filling (U3)
+
+*Answered 2026-11-03, see 1d (B-7.1, B-7.2, CK-3).*
 
 - **Question.** Should gap filling use FFMI requantification, labelled experimental?
 - **Recommendation:** accept it, labelled experimental, as M9 left that caption. The rules:
@@ -1224,6 +1538,10 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §7 D11, §2 C6, §4 item 1, §5.2 (gap filling); openms.md §8 Q5.
 
 ### B-8. Library similarity and library sources (U6)
+
+*Answered 2026-11-03, see 1d (B-8.1, B-8.2, CK-1).*
+
+*2026-11-03, correction:* below, and in the research synthesis (not in this repository), matchms reads as a cosine route only, with entropy only through `ms_entropy`. That no longer holds: matchms 0.33.1 computes cosine, modified cosine and entropy (`FlashSimilarity`), measured for the decision page. Its entropy is not `ms_entropy`'s score: 0.86739 against 0.88352 with a close doublet.
 
 - **Question.** Two parts:
   - **D8, the metric.** Approve `ms_entropy 1.5.3` (Apache-2.0, numpy only, cp313 wheel) and use entropy similarity as v5.11's "相似度". The alternatives are a cosine through matchms, which is heavy, or a project-owned cosine under a written decision.
@@ -1237,6 +1555,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### B-9. The GNPS/MGF export writer (U5)
 
+*Answered 2026-11-03, see 1d (B-9.1, B-9.2).*
+
 - **Question.** Which writer produces the GNPS and MGF export?
   - The pyOpenMS writers. GNPS2's acceptance of `GNPSQuantificationFile` output is unverified, and `GNPSMGFFile.store` reads every mzML at once.
   - A project-owned MZmine-2-style CSV and MGF writer. GNPS2 accepts MZMINE.
@@ -1247,6 +1567,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **Sources:** SYN §5.2 (GNPS/MGF export) and §1 (GNPS2 row).
 
 ### B-10. External engines and outbound messages
+
+*Answered 2026-11-03, see 1d (B-10.1 to B-10.4).*
 
 - **Question.** Four parts:
   - a SIRIUS adapter: drive only, user-installed, with its online steps labelled academic-only;
@@ -1262,12 +1584,16 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### C-2. A deeper check for mzMLb and mz5
 
+*Answered 2026-11-03, see 1d (C-2, CK-8).*
+
 - **Question.** Should a new HDF5 reader dependency be added to check mzMLb and mz5 outputs more deeply?
 - **Recommendation:** no new dependency. Keep ADR 0055's minimal checks (exit 0, one file, non-zero length, the HDF5 signature) and the not-verified label until a user reports a bad file.
 - **Urgency:** later. **Kind:** choice.
 - **Sources:** ADR 0055:389–395 and :581; GAP C09.
 
 ### V-6. Open on example data (SH-16)
+
+*Answered 2026-11-03, see 1d.*
 
 - **Question.** Should MSCanvas open on example data?
 - **Options:**
@@ -1285,6 +1611,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 - **EXP-17:** check the spreadsheet CSV in Excel, LibreOffice and WPS before any help or release text claims formula protection (AFTER_BETA1_PLAN section 2, 2026-10-28).
 - **Outbound contact:** each message needs the owner's own go-ahead (B-10).
 - **Dependency PRs** #136, #165 and #168 stay with the owner under the dependency policy. The alert backlog is already decided (section 1).
+  *2026-11-03:* #136 closed on 2026-10-31 and #195 took its place. B-3.3 deletes the experiment lock that #168 bumps; that deletion is the runtime work's (A-03, A-05), and #168 stays with the owner until then. The answers of section 1d approve no dependency PR.
 - **An idle-desktop window** for the native and Tauri specs that #164 and #175 could not run, because they take the foreground (#164 "Not done"; the non-runtime draft's ND-02).
 
 **A record to fix, no decision needed.** AFTER_BETA1_PLAN 7.6 still lists mzXML output under "Stays refused". ADR 0055 decision 6 (accepted) returns mzXML as a labelled advanced format through the two-run route, so 7.6 needs a dated note.
@@ -1425,6 +1752,8 @@ These are left out on purpose; each is still open in its own record:
 
 Generated by the planning workspace's merge script from the same data as `ROADMAP_V511_AND_ANALYSIS.md`. Item ids are the roadmap's; "-UI" marks a unit's interface item.
 
+*2026-11-03:* the rows of B-4, B-5 and B-11 were edited by hand for the owner's answers, as the top of `ROADMAP_V511_AND_ANALYSIS.md` says of its tables. The script was not rerun, and rerunning it would write back its older data. This table follows the Decision cells of the roadmap's phase tables, so a row of section 1d may name more work than its line here.
+
 | Decision | Roadmap items it gates |
 | --- | --- |
 | FE-1 | N-01, N-04 |
@@ -1469,10 +1798,10 @@ Generated by the planning workspace's merge script from the same data as `ROADMA
 | X-3 | N-X2 |
 | B-2 | A-03, A-02, A-07, A-20, A-21 |
 | B-3 | A-03, A-02, A-25 |
-| B-4 | A-20, A-16, A-20-UI, A-21, A-23, A-27 |
-| B-5 | A-20, A-23, A-17 |
+| B-4 | A-20, A-15, A-16, A-20-UI, A-21, A-23, A-27 |
+| B-5 | A-20, A-23 |
 | B-6 | N-11, A-09, A-08, A-08-KINDS, A-21 |
-| B-11 | A-04, A-13, A-14 |
+| B-11 | A-04, A-13, A-14, A-15 |
 | S-4 | N-12, N-A10 |
 | B-7 | A-22, A-22-UI |
 | B-8 | A-25, A-25-UI |

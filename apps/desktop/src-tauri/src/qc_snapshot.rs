@@ -77,6 +77,7 @@ pub fn capture_qc_summary(
         let (summary, producer) = service
             .retained_run_summary(handle, preview_token)
             .map_err(|refusal| match refusal {
+                RetainedSummaryRefusal::ViewedThroughCache => ProjectError::ViewedThroughCache,
                 RetainedSummaryRefusal::NotCurrent => ProjectError::PreviewNotCurrent,
                 RetainedSummaryRefusal::RowGone => ProjectError::NotInWorkbench,
                 RetainedSummaryRefusal::ProducerUnidentified => ProjectError::ProducerUnidentified,
