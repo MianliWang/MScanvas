@@ -109,6 +109,55 @@ exercised natively for this command in M9.2 (the native harness has no project
 fixture with a stored result), and a capability that has not been exercised is
 not offered.
 
+> **Note, 2026-11-04: the rows shown of a result.** On 2026-11-03 the owner
+> selected sorting, filtering and view-scoped export for the targeted results
+> table, and recorded that the exported file names its filter and that a partial
+> export may be taken for the whole table (S-7.1,
+> [owner decisions](../../development/OWNER_DECISIONS_V511.md), section 1d).
+> FIG-010 in the [feature catalog](../../product/FEATURE_CATALOG.md) builds it.
+> The M9.2 operations do not change: `export_targeted_ms1_table` and section 5's
+> `mscanvas_targeted_ms1_results` schema 1 are as they were, and the goldens in
+> `fixtures/targeted-table-golden/` for the three whole-table documents are not
+> regenerated.
+>
+> As built, not an owner decision:
+>
+> - **The command.** `export_targeted_ms1_table_view` names a result, a format and
+>   a view: the target identifiers in the order shown, and the outcomes, text and
+>   sort that describe them. So it takes more than identifiers, unlike the M9.2
+>   operations section 1 describes. Otherwise section 1 and this section hold for
+>   it: the same read of the stored result, no executor, job, source handle or
+>   path, nothing in the document changed, the same output lane, the same refusals
+>   before the dialog and the same no-overwrite write.
+> - **The suggested name.** `mscanvas-targeted-ms1-<artifact8>-results-view-<N>-of-<M>.csv|tsv`
+>   and `mscanvas-targeted-ms1-<artifact8>-results-view-<N>-of-<M>-spreadsheet.csv`:
+>   the counts, never a label or the filter text.
+> - **The documents.** Section 5's format promises every plan target in plan
+>   order, so a view is a format of its own, as
+>   [ADR 0054](0054-spreadsheet-csv-for-the-targeted-results-table.md) section 2
+>   does for a changed document: `mscanvas_targeted_ms1_results_view` schema 1,
+>   and `mscanvas_targeted_ms1_results_view_spreadsheet` schema 1 with ADR 0054's
+>   mark and trigger rule. The 40 columns and section 5's preamble keys keep their
+>   order. `target_count` stays the plan's count, `target_position` stays the
+>   row's plan position, and `row_order` is `view` under a sort and otherwise
+>   `plan`. Five lines follow `intensity_unit`: `view_rows` (`12 of 40`),
+>   `view_outcomes`, `view_text`, `view_sort_key` and `view_sort_direction`, with
+>   an empty cell for an absent value. `view_text` is text a person typed, and it
+>   is a declared text field of the spreadsheet variant.
+> - **What Rust checks.** It refuses, as `targeted_table_view_refused`, a word it
+>   does not have, a text over 200 characters or holding a control character, an
+>   empty list, a row named twice, a target outside the result's plan, a list that
+>   is not exactly the rows the described outcomes and text keep, and a list out
+>   of plan order with no sort named. The order under a named sort is the
+>   webview's: the sort runs in the page because a whole result fits one read
+>   (`MAX_TARGETS` 200, `MAX_PAGE_ROWS` 500).
+>
+> Not decided by this note: how Excel, LibreOffice and WPS open the spreadsheet
+> view (EXP-17, the owner's check, still pending, so
+> [ADR 0054](0054-spreadsheet-csv-for-the-targeted-results-table.md) section 6
+> holds and no text claims formula protection), and the feature table's half of
+> S-7.1 (N-A5, N-A6), which is not built.
+
 ### 5. The results table, v1
 
 `mscanvas_targeted_ms1_results`, schema 1. UTF-8 without a BOM, `\n` line
