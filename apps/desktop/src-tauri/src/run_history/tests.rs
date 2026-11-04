@@ -2117,6 +2117,54 @@ fn a_junction_or_a_link_with_a_siblings_name_is_kept_and_its_target_untouched() 
     }
 }
 
+/// An AF_UNIX socket's file: a reparse point whose tag has no name-surrogate bit,
+/// so std's `is_file()` says yes. It takes no privilege, and it stays because the
+/// child kills itself before .NET can remove it, so its exit status means nothing.
+#[cfg(windows)]
+fn reparse_file_without_name_surrogate(directory: &Path, name: &str) -> PathBuf {
+    use std::os::windows::fs::MetadataExt as _;
+    // By bare name from the folder: a socket's path has a limit of 108 bytes.
+    let script = format!(
+        "$s = [Net.Sockets.Socket]::new('Unix', 'Stream', 'Unspecified'); \
+         $s.Bind([Net.Sockets.UnixDomainSocketEndPoint]::new('{name}')); \
+         Stop-Process -Id $PID -Force"
+    );
+    let made = std::process::Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .current_dir(directory)
+        .output()
+        .expect("run pwsh");
+    let path = directory.join(name);
+    let metadata = fs::symlink_metadata(&path).unwrap_or_else(|error| {
+        panic!(
+            "the disposable socket file must exist: {error}: {}",
+            String::from_utf8_lossy(&made.stderr)
+        )
+    });
+    // Not through the code under test. Should a later Windows mark this tag a name
+    // surrogate, `is_file()` turns false and this says so instead of passing idly.
+    assert_ne!(metadata.file_attributes() & 0x400, 0, "a reparse point");
+    assert!(metadata.is_file(), "no name-surrogate bit");
+    path
+}
+
+#[cfg(windows)]
+#[test]
+fn a_reparse_file_that_is_no_link_with_a_siblings_name_is_kept() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-reparse-file");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let path = reparse_file_without_name_surrogate(&directory, &sibling_name(0));
+        set_written(&path, SystemTime::now() - LONG_AGO);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(fs::symlink_metadata(&path).is_ok(), "the file stays");
+        fs::remove_file(&path).expect("remove the socket file");
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn a_sibling_that_cannot_be_removed_is_counted_and_the_sweep_goes_on() {
