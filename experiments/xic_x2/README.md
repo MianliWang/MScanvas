@@ -40,6 +40,7 @@ record's "Whether the run can fail", and `combine_x2.py` refuses such a build.
 `--supersedes` on `freeze` writes a new freeze after a runner-only revision, and it
 refuses one that changes an input or an answer.
 
-`test_record.py` checks what the record and ADR 0072 say against the record's own tables
-and, with `MSCANVAS_X2_EVIDENCE` set to the retained folder, against the retained runs. No
-identity digest binds it, and it is run by hand.
+`tests/test_record.py` checks what the record and ADR 0072 say against the record's own
+tables and, with `MSCANVAS_X2_EVIDENCE` set to the retained folder, against the retained
+runs. It is run by hand. It sits in its own folder because the runners record the digest of
+every `*.py` beside them, and a file added there would change what a rerun records.

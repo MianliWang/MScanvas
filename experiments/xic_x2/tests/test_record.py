@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """What the X2 record and ADR 0072 say, against their own tables and the retained runs.
 
-    python -B experiments/xic_x2/test_record.py
-    MSCANVAS_X2_EVIDENCE=D:/MSCanvas-X2-20261104 python -B experiments/xic_x2/test_record.py
+    python -B experiments/xic_x2/tests/test_record.py
+    MSCANVAS_X2_EVIDENCE=D:/MSCanvas-X2-20261104 python -B experiments/xic_x2/tests/test_record.py
 
 The retained runs are local, so without the variable those cases are reported as
-skipped. Run by hand, like the runners here: nothing in CI reads this.
+skipped. Run by hand, like the runners: nothing in CI reads this. It sits in its own
+folder because the runners record the digest of every `*.py` beside them.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -17,7 +19,7 @@ import re
 import statistics
 import unittest
 
-REPO = pathlib.Path(__file__).resolve().parents[2]
+REPO = pathlib.Path(__file__).resolve().parents[3]
 EVIDENCE = os.environ.get("MSCANVAS_X2_EVIDENCE")
 
 
@@ -30,12 +32,21 @@ X2 = prose("docs/spikes/XIC_X2_CANDIDATE_EVIDENCE.md")
 ADR = prose("docs/architecture/adr/0072-xic-candidate-decision-x3.md")
 
 
+def runner_table() -> dict[str, str]:
+    return dict(re.findall(r"\| `experiments/xic_x2/(\w+\.py)` \| `([0-9a-f]{64})` \|", X2_TEXT))
+
+
 def timings(row: str) -> list[list[float]]:
     line = next(line for line in X2_TEXT.splitlines() if line.startswith(f"| {row} |"))
     return [[float(value) for value in cell.split(" / ")] for cell in line.strip(" |").split("|")[-3:]]
 
 
 class Record(unittest.TestCase):
+    def test_a_rerun_records_the_tables_runner_digests(self) -> None:
+        # As harness_x2.runner_hashes() reads them: every *.py beside the runners.
+        beside = (REPO / "experiments/xic_x2").glob("*.py")
+        self.assertEqual({path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in beside}, runner_table())
+
     def test_window_width_is_stated_set_by_set_from_the_table(self) -> None:
         narrow = timings("R0 profile file, narrow window")
         whole = timings("R0 profile file, whole scan range")
@@ -94,7 +105,7 @@ class RetainedRuns(unittest.TestCase):
             self.assertTrue(all(code in (0, 3) for code in failed))
 
     def test_read_back_counts_and_digests(self) -> None:
-        table = dict(re.findall(r"\| `experiments/xic_x2/(\w+\.py)` \| `([0-9a-f]{64})` \|", X2_TEXT))
+        table = runner_table()
         self.assertEqual(len(table), 5)
         records = [self.records(f"final-3/{folder}") for folder in ("main", "supplement", "integer-scored")]
         self.assertEqual([len(group) for group in records], [143, 10, 34])
