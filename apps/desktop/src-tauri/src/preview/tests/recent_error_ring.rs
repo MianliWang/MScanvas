@@ -9,7 +9,7 @@ use crate::preview::dto::ConversionReportDto;
 ///
 /// Less `file_not_resolvable`: the fake installation names tools that are not
 /// there, and each look at one builds and discards that error (decision 5).
-fn noted_during<T>(run: impl FnOnce() -> T) -> (T, Vec<String>) {
+pub(super) fn noted_during<T>(run: impl FnOnce() -> T) -> (T, Vec<String>) {
     NOTED_ON_THIS_THREAD.take();
     let value = run();
     let mut noted = NOTED_ON_THIS_THREAD.take();

@@ -100,6 +100,15 @@ differs from it in two lines.
   if there is none, and the table says never by opening one, so the line stays until
   the session holds an open cache.
 
+*As built, 2026-11-04, not an owner decision:* #203 put **View** in this build, so
+`Usage: not in this build` no longer reads as true, although the condition above
+still holds: the session opens the cache for each call and keeps none open, and
+`describe_view_cache` and `clear_view_cache` still have no caller. The table sets the
+value, so it stays until the owner answers. The choices are another fixed value
+that does not say "not in this build" (the key stays, so `Format` stays), or the
+usage read without making the folder, the way `ViewCache::inspect` looks at the root.
+This is unanswered.
+
 ### 2. What never goes in
 
 No file name of the user's data and no name, path or count from the workspace,
@@ -243,6 +252,15 @@ Two readings of question 7 here are not owner decisions:
   recorded once, as the kind of the `PreviewErrorDto` the view run returns. That
   kind is usually the failure's coarse `stable_id()`: where a queue report records
   `missing_output`, a view conversion records `output_rejected`.
+
+*As built, 2026-11-04, not an owner decision:* #203's answer to whether **View** can
+be pressed is also a refusal carried in an `Ok` outcome, which the list above does
+not name because it did not exist yet. `get_raw_view_state` is polled, so the answer
+names its code and builds no `PreviewErrorDto`: highlighting a row or watching a view
+run to its end adds no line. An error built and then discarded counts where that is
+a side effect, as in `file_identity`; this is a designed refusal. A **View** press
+that is refused is an `Err` at the boundary and is recorded. The owner's answer to
+question 7 did not take the `Ok`-carried refusals, and this path was not put to them.
 
 ### 6. Format
 

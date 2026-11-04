@@ -511,10 +511,11 @@ pub(crate) fn render(facts: &Facts, roots: &KnownRoots, accounts: &[String]) -> 
             code_or_none(facts.remembered_not_saved.as_deref())
         ),
         String::new(),
-        // ponytail: ADR 0060's slice 2 binds only the cache's parent folder, and
-        // `describe_view_cache` makes the cache if there is none, which this
-        // summary never does (ADR 0063, decision 1). Report the usage here once
-        // the session holds an open cache.
+        // ponytail: the session binds only the cache's parent folder and opens the
+        // cache for each call, and `describe_view_cache` makes the cache if there is
+        // none, which this summary never does. Report the usage here once the session
+        // holds an open cache. Since View landed these words read less true, and how
+        // to change them is unanswered (ADR 0063, decision 1).
         "[View cache]".to_owned(),
         "Usage: not in this build".to_owned(),
         String::new(),
