@@ -1331,8 +1331,9 @@ fn names(directory: &Path) -> io::Result<Vec<String>> {
 }
 
 /// Run documents only, oldest first, with their sizes. Nothing whose name is
-/// not exactly a run's is ever read, kept aside or removed. A size that cannot
-/// be read counts as none: the name stays, for its read to judge.
+/// not exactly a run's comes through here, so none is read, kept aside or removed
+/// on this listing. A size that cannot be read counts as none: the name stays, for
+/// its read to judge.
 fn run_entries(directory: &Path) -> io::Result<Vec<(String, u64)>> {
     let mut entries = Vec::new();
     for entry in fs::read_dir(directory)? {

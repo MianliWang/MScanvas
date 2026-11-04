@@ -1931,6 +1931,12 @@ fn clear_and_off_remove_a_sibling_past_a_day_and_keep_one_short_of_it() {
         let directory = history_directory(&scratch);
         // The last attempt a write makes.
         let old = left_behind(&directory, &sibling_name(7), LONG_AGO);
+        // What a crash leaves: another process's name, and that process is gone.
+        let another_process = format!(
+            "{TEMPORARY_PREFIX}{}-0.tmp",
+            std::process::id().wrapping_add(1)
+        );
+        let crashed = left_behind(&directory, &another_process, LONG_AGO);
         let just_past = left_behind(&directory, &sibling_name(1), DAY + MINUTE);
         let just_short = left_behind(&directory, &sibling_name(2), DAY - MINUTE);
         let fresh = left_behind(&directory, &sibling_name(3), Duration::ZERO);
@@ -1939,6 +1945,7 @@ fn clear_and_off_remove_a_sibling_past_a_day_and_keep_one_short_of_it() {
         assert_eq!(sweep(&history), SWEPT);
 
         assert!(!old.exists(), "an old sibling goes");
+        assert!(!crashed.exists(), "whichever process wrote it");
         assert!(!just_past.exists(), "just past a day goes");
         assert_eq!(fs::read(&just_short).expect("kept"), SIBLING_BYTES);
         assert_eq!(fs::read(&fresh).expect("kept"), SIBLING_BYTES);
@@ -2158,14 +2165,13 @@ fn a_sibling_that_cannot_be_removed_changes_nothing_for_a_run_in_progress() {
 }
 
 /// A session suspended for over a day between creating its sibling and publishing
-/// it. Its handle shares reading only, as `create_private_sibling` opens it, so on
-/// Windows the sibling cannot go while the writer lives: Clear and Off say so, and
-/// the write lands when the session wakes.
+/// it, through the very handle a write holds. It shares reading only, so on Windows
+/// the sibling cannot go while the writer lives: Clear and Off say so, and the write
+/// lands when the session wakes.
 #[cfg(windows)]
 #[test]
 fn a_write_suspended_for_over_a_day_keeps_its_sibling_and_still_publishes() {
     use std::io::Write as _;
-    use std::os::windows::fs::OpenOptionsExt as _;
 
     let scratch = Scratch::new("history-sibling-suspended");
     let history = open(&scratch);
@@ -2174,18 +2180,8 @@ fn a_write_suspended_for_over_a_day_keeps_its_sibling_and_still_publishes() {
     let target = directory.join(&name);
     let document = fs::read(&target).expect("read");
     fs::remove_file(&target).expect("not yet published");
-    let path = directory.join(sibling_name(0));
-    let mut writer = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        // FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE; FILE_SHARE_READ;
-        // FILE_FLAG_OPEN_REPARSE_POINT.
-        .access_mode(0x0012_0089 | 0x0012_0116 | 0x0001_0000)
-        .share_mode(0x1)
-        .custom_flags(0x0020_0000)
-        .open(&path)
-        .expect("the sibling");
+    let (mut writer, path) =
+        local_document::create_private_sibling(&directory, TEMPORARY_PREFIX).expect("the sibling");
     writer.write_all(&document).expect("fill");
     writer
         .set_modified(SystemTime::now() - LONG_AGO)

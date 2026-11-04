@@ -516,7 +516,7 @@ pub fn is_temporary_name(name: &str, prefix: &str) -> bool {
 /// also remove it. Sharing is read-only for the object's whole lifetime, so
 /// nothing can write into or delete the bytes between filling and publishing.
 #[cfg(windows)]
-fn create_private_sibling(
+pub(crate) fn create_private_sibling(
     directory: &Path,
     prefix: &str,
 ) -> Result<(std::fs::File, PathBuf), PublishFailure> {
@@ -547,7 +547,7 @@ fn create_private_sibling(
 }
 
 #[cfg(not(windows))]
-fn create_private_sibling(
+pub(crate) fn create_private_sibling(
     directory: &Path,
     prefix: &str,
 ) -> Result<(std::fs::File, PathBuf), PublishFailure> {
