@@ -4,8 +4,8 @@ Status: **Accepted**, by the owner's answer of 2026-10-28
 ([after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md), section 2 and
 section 6.2, PM9.4 F2). The answer is "one Add per output, as recommended; a
 large SCIEX set is checked in rendered QA at 960x640 before that is final", so
-the interface half stays open until that check is made. *2026-11-03: made, in
-PR #201, and final; see the note under Consequences.*
+the interface half stays open until that check is made.
+*2026-11-03: made, in PR #201, and final; see the note under Consequences.*
 Related: [0016](0016-explicit-converted-output-adoption.md) (explicit
 adoption), [0027](0027-first-visible-sciex-wiff-workflow.md) (the visible
 SCIEX workflow and partial sets),
