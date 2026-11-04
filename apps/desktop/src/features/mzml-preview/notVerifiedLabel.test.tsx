@@ -128,6 +128,24 @@ describe("the not-verified label", () => {
     expect(panel.querySelector(".conversion-run-list [data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
   });
 
+  it("stays on a finalized row while its queue runs, where no Add carries it", async () => {
+    // A finalized item holds a ticket whatever the queue is doing, so only the
+    // count Rust sends says the queue has not settled: 0 until it has.
+    const running: WorkspaceConversionState = {
+      status: "running",
+      operationId: "1",
+      queue: {
+        ...queueOf([finalized(ROWS[0]!), queueItem("file-2", "run-2.raw", { state: "running", attempts: 1 })]),
+        adoptableOutputCount: 0,
+      },
+    };
+    renderApp(createFakePreviewApi({ initialDatasets: ROWS, availability: availableBackend, initialConversion: running }));
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-run-list [data-not-verified]")).toHaveLength(1));
+    expect(panel.querySelector(".conversion-run-list [data-not-verified]")?.textContent).toBe(BUILD_LABEL);
+    expect(within(panel.querySelector<HTMLElement>(".conversion-run-list")!).queryByRole("button", { name: /^Add /u })).toBeNull();
+  });
+
   it("is said beside Add, which it describes, and on the roster row an adopted output becomes", async () => {
     const terminal: WorkspaceConversionState = {
       status: "terminal",
