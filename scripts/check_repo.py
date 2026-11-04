@@ -5792,8 +5792,9 @@ def validate_every_boundary_error_code_is_accounted_for(errors: list[str]) -> No
 
 # ADR 0065 section 7's first four open edge cases as they read at c006a0ad, the
 # text the owner accepted as documented on 2026-11-03. One block, because the owner
-# named them by position. An answer or a further corner goes in a dated note outside
-# it, so changing these words takes a new answer, not a better sentence.
+# named them by position. An answer or a further corner goes in a dated note after
+# the list or outside it, never before item 1 or between items 4 and 5, so changing
+# these words or what "item 5" means takes a new answer, not a better sentence.
 ADR_0065_ACCEPTED_CORNERS = """\
   - **A write under way at Off:** a write already under way when Off removes
     the files can land just after. The next start or list while it is off
@@ -5811,17 +5812,46 @@ ADR_0065_ACCEPTED_CORNERS = """\
     to its removal; this comes from reading the code and was not run. Shipped
     2026-11-03, not an owner decision.
 """
+# Position only: item 5's words stay free, since the owner's answer changes them. If
+# building that answer renames its label, update this label in the same commit.
+ADR_0065_ITEM_5_LABEL = "  - **What Clear and Off cannot reach:**"
+ADR_0065_CORNERS_IN_PLACE = re.compile(
+    r"^- \*\*Open edge cases\.\*\*[^\n]*\n"
+    + re.escape(ADR_0065_ACCEPTED_CORNERS + ADR_0065_ITEM_5_LABEL),
+    re.MULTILINE,
+)
 
 
 def validate_the_accepted_run_history_corners_keep_their_words(errors: list[str]) -> None:
     adr = "docs/architecture/adr/0065-conversion-run-history.md"
-    if ADR_0065_ACCEPTED_CORNERS not in (ROOT / adr).read_text(encoding="utf-8"):
+    text = (ROOT / adr).read_text(encoding="utf-8")
+    corners = ADR_0065_ACCEPTED_CORNERS
+    if not ADR_0065_CORNERS_IN_PLACE.search(text):
         fail(
-            f"{adr} section 7 no longer holds, byte for byte, the four edge cases the owner "
-            "accepted on 2026-11-03: restore them from c006a0ad and put anything new in a "
-            "dated note outside them",
+            f"{adr} section 7 no longer holds, byte for byte and in place, the four edge "
+            "cases the owner accepted on 2026-11-03: restore them from c006a0ad as the "
+            "first four items of the list, and put anything new in a dated note after the "
+            "list or outside it",
             errors,
         )
+        return
+    # This rule's own proof, against the real text: an edit it lets through, or one
+    # that no longer changes anything, means it stopped holding what it says it holds.
+    note = "  - **A dated note:** new.\n"
+    item_3 = "  - **A run Off could not remove:**"
+    for name, edited in {
+        "a word changed in item 3": text.replace(
+            corners, corners.replace("goes on being written", "keeps being written")
+        ),
+        "a bullet before item 1": text.replace(corners, note + corners),
+        "a bullet between items 2 and 3": text.replace(item_3, note + item_3),
+        "a bullet between items 4 and 5": text.replace(corners, corners + note),
+        "the block moved under Consequences": text.replace(corners, "").replace(
+            "## Consequences", corners + "\n## Consequences"
+        ),
+    }.items():
+        if edited == text or ADR_0065_CORNERS_IN_PLACE.search(edited):
+            fail(f"{adr}: the accepted-corners rule lets this edit through: {name}", errors)
 
 
 def main() -> int:
