@@ -156,7 +156,7 @@ A refusal that ends a running queue is terminal too, with its code.
 - From memory a run reads as its file would, without its items where they would
   not fit (section 4). While Off holds, what is owed is that removal and no write,
   so the list does not say `notWritten`; Off's own answer said `notRemoved`. Both
-  as shipped on 2026-11-03, not owner decisions.
+  as built on 2026-11-03, not owner decisions.
 - A running item records its state and attempts only. The result an earlier
   attempt of a retry left is not this attempt's; a pending item keeps it, for the
   reason section 5 gives.
@@ -298,7 +298,7 @@ and of G16, cross-session staging ownership, unchanged.
   next start or list only tries to take the name off. It counts once, unless the
   holder also keeps the name from being read, which counts it again until the
   holder lets go. Another document at that name is another run, with its own
-  link. As shipped on 2026-11-03, not an owner decision.
+  link. As built on 2026-11-03, not an owner decision.
 - **Newer schema:** left exactly where it is and never rewritten. The list
   counts it as `newer`. Neither pruning nor Clear removes it, and pruning does
   not count it: a later build's run may be one its live instance is still
@@ -450,7 +450,7 @@ shows the queue.
   sentence beside its stable code, and on Details its outputs and checks. A file a
   retry has not reached offers no Details: the record keeps its earlier attempt for
   section 5, and that attempt is not why it waits. The queue's own row does offer
-  Details on such a file, because it goes by attempts. Shipped 2026-11-03, not an
+  Details on such a file, because it goes by attempts. As built on 2026-11-03, not an
   owner decision. An
   interrupted file says its outcome is unknown; an oversized run says its files
   were not kept. A code appears only beside its sentence. What ended the queue is
