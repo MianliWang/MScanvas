@@ -435,7 +435,8 @@ CK-5 are under classes D, E and F above, and S-5 under ANA-002.
 
 *2026-11-04, a measurement, not an owner decision:* S-2.10's second cost holds
 only while the log2 values still differ within at least one group. The bound looks
-at raw values and Welch at their log2, where so narrow a spread can round away.
+at the values `pca` is given, raw here, and Welch at their log2, where so narrow a
+spread can round away.
 Take six samples, three per group, with ε = 2^−52, and each group
 c(1 − kε), c, c(1 + kε) in doubles, for k from 1 to 6 at the centres 1.5, 3, 10,
 100, 1e3, 1e4, 1e5, 1e6, 1e9, 1e12 and 1e15, beside one varying feature so that
@@ -444,7 +445,9 @@ c(1 − kε), c, c(1 + kε) in doubles, for k from 1 to 6 at the centres 1.5, 3,
 general rate. PCA still called all 66 zero in the two other placements measured.
 With one value of group A at c(1 + kε) and the rest at c, Welch tested 38 and
 returned `ZeroVariance` for 28. With group A at c and group B at c(1 + kε), it
-tested none, since neither group varies within itself.
+tested none, since neither group varies within itself. With the caller's log2 passed
+to `pca` (below), the first placement gives 62 zero, not 66, and the third keeps 2
+features Welch cannot test.
 
 ### As built, not an owner decision
 
