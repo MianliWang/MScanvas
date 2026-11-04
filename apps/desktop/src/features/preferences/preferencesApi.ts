@@ -39,7 +39,8 @@ export interface PreferencesApi {
    *
    * `saved` carries the snapshot that was published and read back -- what a
    * restart will find -- rather than what was requested. An uncertain outcome
-   * is a failure, not a save.
+   * is a failure, not a save. `notRemembered` is neither: remembering is off,
+   * so nothing was written, and the choice is this session's.
    */
   savePreferences(request: PreferenceWriteRequest): Promise<PreferenceSaveOutcome>;
   /**

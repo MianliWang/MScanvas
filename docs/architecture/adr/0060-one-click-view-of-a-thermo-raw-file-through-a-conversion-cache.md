@@ -1710,6 +1710,20 @@ Q2–Q5 and Q7 stand. Q6, the hold release, stays open under HR-1.
    store refuses another schema rather than migrating it, so preferences written
    by a later build would read as unsupported in an earlier one. *Default: the
    10 GiB constant.*
+   Dated note, 2026-11-04, PR #213 (N-S7), as built and not an owner decision: the
+   preference store now reads a schema 1 record and upgrades it to schema 2, writing
+   it at the next change. That is the cost V-7.1 accepted on 2026-11-03 ("the new
+   build must also read beta 1's record"). So three sentences here no longer hold as
+   written, and they stay as they were accepted: decision 9's "whose store refuses
+   another schema rather than migrating it", Alternatives rejected's "a preference
+   schema change that the store refuses rather than migrates", and this question's
+   "the store refuses another schema rather than migrating it". A version the store
+   does not know is still refused and left in place, and an earlier build still reads
+   a later record as unsupported. Schema 2 carries V-7's seven settings and no cap.
+   A cap added before the release that ships schema 2 stays schema 2 (PR #213's
+   reading, not an owner decision); after that release it bumps again, V-7.1's "a
+   setting added later bumps again". A user-adjustable cap stays not built, and this
+   note decides nothing about it: question 2 and its default stand as A0060 left them.
 3. **A same-session repeat view on highlight.** With a memo hit and an existing
    entry, a highlighted RAW row could open at once, as an mzML row does, at the
    cost of the cached copy's hash and the open on every highlight. *Default: no;
