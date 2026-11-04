@@ -34,6 +34,7 @@ mod fs_guard;
 mod intent;
 mod mzml;
 mod mzml_reader;
+mod mzml_xic;
 mod output_inspect;
 mod preview;
 mod process;
@@ -128,6 +129,11 @@ pub use mzml_reader::{
     MzmlRunSummary, MzmlSelectedSpectrum, MzmlSpectrumError, MzmlSpectrumRow, MzmlSpectrumTable,
     ReaderLimitKind, RequiredValue, RetentionTimeUnit, read_selected_spectrum,
     read_selected_spectrum_from, read_spectrum_table, read_spectrum_table_from,
+};
+pub use mzml_xic::{
+    XIC_QUANTITY, XicAxis, XicIdentity, XicMetadataProblem, XicQuery, XicRefusal, XicRequiredValue,
+    XicResult, XicScan, XicScanState, XicSpectrumTransform, XicUnit, XicUnreadableReason,
+    XicWindowInput, read_xic, read_xic_from,
 };
 pub use output_inspect::{
     FinalOutputVerdict, IntermediateFacts, MzxmlEncoding, MzxmlPrecision, NonMzmlFormat,
