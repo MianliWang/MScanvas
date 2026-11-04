@@ -163,7 +163,7 @@ failure.
 | Evidence | `read_targeted_ms1_evidence`: one target's lines, each checked against the index |
 | Figure | `preview_targeted_ms1_figure` → the shared `FigureSpec` (plot-spec schema 3) → deterministic SVG, shown on screen as that SVG; only stored points, marked and joined to neighbours, the RT window, the feature band and apex, other candidates. No smoothing, no fitted curve, no mass error |
 | SVG / PNG | `export_targeted_ms1_figure`, the same drawing at the chosen size, DPI and theme, through the native save dialog, never over an existing file |
-| CSV / TSV | `export_targeted_ms1_table`: `mscanvas_targeted_ms1_results` v1, a `#` provenance preamble and 40 columns, one row per plan target in plan order; an absent value is an empty cell, never zero; outcome and reason words are the payload's; TSV refuses a field it cannot carry. *2026-11-03: the same command also writes the spreadsheet CSV the results table offers, `mscanvas_targeted_ms1_results_spreadsheet` schema 1 ([ADR 0054](../architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)): the same preamble keys and 40 columns, with a byte-order mark and declared text changed for spreadsheets* *2026-11-04 (S-7.1, the owner's answer of 2026-11-03): `export_targeted_ms1_table_view` writes the rows shown of a stored result in the order shown, as `mscanvas_targeted_ms1_results_view` or `mscanvas_targeted_ms1_results_view_spreadsheet` schema 1; the three documents above do not change. See FIG-010 in the [feature catalog](FEATURE_CATALOG.md)* |
+| CSV / TSV | `export_targeted_ms1_table`: `mscanvas_targeted_ms1_results` v1, a `#` provenance preamble and 40 columns, one row per plan target in plan order; an absent value is an empty cell, never zero; outcome and reason words are the payload's; TSV refuses a field it cannot carry. *2026-11-03: the same command also writes the spreadsheet CSV the results table offers, `mscanvas_targeted_ms1_results_spreadsheet` schema 1 ([ADR 0054](../architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)): the same preamble keys and 40 columns, with a byte-order mark and declared text changed for spreadsheets* *2026-11-04 (S-7.1, the owner's answer of 2026-11-03): `export_targeted_ms1_table_view` writes the rows shown of a stored result in the order shown, as `mscanvas_targeted_ms1_results_view` or `mscanvas_targeted_ms1_results_view_spreadsheet` schema 1; the three documents above do not change. See FIG-010 in the [feature catalog](FEATURE_CATALOG.md). The owner selected saving the rows shown; everything else here is as built, not an owner decision* |
 | Clipboard | **none** for a stored result |
 | Runtime question | `get_targeted_ms1_runtime`: informational only; no stored-result operation consults it |
 
@@ -391,7 +391,8 @@ Checked in code and by a scan of a real run's saved documents and stores
   ([ADR 0054](../architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md))
   has the same preamble keys and columns as the CSV.*
   *2026-11-04: a saved view (FIG-010) also holds the filter text a person typed,
-  and its suggested name adds how many rows of how many, still never a label.*
+  and its suggested name adds how many rows of how many, still never a label.
+  As built, not an owner decision.*
 
 ## 10. Dependencies and licences
 

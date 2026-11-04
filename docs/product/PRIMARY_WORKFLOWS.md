@@ -683,4 +683,7 @@ in plan order at first, sort by a pressed column head and filter by outcome and
 by text over target name and formula. **Save N of M rows…** then writes the rows
 shown, in that order, as CSV, TSV or spreadsheet CSV, in a document that says it
 is a view; **Reset** returns to the table, and **Export** still writes every row.
-See FIG-010 in the [feature catalog](FEATURE_CATALOG.md).
+See FIG-010 in the [feature catalog](FEATURE_CATALOG.md). The owner selected
+sorting, filtering and saving the rows shown, in a file that names its filter.
+Everything else here is as built, not an owner decision: the controls and their
+words, the formats offered and the form of the document.
