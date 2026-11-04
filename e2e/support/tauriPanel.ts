@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { StoredPreferences } from "../../apps/desktop/src/features/preferences/storedPreferences";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION, type StoredPreferences } from "../../apps/desktop/src/features/preferences/storedPreferences";
 import { MZML_ROW, SETTLED_AUTHORITY, ipcTable, spectrumWithPeaks } from "./fixtures";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,9 +53,10 @@ export const STATUS = ".spectrum-panel .spectrum-export-status";
  * the real preference store. Preview activation folds it through navigation.
  */
 export const TAURI_VIEWER_PREFERENCES: StoredPreferences = {
-  schemaVersion: 1,
+  schemaVersion: PREFERENCE_SCHEMA_VERSION,
   appearance: { locale: "en", density: "comfortable" },
   layout: { roster: "shown", details: "automatic" },
+  display: DISPLAY_DEFAULTS,
 };
 
 /**

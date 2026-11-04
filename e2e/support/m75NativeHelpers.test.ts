@@ -76,9 +76,10 @@ function digest(bytes: Buffer): string {
 }
 
 const RECORD = JSON.stringify({
-  schemaVersion: 1,
+  schemaVersion: 2,
   appearance: { locale: "en", density: "comfortable" },
   layout: { roster: "automatic", details: "automatic" },
+  display: { textSize: "standard", contrast: "normal", motion: "system", wheelHabit: "draw", crosshair: false, grid: true, remember: true },
 });
 
 test("the hold refuses every target that is not this campaign's own record", () => {
