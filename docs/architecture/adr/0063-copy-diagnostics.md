@@ -333,7 +333,8 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
 *As built, 2026-11-04, not an owner decision:*
 
 - The answer shows the new text from its first line wherever the keyboard is. A
-  reader who has moved keeps the keyboard and the body where they are.
+  reader who has moved keeps the keyboard and, when the text answers, the body where
+  they are; a failure comes into view.
 - A Tab with Ctrl, Alt or Meta held moves no focus, so it does not count as a Tab,
   and pressing the text after one does not scroll.
 

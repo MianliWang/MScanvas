@@ -384,6 +384,27 @@ describe("Copy diagnostics, rendered", () => {
         });
       }
 
+      // Only a Tab counts: Enter moves no focus either, and the refusal it brings sends the reader to the text.
+      it(`a press in the text after Enter on a refused Copy moves nothing, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await standInClipboard(true);
+        await browser.$(READ).click();
+        await browser.waitUntil(() => activeMatches(PREVIEW));
+        await browser.keys("Tab");
+        expect(await activeMatches(COPY)).toBe(true);
+        await browser.keys("Enter");
+        await browser.$(COPY_FAILED).waitForDisplayed();
+        await aFrameLater();
+        expect(await activeMatches(COPY)).toBe(true);
+        await boxHalfBelow();
+        const before = await bodyTop();
+        await pressTheText();
+        expect(await activeMatches(PREVIEW)).toBe(true);
+        await aFrameLater();
+        expect(await bodyTop()).toBe(before);
+        await inTheBody(COPY_FAILED);
+      });
+
       it(`a refused copy reached backwards by Tab shows the refusal whole, ${locale} ${String(width)}x${String(height)}`, async () => {
         await open(locale, width, height);
         await standInClipboard(true);
