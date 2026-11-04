@@ -470,8 +470,10 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
           });
           return;
         }
-        if (outcome.outcome === "unavailable") {
-          regress(outcome.revision, "unavailable", outcome.problem);
+        if (outcome.outcome === "unavailable" || outcome.outcome === "notRemembered") {
+          // Remembering being off says nothing is wrong with the store, so only
+          // the store that is really unavailable changes the status.
+          if (outcome.outcome === "unavailable") regress(outcome.revision, "unavailable", outcome.problem);
           // The change the user asked for still happens, and it is named for
           // what it is. Leaving the draft unapplied made the first press a
           // no-op that the footer then reported as a session-only
@@ -519,6 +521,13 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
     api.savePreferences({ layout }).then(
       outcome => {
         if (!mounted.current || ticket !== layoutTicket.current) return;
+        if (outcome.outcome === "notRemembered") {
+          // What the user asked for by turning remembering off, so this is not
+          // an arrangement to warn about losing.
+          setLayoutSave(IDLE_LAYOUT);
+          setLayoutAnnouncement(current => (current === "reset" ? current : null));
+          return;
+        }
         if (outcome.outcome === "saved") {
           adopt(outcome.revision);
           setLayoutSave(IDLE_LAYOUT);

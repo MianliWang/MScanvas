@@ -37,6 +37,7 @@ import {
 import { showProjectSurface } from "../support/shell";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { FAKE_WORKSPACE_CAPACITY } from "../../apps/desktop/src/test/previewFixtures";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
 
 let output = "";
 const evidence: unknown[] = [];
@@ -635,9 +636,10 @@ describe("M8.5 QC summary snapshot and report, rendered", () => {
       outcome: "saved",
       revision: 1,
       preferences: {
-        schemaVersion: 1,
+        schemaVersion: PREFERENCE_SCHEMA_VERSION,
         appearance: { locale: "en", density: "comfortable" },
         layout: { roster: "automatic", details: "shown" },
+        display: DISPLAY_DEFAULTS,
       },
     };
     await installIpcBoundary(table);

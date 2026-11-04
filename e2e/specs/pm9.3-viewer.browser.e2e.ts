@@ -73,6 +73,7 @@ import {
 import { fixed, untrue } from "../../apps/desktop/src/test/rangeClaims";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
 
 let output = "";
 const evidence: unknown[] = [];
@@ -194,9 +195,10 @@ function answers(options: { readonly refusedViewport?: boolean; readonly locale?
   table.subscribe_workspace_drop_updates = { reservationId: "pm93-browser-reservation" };
   if (options.locale === "zh-CN") {
     const preferences = {
-      schemaVersion: 1,
+      schemaVersion: PREFERENCE_SCHEMA_VERSION,
       appearance: { locale: "zh-CN", density: "comfortable" },
       layout: { roster: "automatic", details: "automatic" },
+      display: DISPLAY_DEFAULTS,
     };
     table.load_ui_preferences = { outcome: "loaded", revision: 1, preferences };
     table.save_ui_preferences = { outcome: "saved", revision: 2, preferences };
