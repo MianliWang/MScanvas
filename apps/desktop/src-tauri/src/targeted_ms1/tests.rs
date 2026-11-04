@@ -6399,6 +6399,10 @@ fn a_view_table_refuses_rows_that_are_not_the_views() {
             "outside the plan",
             golden_view(&[99], &EVERY_OUTCOME, "", None),
         ),
+        (
+            "every row and one outside the plan, which is not skipped",
+            golden_view(&[1, 2, 3, 4, 5, 6, 99], &EVERY_OUTCOME, "", None),
+        ),
         ("no rows", golden_view(&[], &EVERY_OUTCOME, "", None)),
         (
             "no rows under a filter that keeps none",
