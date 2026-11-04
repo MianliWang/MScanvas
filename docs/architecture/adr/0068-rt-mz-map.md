@@ -136,6 +136,10 @@ its table row reports each spectrum's polarity. It states no scan type yet.
 - **Never the arrays.** Only the raster crosses to the webview, as one bounded
   value per cell. Decoded arrays stay in the pass and are dropped spectrum by
   spectrum.
+- **Where the raster is kept (2026-11-04, ADR 0070 decision 3's item 7; as built,
+  not an owner decision).** The library returns it to the caller and keeps nothing,
+  so it ends when the caller drops it. Where the desktop keeps it and when that ends
+  is not stated here. Slice 2 owes that sentence to this record.
 - **The first view.** Retention time spans the lowest to the highest retention
   time of the map's spectra. m/z spans the lowest and highest observed m/z they
   state (MS:1000528, MS:1000527), when every one of them states both. That is a
@@ -227,7 +231,7 @@ its table row reports each spectrum's polarity. It states no scan type yet.
 ### 5. Refusals
 
 Every refusal is typed, carries no path or document text, and leaves no
-partial raster.
+partial raster. Nothing falls back to `msaccess` or another reader.
 
 | Refusal | Stable identifier |
 | --- | --- |
@@ -299,12 +303,16 @@ partial raster.
   own version. It never contains the arrays; a spectrum's own export already
   does.
 - **Both exports carry the same provenance (2026-11-04, ADR 0070 decision 3's items
-  9 and 10; following that list is a reading, not an owner decision).** The data
+  9 and 10, which the owner's answer of that day, A0070-Q1, makes part of each
+  record's minimum; how these lines answer them is not an owner decision).** The data
   document's preamble and the figure's description also state the source and its
-  generation; this record; the bounds and bin counts, kept exactly; the spectra
+  generation; this record; the bounds and bin counts, kept exactly (shortest
+  round-trip decimals, never rounded, in the caption too); the spectra
   used and those left out (the other maps', those beyond the window, the
   narrow-window scans), by count; and the points outside the m/z range. None is
-  counted as refused, because a refused spectrum refuses the map (decision 5).
+  counted as refused, because a refused spectrum refuses the map (decision 5). The
+  pass resolves no operand, so item 9's "as typed" and "as resolved" are one set of
+  values here: the request's.
 - **Both are written through the existing no-overwrite export path,** so an export
   never replaces a file.
 
@@ -330,9 +338,9 @@ no sum, XIC, summed spectrum, peak picking or feature detection.
 3. **Screen and export.** The plot kind, the screen view, the figure and data
    exports (decision 7), and rendered QA.
 4. **Polarity and representation** (MAP-1.6, MAP-1.8). In the library since
-   2026-11-04; the reader did not change (decisions 1 and 3).
-5. **Scan type** (MAP-1.9). Its own change, `be/map-scan-type`, after #207 merges
-   because #207 edits the reader: a small field on the table row, no array read
+   2026-11-04; the reader's code did not change (decisions 1 and 3).
+5. **Scan type** (MAP-1.9). Its own change, `be/map-scan-type`, after #207, merged
+   2026-11-04, because #207 edits the reader: a small field on the table row, no array read
    for it, and no width threshold (decision 1). Not in R-1's scope; its effort
    is not estimated.
 
@@ -497,7 +505,8 @@ decision 7's record for this one computation, and its scope is its limit.
 
 **What these answers do not decide:**
 
-- ADR 0070's questions 1 and 2, which are still open.
+- ADR 0070's questions 1 and 2. The owner answered those on 2026-11-04, in the note
+  below.
 - A numeric definition of narrow (decision 1).
 - The export's cell cap (MAP-1.4 asks for one and sets no value), the cap on
   retention-time bins (decision 2), the command, the plot kind and the screen:
@@ -507,29 +516,45 @@ decision 7's record for this one computation, and its scope is its limit.
   and the desktop design in decision 6 are the design of 2026-10-30 and
   the library as built. The owner was not asked about them: not an owner decision.
 
+*Owner decisions, 2026-11-04, on ADR 0070's two questions; its dated notes hold the
+reply and what it leaves open.* A0070-Q1, option `minimum`: decision 3's list there
+is the minimum each record states, so this record has to answer all eleven items
+([its check](#adr-0070-decision-3s-list), which names the part it does not state
+yet). A0070-Q2, option `with-code`: the two reader lines of
+`crates/proteowizard/AGENTS.md` change together with a record's code. #207 changed
+them for the XIC pass, and this record's slice names the map pass beside it and
+keeps the closing rule that anything else stays forbidden.
+
 **Written elsewhere, not here, and not yet on `main` on 2026-11-04:** ADR 0057's
-amendment for the map pass (MAP-1.7), ADR 0056 decision 1's dated widening for the
-scan type (MAP-1.9), and the answers' rows in the owner-decisions list.
+amendment for the map pass (MAP-1.7) and ADR 0056 decision 1's dated widening for the
+scan type (MAP-1.9). The answers' rows reached `main` with #212, in section 1d of
+[the owner-decisions list](../../development/OWNER_DECISIONS_V511.md).
 
 ## ADR 0070 decision 3's list
 
-Checked on 2026-11-04. Whether that list is the minimum each record states is ADR
-0070's question 1, which is open; following it here is a reading, not an owner
-decision. "Slice 2" and "slice 3" mark what this record states and the library
-does not do yet.
+Checked on 2026-11-04. That list is the minimum each record states: the owner's
+answer to ADR 0070's question 1, 2026-11-04, A0070-Q1, option `minimum`. So following
+it is no longer a reading. What stays a reading, not an owner decision, is this
+table: that each row answers its item. It rests on one comparison of ADR 0070
+decision 3's text with this record, made for #183; the decision page did not check
+it item by item (ADR 0070, question 1). The owner's answer also leaves open whether
+the fixed rules in items 2, 3 and 5 bind every record. This record states them as its
+own decisions, so it does not depend on that. "Slice 2" and "slice 3" mark what this
+record states and the library does not do yet, except item 7's last part, which this
+record does not state yet.
 
 | Item | Where this record answers it | Not built yet |
 | --- | --- | --- |
 | 1. Input | Decisions 1 and 2: MS1 spectra of one polarity and representation, by the table's offsets through the selected read; the open's refusals stand in front | Leaving narrow scans out (`be/map-scan-type`) |
-| 2. Operands and bounds | Decisions 2 and 5: a typed `MapRequest`, checked before any spectrum is read; the result keeps the bounds exactly | Stating them as shortest round-trip decimals in the caption and export, never rounded (slice 3) |
+| 2. Operands and bounds | Decisions 2, 5 and 7: a typed `MapRequest`, checked before any spectrum is read; the result keeps the bounds exactly | Stating them as shortest round-trip decimals in the caption and export, never rounded (slice 3) |
 | 3. Units | Decision 4 | |
 | 4. Profile and centroid | Decision 3 | |
-| 5. No invented values | Decisions 1 and 5: an empty cell has no value, zero and negative values are kept, and a spectrum that cannot be used refuses the whole map | |
+| 5. No invented values | Decisions 1 and 5: an empty cell has no value, zero and negative values are kept, a spectrum that cannot be used refuses the whole map, and nothing falls back to `msaccess` or another reader | |
 | 6. Arithmetic | Decision 1: the maximum of stored values as `f64`. ADR 0056's selected read widens each exactly or refuses it, and refuses a non-finite value, so none reaches a cell | |
-| 7. Retention | Decision 2: at most 2^21 `f64` cells, returned to the caller; nothing is cached and no array outlives its spectrum's step | Where the desktop keeps it and when that ends (slice 2) |
-| 8. Running | Decision 6: cancellation between spectra, and progress as spectra read out of the table's count | Supersession and the generation check (slice 2) |
-| 9. Provenance | The result carries the map's polarity and representation, bounds, bins, units and counts of spectra and points. Spectra excluded: the other maps' counts, and the map's own beyond the window, from `ms1_extent`. Refused: none, because a refused spectrum refuses the map. Decision 7: both exports carry the same | The source, its generation and this record's name (slice 2); the count of narrow scans left out (`be/map-scan-type`); the exports (slice 3) |
-| 10. Export | Decision 7, through the shared specification and the existing no-overwrite export path, with a data document that carries item 9 | All of it (slice 3) |
+| 7. Retention | Decision 2: at most 2^21 `f64` cells, returned to the caller, and the library keeps nothing; nothing is cached and no array outlives its spectrum's step. **Not stated yet:** where the desktop keeps the raster and when that ends, which slice 2 owes this record | The desktop's part, statement included (slice 2) |
+| 8. Running | Decision 6: cancellation between spectra, and progress as spectra read out of the table's count, with no estimate of time | Supersession and the generation check (slice 2) |
+| 9. Provenance | The result carries the map's polarity and representation, bounds, bins, units and counts of spectra and points. The pass resolves no operand, so the request is both as typed and as resolved. Spectra excluded: the other maps' counts, and the map's own beyond the window, from `ms1_extent`. Refused: none, because a refused spectrum refuses the map. Decision 7: both exports carry the same | The source, its generation and this record's name (slice 2); the count of narrow scans left out (`be/map-scan-type`); the exports (slice 3) |
+| 10. Export | Decision 7, through the shared specification and the existing no-overwrite export path, with a data document that carries item 9. Decision 2: only the raster crosses to the webview, never the arrays | All of it (slice 3) |
 | 11. Evidence | Evidence: time and memory on real files, release build, judged with no threshold set in advance. The tests' fixtures are hand-computed; `ltq_check.py` is an independent reference for the LTQ Velos counts it made | |
 
 ## Open questions for the owner
