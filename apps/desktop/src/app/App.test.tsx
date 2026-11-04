@@ -77,18 +77,15 @@ async function addFilesOffered(): Promise<void> {
 }
 
 /**
- * Presses a roster row and then Enter, once the row can be read.
+ * Starts a read by pressing a roster row, once that press can read.
  *
- * During the mount-time installation check neither gesture reads anything, and
- * a row has no refused state to wait on. `Add files…` answers to the same
- * `backendBusy`, so its offer is the moment. The wait comes before the press
- * because a plain press on an mzML row also starts a read: which gesture started
- * it must not be event-loop order.
+ * During the mount-time installation check a press reads nothing, and a row has
+ * no refused state to wait on. `Add files…` answers to the same `backendBusy`,
+ * so its offer is the moment.
  */
 async function readRow(name: RegExp): Promise<void> {
   await addFilesOffered();
   fireEvent.click(await screen.findByRole("row", { name }));
-  fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 }
 
 /**
@@ -1757,6 +1754,23 @@ describe("the session workspace roster", () => {
     expect(screen.queryByRole("button", { name: "List actions" })).toBeNull();
   });
 
+  it("reads nothing from a row while the installation check runs", async () => {
+    // Only the reads are pinned. What such a press leaves behind once the check
+    // ends is still an open question, so nothing is asserted after the release.
+    const check = deferred<typeof availableBackend>();
+    const api = createFakePreviewApi({
+      initialDatasets: [selectedFile],
+      availability: () => check.promise,
+    });
+    renderApp(api);
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    expect(api.openCount()).toBe(0);
+
+    check.resolve(availableBackend);
+    await addFilesOffered();
+  });
+
   it("bounds repeated activation to one read at a time", async () => {
     // Every activation is one process behind one global gate. Without this a
     // user walking the roster with Enter would queue one read per row, and the
@@ -3202,8 +3216,11 @@ describe("adding a folder of mzML files", () => {
       scannedFolder: () => scan.promise,
     });
     renderApp(api);
-    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }));
+    // A plain press could start the read before the scan does. A ctrl-press only
+    // selects, so the read can come only from the Enter during the scan.
+    fireEvent.click(await screen.findByRole("row", { name: /QC_pool_01\.mzML/ }), { ctrlKey: true });
     await pressAddFolder();
+    expect(api.openCount()).toBe(0);
 
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
 
