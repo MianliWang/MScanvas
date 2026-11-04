@@ -144,6 +144,13 @@ jobs:
             Set-Content "$at\staging\$attempt\owner.json" '{}'
             Set-Content "$at\staging\$attempt\entry\view.mzML" 'partial'
           }
+          # Win32 reads a path's last name without its trailing spaces and dots, and
+          # keeps them in a middle name. mklink and New-Item drop them as well, but
+          # any program can rename to them.
+          function New-NamedJunction([string]$at, [string]$name, [string]$target) {
+            New-Item -ItemType Junction -Path "$at\to-be-renamed" -Target $target | Out-Null
+            [IO.Directory]::Move("\\?\$at\to-be-renamed", "\\?\$at\$name")
+          }
           # Everything under the parent that is not the cache.
           function New-Neighbours {
             New-Item -ItemType Directory -Force $data, "$data\view-cache-old", "$data\view-cache.creating-$attempt" | Out-Null
@@ -345,6 +352,63 @@ jobs:
           Check 'removed view-cache' (-not (Test-Path -LiteralPath $root))
           Check-Neighbours
 
+          foreach ($case in @(@("$root\entries\$key", '. '), @("$root\entries\$key", ' '), @("$root\staging", '.. '), @($root, '...'), @("$root\entries\$key", 'NUL'))) {
+            $outside = Start-Case "a junction named [$($case[1])] leaves its target untouched, and the tree whole"
+            New-Neighbours; New-Cache $root
+            New-NamedJunction $case[0] $case[1] $outside
+            $code = Uninstall-InPlace @('/S')
+            Check "exit status 0 ($code)" ($code -eq 0)
+            Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
+            Check-CacheWhole $root
+          }
+
+          $outside = Start-Case 'a junction named [link ] beside a plain link holding a locked file leaves its target untouched, and the tree whole'
+          New-Neighbours; New-Cache $root
+          New-Item -ItemType Directory "$root\entries\$key\link" | Out-Null
+          Set-Content "$root\entries\$key\link\held.txt" 'held'
+          New-NamedJunction "$root\entries\$key" 'link ' $outside
+          $lock = [IO.File]::Open("$root\entries\$key\link\held.txt", 'Open', 'Read', 'None')
+          $code = Uninstall-InPlace @('/S')
+          $lock.Close()
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
+          Check-CacheWhole $root
+
+          # A path through a folder named x. reads x, so nothing below x. is listed.
+          $outside = Start-Case 'a junction in a folder named [x.], beside a plain x, leaves its target untouched, and the tree whole'
+          New-Neighbours; New-Cache $root
+          New-Item -ItemType Directory "$root\entries\x" | Out-Null
+          New-Item -ItemType Junction -Path "$root\entries\x\j" -Target $outside | Out-Null
+          [void][IO.Directory]::CreateDirectory("\\?\$root\entries\x.")
+          [IO.Directory]::Move("\\?\$root\entries\x\j", "\\?\$root\entries\x.\j")
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
+          Check-CacheWhole $root
+
+          foreach ($name in 'z.', 'z ', "$marker ") {
+            $null = Start-Case "a file named [$name], which a plain path reads as another name, keeps the tree whole"
+            New-Neighbours; New-Cache $root
+            [IO.File]::WriteAllText("\\?\$root\$name", 'x')
+            $code = Uninstall-InPlace @('/S')
+            Check "exit status 0 ($code)" ($code -eq 0)
+            Check-CacheWhole $root
+          }
+
+          # The longest string NSIS holds. A walk that reached it would list the
+          # folder as its own child, and recurse until the stack overflows.
+          $null = Start-Case 'a folder at a path of 1023 characters cannot be listed, and keeps the tree whole'
+          New-Neighbours; New-Cache $root
+          $deep = "\\?\$root\entries\$key"
+          while ($deep.Length -lt 1023) {
+            $room = 1022 - $deep.Length
+            $deep = "$deep\" + ('d' * $(if ($room -gt 200) { 100 } else { $room }))
+          }
+          [void][IO.Directory]::CreateDirectory($deep)
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check-CacheWhole $root
+
           $null = Start-Case 'a root something holds keeps its marker, byte for byte, the uninstall still succeeds, and the next one finishes'
           New-Neighbours; New-Cache $root
           $holder = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 600' -WorkingDirectory $root -PassThru
@@ -390,6 +454,24 @@ jobs:
           $code = Uninstall-InPlace @('/S')
           Check "exit status 0 ($code)" ($code -eq 0)
           Check 'made no folder' (-not (Test-Path -LiteralPath $data))
+
+          # Not an owner decision, a record of what the template does (AFTER_BETA1_PLAN
+          # 7.2): its RmDir /r takes the marker first, and the hook then finds nothing
+          # it recognizes, on this uninstall or a later one.
+          $null = Start-Case 'the box ticked with a file locked leaves that file and no marker, and a later uninstall leaves them too'
+          New-Neighbours; New-Cache $root
+          Set-RecordedLanguage
+          $lock = [IO.File]::Open("$root\entries\$key\view.mzML", 'Open', 'Read', 'None')
+          $code = Drive $uninstaller @("_?=$install") $true
+          $lock.Close()
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the locked file' (Test-Path -LiteralPath "$root\entries\$key\view.mzML")
+          Check 'no marker' (-not (Test-Path -LiteralPath "$root\$marker"))
+          $code = Run-Waited $setup @('/S')
+          Check "installing again exits 0 ($code)" ($code -eq 0)
+          $code = Uninstall-InPlace @('/S')
+          Check "the next uninstall exits 0 ($code)" ($code -eq 0)
+          Check 'the next uninstall kept the file' (Test-Path -LiteralPath "$root\entries\$key\view.mzML")
 
           # Not owner decisions, records of what the template does (AFTER_BETA1_PLAN
           # 7.2): a passive install skips the page, so no first choice is selected.
