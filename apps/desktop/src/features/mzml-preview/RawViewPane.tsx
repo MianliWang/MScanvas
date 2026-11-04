@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type FocusEvent, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
 
 import { Button, EmptyState, Icon } from "../../components/ui";
 import type { UiMessage } from "../preferences/i18n";
@@ -34,6 +34,15 @@ const GIB = 2 ** 30;
 const gib = (bytes: number) => (bytes / GIB).toFixed(1);
 
 export const rawViewPhaseText = (phase: RawViewPhase, t: UiMessage) => t(PHASE[phase]);
+
+/**
+ * A repeated keydown presses nothing (decision 1). The button a press takes away
+ * hands the keyboard to the next one, which a held key would otherwise press too:
+ * Cancel would start a view, and View would cancel it.
+ */
+export function refuseHeldEnter(event: KeyboardEvent) {
+  if (event.key === "Enter" && event.repeat) event.preventDefault();
+}
 
 /** Minutes and seconds of a clock, never an estimate of what is left (decision 3). */
 export function formatElapsed(milliseconds: number): string {
@@ -246,10 +255,10 @@ export function RawViewPane({ row, view, localReason, runningName, canOpen, open
       {convert}
     </div>} />;
   }
-  return <div ref={root} className="raw-view-pane" data-raw-view-pane={row.handle} tabIndex={-1} onFocus={onFocus} onBlur={onBlur}>{body}</div>;
+  return <div ref={root} className="raw-view-pane" data-raw-view-pane={row.handle} tabIndex={-1} onFocus={onFocus} onBlur={onBlur} onKeyDownCapture={refuseHeldEnter}>{body}</div>;
 }
 
 /** The settings a view was converted with, in the conversion surface's own words. */
 export function viewSourceSettings(source: ViewSource, t: UiMessage): string {
-  return ["mzML", ...CONVERSION_AXES.map(axis => axisValueLabel(axis, source.intent[axis] as never, t))].join(", ");
+  return ["mzML", ...CONVERSION_AXES.map(axis => axisValueLabel(axis, source.intent[axis] as never, t))].join(t("m74CnvListSeparator"));
 }

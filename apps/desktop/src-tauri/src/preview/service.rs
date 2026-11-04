@@ -7886,7 +7886,11 @@ impl PreviewService {
         // and the token below is the only way the webview can name it, so an
         // export writes this spectrum rather than reconstructing one from the
         // arrays it is about to receive, which may be a prefix of them.
-        let snapshot = self.spectrum_export_slot().install(id, spectrum);
+        let snapshot = if view.is_some() {
+            self.spectrum_export_slot().install_viewed(id, spectrum)
+        } else {
+            self.spectrum_export_slot().install(id, spectrum)
+        };
         let projected = selected_spectrum_dto(
             snapshot.spectrum(),
             &redactor,

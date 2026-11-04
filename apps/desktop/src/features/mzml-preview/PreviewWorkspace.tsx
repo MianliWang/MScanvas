@@ -25,7 +25,7 @@ import { WorkspaceRestoreNotice, announceRestore } from "./WorkspaceRestoreNotic
 import { useWorkspaceRestore } from "./useWorkspaceRestore";
 import { InspectorClose, PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { NotVerifiedTag } from "./NotVerifiedTag";
-import { RawViewPane, formatElapsed, ownRawViewState, rawViewFailureText, rawViewFirstAction, rawViewPhaseText, rawViewRefusalText, shortFileName } from "./RawViewPane";
+import { RawViewPane, formatElapsed, ownRawViewState, rawViewFailureText, rawViewFirstAction, rawViewPhaseText, rawViewRefusalText, refuseHeldEnter, shortFileName } from "./RawViewPane";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
@@ -34,8 +34,7 @@ import { SpectrumTable, scanStepReasonId } from "./SpectrumTable";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
-import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
-import { reconcileOrganization } from "../workbench/organization";
+import { pressRowActions, rosterProjection, type WorkspaceNotice } from "./rosterSelection";
 import type { WorkspaceAddResult } from "./contracts";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 
@@ -91,45 +90,8 @@ export function PreviewWorkspace() {
   const revealInWorkbench = useCallback(
     (handle: string, openList = true) => {
       setSurface("workbench");
-      // A row the list is not showing cannot be revealed, and a reveal that
-      // reveals nothing is worse than no reveal. There are two reasons a row
-      // is not on screen and the reducer treats neither as a press it can
-      // act on, so both are cleared before the row is pressed.
-      //
-      // The search first. Deliberate, and only where it is needed: a row the
-      // query already shows keeps the reader's query exactly as they left it.
-      // A row that has just arrived is never in the projection this render
-      // was drawn from, so an add with a query set always clears it -- which
-      // is the right answer, because the row is the thing they asked to see.
-      if (!rosterProjection(workspace.roster).handles.has(handle)) {
-        workspace.dispatchRoster({ type: "searchCleared" });
-      }
-      // Then the group. A collapsed group drops its rows from the projection
-      // entirely, and the default destination for every new row is a group
-      // that can be collapsed -- so without this, revealing into one is a
-      // navigation that lands on nothing. The handle is named to the
-      // reconciliation as well, because a row that has just arrived is not in
-      // the organization this render was drawn from and belongs to the
-      // ungrouped group until it is.
-      const holding = reconcileOrganization(workspace.roster.organization, [
-        ...workspace.roster.datasets.map((dataset) => dataset.handle),
-        handle,
-      ]).groups.find((group) => group.handles.includes(handle));
-      if (holding?.collapsed === true) {
-        // `disclose` toggles, so this is asked only of a group that is closed.
-        workspace.dispatchRoster({
-          type: "organization",
-          action: { type: "disclose", groupId: holding.id },
-        });
-      }
-      // The same thing pressing the row does: it becomes the focused row and
-      // the highlighted one. It starts no read -- that is the component's
-      // separate response to a press, not the reducer's.
-      workspace.dispatchRoster({
-        type: "rowPressed",
-        handle,
-        modifiers: { ctrl: false, shift: false },
-      });
+      // A reveal that reveals nothing is worse than no reveal.
+      for (const action of pressRowActions(workspace.roster, handle)) workspace.dispatchRoster(action);
       revealToken.current += 1;
       setRevealRow({ handle, token: revealToken.current });
       if (openList && !rosterOpen && !panels.busy) panels.toggle("roster");
@@ -202,9 +164,10 @@ export function PreviewWorkspace() {
   useLayoutEffect(() => {
     if (pendingRevealFocus.current && surface === "workbench" && !rosterOpen && !detailsOpen) {
       pendingRevealFocus.current = false;
-      evidenceRef.current?.focus({ preventScroll: true });
+      // A pane's own Show has already handed the keyboard to what replaced it.
+      if (evidenceRef.current?.contains(document.activeElement) !== true) evidenceRef.current?.focus({ preventScroll: true });
     }
-  }, [surface, rosterOpen, detailsOpen]);
+  }, [surface, rosterOpen, detailsOpen, revealRow]);
   /**
    * At 1050 px and below the roster and Details are drawers over the workspace
    * card (spec 3.1). While one is open it is modal: the rest of the card and
@@ -557,8 +520,14 @@ export function PreviewWorkspace() {
     pendingRevealFocus.current = true;
     panels.navigate();
   };
-  /** Shows a RAW row's pane. Where the list is a drawer it stays folded, or it would cover the pane. */
-  const showRawRow = (handle: string) => { revealInWorkbench(handle, !constrained); };
+  /**
+   * Shows a RAW row's pane. Where the list is a drawer it stays folded, or it would
+   * cover the pane, so the row cannot take the keyboard and the evidence does.
+   */
+  const showRawRow = (handle: string) => {
+    pendingRevealFocus.current = constrained;
+    revealInWorkbench(handle, !constrained);
+  };
   /** The bar's line: what runs, from every surface, or what became ready or failed out of sight. */
   const rawViewStatus = rawViewRunning !== null ? {
     text: t("rawViewStatus", { name: shortFileName(rawViewRunning.fileName), elapsed: formatElapsed(rawViewRunning.elapsedMs) }),
@@ -1312,7 +1281,7 @@ export function PreviewWorkspace() {
                 // A RAW row's failed open left its entry in the cache, so viewing it
                 // again is always the way on, whatever the failure was.
                 action={(preview.error.retryable || preview.error.kind === "selection_superseded" || workspace.activeDataset?.sourceKind === "thermo_raw") && workspace.activeDataset !== null ? (
-                  <div className="evidence-actions">
+                  <div className="evidence-actions" onKeyDownCapture={refuseHeldEnter}>
                     <Button variant="secondary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
                       {t("retryEvidence")}
                     </Button>

@@ -4,13 +4,13 @@
  */
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import type { RawViewAvailability, RawViewSnapshot, RawViewState, SelectedFile, ViewSource } from "../features/mzml-preview/contracts";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
-import { rawViewFailureText, shortFileName } from "../features/mzml-preview/RawViewPane";
+import { rawViewFailureText, shortFileName, viewSourceSettings } from "../features/mzml-preview/RawViewPane";
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { spectrumSelectionAvailability } from "../features/mzml-preview/viewer/selectionAvailability";
 import { chooseRosterAction, rosterActionRefused } from "../test/rosterActions";
@@ -357,6 +357,43 @@ describe("viewing a Thermo RAW row", () => {
       expect(begun).toEqual([]);
     });
 
+    it("starts nothing on Enter over a row whose view is open", async () => {
+      const { begun, opened, api } = session({ state: ready() });
+      await focusedOnFirst();
+      await act(async () => { fireEvent.keyDown(grid(), { key: "Enter" }); });
+      await waitFor(() => expect(document.querySelector("[data-raw-view='ready']")).not.toBeNull());
+      await act(async () => { fireEvent.keyDown(grid(), { key: "Enter" }); });
+      await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "loaded"));
+      const reads = api.openCount();
+      await act(async () => { fireEvent.keyDown(grid(), { key: "Enter" }); });
+      expect(begun).toEqual([]);
+      expect(opened).toEqual([1]);
+      expect(api.openCount()).toBe(reads);
+    });
+
+    it("presses nothing under a held Enter, on any button the keyboard can land on", async () => {
+      // jsdom turns no keydown into a click: the browser's does, unless this is refused.
+      const held = (button: HTMLElement) => fireEvent.keyDown(button, { key: "Enter", repeat: true });
+      const { api, world } = session();
+      await highlight();
+      await waitFor(() => expect(viewButton()).not.toHaveAttribute("aria-disabled"));
+      expect(fireEvent.keyDown(viewButton(), { key: "Enter" })).toBe(true);
+      expect(held(viewButton())).toBe(false);
+      await act(async () => { fireEvent.click(viewButton()); });
+      expect(held(within(evidence()).getByRole("button", { name: words.cancel }))).toBe(false);
+
+      world.state = failed("raw_view_source_changed", true);
+      const again = await within(evidence()).findByRole("button", { name: words.rawViewTryAgain }, { timeout: 2_000 });
+      expect(held(again)).toBe(false);
+
+      world.state = ready();
+      api.openRawView = () => { world.state = ready({ openable: false }); return Promise.reject({ kind: "view_cache_entry_lost", summary: "x", detail: null, retryable: true }); };
+      await act(async () => { fireEvent.click(await row(OTHER)); });
+      await act(async () => { fireEvent.click(await row(RAW)); });
+      await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.rawViewOpen })); });
+      expect(held(await within(evidence()).findByRole("button", { name: words.retryEvidence }))).toBe(false);
+    });
+
     it("moves the keyboard to Cancel when the pressed View leaves", async () => {
       session();
       await highlight();
@@ -435,6 +472,56 @@ describe("viewing a Thermo RAW row", () => {
       world.state = failed("view_cache_not_stored", true);
       await waitFor(() => expect(within(evidence()).getByRole("alert")).toHaveTextContent(words.errViewCacheNotStored), { timeout: 2_000 });
       expect(within(evidence()).getByRole("button", { name: words.rawViewConvert })).toBeVisible();
+    });
+
+    describe("a re-read of a row the reader has left highlighted no longer", () => {
+      /** A failed open on screen, and the row no longer highlighted. */
+      async function failedAndLeft() {
+        const opened = session({ state: ready() });
+        opened.api.openRawView = () => { opened.world.state = ready({ openable: false }); return Promise.reject({ kind: "view_cache_entry_lost", summary: "x", detail: null, retryable: true }); };
+        await highlight();
+        await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.rawViewOpen })); });
+        await within(evidence()).findByRole("button", { name: words.retryEvidence });
+        await act(async () => { fireEvent.click(await row(RAW), { ctrlKey: true }); });
+        await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "failed"));
+        return { ...opened, again: within(evidence()).getByRole("button", { name: words.retryEvidence }) };
+      }
+      const refusedBy = (kind: string) => () => Promise.reject({ kind, summary: "x", detail: null, retryable: false });
+
+      it("shows a refusal on screen, with its reason", async () => {
+        const { api, again } = await failedAndLeft();
+        api.beginRawView = refusedBy("view_cache_unavailable");
+        await act(async () => { fireEvent.click(again); });
+        await waitFor(() => expect(evidence().querySelector("[data-raw-view-refusal='view_cache_unavailable']")).toHaveTextContent(words.errViewCacheUnavailable));
+      });
+
+      it("runs in the pane, with its phase and Cancel", async () => {
+        const { begun, again } = await failedAndLeft();
+        await act(async () => { fireEvent.click(again); });
+        expect(begun).toEqual([RAW.handle]);
+        await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "raw-view"));
+        expect(document.querySelector("[data-raw-view-phase='checkingSource']")).not.toBeNull();
+        expect(within(evidence()).getByRole("button", { name: words.cancel })).toBeVisible();
+      });
+
+      it("shows a refusal under a search the row does not match, which the row stays pinned through", async () => {
+        const { api, again } = await failedAndLeft();
+        api.beginRawView = refusedBy("view_cache_unavailable");
+        await act(async () => { fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no such file" } }); });
+        await act(async () => { fireEvent.click(again); });
+        await waitFor(() => expect(evidence().querySelector("[data-raw-view-refusal='view_cache_unavailable']")).not.toBeNull());
+      });
+
+      it("asks nothing further until the press is answered, so no read can release it", async () => {
+        const { api, read, again } = await failedAndLeft();
+        let answer: (state: RawViewState) => void = () => {};
+        api.beginRawView = () => new Promise(resolve => { answer = resolve; });
+        const before = read.mock.calls.length;
+        await act(async () => { fireEvent.click(again); });
+        expect(read.mock.calls.length).toBe(before);
+        await act(async () => { answer(running("checkingSource")); });
+        await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(before));
+      });
     });
 
     it("re-reads an open view from its Reopen in the pane, and Cancel brings the preview back", async () => {
@@ -657,6 +744,83 @@ describe("viewing a Thermo RAW row", () => {
     const panel = within(evidence()).getByRole("tabpanel");
     expect(tab.compareDocumentPosition(convert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(convert.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("refuses every export of a viewed file, in both plots' ⋯ menus, and calls nothing", async () => {
+    const { api } = session({ state: ready() });
+    const calls = (["exportSelectedSpectrum", "copySelectedSpectrumPlot", "exportChromatogram", "copyChromatogramPlot", "exportLinkedFigure", "copyLinkedPlot", "previewFigure"] as const)
+      .map(name => vi.spyOn(api, name));
+    await highlight();
+    await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.rawViewOpen })); });
+    const grid = await screen.findByRole("grid", { name: "Scans" });
+    await act(async () => { fireEvent.click(within(grid).getAllByRole("row")[1]!); });
+    await waitFor(() => expect(evidence().querySelectorAll(".figure-quick-actions")).toHaveLength(2));
+    const withheld = document.querySelector("[data-view-export-withheld]")!;
+    for (const actions of Array.from(evidence().querySelectorAll<HTMLElement>(".figure-quick-actions"))) {
+      const open = within(actions).getByRole("button", { name: words.figureExportTitle });
+      expect(open).toHaveAttribute("aria-disabled", "true");
+      expect(open.getAttribute("aria-describedby")).toContain(withheld.id);
+      await act(async () => { fireEvent.click(open); });
+      fireEvent.keyDown(within(actions).getByRole("button", { name: words.plotMoreExports }), { key: "Enter" });
+      const menu = await screen.findByRole("menu");
+      // The plot's own range is not an export; everything after it is.
+      const exports = within(menu).getAllByRole("menuitem").filter(item => item.childNodes[0]?.textContent !== words.rangeSet);
+      expect(exports.length).toBeGreaterThan(2);
+      for (const item of exports) {
+        expect(item).toHaveAttribute("aria-disabled", "true");
+        expect(item).toHaveAccessibleDescription(expect.stringContaining(words.viewExportWithheldShort));
+        await act(async () => { fireEvent.click(item); });
+      }
+      fireEvent.keyDown(menu, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    }
+    for (const call of calls) expect(call).not.toHaveBeenCalled();
+  });
+
+  it("joins the settings of a view's source in the reader's language", () => {
+    const t = ((key: string) => key === "m74CnvListSeparator" ? "、" : key) as never;
+    expect(viewSourceSettings(SOURCE, t)).toMatch(/^mzML、[^,]+$/);
+  });
+
+  describe("where the list stays folded", () => {
+    let restore = () => {};
+    beforeEach(() => {
+      const original = window.matchMedia;
+      window.matchMedia = ((query: string) => ({
+        media: query, matches: query.includes("max-width: 1050px"), onchange: null,
+        addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; },
+      })) as unknown as typeof window.matchMedia;
+      restore = () => { window.matchMedia = original; };
+    });
+    afterEach(() => { restore(); });
+
+    it.each([
+      ["a Ready out of sight", ready()],
+      ["a failure out of sight", failed("raw_view_source_changed", true)],
+      ["a running view", running("converting")],
+    ])("takes the keyboard to the row's pane from the bar's Show: %s", async (_, state) => {
+      session({ state });
+      const show = await waitFor(() => { const found = statusBar()?.querySelector<HTMLElement>("button"); expect(found).toBeTruthy(); return found!; });
+      // Asked rather than read back: jsdom lets a folded list's row take the
+      // keyboard after this, and view-raw.browser.e2e.ts says where it lands.
+      const moved = vi.spyOn(evidence(), "focus");
+      show.focus();
+      await act(async () => { fireEvent.click(show); });
+      await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "raw-view"));
+      expect(moved).toHaveBeenCalledOnce();
+    });
+
+    it("takes the keyboard to the row's pane from the Conversion page's Show", async () => {
+      session({ state: running("converting") });
+      await act(async () => { fireEvent.click(await screen.findByRole("button", { name: words.conversionTask })); });
+      const panel = document.getElementById("workbench-conversion")!;
+      const show = await within(panel).findByRole("button", { name: `Show ${RAW.fileName}` });
+      const moved = vi.spyOn(evidence(), "focus");
+      show.focus();
+      await act(async () => { fireEvent.click(show); });
+      await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "raw-view"));
+      expect(moved).toHaveBeenCalledOnce();
+    });
   });
 
   it("refuses a QC capture of a viewed preview by its own reason", async () => {

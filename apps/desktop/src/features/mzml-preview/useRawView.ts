@@ -53,6 +53,11 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
   const mounted = useRef(true);
   /** Only the newest read speaks, so a slow answer cannot put back an older phase. */
   const reads = useRef(0);
+  /**
+   * A press not answered yet. A read sent now could answer from before it and
+   * release the claim, so the one after the press's answer asks instead.
+   */
+  const pressed = useRef(false);
 
   /**
    * The operation this document has begun opening. Its one open is spent the moment
@@ -77,6 +82,7 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
   }, []);
 
   const read = useCallback(() => {
+    if (pressed.current) return;
     reads.current += 1;
     const ticket = reads.current;
     const handle = highlightedRef.current;
@@ -116,6 +122,7 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
     if (busyRef.current) return;
     // Raised before the answer, so no second press and no other route slips in.
     busyRef.current = true;
+    pressed.current = true;
     setClaimed(true);
     setRefusal(null);
     reads.current += 1;
@@ -123,6 +130,7 @@ export function useRawView(api: PreviewApi, highlighted: string | null, onReady:
       busyRef.current = false;
       if (mounted.current) setRefusal({ handle, error: toPreviewError(cause) });
     }).finally(() => {
+      pressed.current = false;
       if (!mounted.current) return;
       setClaimed(false);
       read();

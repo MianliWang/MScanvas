@@ -290,7 +290,7 @@ availability, queue, adoption and export contracts.
    Both scopes exclude unsupported rows and show requested/eligible/excluded
    counts; a bounded disclosure names the excluded rows without changing
    membership, eligibility or order (PM9.4 O2). The three families may be mixed. Vendor rows cannot be previewed,
-   and say so. There is no `Convert visible` scope: search changes presentation
+   and say so, except a Thermo RAW row, which is read through View (ADR 0060). There is no `Convert visible` scope: search changes presentation
    only; the selected/all actions remain available.
 3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
    groups — peak processing, spectra included, numeric precision, array

@@ -1326,6 +1326,27 @@ const STOPS: readonly Stop[] = [
     await setInvokeResult("get_raw_view_state", { state: viewFailed("view_cache_not_stored", true, { operation: 2 }), availability: { available: true, unverifiedBuildRelease: null } });
     await browser.$('[data-raw-view-code="view_cache_not_stored"]').waitForExist({ timeout: 30_000 });
   }, anchor: '[data-raw-view-code="view_cache_not_stored"]' },
+  // The row left, then a re-read refused: the row takes the highlight, so the reason is on screen.
+  { name: "view-reread-refused-left", table: viewFailedOpenWorld, keepFocus: true, drive: async () => {
+    await failTheOpen();
+    await revealRosterRow(FIRST.handle);
+    await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), `.grouped-roster [data-handle="${FIRST.handle}"]`);
+    await browser.keys(" ");
+    await foldNarrowRoster();
+    await setInvokeResult("begin_raw_view", { __reject: { kind: "view_cache_unavailable", summary: "Controlled", detail: null, retryable: false } });
+    await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), FAILED_OPEN_AGAIN);
+    await browser.keys("Enter");
+    await browser.$('[data-raw-view-refusal="view_cache_unavailable"]').waitForExist({ timeout: 30_000 });
+    await frames();
+  }, anchor: '#workbench-evidence [data-raw-view-refusal="view_cache_unavailable"]' },
+  // Show by keyboard: where the list stays folded the keyboard waits on the evidence.
+  { name: "view-show-keyboard", table: viewWorld(viewReady()), keepFocus: true, drive: async () => {
+    await browser.$("[data-status-raw-view] button").waitForExist({ timeout: 30_000 });
+    await browser.execute(() => document.querySelector<HTMLElement>("[data-status-raw-view] button")?.focus());
+    await browser.keys("Enter");
+    await browser.$("[data-raw-view-open]").waitForExist({ timeout: 30_000 });
+    await frames();
+  }, anchor: "[data-raw-view-open]" },
   { name: "view-open-long-label", table: viewWorld(viewReady({ handle: LONG_NAME.handle, unverifiedBuildRelease: UNMEASURED }), { available: true, unverifiedBuildRelease: UNMEASURED }, UNMEASURED, LONG_NAME), drive: async () => { await highlight(LONG_NAME); await browser.$("[data-raw-view-open]").click(); await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 30_000 }); await foldNarrowRoster(); await frames(); }, anchor: ".viewer-file-facts .not-verified-tag" },
   { name: "view-open-scans", table: viewWorld(viewReady()), drive: async () => { await openTheView(); await browser.$('.viewer-tabs [role="tab"]:nth-child(2)').click(); await frames(); }, anchor: "[data-view-export-withheld]" },
   { name: "view-long-name-busy", table: viewWorld(viewRunning("converting", { handle: LONG_NAME.handle, fileName: LONG_NAME.fileName }), { available: false, code: "raw_view_busy" }), drive: () => highlight(SECOND), anchor: '[data-raw-view-refusal="raw_view_busy"]' },

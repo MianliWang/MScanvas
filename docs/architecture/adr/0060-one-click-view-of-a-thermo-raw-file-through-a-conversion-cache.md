@@ -12,6 +12,9 @@ library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/1
 ([slice 3 notes](#slice-3-notes-2026-11-03)), without View with… and the Settings row; nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
+Owner decision, 2026-10-30 (A0060): Q1: a View button. Q8: slice 3 builds on #164's
+structure (FE-1 (a)), with decision 1's content, the phases, Cancel and the CNV-D8
+progress amendment as written. The pane's place moves with FE-2.
 Amended 2026-10-30 by ADR 0056 slice 2: the data documents' version numbers
 (a note under Exports).
 Related: [0005](0005-mzml-preview-boundary.md),
@@ -385,6 +388,9 @@ under the `e2e` feature it is the same task-owned QA root.
 - **The uninstaller.** Whatever it does with the application data, it does with
   the cache. What its "Delete the application data" choice removes is not yet
   observed (plan section 7.2, as ADR 0058 records for presets).
+  Owner decision, 2026-11-03 (DEF-2): option (b), so the cache no longer follows the
+  application data on uninstall. Not built yet; see
+  [slice 3 note 9](#slice-3-notes-2026-11-03).
 
 **Ownership marker.** The marker, `.mscanvas-view-cache-owner`, holds a
 constant, `mscanvas-view-cache\n`, as the staging marker does: it proves which
@@ -1357,7 +1363,10 @@ unless it carries "Owner decision, 2026-11-03".
    versions, six preamble keys, a figure source line and their goldens, across
    the single, linked and copied figures. So a viewed preview exports nothing
    until they exist: `ScientificExportSlots` refuses every begin and copy of a
-   viewed open with `view_export_withheld`, a figure preview included. The tokens
+   spectrum or chromatogram read from a cached view with `view_export_withheld`, a
+   figure preview included. The mark is on the snapshot, set where it is read, so no
+   later open can clear it: a reopen refused after its start keeps the row's cached
+   preview, and that preview's next spectrum is withheld too. The tokens
    stay issued, because the viewport's projection reads the spectrum by its token
    and is not an export. The interface shows Export… and every figure and data
    item of ⋯ refused, each pointing at one visible line in the file row, beside
@@ -1439,6 +1448,8 @@ unless it carries "Owner decision, 2026-11-03".
      Open away, because a re-read needs its phases, its Cancel and its failure on
      screen. Decision 3 keeps a view on screen during another setting's run; that is
      View with…'s, and it can move there with it. Here Cancel brings the preview back.
+     So a re-read gives the row the highlight first, or a row the reader had moved
+     off would run, or be refused, with nothing on screen saying so.
    - **A view is its own fact in the conversion lane,** not a read: the queue's
      Convert answers `raw-view-running`, with decision 5's sentence and Show {name},
      and the scan selection says the same.
@@ -1456,18 +1467,22 @@ unless it carries "Owner decision, 2026-11-03".
      row is looked at, and one `role="alert"`, as decision 1 asks.
    - **The keyboard.** Tabs, then Convert, then the panel (`Tabs` takes `actions`).
      Storing has no button, so the pane itself holds the keyboard. Open and a re-read
-     hand it to the evidence and the pane.
+     hand it to the evidence and the pane. Show goes to the row, or where the list
+     stays folded to the evidence, and Tab reaches the pane's first button. A held
+     Enter presses nothing in the pane or on a failed open's actions, because each
+     press hands the keyboard to the next button.
    - **Converted at** is in the reader's locale, with the recorded instant as its title.
 9. **What went to the owner.**
    - **DEF-2.** `OWNER_DECISIONS_V511.md` says it blocks shipping the view cache.
-     Until it is answered no uninstall removes the cache unless "Delete the
-     application data" is checked, and no NSIS hook is written here.
-     Owner decision, 2026-11-03 (DEF-2): option (b). Uninstall always removes the
-     cache folder, including `/S` and `/P`, except on `/UPDATE`. Presets and
-     preferences stay opt-in behind "Delete the application data". It is built as a
-     separate change, `be/uninstall-view-cache`, which must land before any release
-     that ships the view cache. This change touches no NSIS hook, so until that one
-     lands the sentence above still describes an uninstall.
+     Owner decision, 2026-11-03 (DEF-2): option (b). Always remove the cache folder
+     on uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets and
+     preferences stay opt-in behind "Delete the application data". A release-path
+     change: an NSIS hook.
+     Not an owner decision: this change writes no hook, so until one lands no uninstall
+     removes the cache unless "Delete the application data" is checked. The hook is
+     planned as a separate change, `be/uninstall-view-cache`, which does not exist yet.
+     Whether it must land before this change merges is not answered: the decision page
+     says DEF-2 blocks shipping the view cache, and the answer names no order.
    - **The split of View with… and the Settings row** (note 7). Until the row exists
      the cache is bounded by its 10 GiB cap, and a person has no way to clear it.
      Owner decision, 2026-11-03 (A0060-split): accepted. View with… and the Settings
@@ -1610,6 +1625,11 @@ None blocks slices 1 and 2. Questions 1 and 8 gate slice 3: its work starts
 once the owner has answered them, and their defaults are recommendations, not
 answers. Every other question has a recommended default, which stands unless
 the owner chooses otherwise.
+
+Owner decision, 2026-10-30 (A0060): Q1: a View button. Q8: slice 3 builds on #164's
+structure (FE-1 (a)), with decision 1's content, the phases, Cancel and the CNV-D8
+progress amendment as written. The pane's place moves with FE-2. The defaults of
+Q2–Q5 and Q7 stand. Q6, the hold release, stays open under HR-1.
 
 1. **The entry point (gates slice 3).** The accepted wording is "Selecting a
    Thermo RAW row to view converts it". This record recommends a View button,

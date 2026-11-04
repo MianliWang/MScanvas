@@ -8,10 +8,10 @@
  * Every control is found by structure, never by its words. No file is read and
  * no provider or engine runs; decision 14's native QA is a later hold release.
  */
-import { metrics } from "../support/cdp";
-import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
+import { cdp, metrics } from "../support/cdp";
+import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeRejection, setInvokeResult } from "../support/harness";
 import { NO_PROJECT, scenario, type Locale } from "../support/pm9Scenarios";
-import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
+import { readBackSavedPreferences, revealRosterRow, selectTheSpectrum } from "../support/viewer";
 import { availableBackend, completeCatalog, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
 import type { SelectedFile } from "../../apps/desktop/src/features/mzml-preview/contracts";
 
@@ -108,6 +108,21 @@ async function calls(command: string): Promise<number> {
   return (await ipcCalls()).filter((call) => call.command === command).length;
 }
 
+/** Enter held down as the system repeats it: one press, then repeated keydowns on whatever has the keyboard. */
+async function holdEnter(repeats = 12) {
+  const enter = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+  // Without the text the browser presses no button, and this would pass for the wrong reason.
+  const down = { type: "keyDown", ...enter, text: "\r", unmodifiedText: "\r" };
+  await cdp("Input.dispatchKeyEvent", down);
+  for (let repeat = 0; repeat < repeats; repeat += 1) {
+    await browser.pause(35);
+    await cdp("Input.dispatchKeyEvent", { ...down, autoRepeat: true });
+  }
+  await cdp("Input.dispatchKeyEvent", { type: "keyUp", ...enter });
+}
+
+const focusOn = (css: string) => browser.execute((target: string) => document.querySelector<HTMLElement>(target)?.focus(), css);
+
 async function clean() {
   const unexpected = (await consoleEntries())
     .filter((entry) => !ALLOWED_CONSOLE_SUBSTRINGS.some((allowed) => entry.text.includes(allowed)))
@@ -159,15 +174,129 @@ for (const locale of ["en", "zh-CN"] as const) {
         await phase("checkingCachedCopy");
         await step(ready({ cacheHit: true }));
         await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 10_000 });
+        await foldNarrowRoster();
+        await selectTheSpectrum(0);
         const reason = await browser.$("[data-view-export-withheld]").getAttribute("id");
         const exports = await browser.$$(".figure-quick-actions > .ui-button:not([aria-haspopup])");
-        expect(await exports.length).toBeGreaterThan(0);
+        expect(await exports.length).toBe(2);
         for (const button of await exports.getElements()) {
           expect(await button.getAttribute("aria-disabled")).toBe("true");
           expect(await button.getAttribute("aria-describedby")).toContain(reason);
         }
+        // Both plots' ⋯: the first item is the plot's own range, and the rest are exports.
+        for (const menu of await browser.$$('.figure-quick-actions button[aria-haspopup="menu"]').getElements()) {
+          await menu.click();
+          await browser.$('[role="menu"]').waitForExist({ timeout: 10_000 });
+          const items = await browser.execute(() => Array.from(document.querySelectorAll('[role="menuitem"]')).map(item => item.getAttribute("aria-disabled")));
+          expect(items.length).toBeGreaterThan(2);
+          expect(items.slice(1).every(refused => refused === "true")).toBe(true);
+          await browser.keys("Escape");
+          await browser.$('[role="menu"]').waitForExist({ reverse: true, timeout: 10_000 });
+        }
         expect(await browser.$("[data-raw-view-convert]").isDisplayed()).toBe(true);
         expect(await calls("begin_chromatogram_export")).toBe(0);
+        expect(await calls("begin_selected_spectrum_export")).toBe(0);
+        await clean();
+      });
+
+      it("a held Enter presses one button: View does not cancel, and Cancel does not view", async () => {
+        const table = world(locale, running("converting"));
+        await open(locale, viewport, table);
+        await highlight(FIRST);
+        await offered("[data-raw-view-view]");
+        await step(running("converting"));
+        await focusOn("[data-raw-view-view]");
+        await holdEnter();
+        await phase("converting");
+        await browser.waitUntil(async () => browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-cancel") === true), { timeout: 10_000, timeoutMsg: "the keyboard did not reach Cancel" });
+        expect(await calls("begin_raw_view")).toBe(1);
+        expect(await calls("cancel_raw_view")).toBe(0);
+
+        await step(table["cancel_raw_view"]);
+        await holdEnter();
+        await browser.$('[data-raw-view="cancelled"]').waitForExist({ timeout: 10_000 });
+        await browser.waitUntil(async () => browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-view") === true), { timeout: 10_000, timeoutMsg: "the keyboard did not reach View" });
+        expect(await calls("cancel_raw_view")).toBe(1);
+        expect(await calls("begin_raw_view")).toBe(1);
+        await clean();
+      });
+
+      it("Show by keyboard goes to the row, or where the list stays folded to the evidence, and never the body", async () => {
+        const narrow = viewport[0] <= 1050;
+        const press = async (show: string) => {
+          await browser.$(show).waitForExist({ timeout: 10_000 });
+          await focusOn(show);
+          await browser.keys("Enter");
+          await browser.$("[data-raw-view-pane]").waitForExist({ timeout: 10_000 });
+          // Long enough for a row's reveal to have had its turn, and for a read to have answered.
+          await browser.pause(500);
+          const where = await browser.execute(() => document.activeElement === document.body ? "body" : document.activeElement?.id === "workbench-evidence" ? "evidence" : document.activeElement?.matches("[data-handle]") ? "row" : "pane");
+          expect(where).toBe(narrow ? "evidence" : "row");
+        };
+        const withState = (state: unknown, availability: unknown = AVAILABLE) => {
+          const table = world(locale);
+          table.get_raw_view_state = { state, availability };
+          return table;
+        };
+        const busy = { available: false, code: "raw_view_busy" };
+
+        await open(locale, viewport, withState(ready()));
+        await press("[data-status-raw-view] button");
+        await browser.$("[data-raw-view-open]").waitForExist({ timeout: 10_000 });
+
+        await open(locale, viewport, withState({ state: "failed", operation: 1, handle: FIRST.handle, intentId: shippedIntent.id, code: "raw_view_source_changed", message: "Controlled", retryable: true, neededBytes: null, freeBytes: null }));
+        await press("[data-status-raw-view] button");
+        await browser.$("[data-raw-view-retry]").waitForExist({ timeout: 10_000 });
+
+        await open(locale, viewport, withState(running("converting"), busy));
+        await press("[data-status-raw-view] button");
+        await phase("converting");
+
+        await open(locale, viewport, withState(running("converting"), busy));
+        await browser.$('.workbench-navigation [data-surface-tab="conversion"]').click();
+        await press(".raw-view-notice button");
+        await phase("converting");
+
+        await open(locale, viewport, withState(running("converting"), busy));
+        await revealRosterRow(OPEN.handle);
+        await browser.$(`.grouped-roster [data-handle="${OPEN.handle}"]`).click();
+        await browser.$("[data-raw-view-held]").waitForExist({ timeout: 10_000 });
+        await press(".evidence-state:has([data-raw-view-held]) button");
+        await phase("converting");
+        await clean();
+      });
+
+      it("a re-read of a row no longer highlighted shows its refusal, or runs in the pane", async () => {
+        const again = '#workbench-evidence[data-evidence="failed"] .evidence-actions button';
+        const failedAndLeft = async () => {
+          const table = world(locale);
+          table.get_raw_view_state = { state: ready(), availability: AVAILABLE };
+          table.open_raw_view = { __reject: { kind: "view_cache_entry_lost", summary: "gone", detail: null, retryable: true } };
+          await open(locale, viewport, table);
+          await highlight(FIRST);
+          await browser.$("[data-raw-view-open]").click();
+          await browser.$(again).waitForExist({ timeout: 10_000 });
+          await revealRosterRow(FIRST.handle);
+          await focusOn(`.grouped-roster [data-handle="${FIRST.handle}"]`);
+          await browser.keys(" ");
+          await browser.waitUntil(async () => (await browser.$(`.grouped-roster [data-handle="${FIRST.handle}"]`).getAttribute("aria-selected")) !== "true");
+          await foldNarrowRoster();
+          await browser.$(again).waitForDisplayed({ timeout: 10_000 });
+          await focusOn(again);
+        };
+
+        await failedAndLeft();
+        await setInvokeRejection("begin_raw_view", { kind: "view_cache_unavailable", summary: "gone", detail: null, retryable: false });
+        await browser.keys("Enter");
+        await browser.$('#workbench-evidence [data-raw-view-refusal="view_cache_unavailable"]').waitForDisplayed({ timeout: 10_000 });
+        expect(await browser.execute(() => document.activeElement?.closest("[data-raw-view-pane]") !== null)).toBe(true);
+
+        await failedAndLeft();
+        await step(running("checkingSource", { operation: 2 }));
+        await setInvokeResult("begin_raw_view", running("checkingSource", { operation: 2 }));
+        await browser.keys("Enter");
+        await phase("checkingSource");
+        await browser.waitUntil(async () => browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-cancel") === true), { timeout: 10_000, timeoutMsg: "the keyboard did not reach Cancel" });
         await clean();
       });
 
@@ -324,11 +453,14 @@ for (const locale of ["en", "zh-CN"] as const) {
 
         await step(running("checkingSource", { operation: 2 }));
         await setInvokeResult("begin_raw_view", running("checkingSource", { operation: 2 }));
-        await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), again);
-        await browser.keys("Enter");
+        await focusOn(again);
+        await holdEnter();
         await phase("checkingSource");
-        // The pressed button left with the failure; the keyboard is on what replaced it.
+        // The pressed button left with the failure; the keyboard is on what replaced it,
+        // and the held key pressed neither again.
         await browser.waitUntil(async () => browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-cancel") === true), { timeout: 10_000, timeoutMsg: "the keyboard did not reach Cancel" });
+        expect(await calls("begin_raw_view")).toBe(1);
+        expect(await calls("cancel_raw_view")).toBe(0);
 
         await step({ state: "failed", operation: 2, handle: FIRST.handle, intentId: shippedIntent.id, code: "view_cache_not_stored", message: "Controlled", retryable: true, neededBytes: null, freeBytes: null });
         await browser.$('[data-raw-view-code="view_cache_not_stored"]').waitForExist({ timeout: 10_000 });

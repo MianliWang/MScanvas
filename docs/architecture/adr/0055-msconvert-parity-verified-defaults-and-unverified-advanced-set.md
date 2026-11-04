@@ -253,6 +253,7 @@ default.
 > not a conflict policy, because a view has no destination. On an unmeasured build
 > a view carries the label beside View, in its progress, in the file row and in
 > the Metadata tab; exports of a view are withheld until they can carry it too.
+> Not an owner decision (ADR 0060 slice 3 note 10).
 
 ### 4. An ordered filter chain replaces the nine fixed rows
 

@@ -82,6 +82,7 @@ import {
   describeRemoveResult,
   describeRestoreResult,
   initialRosterState,
+  pressRowActions,
   rosterReducer,
   rowStateForError,
   type RosterAction,
@@ -2114,13 +2115,19 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     const handle = rosterRef.current.active;
     if (handle === null) return;
     // A viewed row is read only through a view. A failed open left its entry in
-    // the cache, so this is a hit (ADR 0060 decision 10).
-    if (rosterRef.current.datasets.some((row) => row.handle === handle && row.sourceKind === "thermo_raw")) {
+    // the cache, so this is a hit (ADR 0060 decision 10). Its phases, its Cancel
+    // and any refusal are in the row's pane, so the row takes the highlight first;
+    // one already highlighted keeps the rows highlighted with it.
+    const current = rosterRef.current;
+    if (current.datasets.some((row) => row.handle === handle && row.sourceKind === "thermo_raw")) {
+      if (current.focused !== handle || !current.selected.has(handle)) {
+        for (const action of pressRowActions(current, handle)) dispatchRoster(action);
+      }
       rawView.begin(handle);
     } else {
       activateDataset(handle);
     }
-  }, [activateDataset, rawView.begin]);
+  }, [activateDataset, dispatchRoster, rawView.begin]);
 
   const admitProjectInput = useCallback(
     (result: WorkspaceAddResult) => {
