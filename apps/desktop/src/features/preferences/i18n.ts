@@ -156,6 +156,7 @@ export interface MessageParameters {
   readonly outputOpenGroup: { readonly name: string };
   readonly stagingRecoveryOwned: { readonly count: number };
   readonly clearCounts: { readonly count: number; readonly total: number; readonly protected: string };
+  readonly clearCountsView: { readonly count: number; readonly total: number; readonly protected: string };
   readonly linkedHeight: { readonly value: string };
   readonly viewerExportRtWindow: { readonly low: string; readonly high: string };
   readonly viewerLinkedCopied: { readonly width: string; readonly height: string; readonly theme: string; readonly index: string; readonly count: number };
@@ -286,6 +287,16 @@ export interface MessageParameters {
   readonly shellContextProject: { readonly name: string };
   readonly shellContextActivity: { readonly activity: string };
   readonly statusBusy: { readonly reason: string };
+  readonly rawViewShow: { readonly name: string };
+  readonly rawViewPhaseAnnounce: { readonly name: string; readonly phase: string };
+  readonly rawViewReady: { readonly name: string };
+  readonly rawViewOpened: { readonly name: string };
+  readonly rawViewStatus: { readonly name: string; readonly elapsed: string };
+  readonly rawViewBusy: { readonly name: string };
+  readonly rawViewFailedStatus: { readonly name: string };
+  readonly rawViewNoSpace: { readonly needed: string; readonly free: string };
+  readonly rawViewFreeNow: { readonly free: string };
+  readonly rawViewFailureWithFree: { readonly failure: string; readonly free: string };
 }
 export type MessageArguments<K extends MessageKey> = K extends keyof MessageParameters
   ? [parameters: MessageParameters[K]] : [];

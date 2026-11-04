@@ -24,6 +24,8 @@ export interface SpectrumSelectionLane {
   readonly backendBusy: boolean;
   /** Whether a conversion owns it. */
   readonly conversionBusy: boolean;
+  /** Whether a one-click view holds the slot (ADR 0060 decision 5). */
+  readonly rawViewBusy: boolean;
 }
 
 /**
@@ -59,7 +61,8 @@ export type SpectrumSelectionUnavailableReason =
   | "no-loaded-run"
   | "backend-unavailable"
   | "backend-changing"
-  | "conversion-running";
+  | "conversion-running"
+  | "raw-view-running";
 
 /**
  * Whether a selection may start, and what to say when it may not.
@@ -125,6 +128,9 @@ function unavailableReason(lane: SpectrumSelectionLane): SpectrumSelectionUnavai
   }
   if (lane.conversionBusy) {
     return "conversion-running";
+  }
+  if (lane.rawViewBusy) {
+    return "raw-view-running";
   }
   return null;
 }
