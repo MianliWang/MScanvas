@@ -422,6 +422,26 @@ fn a_schema_two_record_needs_the_group_and_refuses_anything_more_in_it() {
         read_record(&with_display(|display| *display = "standard".into())),
         Err(RecordProblem::Malformed)
     );
+    // The rest of a schema 2 record is held the same way, at every level.
+    for (group, field, value) in [
+        (None, "lastFolder", serde_json::json!("D:\\data")),
+        (Some("appearance"), "theme", serde_json::json!("dark")),
+        (Some("appearance"), "locale", serde_json::json!("de")),
+        (Some("layout"), "width", serde_json::json!(280)),
+        (Some("layout"), "roster", serde_json::json!("maybe")),
+    ] {
+        let mut record = serde_json::to_value(UiPreferences::default()).expect("the document");
+        let target = match group {
+            Some(group) => &mut record[group],
+            None => &mut record,
+        };
+        target[field] = value;
+        assert_eq!(
+            read_record(&serde_json::to_vec(&record).expect("the bytes")),
+            Err(RecordProblem::Malformed),
+            "{record}"
+        );
+    }
 }
 
 #[test]
