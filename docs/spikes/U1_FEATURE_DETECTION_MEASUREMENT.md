@@ -502,39 +502,63 @@ decision page, version 2026-11-03.2, and in chat the same day for CK-6 and CK-7.
 The ids below are that page's, and the labels are its labels in English. None of
 this is built yet. The rest of this section stays as written, as the evidence of
 what was recommended on 2026-10-30. Where the two differ, this note replaces the
-recommendation.
+recommendation. Each "Cost" comes from the page's list for the option chosen.
 
 - **B-11.4, U1-2.2: "4 GiB, two tiers".** The recommendation stands: a 4 GiB Job
   commit cap, and a typed refusal above 150 M MS1 peaks at noise 1e4 or more and
   above 80 M below 1e4. Its precondition stands too: U1's source check keeps no
-  copy of the MS1 spectra.
-- **U1-2.1: "Keep 600 s".** The recommendation stands.
+  copy of the MS1 spectra. Cost: at 1e3 a 2 GiB file is refused, and v5.11's
+  default noise of 1000 is in this tier; a new source check must be written, of
+  which only one item, the finite test, was measured (section 5.4).
+- **U1-2.1: "Keep 600 s".** The recommendation stands. Cost: a file near the
+  limit may time out on a busy machine (section 6.2), and the user waits until
+  then to know.
 - **U1-1, CK-6: "Let the user set the thread count".** This replaces U1's
   `OMP_NUM_THREADS=1`. The default is 1 and the range is 1 to the logical core
   count. The thread count is in the reuse key until real files prove the result
   does not change. This record measured 1 and 4 threads only. The answer pins
-  `OPENBLAS_NUM_THREADS=1`, which this record's runs did not measure.
+  `OPENBLAS_NUM_THREADS=1`, which this record's runs did not measure. Cost: above
+  4 threads there is no speed-up data; a changed thread count reruns the sample
+  until then; v5.11 has no such field, so there is one more parameter to record.
+  The headroom figures in this section were computed at 1 and 4 threads only.
 - **U1-2.3: "Measure lower thresholds first, then set the floor".** This
-  replaces the recommendation to refuse until a lower value is measured, with
-  1e3 as the floor: the floor is set from that measurement. Until it exists, a
-  threshold below 1e3 stays refused, as this section says. That refusal is this
-  record's own reading, not an owner decision.
+  replaces the recommendation, which was to refuse until a lower value is
+  measured and to keep 1e3 as the floor. The floor is set from that measurement
+  instead. Until it exists, a threshold below 1e3 stays refused, as this section
+  says. That refusal is this record's own reading, not an owner decision. Cost:
+  it needs lawful data and a measuring window; the roadmap's measurement item
+  does not include it, and it is not estimated; until then this field's range
+  cannot be set; lower thresholds take more memory, about 2.1–9.9 GiB with every
+  peak above the threshold (ceiling arithmetic, not a prediction), so 4 GiB may
+  need a third tier. The owner has not been asked about that tier.
 - **B-4.6: "By instrument: Orbitrap 1e4, QTOF 1e3".** This section recommended a
   floor, not a default; the answer sets the default. At these defaults an
   Orbitrap file falls under the 150 M tier and a QTOF file under the 80 M tier.
+  Cost: the file's declared analyzer must be read; real files declare a
+  combination, so the rule must be written on CV terms, and an unclear
+  declaration must be entered by hand; the QTOF basis is one file. Where the
+  analyzer is read is still open.
 - **CK-7: "Accept the refusal; its message says the threshold can be changed to
-  1e4".** The 80 M tier stands, so QTOF files over about 1.47 GiB are refused at
-  the default 1e3. That size is the decision page's figure, not a measurement of
-  this record. The threshold is never adjusted automatically.
+  1e4".** The 80 M tier stands, so at file A's density (19.7 bytes per peak on
+  disk) QTOF files over about 1.47 GiB are refused at the default 1e3. The
+  refusal counts MS1 peaks, not bytes, and other densities differ. That size is
+  the decision page's figure, not a measurement of this record. The threshold is
+  never adjusted automatically. Cost: at 1e4 features fall sharply (measured
+  4,840 to 475, section 5.3), and a large QTOF file is refused the first time.
 - **B-5: "Both at once".** This section made no recommendation on polarity. U1
-  does both polarities at once, and this record measured positive only: both
-  files in section 3 are ESI positive.
+  covers negative mode as well as positive from the start, and this record
+  measured positive only: both files in section 3 are ESI positive. Cost: U1's
+  verification doubles; adduct grouping (U4) needs a negative adduct set, which
+  U1 does not; negative mode's time and memory are not measured.
 - **B-11.2: "Accept the EMBL-EBI terms; measure locally only".** This section
-  made no recommendation on data. The answer accepts the terms section 3 names;
-  the files are neither committed nor redistributed.
+  made no recommendation on data. The answer accepts the terms section 3 names.
+  Cost: they are not an open-data licence, so the files are neither committed nor
+  redistributed, and whether they may go on Actions is unconfirmed.
 - **B-11.3: "One 1-2 GiB Orbitrap run is still required".** This section made no
   recommendation on that run. Larger files stay an extrapolation through MS1
-  peak counts (section 6) until it exists.
+  peak counts (section 6) until it exists. Cost: first estimated at 2 slices, of
+  which this record did part, the rest not estimated; B-11.2's data question
+  comes first.
 
 Recommendations for the owner and the U1 recipe record. Nothing here changes
 `targeted_ms1.rs`.
@@ -595,7 +619,7 @@ Targeted MS1 shares the import. The single 167 s import used about 28 % of its
 ## 8. What this does not show
 
 **2026-11-03.** B-5 and B-11.3 keep two of these gaps open as work still owed
-(negative mode; a 1-2 GiB Orbitrap run), and U1-2.3 keeps the third (thresholds
+(negative mode; a 1-2 GiB Orbitrap run), and U1-2.3 keeps a third (thresholds
 below 1e3).
 
 - **No 1–2 GiB Orbitrap run.** The larger file is 0.89 GiB QTOF data. The
