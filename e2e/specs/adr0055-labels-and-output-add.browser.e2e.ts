@@ -607,7 +607,8 @@ describe("A0055 and ADR 0052, rendered", () => {
         return {
           pressed: reason(`${one} ${button}`),
           other: reason(`${other} ${button}`),
-          // Drawn, not merely in the document: every member's label stays on the screen.
+          // Has a box, not merely in the document. A labelled set is this fixture's
+          // shape, which Rust does not produce: it only drives OutputOpenActions.
           tags: [...document.querySelectorAll(".conversion-run-list [data-not-verified]")].filter((each) => each.getBoundingClientRect().height > 0).length,
         };
       }, OUTPUT_ADD, pressed, group(locale, SET_NAMES[2]!));
