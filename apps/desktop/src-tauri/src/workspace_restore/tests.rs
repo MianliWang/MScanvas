@@ -1478,6 +1478,25 @@ fn a_file_replaced_after_the_re_check_stays_a_marked_row_beside_what_was_admitte
         states(&restored(&store)),
         vec![("a.mzML".to_owned(), RowState::Changed)]
     );
+
+    // Not counted, though it was not refused: as built, not an owner decision
+    // (ADR 0061, decision 10). What the next start loads says so.
+    let handle = answer.workspace.roster.datasets[0].handle.clone();
+    assert_eq!(
+        store.save_with(&ungrouped(&[handle.as_str(), "restored-0"]), || {
+            service.workspace_restore_rows()
+        }),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(
+        states(&restored(&reopen(&scratch))),
+        vec![
+            ("a.mzML".to_owned(), RowState::Matching),
+            ("a.mzML".to_owned(), RowState::Changed),
+        ],
+        "the new file as added, and the row that stays marked"
+    );
+    assert_eq!(offered_counts(&scratch), vec![0, 0]);
 }
 
 #[test]
