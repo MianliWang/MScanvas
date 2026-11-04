@@ -160,9 +160,11 @@ pub enum WheelHabit {
 ///
 /// A group of its own rather than more of [`AppearancePreferences`], which the
 /// webview uses as its session state. Every default keeps what a build without
-/// these fields does, which is why `crosshair` is off: a plot draws no pointer
-/// lines today, only a crosshair cursor, and that cursor is not this switch.
-/// That default is a reading, not an owner decision.
+/// these fields does, which is why `crosshair` is off: no plot draws a crosshair
+/// today. The chromatogram's dashed rule at the hovered scan and the crosshair
+/// cursor style are not this switch; whether that rule answers to it is N-V4's to
+/// decide, and off must not hide it. That default is a reading, not an owner
+/// decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DisplayPreferences {
@@ -172,8 +174,10 @@ pub struct DisplayPreferences {
     pub wheel_habit: WheelHabit,
     pub crosshair: bool,
     pub grid: bool,
-    /// Whether interface preferences are written at all. The record keeps this
-    /// switch itself; [`super::UiPreferenceStore::save`] applies its rule.
+    /// Whether interface preferences are written at all, by the rule in
+    /// [`super::UiPreferenceStore::save`]. The record keeping this switch itself
+    /// is a reading, not an owner decision: V-7.3 chose the switch and left open
+    /// where "off" is stored.
     pub remember: bool,
 }
 

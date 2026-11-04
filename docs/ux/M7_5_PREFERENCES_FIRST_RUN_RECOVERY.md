@@ -544,7 +544,7 @@ Settings row exists for them; the lanes that add the rows bring the behaviour.
 | `display.contrast` | `normal` \| `high` | `normal` | the one contrast |
 | `display.motion` | `system` \| `reduce` | `system` | motion follows the system |
 | `display.wheelHabit` | `draw` \| `figma` | `draw` | the wheel zooms |
-| `display.crosshair` | `true` \| `false` | `false` | no pointer lines are drawn; the crosshair cursor is not this switch |
+| `display.crosshair` | `true` \| `false` | `false` | no plot draws a crosshair; the chromatogram's hover rule and the crosshair cursor are not this switch |
 | `display.grid` | `true` \| `false` | `true` | gridlines are drawn |
 | `display.remember` | `true` \| `false` | `true` | every commit is written |
 
@@ -565,21 +565,30 @@ defaults and leaves the file, the cost V-7.1 accepted. Beta 1 probes the version
 first, so it reports `unsupportedVersion` and says "The saved file was written
 by a newer version of MSCanvas."
 
-**The write rule (V-7.3).** A commit that leaves remembering off is not written
-and answers `notRemembered`; the session keeps the choice and says it is this
-session's. The commit that turns it off writes that switch and no other change.
-The commit that turns it on is written whole. The record keeps the switch.
-
-Four parts of this are as built on 2026-11-04, each a reading and not an owner
+Five parts of this are as built on 2026-11-04, each a reading, not an owner
 decision:
 
+- The write rule. V-7.3 (2026-11-03) chose the switch and accepted that where
+  "turned off" is stored needs a rule, and that rule is open: its row in section
+  1d of `OWNER_DECISIONS_V511.md` (#212, not merged) says "Open: that rule", and
+  owner question "V-7.3 ProteoWizard 文件夹" is unanswered. As built, the record
+  keeps the switch. A commit that leaves remembering off is not written and
+  answers `notRemembered`; the session keeps the choice and says it is this
+  session's. The commit that turns it off writes that switch and no other change.
+  The commit that turns it on is written whole, and so is a confirmed replacement
+  of an unusable record, because that confirmation says it stores the preferences
+  shown.
 - The ProteoWizard folder is still remembered and forgotten while remembering is
   off, because it is what lets the next launch find the tools. It never reaches
   the webview.
 - Turning remembering off leaves what was stored in place, so the next launch
-  still starts on it. The v5.11 demo removes it instead.
-- `display.crosshair` defaults to off, because no pointer lines are drawn today.
-  The v5.11 demo defaults it on.
+  still starts on it. The v5.11 demo removes it instead, and the gain V-7.3 was
+  chosen with, "不想留记录的人有开关" (people who want no record have a switch),
+  points that way too.
+- `display.crosshair` defaults to off, because no plot draws a crosshair today.
+  The chromatogram does draw a dashed rule at the hovered scan, and the spectrum
+  draws no pointer line. Whether that rule answers to this switch is N-V4's to
+  decide, and off must not hide it. The v5.11 demo defaults the switch on.
 - `display` is a new root group rather than part of `appearance`, and whether
   Reset defaults reaches it belongs to the lanes that add the rows.
 
