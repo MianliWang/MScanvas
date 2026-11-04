@@ -307,11 +307,16 @@ function CopyDiagnostics() {
     // Only from the button that asked, or from what the failure took away, which
     // leaves the keyboard on the dialog: a reader who has since moved keeps their place.
     const active = document.activeElement;
-    if (read.status === "read" && active === opener.current) {
-      // A new value leaves the caret at its end, and focus shows only the caret's line.
-      preview.current?.setSelectionRange(0, 0);
-      preview.current?.focus();
-      preview.current?.scrollIntoView?.({ block: "nearest" });
+    const box = preview.current;
+    if (read.status === "read" && box !== null) {
+      // A new value leaves the box where it had scrolled and the caret at its end, and
+      // focus shows only the caret's line. Wherever the keyboard is: Tab can come back.
+      box.setSelectionRange(0, 0);
+      box.scrollTop = 0;
+      if (active === opener.current) {
+        box.focus();
+        box.scrollIntoView?.({ block: "nearest" });
+      }
     }
     if (read.status !== "failed") return;
     if (active === null || active === document.body || active.matches("[data-settings-dialog]")) opener.current?.focus({ preventScroll: true });

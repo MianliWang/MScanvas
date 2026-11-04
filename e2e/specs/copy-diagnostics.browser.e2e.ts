@@ -107,6 +107,22 @@ const toEdge = (selector: string) => browser.execute((css: string) => {
 }, selector);
 /** Past what an answer rendered and the effects that follow it. */
 const aFrameLater = () => browser.execute(() => new Promise((done) => { requestAnimationFrame(() => { requestAnimationFrame(done); }); }));
+/** The box's first line on screen and the rest below the body, so anything that scrolls to it shows. */
+const boxHalfBelow = () => browser.execute((body: string, box: string) => {
+  const scroller = document.querySelector(body)!;
+  scroller.scrollTop += document.querySelector(box)!.getBoundingClientRect().top - scroller.getBoundingClientRect().bottom + 40;
+}, BODY, PREVIEW);
+const bodyTop = () => browser.execute((css: string) => document.querySelector(css)?.scrollTop ?? null, BODY);
+/** A pointer action at a visible point: an element click scrolls it into view first. */
+async function pressTheText() {
+  const text = await boxOf(PREVIEW);
+  await browser.action("pointer").move({ x: Math.round((text.left + text.right) / 2), y: Math.round(text.top + 20) }).down().up().perform();
+}
+/** Where the box has scrolled to and where its caret is. */
+const boxPlace = () => browser.execute((css: string) => {
+  const box = document.querySelector<HTMLTextAreaElement>(css)!;
+  return { top: box.scrollTop, caret: box.selectionStart };
+}, PREVIEW);
 
 describe("Copy diagnostics, rendered", () => {
   afterEach(async () => {
@@ -232,10 +248,7 @@ describe("Copy diagnostics, rendered", () => {
         await browser.$(READ).click();
         await browser.waitUntil(() => activeMatches(PREVIEW));
         // The box's first line is on screen, so the caret alone would not move the body.
-        await browser.execute((body: string, box: string) => {
-          const scroller = document.querySelector(body)!;
-          scroller.scrollTop += document.querySelector(box)!.getBoundingClientRect().top - scroller.getBoundingClientRect().bottom + 40;
-        }, BODY, PREVIEW);
+        await boxHalfBelow();
         await setInvokeResult(COMMAND, SECOND_READING);
         await pressAt(READ);
         await browser.waitUntil(async () => (await value()) === SECOND_READING);
@@ -243,8 +256,40 @@ describe("Copy diagnostics, rendered", () => {
         await aFrameLater();
         await inTheBody(READ, PREVIEW, COPY);
         // From its first line, as a first read shows it.
-        expect(await browser.execute((css: string) => document.querySelector(css)?.scrollTop, PREVIEW)).toBe(0);
+        expect((await boxPlace()).top).toBe(0);
       });
+
+      // A slow worker or profile volume leaves time to move. The keyboard and the body
+      // stay with the reader, and the new text still starts at its first line.
+      for (const holder of [COPY, PREVIEW]) {
+        it(`a second read shows its first line to a reader who moved to ${holder}, ${locale} ${String(width)}x${String(height)}`, async () => {
+          await open(locale, width, height);
+          await browser.$(READ).click();
+          await browser.waitUntil(() => activeMatches(PREVIEW));
+          await holdInvoke(COMMAND);
+          await setInvokeResult(COMMAND, SECOND_READING);
+          await pressAt(READ);
+          await browser.$(`${READ}[aria-disabled="true"]`).waitForExist();
+          await browser.keys("Tab");
+          if (holder === COPY) await browser.keys("Tab");
+          expect(await activeMatches(holder)).toBe(true);
+          await browser.execute((css: string) => { document.querySelector(css)!.scrollTop = 400; }, PREVIEW);
+          const before = await bodyTop();
+
+          await releaseInvokeHold(COMMAND);
+          await browser.waitUntil(async () => (await value()) === SECOND_READING);
+          await aFrameLater();
+          expect(await activeMatches(holder)).toBe(true);
+          expect(await boxPlace()).toEqual({ top: 0, caret: 0 });
+          expect(await bodyTop()).toBe(before);
+
+          // Back into the box from Copy: the caret decides what focus shows.
+          if (holder === COPY) await browser.keys(["Shift", "Tab"]);
+          await aFrameLater();
+          expect(await activeMatches(PREVIEW)).toBe(true);
+          expect(await boxPlace()).toEqual({ top: 0, caret: 0 });
+        });
+      }
 
       // Copy sits on the body's lower edge after a wheel or a Tab, with its result
       // below it and the refusal pushing it further down.
@@ -279,6 +324,28 @@ describe("Copy diagnostics, rendered", () => {
         await inTheBody(COPY, COPY_FAILED);
         expect(await activeMatches(COPY)).toBe(true);
         expect(await browser.$(COPY_FAILED).getText()).toBe(words.diagnosticsCopyFailed);
+        // Copy's right edge is the column's, in both languages.
+        expect((await boxOf(COPY)).right).toBe((await boxOf(COPY_FAILED)).right);
+      });
+
+      // A Tab before the press is what could make it scroll, and a drag would lose its start.
+      it(`a press in the text after a Tab moves nothing, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await standInClipboard(true);
+        await browser.$(READ).click();
+        await browser.waitUntil(() => activeMatches(PREVIEW));
+        await browser.keys("Tab");
+        expect(await activeMatches(COPY)).toBe(true);
+        await pressAt(COPY);
+        await browser.$(COPY_FAILED).waitForDisplayed();
+        await aFrameLater();
+        await boxHalfBelow();
+        const before = await bodyTop();
+        await pressTheText();
+        expect(await activeMatches(PREVIEW)).toBe(true);
+        await aFrameLater();
+        expect(await bodyTop()).toBe(before);
+        await inTheBody(COPY_FAILED);
       });
 
       it(`a refused copy reached backwards by Tab shows the refusal whole, ${locale} ${String(width)}x${String(height)}`, async () => {
@@ -407,13 +474,10 @@ describe("Copy diagnostics, rendered", () => {
       expect(await value()).toBe(TEXT);
       // A person can still select all of it and take it themselves. The press
       // moves nothing: the reason stays in sight, and a drag would keep its text.
-      // A pointer action at a visible point: an element click scrolls it into view first.
-      const scrolled = () => browser.execute(() => document.querySelector(".settings-dialog-body")?.scrollTop ?? null);
-      const before = await scrolled();
-      const text = await boxOf(PREVIEW);
-      await browser.action("pointer").move({ x: Math.round((text.left + text.right) / 2), y: Math.round(text.top + 20) }).down().up().perform();
+      const before = await bodyTop();
+      await pressTheText();
       expect(await activeMatches(PREVIEW)).toBe(true);
-      expect(await scrolled()).toBe(before);
+      expect(await bodyTop()).toBe(before);
       expect(contains(await boxOf(".settings-dialog-body"), await boxOf(COPY_FAILED))).toBe(true);
       await browser.keys(["Control", "a"]);
       expect(await browser.execute((css: string) => {

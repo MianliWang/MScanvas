@@ -300,9 +300,9 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
 - The button reads when pressed, and again as **Read again**. A second read leaves
   the screen as it is until it answers, with **Copy** refused meanwhile, and the
   result of a copy still out when it was pressed is not shown, because that copy
-  took the old text. The answer shows the new text from its first line. A failed read
-  takes the text and **Copy** away, so if either had the keyboard it goes to
-  **Read again**.
+  took the old text. The answer shows the new text from its first line, wherever the
+  keyboard is. A failed read takes the text and **Copy** away, so if either had the
+  keyboard it goes to **Read again**.
 - The box is a fixed 200 px and scrolls inside the dialog's body, which scrolls too.
   Measured with the 42-line fixture at 1366x768 and 960x640: a 198 px client area
   holding 822 px, so about ten lines show, and `[ProteoWizard]` (line 19) and
@@ -458,9 +458,7 @@ Shown a list of decisions on 2026-11-03, question 8 of this record among them
 (P202), the owner replied "全部按推荐" ("all as recommended"). It is answered as
 recommended:
 
-8. **The sentence of decision 10:** not shown. #202 as built stands. Decision 10's
-   text stays as it was accepted on 2026-10-30, with this answer in a dated note
-   beside it.
+8. **The sentence of decision 10:** not shown. #202 as built stands.
 
 ## Open questions for the owner
 

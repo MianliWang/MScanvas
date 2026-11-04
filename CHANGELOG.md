@@ -7,7 +7,7 @@ All notable changes will be documented here once versioned releases begin.
 ### Added
 
 - **Copy diagnostics.** Settings → Support → **Copy diagnostics** shows a short
-  environment summary in a read-only box, and **Copy** puts exactly that text on
+  environment summary in a read-only box, and **Copy** puts that text on
   the clipboard, for you to paste into a bug report yourself. It holds the
   MSCanvas, Windows, WebView2 and ProteoWizard versions, whether that
   ProteoWizard is the verified build, and this session's recent error codes,

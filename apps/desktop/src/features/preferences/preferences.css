@@ -142,7 +142,7 @@
   line-height: 1.5;
 }
 .settings-diagnostics-preview textarea:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
-.settings-diagnostics-actions { display: flex; flex: none; flex-direction: column; align-items: flex-start; gap: 6px; }
+.settings-diagnostics-actions { display: flex; flex: none; flex-direction: column; align-items: flex-end; gap: 6px; }
 /* As wide empty as with "已复制。", so a new reading clearing it does not rewrap the text. */
 .settings-diagnostics-actions p { min-width: 4em; margin: 0; color: var(--color-text-secondary); font-size: 12px; }
 .settings-diagnostics-problem { margin: 0 0 8px; }
