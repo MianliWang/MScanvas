@@ -6294,6 +6294,13 @@ fn a_view_table_names_what_it_keeps_and_how_many_of_how_many() {
     let (table, count) = view_table(&stored, TableFormat::Csv, &view).expect("a table");
     assert_eq!(count, 2);
     assert_eq!(preamble_value(&table, "view_text"), "C8H10");
+
+    // A name typed in lower case finds the mixed-case name the page finds: only
+    // target 2's label holds "sum", so only the label can keep it.
+    let view = golden_view(&[2], &EVERY_OUTCOME, "sum", None);
+    let (table, count) = view_table(&stored, TableFormat::Csv, &view).expect("a table");
+    assert_eq!(count, 1);
+    assert_eq!(preamble_value(&table, "view_text"), "sum");
 }
 
 /// The same view writes the same line, whatever order its outcomes came in.
