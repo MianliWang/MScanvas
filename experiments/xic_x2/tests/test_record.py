@@ -113,6 +113,13 @@ class Record(unittest.TestCase):
         self.assertIn("its source was not kept", X2)
         self.assertIn("draws its own time axis", ADR)
 
+    def test_the_notes_this_pr_owed_leave_accepted_text_alone(self) -> None:
+        row = "| XIC: a per-scan sum of stored intensities inside an m/z window | The X0 scope record (N-13) | Not written. X-1 and X-2 decided its scope; this ADR does not restate it |"
+        self.assertIn(row, (REPO / "docs/architecture/adr/0070-computation-over-decoded-arrays.md").read_text(encoding="utf-8"))
+        self.assertIn("the second row speaks of 2026-10-30", prose("docs/architecture/adr/0070-computation-over-decoded-arrays.md"))
+        self.assertIn("X2 has run", prose("docs/architecture/adr/0071-xic-re-entry-and-its-first-version.md"))
+        self.assertIn("Status: **Proposed (2026-11-04).**", ADR)
+
 
 @unittest.skipUnless(EVIDENCE, "MSCANVAS_X2_EVIDENCE is not set")
 class RetainedRuns(unittest.TestCase):
