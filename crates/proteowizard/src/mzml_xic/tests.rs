@@ -369,6 +369,8 @@ fn an_excluded_scan_is_filtered_on_declared_metadata_without_decoding() {
     let row = &result.rows()[0];
     assert_eq!(row.state(), XicScanState::ExcludedByMsLevel);
     assert_eq!(row.ms_level(), Some(2));
+    // Declared metadata, so every row keeps its time (ADR 0046 §1).
+    assert_eq!(row.retention_time(), Some(60.0));
     assert!(!row.decode_attempted());
     assert!(!row.is_coverage_gap());
     assert!(result.is_complete());
@@ -391,6 +393,7 @@ fn an_undeclared_level_is_its_own_state_and_a_gap_and_is_never_guessed() {
     let row = &result.rows()[0];
     assert_eq!(row.state(), XicScanState::MsLevelUndeclared);
     assert_eq!(row.ms_level(), None);
+    assert_eq!(row.retention_time(), Some(60.0));
     assert!(!row.decode_attempted());
     assert_eq!(result.coverage_gaps(), 1);
     assert!(!result.is_complete());
@@ -525,25 +528,23 @@ fn a_nan_mz_ends_the_scan_before_intensity_is_decoded() {
     let nan_mz = mz_array(&[f64::NAN, 101.0]);
     let corrupt = corrupt_intensity();
     for arrays in [[nan_mz.clone(), corrupt.clone()], [corrupt, nan_mz]] {
-        assert_eq!(
-            only_state(&[spectrum(0, 2, &level_one, &time, &arrays)]),
-            XicScanState::NoUsableArrays
-        );
+        let result = evaluate(&[spectrum(0, 2, &level_one, &time, &arrays)]);
+        assert_eq!(result.rows()[0].state(), XicScanState::NoUsableArrays);
+        assert!(result.rows()[0].decode_attempted());
     }
 }
 
 #[test]
 fn a_wrong_mz_length_ends_the_scan_before_intensity_is_decoded() {
-    assert_eq!(
-        only_state(&[spectrum(
-            0,
-            2,
-            &level(1),
-            &scan_list(60.0),
-            &[mz_array(&[101.0]), corrupt_intensity()],
-        )]),
-        XicScanState::NoUsableArrays
-    );
+    let result = evaluate(&[spectrum(
+        0,
+        2,
+        &level(1),
+        &scan_list(60.0),
+        &[mz_array(&[101.0]), corrupt_intensity()],
+    )]);
+    assert_eq!(result.rows()[0].state(), XicScanState::NoUsableArrays);
+    assert!(result.rows()[0].decode_attempted());
 }
 
 #[test]
@@ -693,6 +694,32 @@ fn a_term_after_the_payload_is_unreadable() {
             reason: XicUnreadableReason::TermAfterPayload
         }
     );
+    // It is named over any reason the array already has, structural ones too.
+    let role = mz_role(MZ_UNIT);
+    let values = zlib(&le_f64(&[101.0]));
+    for inside in [
+        format!("<binary>{values}</binary><binary>{values}</binary>"),
+        format!("<binary><userParam/>{values}</binary>"),
+        format!("<binary>{values}&amp;</binary>"),
+    ] {
+        let late = format!(
+            r#"<binaryDataArray encodedLength="0">{role}{F64}{ZLIB}{inside}{F64}</binaryDataArray>"#
+        );
+        assert_eq!(
+            only_state(&[spectrum(
+                0,
+                1,
+                &level(1),
+                &scan_list(60.0),
+                &[late, intensity_array(&[1.0])],
+            )]),
+            XicScanState::Unreadable {
+                role: ArrayRole::Mz,
+                reason: XicUnreadableReason::TermAfterPayload
+            },
+            "{inside}"
+        );
+    }
 }
 
 #[test]
@@ -759,6 +786,37 @@ fn a_payload_over_its_bound_is_a_refusal_of_that_scan_and_the_pass_goes_on() {
         result.rows()[1].state(),
         XicScanState::Measured { .. }
     ));
+}
+
+#[test]
+fn a_payload_exactly_at_its_bound_is_read_and_one_byte_more_is_not() {
+    // One stored double, uncompressed: 12 base64 characters, and a bound of
+    // 12 + 12 / 32 + 1024 = 1036 under the reader's `encoded_bound`.
+    let values = plain(&le_f64(&[101.0]));
+    let state = |spaces: usize| {
+        let payload = format!("{}{}{}", &values[..4], " ".repeat(spaces), &values[4..]);
+        only_state(&[spectrum(
+            0,
+            1,
+            &level(1),
+            &scan_list(60.0),
+            &[
+                array(&[&mz_role(MZ_UNIT), F64, NO_COMPRESSION], &payload),
+                intensity_array(&[1.0]),
+            ],
+        )])
+    };
+    assert_eq!(
+        state(1024),
+        XicScanState::Measured {
+            sum: 1.0,
+            points_in_window: 1
+        }
+    );
+    assert_eq!(
+        state(1025),
+        unreadable(ArrayRole::Mz, ArrayProblem::EncodedTextOverBound)
+    );
 }
 
 #[test]
@@ -1031,6 +1089,21 @@ fn the_unit_rules_compare_the_raw_triple_so_a_synonym_is_a_mix() {
         ]),
         XicRefusal::MixedUnit(XicAxis::RetentionTime)
     );
+    // An attribute stated empty and an attribute not stated are two declarations.
+    let accession_only = r#"unitAccession="UO:0000031""#;
+    for stated_empty in [
+        r#"unitAccession="UO:0000031" unitName="""#,
+        r#"unitAccession="UO:0000031" unitCvRef="""#,
+    ] {
+        assert_eq!(
+            refuse(&[
+                with_units(0, 1, MZ_UNIT, accession_only, INTENSITY_UNIT),
+                with_units(1, 1, MZ_UNIT, stated_empty, INTENSITY_UNIT),
+            ]),
+            XicRefusal::MixedUnit(XicAxis::RetentionTime),
+            "{stated_empty}"
+        );
+    }
 }
 
 #[test]
@@ -1483,6 +1556,18 @@ fn differing_scan_windows_and_one_beside_none_are_disclosed_in_scope_only() {
 }
 
 #[test]
+fn the_same_scan_windows_listed_another_way_do_not_differ() {
+    let (first, second) = ((50.0, 200.0), (300.0, 400.0));
+    for other in [&[second, first][..], &[first, second, first]] {
+        let result = evaluate(&[
+            with_scan_windows(0, 1, &[first, second]),
+            with_scan_windows(1, 1, other),
+        ]);
+        assert!(!result.scan_windows_differ(), "{other:?}");
+    }
+}
+
+#[test]
 fn a_limit_that_cannot_be_read_or_is_not_stated_leaves_no_window() {
     let lower = |value| cv("MS:1000501", value);
     let upper = |value| cv("MS:1000500", value);
@@ -1618,6 +1703,14 @@ fn a_level_and_a_start_time_must_be_readable_when_stated() {
     assert_eq!(
         refuse(&[spectrum(0, 1, &level(1), &infinite, &arrays)]),
         MzmlScanError::Malformed(MzmlMalformedKind::NonFiniteNumber).into()
+    );
+    // Python's `float`, the oracle's reader, takes this as 60.
+    let underscored = format!(
+        r#"<scanList count="1"><scan><cvParam cvRef="MS" accession="MS:1000016" name="scan start time" value="6_0" {RT_UNIT}/></scan></scanList>"#
+    );
+    assert_eq!(
+        refuse(&[spectrum(0, 1, &level(1), &underscored, &arrays)]),
+        MzmlScanError::Malformed(MzmlMalformedKind::InvalidNumber).into()
     );
 }
 
@@ -2133,6 +2226,99 @@ fn a_spectrum_outside_the_list_does_not_close_the_open_one() {
     );
 }
 
+/// A term or an element counts only on its own path, as the oracle reads it. Each of
+/// these would conflict with the scan, or break a count, if it were read as the scan's.
+#[test]
+fn terms_and_elements_off_their_path_are_not_the_scans() {
+    let measured = XicScanState::Measured {
+        sum: 4.0,
+        points_in_window: 1,
+    };
+    let other_time = format!(
+        r#"<cvParam cvRef="MS" accession="MS:1000016" name="scan start time" value="999" {RT_UNIT}/>"#
+    );
+    let stray_array = corrupt_intensity();
+    for noise in [
+        format!("<scan>{other_time}</scan>"),
+        format!(
+            r#"<precursorList><scanList count="9"><scan>{other_time}</scan></scanList></precursorList>"#
+        ),
+        stray_array.clone(),
+        format!(
+            r#"<precursorList><binaryDataArrayList count="9">{stray_array}</binaryDataArrayList></precursorList>"#
+        ),
+    ] {
+        let result = evaluate(&[spectrum(
+            0,
+            1,
+            &format!("{}{noise}", level(1)),
+            &scan_list(60.0),
+            &[mz_array(&[101.0]), intensity_array(&[4.0])],
+        )]);
+        assert_eq!(result.rows()[0].state(), measured, "{noise}");
+        assert_eq!(result.rows()[0].retention_time(), Some(60.0), "{noise}");
+    }
+
+    // An array inside the open array is not the open array.
+    let inside = format!(
+        "<userParam><binaryDataArray>{}</binaryDataArray></userParam>",
+        intensity_role(INTENSITY_UNIT)
+    );
+    assert_eq!(
+        only_state(&[spectrum(
+            0,
+            1,
+            &level(1),
+            &scan_list(60.0),
+            &[
+                array(
+                    &[&mz_role(MZ_UNIT), F64, ZLIB, &inside],
+                    &zlib(&le_f64(&[101.0]))
+                ),
+                intensity_array(&[4.0]),
+            ],
+        )]),
+        measured
+    );
+
+    // A term under a child of a group is not the group's.
+    let nested_in_group = group("g", &format!("<userParam>{}</userParam>", level(2)));
+    let referring = spectrum(
+        0,
+        1,
+        &format!("{}{}", level(1), group_ref("g")),
+        &scan_list(60.0),
+        &[mz_array(&[101.0]), intensity_array(&[4.0])],
+    );
+    assert_eq!(
+        run(
+            &document_with_groups(&nested_in_group, &[referring]),
+            window(100.0, 102.0)
+        )
+        .unwrap()
+        .rows()[0]
+            .state(),
+        measured
+    );
+
+    // A limit in a window outside the list does not complete one inside it.
+    let result = evaluate(&[spectrum(
+        0,
+        1,
+        &level(1),
+        &scan_list(60.0).replace(
+            "</scan>",
+            &format!(
+                r#"<scanWindow>{}</scanWindow><scanWindowList count="1"><scanWindow>{}</scanWindow></scanWindowList></scan>"#,
+                cv("MS:1000501", "500"),
+                cv("MS:1000500", "600")
+            ),
+        ),
+        &[mz_array(&[101.0]), intensity_array(&[4.0])],
+    )]);
+    assert_eq!(result.scans_outside_scan_window(), 0);
+}
+
 #[test]
 fn a_term_restated_with_its_attributes_in_another_order_does_not_conflict() {
     let reordered = r#"<cvParam value="1" name="ms level" accession="MS:1000511" cvRef="MS"/>"#;
@@ -2282,6 +2468,24 @@ fn an_undefined_param_group_is_refused_outside_every_read_scope() {
         ),
         Err(MzmlOpenError::UndefinedParamGroup.into())
     );
+    // A group is defined only where it comes before its reference, and the oracle,
+    // which reads the whole tree first, finds one after the run too.
+    let referring = spectrum(
+        0,
+        1,
+        &group_ref("g"),
+        &scan_list(60.0),
+        &[mz_array(&[101.0]), intensity_array(&[1.0])],
+    );
+    let after_run = inserted(
+        &document(&[referring]),
+        "</mzML>",
+        group("g", &level(1)).as_bytes(),
+    );
+    assert_eq!(
+        run(&after_run, window(100.0, 102.0)),
+        Err(MzmlOpenError::UndefinedParamGroup.into())
+    );
 }
 
 /// The shape of the frozen row `inherited_tiny.pwiz.1.1.mzML`, which is not read
@@ -2336,6 +2540,13 @@ fn an_iso_8859_1_declaration_is_read_when_every_byte_is_ascii() {
         run(other_label.as_bytes(), query),
         Err(MzmlOpenError::NotUtf8.into())
     );
+    // Nor does a later declaration pass because this one was stated first.
+    let then_other = inserted(
+        lower.as_bytes(),
+        "<run",
+        br#"<?xml version="1.0" encoding="UTF-16"?>"#,
+    );
+    assert_eq!(run(&then_other, query), Err(MzmlOpenError::NotUtf8.into()));
     // A byte order mark comes before the first event, so the rule does not see it.
     let marked = [b"\xef\xbb\xbf".as_slice(), &declared_iso_8859_1(&uniform)].concat();
     assert!(run(&marked, query).is_ok());

@@ -289,6 +289,10 @@ impl XicMetadataProblem {
 /// Why the whole query was refused. No variant contains a path or document
 /// text, and no refusal carries a partial result.
 ///
+/// A document cut off part-way is refused whole, as built 2026-11-03 and not an
+/// owner decision. ADR 0071 open question 3 still carries to X4 whether a partial
+/// or truncated read is returned with typed coverage or refused.
+///
 /// ponytail: a unit refusal names the axis and not the attributes it saw, which
 /// ADR 0046's PX.1 clarification says are retained. X2's observer echoes them for
 /// every scan, on a refusal too, and X4's DTO takes them from there (as built
@@ -623,7 +627,8 @@ impl XicResult {
         self.scans_outside_scan_window
     }
 
-    /// In-scope scans declare different scan windows, or one beside none.
+    /// In-scope scans declare different sets of scan windows, or one beside none.
+    /// The order of a list and a window stated twice are no difference.
     #[must_use]
     pub const fn scan_windows_differ(&self) -> bool {
         self.scan_windows_differ
@@ -803,7 +808,8 @@ impl OpenArray {
         }
     }
 
-    /// The first reason stands.
+    /// The first reason stands, unless a term follows the payload, which
+    /// `decode_array` names over any of them.
     fn refuse(&mut self, reason: XicUnreadableReason) {
         self.refused.get_or_insert(reason);
         self.parse.encoded = Vec::new();
@@ -972,8 +978,9 @@ impl<T: XicSpectrumTransform, C: FnMut() -> bool> EventPass for XicPass<'_, T, C
     /// See the module documentation. The label the frozen input states, in any
     /// case, and none of its aliases.
     fn accepts_encoding(&mut self, encoding: &[u8]) -> bool {
-        self.ascii_only |= encoding.eq_ignore_ascii_case(b"iso-8859-1");
-        self.ascii_only || encoding.eq_ignore_ascii_case(b"utf-8")
+        let iso = encoding.eq_ignore_ascii_case(b"iso-8859-1");
+        self.ascii_only |= iso;
+        iso || encoding.eq_ignore_ascii_case(b"utf-8")
     }
 
     fn start(
@@ -1498,6 +1505,11 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
                     .iter()
                     .any(|&(lower, upper)| lower <= self.query.high && self.query.low <= upper);
             self.scans_outside_scan_window += u64::from(outside);
+            // Compared as sets. The limits are finite, so they are always ordered.
+            spectrum
+                .scan_windows
+                .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            spectrum.scan_windows.dedup();
             self.scan_windows
                 .observe(std::mem::take(&mut spectrum.scan_windows));
         }
@@ -1646,6 +1658,8 @@ enum Decoded {
 /// byte past it counts, since the bound leaves nothing more to measure.
 fn decode_array(mut array: OpenArray, role: ArrayRole) -> Result<Decoded, XicRefusal> {
     use XicUnreadableReason as Reason;
+    // Ahead of any recorded reason, which may be a term judged missing that this
+    // late term states.
     if array.parse.late_term {
         return Ok(Decoded::Unreadable(Reason::TermAfterPayload));
     }

@@ -3,7 +3,7 @@
 Status: **Accepted (2026-10-30)**, by the owner's decision U7 recorded under
 [Owner decision, 2026-10-30](#owner-decision-2026-10-30). Decisions 1 and 2
 are U7's recommendation, option (a). Decision 3 is added here and is
-[open question 1](#open-questions). Nothing here is implemented, and this ADR
+[open question 1](#open-questions). Accepted with nothing implemented, and this ADR
 alone admits no computation: each one needs its own record (decision 1).
 Plan: [owner decisions](../../development/OWNER_DECISIONS_V511.md), U7;
 [roadmap](../../development/ROADMAP_V511_AND_ANALYSIS.md), N-13 and N-14.
@@ -17,6 +17,12 @@ ADR 0068 (proposed in PR #183).
 Sources: the XIC evaluation (`XIC_EVALUATION.md`, sections 5–9 and 11) and
 the analysis research synthesis (`SYNTHESIS.md`, section 5.2), both in the
 planning workspace, not in the repository.
+
+*Note, 2026-11-03, a status and not an owner decision:* the first computation
+under this ADR, ADR 0071's XIC pass, has its library in PR #207
+(`crates/proteowizard/src/mzml_xic.rs`). Nothing calls it, and VIEW-007 stays
+unavailable. [Open question 2](#open-questions) is unanswered, so
+`crates/proteowizard/AGENTS.md` is not changed.
 
 ## Context
 
