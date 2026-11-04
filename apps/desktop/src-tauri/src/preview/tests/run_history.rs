@@ -564,6 +564,80 @@ fn a_queue_refused_after_it_bound_a_build_records_its_failure_code() {
     assert_eq!(items[1].progress.state, "notRun");
 }
 
+/// A refused single output's code is only in its report, and the sentence the
+/// history says comes from that code (ADR 0065 section 1).
+#[test]
+fn a_rejected_output_records_the_code_its_report_gives() {
+    let fixture = TestFile::new("run-history-rejected");
+    let destination = destination_root(&fixture, "out");
+    let profile = Scratch::new("run-history-rejected-profile");
+    let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+    let service = PreviewService::new(Box::new(ConvertingProvider::new(
+        evidenced_capabilities(),
+        FakeConversionRunner::new(BackendAct::WriteNothing),
+    )));
+    service.attach_run_history(Arc::clone(&history));
+    let handle = add_one_acquisition(&service, &fixture.thermo_raw("one.raw"));
+
+    let update = queue_and_run(&service, &[handle], &destination);
+
+    let item = &terminal_queue(&update).items[0];
+    assert!(item.error.is_none(), "only the report says why: {item:?}");
+    let report = item_report(item).expect("the attempt reports");
+    assert_eq!(report.outcome, "output_rejected");
+    assert!(report.detailed_outcome.is_some(), "{report:?}");
+    let runs = recorded(&profile, &history);
+    let RunHistoryReadDto::Found { items, .. } = history.read(&runs[0].run_id) else {
+        panic!("the run reads back");
+    };
+    assert_eq!(items[0].progress.failure, report.detailed_outcome);
+}
+
+/// A set that stopped part way holds its code only in its partial report: what the
+/// filesystem said about the member that failed.
+#[test]
+fn a_set_that_stopped_part_way_records_what_the_filesystem_said() {
+    let fixture = TestFile::new("run-history-partial");
+    let destination = fixture.destination("out");
+    let runner = FakeOutputSetRunner::writing(&["a-S1.mzML", "a-S2.mzML", "a-S3.mzML"]);
+    let service = Arc::new(output_set_service(runner));
+    let profile = Scratch::new("run-history-partial-profile");
+    let history = Arc::new(ConversionHistory::open(Ok(profile.join("app"))));
+    service.attach_run_history(Arc::clone(&history));
+    let occupied = destination.join("a-S2.mzML");
+    service.race_next_publication(move |position| {
+        if position == 1 {
+            fs::write(&occupied, b"raced in after the preflight")
+                .expect("occupy the second name mid-set");
+        }
+    });
+    let handle = service
+        .add_sciex_wiff_dataset(&fixture.sciex_bundle("acquisition"))
+        .expect("a SCIEX row")
+        .handle;
+
+    let update = run_visible_queue(
+        &service,
+        std::slice::from_ref(&handle),
+        &destination,
+        ConversionConflictPolicyDto::Fail,
+    );
+
+    let item = &terminal_queue(&update).items[0];
+    assert!(item.error.is_none(), "only the report says why: {item:?}");
+    let report = item_set_report(item).expect("a set item carries its group report");
+    assert_eq!(report.detailed_outcome, None);
+    let partial = report.partial.as_ref().expect("a partial report");
+    let runs = recorded(&profile, &history);
+    let RunHistoryReadDto::Found { items, .. } = history.read(&runs[0].run_id) else {
+        panic!("the run reads back");
+    };
+    assert_eq!(
+        items[0].progress.failure.as_deref(),
+        Some(partial.failure_kind.as_str())
+    );
+}
+
 /// A stop ends the run as what it was, each item as the queue reports it.
 #[test]
 fn a_stopped_queue_is_recorded_as_stopped_and_an_unconfirmed_stop_as_stop_failed() {
