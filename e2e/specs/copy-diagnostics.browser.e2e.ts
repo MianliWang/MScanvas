@@ -16,6 +16,7 @@ import {
   holdInvoke,
   installIpcBoundary,
   ipcCalls,
+  pressAt,
   releaseInvokeHold,
   setInvokeRejection,
   setInvokeResult,
@@ -28,6 +29,7 @@ import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/
 
 const COMMAND = "read_environment_diagnostics";
 const DIALOG = "[data-settings-dialog]";
+const BODY = ".settings-dialog-body";
 const READ = "[data-diagnostics-read]";
 const PREVIEW = "[data-diagnostics-preview]";
 const COPY = "[data-diagnostics-copy]";
@@ -88,12 +90,23 @@ async function endHeldCopy(ending: "resolve" | "reject") {
 }
 /** Inside the part of the dialog that scrolls, so nothing has to be scrolled to find it. */
 async function inTheBody(...selectors: readonly string[]) {
-  const body = await boxOf(".settings-dialog-body");
+  const body = await boxOf(BODY);
   for (const selector of selectors) expect([selector, contains(body, await boxOf(selector))]).toEqual([selector, true]);
 }
 /** Where the three things a second read must not move are. */
 const places = async () => [await boxOf(READ), await boxOf(PREVIEW), await boxOf(COPY)];
 const choose = (value: string) => browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click();
+/** Where a wheel can leave the body: scrolled as far as it goes. */
+const toTheEnd = () => browser.execute((css: string) => {
+  const body = document.querySelector(css)!;
+  body.scrollTop = body.scrollHeight;
+}, BODY);
+/** Where a wheel can leave the body: this element against its lower edge. */
+const toEdge = (selector: string) => browser.execute((css: string) => {
+  document.querySelector(css)!.scrollIntoView({ block: "end" });
+}, selector);
+/** Past what an answer rendered and the effects that follow it. */
+const aFrameLater = () => browser.execute(() => new Promise((done) => { requestAnimationFrame(() => { requestAnimationFrame(done); }); }));
 
 describe("Copy diagnostics, rendered", () => {
   afterEach(async () => {
@@ -189,6 +202,98 @@ describe("Copy diagnostics, rendered", () => {
         await browser.$(COPY).click();
         await browser.waitUntil(async () => (await browser.$(COPIED).getText()) === words.diagnosticsCopied);
         expect(await written()).toEqual([TEXT, SECOND_READING]);
+      });
+
+      // Support is last, so a person who wheels down to it presses with the body at
+      // its end, and only the first line of the box would be left showing.
+      it(`a read pressed at the end of the body shows all of the box, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await toTheEnd();
+        await inTheBody(READ);
+        await pressAt(READ);
+        await browser.waitUntil(() => activeMatches(PREVIEW));
+        await inTheBody(READ, PREVIEW, COPY);
+      });
+
+      it(`a read after a failed one shows all of the box, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await setInvokeRejection(COMMAND, { kind: "preview_worker_unavailable", summary: "", detail: null, retryable: true });
+        await browser.$(READ).click();
+        await browser.$(FAILED).waitForDisplayed();
+        await setInvokeResult(COMMAND, TEXT);
+        await toTheEnd();
+        await pressAt(READ);
+        await browser.waitUntil(() => activeMatches(PREVIEW));
+        await inTheBody(PREVIEW, COPY);
+      });
+
+      it(`a second read with the box half below the body shows all of it, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await browser.$(READ).click();
+        await browser.waitUntil(() => activeMatches(PREVIEW));
+        // The box's first line is on screen, so the caret alone would not move the body.
+        await browser.execute((body: string, box: string) => {
+          const scroller = document.querySelector(body)!;
+          scroller.scrollTop += document.querySelector(box)!.getBoundingClientRect().top - scroller.getBoundingClientRect().bottom + 40;
+        }, BODY, PREVIEW);
+        await setInvokeResult(COMMAND, SECOND_READING);
+        await pressAt(READ);
+        await browser.waitUntil(async () => (await value()) === SECOND_READING);
+        await browser.waitUntil(() => activeMatches(PREVIEW));
+        await aFrameLater();
+        await inTheBody(READ, PREVIEW, COPY);
+        // From its first line, as a first read shows it.
+        expect(await browser.execute((css: string) => document.querySelector(css)?.scrollTop, PREVIEW)).toBe(0);
+      });
+
+      // Copy sits on the body's lower edge after a wheel or a Tab, with its result
+      // below it and the refusal pushing it further down.
+      it(`a copy pressed on the body's edge shows that it was written, each time, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await standInClipboard();
+        await browser.$(READ).click();
+        await browser.waitUntil(() => activeMatches(PREVIEW));
+        await toEdge(COPY);
+        await pressAt(COPY);
+        await browser.waitUntil(async () => (await browser.$(COPIED).getText()) === words.diagnosticsCopied);
+        await aFrameLater();
+        await inTheBody(COPY, COPIED);
+
+        // The same answer again changes nothing on the screen, and it still has to be seen.
+        await toEdge(COPY);
+        expect(contains(await boxOf(BODY), await boxOf(COPIED))).toBe(false);
+        await pressAt(COPY);
+        await browser.waitUntil(async () => contains(await boxOf(BODY), await boxOf(COPIED)), { timeout: 3_000 });
+        expect(await written()).toEqual([TEXT, TEXT]);
+      });
+
+      it(`a copy pressed on the body's edge shows its refusal whole, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await standInClipboard(true);
+        await browser.$(READ).click();
+        await browser.waitUntil(() => activeMatches(PREVIEW));
+        await toEdge(COPY);
+        await pressAt(COPY);
+        await browser.$(COPY_FAILED).waitForDisplayed();
+        await aFrameLater();
+        await inTheBody(COPY, COPY_FAILED);
+        expect(await activeMatches(COPY)).toBe(true);
+        expect(await browser.$(COPY_FAILED).getText()).toBe(words.diagnosticsCopyFailed);
+      });
+
+      it(`a refused copy reached backwards by Tab shows the refusal whole, ${locale} ${String(width)}x${String(height)}`, async () => {
+        await open(locale, width, height);
+        await standInClipboard(true);
+        await browser.$(READ).click();
+        await browser.waitUntil(() => activeMatches(PREVIEW));
+        await browser.execute(() => document.querySelector<HTMLElement>("[data-settings-close]")?.focus());
+        await browser.keys("Tab");
+        for (let press = 0; press < 6 && !(await activeMatches(COPY)); press += 1) await browser.keys(["Shift", "Tab"]);
+        expect(await activeMatches(COPY)).toBe(true);
+        await browser.keys("Enter");
+        await browser.$(COPY_FAILED).waitForDisplayed();
+        await aFrameLater();
+        await inTheBody(COPY, COPY_FAILED);
       });
 
       // Support is last: reading makes it 200px taller, and a save's explanation

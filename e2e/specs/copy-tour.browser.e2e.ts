@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { cdp, metrics } from "../support/cdp";
 import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
 import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered } from "../support/conversion";
-import { IPC_TABLE_KEY, holdInvoke, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
+import { IPC_TABLE_KEY, holdInvoke, installIpcBoundary, pressAt, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
 import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, REFUSED_END, REFUSED_END_ITEMS, REQUEST_REFUSED, RUNNING, RUNNING_ITEMS, SET_ITEM, STOPPED, STOPPED_ITEMS, STOP_FAILED, STOP_FAILED_ITEMS, WHOLE_SET_ITEM, found, listed } from "../support/runHistory";
@@ -398,7 +398,7 @@ async function readDiagnostics() {
 }
 
 /** The text read, a stand-in for the machine's clipboard answering, and Copy pressed. */
-async function copyDiagnostics(refuse: boolean) {
+async function copyDiagnostics(refuse: boolean, onTheEdge = false) {
   await readDiagnostics();
   await browser.$("[data-diagnostics-preview]").waitForExist();
   await browser.execute((refused: boolean) => {
@@ -407,7 +407,13 @@ async function copyDiagnostics(refuse: boolean) {
       value: () => (refused ? Promise.reject(new DOMException("denied", "NotAllowedError")) : Promise.resolve()),
     });
   }, refuse);
-  await browser.$("[data-diagnostics-copy]").click();
+  if (!onTheEdge) {
+    await browser.$("[data-diagnostics-copy]").click();
+    return;
+  }
+  // Against the body's lower edge, where a wheel or a Tab can leave it.
+  await browser.execute(() => document.querySelector("[data-diagnostics-copy]")?.scrollIntoView({ block: "end" }));
+  await pressAt("[data-diagnostics-copy]");
 }
 
 // ---------------------------------------------------------- workspace restore
@@ -1311,6 +1317,33 @@ const STOPS: readonly Stop[] = [
     name: "diagnostics-copy-refused",
     table: withDiagnostics,
     drive: () => copyDiagnostics(true),
+    anchor: "[data-diagnostics-copy-failed]",
+  },
+  {
+    name: "diagnostics-read-from-the-end",
+    table: withDiagnostics,
+    drive: async () => {
+      await browser.$("[data-settings-entry]").click();
+      await browser.$("[data-settings-dialog]").waitForDisplayed();
+      // Support is last, so this is where a person who wheels down to it presses.
+      await browser.execute(() => {
+        const body = document.querySelector(".settings-dialog-body");
+        if (body !== null) body.scrollTop = body.scrollHeight;
+      });
+      await pressAt("[data-diagnostics-read]");
+    },
+    anchor: "[data-diagnostics-preview]:focus",
+  },
+  {
+    name: "diagnostics-copied-on-the-edge",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(false, true),
+    anchor: "[data-diagnostics-copied]:not(:empty)",
+  },
+  {
+    name: "diagnostics-copy-refused-on-the-edge",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(true, true),
     anchor: "[data-diagnostics-copy-failed]",
   },
   {

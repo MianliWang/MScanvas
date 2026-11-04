@@ -295,21 +295,36 @@ function CopyDiagnostics() {
   const opener = useRef<HTMLButtonElement>(null);
   const preview = useRef<HTMLTextAreaElement>(null);
   const failed = useRef<HTMLDivElement>(null);
+  const copyActions = useRef<HTMLDivElement>(null);
   /** Counts presses, so a copy still out says nothing once a later press has replaced it. */
   const lastPress = useRef(0);
   const [read, setRead] = useState<DiagnosticsRead>({ status: "idle" });
   const [reading, setReading] = useState(false);
-  const [copied, setCopied] = useState<boolean | null>(null);
+  /** A new object for each answer, so the same answer twice still comes into view. */
+  const [copied, setCopied] = useState<{ readonly written: boolean } | null>(null);
 
   useEffect(() => {
     // Only from the button that asked, or from what the failure took away, which
     // leaves the keyboard on the dialog: a reader who has since moved keeps their place.
     const active = document.activeElement;
-    if (read.status === "read" && active === opener.current) preview.current?.focus();
+    if (read.status === "read" && active === opener.current) {
+      // A new value leaves the caret at its end, and focus shows only the caret's line.
+      preview.current?.setSelectionRange(0, 0);
+      preview.current?.focus();
+      preview.current?.scrollIntoView?.({ block: "nearest" });
+    }
     if (read.status !== "failed") return;
     if (active === null || active === document.body || active.matches("[data-settings-dialog]")) opener.current?.focus({ preventScroll: true });
     failed.current?.scrollIntoView?.({ block: "nearest" });
   }, [read]);
+
+  useEffect(() => {
+    // Copy can be pressed on the body's edge, with its result below it and a refusal
+    // pushing it down. A refusal sits just above Copy, so it comes along. Only an
+    // answer moves the body: a press in the text does not.
+    if (copied === null) return;
+    copyActions.current?.scrollIntoView?.({ block: "nearest" });
+  }, [copied]);
 
   const readSummary = () => {
     lastPress.current += 1;
@@ -335,7 +350,7 @@ function CopyDiagnostics() {
     } catch {
       written = false;
     }
-    if (press === lastPress.current) setCopied(written);
+    if (press === lastPress.current) setCopied({ written });
   };
 
   return <>
@@ -348,16 +363,16 @@ function CopyDiagnostics() {
       <p>{ownedErrorMessage(read.error, message)}</p>
     </div> : null}
     {read.status === "read" ? <>
-      {/* Above the text, so a short window that has scrolled to it still shows why. */}
-      {copied === false ? <div className="settings-storage-problem settings-diagnostics-problem" role="alert" data-diagnostics-copy-failed="">
+      {/* Above the text, which a reader takes by hand after this. */}
+      {copied?.written === false ? <div className="settings-storage-problem settings-diagnostics-problem" role="alert" data-diagnostics-copy-failed="">
         <p>{message("diagnosticsCopyFailed")}</p>
       </div> : null}
       <div className="settings-diagnostics-preview">
         <textarea ref={preview} data-diagnostics-preview="" aria-labelledby={labelId} lang="en" readOnly spellCheck={false} value={read.text} />
-        <div className="settings-diagnostics-actions">
+        <div className="settings-diagnostics-actions" ref={copyActions}>
           <Button size="sm" data-diagnostics-copy="" refused={reading} reasonId={`${labelId}-help`} onClick={() => void copy(read.text)}>{message("diagnosticsCopy")}</Button>
           {/* Mounted empty, so the change is heard. */}
-          <p role="status" data-diagnostics-copied="">{copied === true ? message("diagnosticsCopied") : ""}</p>
+          <p role="status" data-diagnostics-copied="">{copied?.written === true ? message("diagnosticsCopied") : ""}</p>
         </div>
       </div>
     </> : null}

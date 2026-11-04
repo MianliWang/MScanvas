@@ -300,8 +300,9 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
 - The button reads when pressed, and again as **Read again**. A second read leaves
   the screen as it is until it answers, with **Copy** refused meanwhile, and the
   result of a copy still out when it was pressed is not shown, because that copy
-  took the old text. A failed read takes the text and **Copy** away, so if either
-  had the keyboard it goes to **Read again**.
+  took the old text. The answer shows the new text from its first line. A failed read
+  takes the text and **Copy** away, so if either had the keyboard it goes to
+  **Read again**.
 - The box is a fixed 200 px and scrolls inside the dialog's body, which scrolls too.
   Measured with the 42-line fixture at 1366x768 and 960x640: a 198 px client area
   holding 822 px, so about ten lines show, and `[ProteoWizard]` (line 19) and
@@ -309,15 +310,18 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
   not wait for them to be read. Decision 2 says that those last lines can name a
   vendor and a time. Decision 10 sets no height, and the answer to question 8 did not
   cover it. The alternative is a box that grows with the text, so that only the body
-  scrolls.
+  scrolls. Its cost: the text reaches about 1920 px with a full ring, and **Copy**, at
+  the top of the box, scrolls away while the end is read. This is unanswered.
 - Closing Settings drops the text. The clipboard's refusal is shown above the text,
   because the text stays selectable by hand. Support is the last section, below
   anything a save or the stored record has to say, because the text makes it tall.
   Restore and the conversion history sit below those blocks too, so an unusable
   record is in the dialog's body when Settings opens. Support makes the body scroll
   at 1366x768, so where a Tab lands is brought into view: past Close it wraps to the
-  first choice without scrolling. A press does not scroll, so the clipboard's refusal
-  stays in sight while the text is selected.
+  first choice without scrolling. Pressing the text does not scroll, so the clipboard's
+  refusal stays in sight while the text is selected. The box comes into view when the
+  keyboard goes to it, and **Copy** with its result or refusal each time a copy answers,
+  because a person can press from the body's edge.
 - `check_repo.py` holds the route to this button (question 4) as far as a text
   search can. It refuses the words `navigator.clipboard` in any other non-test file
   of the interface's source, and in this one anything but one `writeText` call. It
@@ -454,9 +458,9 @@ Shown a list of decisions on 2026-11-03, question 8 of this record among them
 (P202), the owner replied "全部按推荐" ("all as recommended"). It is answered as
 recommended:
 
-8. **The sentence of decision 10:** not shown. #202 as built stands, and no code
-   changes. Decision 10's text stays as it was accepted on 2026-10-30, with this
-   answer in a dated note beside it.
+8. **The sentence of decision 10:** not shown. #202 as built stands. Decision 10's
+   text stays as it was accepted on 2026-10-30, with this answer in a dated note
+   beside it.
 
 ## Open questions for the owner
 
