@@ -58,6 +58,13 @@ All notable changes will be documented here once versioned releases begin.
   chromatogram. Each axis names a declared unit by its accession. A spectrum
   whose preview is gone, or whose file changed, offers **Open the file again**
   ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
+- **A plot's axes now tick and read as its exported figure does.** The screen
+  uses the figure's rule for the same range: a label keeps its step's decimals
+  (`0.00, 0.02`), exponents read `5e6` rather than `5.0e+6`, and of two steps
+  equally near five ticks the coarser is taken. A single value reads as the
+  figure writes it (`12.500000`). A figure can still show fewer ticks, where its
+  labels would collide or leave the page. A long label at a plot's right end now
+  stays whole, where the panel's edge used to cut it into another number.
 - **Beta-1 projects open, and are upgraded when you save a change.** A project
   saved by beta 1 opens as it is. Opening it writes nothing, and Save with
   nothing unsaved writes nothing. The first Save after a change writes the new
