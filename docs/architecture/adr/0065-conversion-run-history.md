@@ -354,8 +354,8 @@ and of G16, cross-session staging ownership, unchanged.
     Off and an On in another instance before that write lands do not stop it.
   - **A run Off could not remove:** a file a holder keeps leaves the run this
     session's (section 2). If recording is on again by then, its record, paths
-    included, goes on being written until that run ends, and again if a retry of
-    its queue reopens it. Shipped 2026-11-03, not an owner decision.
+    included, goes on being written until that run ends. Shipped 2026-11-03, not
+    an owner decision.
   - **A retry at the moment of a Clear:** a retry of the same queue that reopens
     a run after Clear read it as ended and before Clear removes its file is not
     recorded: its next write finds the file gone and stops, and nothing says so.
@@ -367,6 +367,11 @@ and of G16, cross-session staging ownership, unchanged.
     (`.mscanvas-run-history-*`), which holds a whole record, paths included.
     Neither Clear nor Off removes it, because a sibling another instance is
     writing looks the same; see the consequences.
+  - **A retry of a run Off could not remove:** more on the third corner above. If
+    recording is on again by then, a retry of its queue reopens that run's record
+    and writes it again, paths included, even if the run ended before Off. Shipped
+    2026-11-03, not an owner decision, and not among the cases shown to the owner
+    on 2026-11-03.
 
 *Recommendation, accepted (2026-10-30, RUN-1, question 1):* history is on by
 default, as workspace restore is in ADR 0061. *Alternative:* off until the user

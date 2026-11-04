@@ -5748,6 +5748,40 @@ def validate_every_boundary_error_code_is_accounted_for(errors: list[str]) -> No
         )
 
 
+# ADR 0065 section 7's first four open edge cases as they read at c006a0ad, the
+# text the owner accepted as documented on 2026-11-03. One block, because the owner
+# named them by position. An answer or a further corner goes in a dated note outside
+# it, so changing these words takes a new answer, not a better sentence.
+ADR_0065_ACCEPTED_CORNERS = """\
+  - **A write under way at Off:** a write already under way when Off removes
+    the files can land just after. The next start or list while it is off
+    removes it; if recording is on again before either, it stays.
+  - **A first write that never landed:** such a run has no file to miss, so an
+    Off and an On in another instance before that write lands do not stop it.
+  - **A run Off could not remove:** a file a holder keeps leaves the run this
+    session's (section 2). If recording is on again by then, its record, paths
+    included, goes on being written until that run ends. Shipped 2026-11-03, not
+    an owner decision.
+  - **A retry at the moment of a Clear:** a retry of the same queue that reopens
+    a run after Clear read it as ended and before Clear removes its file is not
+    recorded: its next write finds the file gone and stops, and nothing says so.
+    Writing it back would restore what Clear forgot. The window is one file's read
+    to its removal; this comes from reading the code and was not run. Shipped
+    2026-11-03, not an owner decision.
+"""
+
+
+def validate_the_accepted_run_history_corners_keep_their_words(errors: list[str]) -> None:
+    adr = "docs/architecture/adr/0065-conversion-run-history.md"
+    if ADR_0065_ACCEPTED_CORNERS not in (ROOT / adr).read_text(encoding="utf-8"):
+        fail(
+            f"{adr} section 7 no longer holds, byte for byte, the four edge cases the owner "
+            "accepted on 2026-11-03: restore them from c006a0ad and put anything new in a "
+            "dated note outside them",
+            errors,
+        )
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -5769,6 +5803,7 @@ def main() -> int:
         validate_the_chromatogram_authority_has_one_installation_path(errors)
         validate_the_linked_pair_is_bound_in_one_operation(errors)
         validate_the_current_status_section_has_one_answer(errors)
+        validate_the_accepted_run_history_corners_keep_their_words(errors)
         validate_drawability_is_settled_in_one_place(errors)
         validate_a_spectrum_range_is_resolved_in_one_place(errors)
         validate_the_xic_route_outcome_has_one_answer(errors)
