@@ -3,6 +3,9 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { SettingField } from "../../components/fields/SettingField";
 import { Button, Icon, SegmentedControl } from "../../components/ui";
+import { usePreviewApi } from "../mzml-preview/api";
+import { toPreviewError, type PreviewError } from "../mzml-preview/contracts";
+import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import type { WorkspaceRestoreSession } from "../mzml-preview/useWorkspaceRestore";
 import { WorkspaceRestoreSettings } from "../mzml-preview/WorkspaceRestoreSettings";
 import { RunHistorySetting } from "../run-history/RunHistorySetting";
@@ -36,6 +39,8 @@ export function SettingsDialog({ restore }: {
   const opener = useRef<HTMLButtonElement>(null);
   const content = useRef<HTMLDivElement | null>(null);
   const composing = useRef(false);
+  /** A Tab is on its way to moving focus, so where it lands comes into view. */
+  const tabbing = useRef(false);
   const returnPending = useRef(false);
   const returnSuperseded = useRef(false);
   const mounted = useRef(true);
@@ -72,8 +77,9 @@ export function SettingsDialog({ restore }: {
   useEffect(() => {
     // The keyboard goes to the explanation, which is where the recovery
     // actions are. Only from the body: a reader who has since moved keeps
-    // their place.
+    // their place. The explanation itself always comes into view.
     if (save.status === "failed" || save.status === "storedRecordUnusable") {
+      failureRef.current?.scrollIntoView?.({ block: "nearest" });
       const active = document.activeElement;
       if (active === null || active === document.body) failureRef.current?.focus({ preventScroll: true });
     }
@@ -137,9 +143,20 @@ export function SettingsDialog({ restore }: {
         }}
         onPointerDownOutside={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
+        // Radix wraps Tab past Close with preventScroll, which would leave the
+        // first choice focused out of sight in a scrolled body. Tab only: a press
+        // must not move what is under the pointer, as `:focus-visible` would for
+        // the diagnostics text.
+        onFocus={(event) => {
+          if (tabbing.current) event.target.scrollIntoView?.({ block: "nearest" });
+          tabbing.current = false;
+        }}
         onCompositionStartCapture={() => { composing.current = true; }}
         onCompositionEndCapture={() => { composing.current = false; }}
         onKeyDownCapture={(event) => {
+          // Radix's own test for a Tab that moves focus. Any other leaves the flag set
+          // until the next focus, which can be a press.
+          tabbing.current = event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey;
           if ((composing.current || event.nativeEvent.isComposing || event.keyCode === 229) && event.key === "Enter") {
             event.preventDefault(); event.stopPropagation();
           }
@@ -176,9 +193,6 @@ export function SettingsDialog({ restore }: {
               <Button size="sm" data-layout-reset="" refused={layoutRefusal !== undefined} reasonId={`${layoutId}-help`}
                 onClick={panels.reset}>{message("layoutReset")}</Button>
             </SettingField>
-            {restore === undefined ? null : <WorkspaceRestoreSettings session={restore} />}
-            <h3 className="settings-section-title">{message("runHistoryTitle")}</h3>
-            <RunHistorySetting />
             {/* The shell's layout region is aria-hidden behind this modal, so
                 the dialog says it here. Mounted empty, so the change is heard. */}
             <p aria-live="polite" className="visually-hidden" data-live-region="settings-layout">
@@ -229,6 +243,14 @@ export function SettingsDialog({ restore }: {
               <p>{explainStoredProblem(save.problem, message)}</p>
               <p>{message("storedUnusableBody")}</p>
             </div> : null}
+            {/* Below those, so what a save or a stored record has to say stays
+                beside the choices that raised it, in view when Settings opens. */}
+            {restore === undefined ? null : <WorkspaceRestoreSettings session={restore} />}
+            <h3 className="settings-section-title">{message("runHistoryTitle")}</h3>
+            <RunHistorySetting />
+            {/* Last, because it grows. */}
+            <h3 className="settings-section-title">{message("supportSection")}</h3>
+            <CopyDiagnostics />
           </div>
         </div>
         <footer className="settings-dialog-footer">
@@ -252,4 +274,114 @@ export function SettingsDialog({ restore }: {
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;
+}
+
+type DiagnosticsRead =
+  | { readonly status: "idle" }
+  | { readonly status: "read"; readonly text: string }
+  | { readonly status: "failed"; readonly error: PreviewError };
+
+/**
+ * Copy diagnostics (ADR 0063, decision 10). Copy takes the string the box shows,
+ * as Rust wrote it and never translated, so what is read is what is pasted.
+ * Mounted with the dialog's content, so closing Settings drops the text.
+ *
+ * A second read leaves the button, the text and any result where they are until
+ * it answers, so a second press still lands on the refused button. Copy is refused
+ * meanwhile: that text is about to be replaced.
+ */
+function CopyDiagnostics() {
+  const api = usePreviewApi();
+  const message = useUiMessages();
+  const labelId = useId();
+  const opener = useRef<HTMLButtonElement>(null);
+  const preview = useRef<HTMLTextAreaElement>(null);
+  const failed = useRef<HTMLDivElement>(null);
+  const copyActions = useRef<HTMLDivElement>(null);
+  /** Counts presses, so a copy still out says nothing once a later press has replaced it. */
+  const lastPress = useRef(0);
+  const [read, setRead] = useState<DiagnosticsRead>({ status: "idle" });
+  const [reading, setReading] = useState(false);
+  /** A new object for each answer, so the same answer twice still comes into view. */
+  const [copied, setCopied] = useState<{ readonly written: boolean } | null>(null);
+
+  useEffect(() => {
+    // Only from the button that asked, or from what the failure took away, which
+    // leaves the keyboard on the dialog: a reader who has since moved keeps their place.
+    const active = document.activeElement;
+    const box = preview.current;
+    if (read.status === "read" && box !== null) {
+      // A new value leaves the box where it had scrolled and the caret at its end, and
+      // focus shows only the caret's line. Wherever the keyboard is: Tab can come back.
+      box.setSelectionRange(0, 0);
+      box.scrollTop = 0;
+      if (active === opener.current) {
+        box.focus();
+        box.scrollIntoView?.({ block: "nearest" });
+      }
+    }
+    if (read.status !== "failed") return;
+    if (active === null || active === document.body || active.matches("[data-settings-dialog]")) opener.current?.focus({ preventScroll: true });
+    failed.current?.scrollIntoView?.({ block: "nearest" });
+  }, [read]);
+
+  useEffect(() => {
+    // Copy can be pressed on the body's edge, with its result below it and a refusal
+    // pushing it down. A refusal sits just above Copy, so it comes along. Only an
+    // answer moves the body: a press in the text does not.
+    if (copied === null) return;
+    copyActions.current?.scrollIntoView?.({ block: "nearest" });
+  }, [copied]);
+
+  const readSummary = () => {
+    lastPress.current += 1;
+    setReading(true);
+    const answer = (next: DiagnosticsRead) => {
+      setRead(next);
+      setCopied(null);
+      setReading(false);
+    };
+    api.readEnvironmentDiagnostics().then(
+      (text) => answer({ status: "read", text }),
+      (error: unknown) => answer({ status: "failed", error: toPreviewError(error) }),
+    );
+  };
+  // Written from this click, through the platform's text clipboard: no Tauri
+  // capability, and nothing is read (ADR 0063, question 4).
+  const copy = async (text: string) => {
+    lastPress.current += 1;
+    const press = lastPress.current;
+    let written = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      written = false;
+    }
+    if (press === lastPress.current) setCopied({ written });
+  };
+
+  return <>
+    <SettingField className="settings-diagnostics-field" labelId={labelId} label={message("diagnosticsField")} help={reading ? message("diagnosticsReading") : undefined}>
+      <Button size="sm" data-diagnostics-read="" ref={opener} refused={reading} reasonId={`${labelId}-help`} onClick={readSummary}>
+        {message(read.status === "idle" ? "diagnosticsShow" : "diagnosticsReadAgain")}
+      </Button>
+    </SettingField>
+    {read.status === "failed" ? <div className="settings-storage-problem" role="alert" data-diagnostics-failed="" ref={failed}>
+      <p>{ownedErrorMessage(read.error, message)}</p>
+    </div> : null}
+    {read.status === "read" ? <>
+      {/* Above the text, which a reader takes by hand after this. */}
+      {copied?.written === false ? <div className="settings-storage-problem settings-diagnostics-problem" role="alert" data-diagnostics-copy-failed="">
+        <p>{message("diagnosticsCopyFailed")}</p>
+      </div> : null}
+      <div className="settings-diagnostics-preview">
+        <textarea ref={preview} data-diagnostics-preview="" aria-labelledby={labelId} lang="en" readOnly spellCheck={false} value={read.text} />
+        <div className="settings-diagnostics-actions" ref={copyActions}>
+          <Button size="sm" data-diagnostics-copy="" refused={reading} reasonId={`${labelId}-help`} onClick={() => void copy(read.text)}>{message("diagnosticsCopy")}</Button>
+          {/* Mounted empty, so the change is heard. */}
+          <p role="status" data-diagnostics-copied="">{copied?.written === true ? message("diagnosticsCopied") : ""}</p>
+        </div>
+      </div>
+    </> : null}
+  </>;
 }

@@ -4,11 +4,17 @@ Status: **Accepted (2026-10-30)**; see the
 [owner decision](#owner-decision-2026-10-30-a0063), which answers questions 1–5,
 and the [owner decision of 2026-10-31](#owner-decision-2026-10-31), which
 answers questions 6 and 7.
+The [owner decision of 2026-11-03](#owner-decision-2026-11-03) answers question 8.
 Proposed on 2026-10-30. The owner asked that day for every backend
 item that can be done now to start; this record states the recommendations that
 lane implemented, and each choice the owner has not made is listed
 [at the end](#open-questions-for-the-owner). The Rust side is implemented on
 branch `be/copy-diagnostics`. No interface calls it yet.
+On 2026-11-03: the Rust side had merged in PR #178, and branch
+`ui/diagnostics-button` added the Settings button and its preview (question 4),
+the `Verified build` line (question 3) and a failed conversion's outcome in the
+ring (question 7). The accepted text below stays as it was accepted; a dated
+note beside it says what was built.
 Related: [0005](0005-mzml-preview-boundary.md),
 [0017](0017-redacted-conversion-diagnostics-export.md),
 [0044](0044-conversion-configuration-authority.md),
@@ -76,6 +82,33 @@ the reading was taken under is still current, and are `unknown` after it
 changed, never the new build's facts beside the old reading's release and
 folder.
 
+*As built, 2026-11-03:* the table above stays as it was accepted, and the summary
+differs from it in two lines.
+
+- `Verified build` is a new `ProteoWizard` line after `msconvert SHA-256`
+  (question 3): whether that digest is ADR 0055's verified build, read from the
+  adapter's `VERIFIED_MSCONVERT_SHA256`, never a copy of it. Question 3 says
+  `yes/no`. The line follows the digest, so it is `unknown` after the binding
+  changed as well as without a digest; that third value follows from having no
+  digest to compare and is not an owner decision.
+- `Usage` under `View cache` still says `not in this build`, which is not an owner
+  decision. ADR 0060's slice 2 has landed, but it binds only the folder the cache
+  would live under, and no interface calls `describe_view_cache` or
+  `clear_view_cache`, because the owner moved **View with…** and Clear view cache
+  to the next slice (A0060-split, 2026-11-03). That answer does not cover this
+  line. `describe_view_cache` goes through `ViewCache::open`, which makes the cache
+  if there is none, and the table says never by opening one, so the line stays until
+  the session holds an open cache.
+
+*As built, 2026-11-04, not an owner decision:* #203 put **View** in this build, so
+`Usage: not in this build` no longer reads as true, although the condition above
+still holds: the session opens the cache for each call and keeps none open, and
+`describe_view_cache` and `clear_view_cache` still have no caller. The table sets the
+value, so it stays until the owner answers. The choices are another fixed value
+that does not say "not in this build" (the key stays, so `Format` stays), or the
+usage read without making the folder, the way `ViewCache::inspect` looks at the root.
+This is unanswered.
+
 ### 2. What never goes in
 
 No file name of the user's data and no name, path or count from the workspace,
@@ -96,6 +129,9 @@ implemented after PR #161 merges), the ring also names conversion outcomes, and
 their times say when a conversion failed. An outcome is an owned id, so it adds
 no text.
 
+*As built, 2026-11-03:* that slice has landed, so the ring does name conversion
+outcomes.
+
 ### 3. Codes come from owned ids; every value passes its shape, or is withheld whole
 
 There is no free-text field. The first line of defence covers the code fields
@@ -109,6 +145,9 @@ ProteoWizard release, build date and source revision from the installed tool's
 own help text. Those are held by their shapes alone, none of which admits a
 path separator or a colon, so loosening one of those shapes removes the only
 defence that value has.
+
+*As built, 2026-11-03:* a conversion outcome (question 7) is a code too, an owned
+`&'static str` id.
 
 The second line is shape. Each value must match its own shape from the table.
 No shape admits a path separator or a colon, so a redactor that knows the
@@ -172,6 +211,10 @@ but not exactly, what the interface showed: an error built and then discarded
 is counted too. A search of the native sources on 2026-10-30 found no
 `ok_or`, `unwrap_or`, `map_or` or `or` that builds one eagerly.
 
+*Found on 2026-11-03:* `file_identity` does build and discard one, through
+`.ok()`, so `file_not_resolvable` can also mean that a path was looked at and not
+found.
+
 Until the slice of question 7 lands, the ring holds `PreviewErrorDto` kinds
 only. These are not errors at the boundary, so they are not in it:
 
@@ -190,6 +233,37 @@ report is projected. That projection is PR #161's code, so this is implemented
 after #161 merges; until then the ring holds only `PreviewErrorDto` kinds, as
 stated above. Nothing else in the list above joins it.
 
+*As built, 2026-11-03:* the slice of question 7 has landed, so a conversion that
+ran and ended in failure is in the ring and off the list above. `Held: 0` still
+does not mean that nothing was refused this session. What is recorded is the
+report's `detailedOutcome`, or its `outcome` when it has none: a set whose
+publication stopped partway is `partially_finalized`, and a set that published
+whole but cannot be adopted keeps `fully_finalized`, the one failure that reads
+like a success. A stop is not a failure and is not recorded.
+
+Two readings of question 7 here are not owner decisions:
+
+- "Where the report is projected" is built as where the session builds its report
+  from the run (`WorkspaceConversionReport::of`, `SciexAttemptSettlement::of`), so
+  it is recorded once per run. It is not recorded where the report is serialized:
+  a queue is read again and again, and two failed rows read in turn would push
+  every other code out of the ring.
+- A view conversion (ADR 0060) has no report and builds neither of those, so it is
+  recorded once, as the kind of the `PreviewErrorDto` the view run returns. That
+  kind is usually the failure's coarse `stable_id()`: where a queue report records
+  `missing_output`, a view conversion records `output_rejected`.
+
+*As built, 2026-11-04, not an owner decision:* #203's answer to whether **View** can
+be pressed is also a refusal carried in an `Ok` outcome, which decision 5's list of
+those does not name because it did not exist yet. `get_raw_view_state` is polled, so the answer
+names its code and builds no `PreviewErrorDto`: highlighting a row or watching a view
+run to its end adds no line. An error built and then discarded counts where that is
+a side effect, as in `file_identity`; this is a designed refusal. A **View** press
+that is refused is an `Err` at the boundary and is recorded. The owner's answer to
+question 7 did not take the `Ok`-carried refusals, and this path was not put to them.
+
+*Found on 2026-11-04, not an owner decision:* a **Cancel** pressed while a **View** is reading the RAW, in Checking file or again in Checking output, or a RAW that has grown past the limit since it was added, which the read in Checking file finds before its first chunk, leaves `file_unreadable` in the ring, though the file reads, because `revalidate_thermo_raw_reporting` builds that error before the view run replaces it with a stop or with `view_cache_entry_too_large`. The owner's answer to question 2 accepted that an error built and then discarded counts; "A stop is not a failure and is not recorded" is about a conversion's stop. Whether a **View** should leave this line is unanswered.
+
 ### 6. Format
 
 Plain text, so it pastes into an issue as it is. The first line is
@@ -201,6 +275,10 @@ Values are written as they are, never translated. `Format` changes when a
 heading or a key does. A recent error is
 `- <first time> <code>`, followed by `(repeated until <last time>)` when it
 repeated, even within the same second.
+
+*As built, 2026-11-03:* `Format` is `2`, because `Verified build` is a new key.
+Format 1 reached no interface. This follows from the rule above and is not an
+owner decision.
 
 ### 7. Bounds
 
@@ -234,6 +312,52 @@ that posture through the capabilities and `package.json`, so a
 route on 2026-10-30 (question 4, A0063). The release guide's
 "For the environment, give" list then points at the button.
 
+Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
+(question 8, [owner decision](#owner-decision-2026-11-03)).
+
+*As built, 2026-11-03, not an owner decision:*
+
+- The button reads when pressed, and again as **Read again**. A second read leaves
+  the screen as it is until it answers, with **Copy** refused meanwhile, and the
+  result of a copy still out when it was pressed is not shown, because that copy
+  took the old text. The answer shows the new text from its first line. A failed read
+  takes the text and **Copy** away, so if either had the keyboard it goes to
+  **Read again**.
+- The box is a fixed 200 px and scrolls inside the dialog's body, which scrolls too.
+  Measured with the 42-line fixture at 1366x768 and 960x640: a 198 px client area
+  holding 822 px, so about ten lines show, and `[ProteoWizard]` (line 19) and
+  `[Recent errors]` (line 38) are reached by scrolling inside the box. **Copy** does
+  not wait for them to be read. Decision 2 says that those last lines can name a
+  vendor and a time. Decision 10 sets no height, and the answer to question 8 did not
+  cover it. The alternative is a box that grows with the text, so that only the body
+  scrolls. Its cost: the text reaches about 1920 px with a full ring, and **Copy**, at
+  the top of the box, scrolls away while the end is read. This is unanswered.
+- Closing Settings drops the text. The clipboard's refusal is shown above the text,
+  because the text stays selectable by hand. Support is the last section, below
+  anything a save or the stored record has to say, because the text makes it tall.
+  Restore and the conversion history sit below those blocks too, so an unusable
+  record is in the dialog's body when Settings opens. Support makes the body scroll
+  at 1366x768, so where a Tab lands is brought into view: past Close it wraps to the
+  first choice without scrolling. Pressing the text does not scroll, so the clipboard's
+  refusal stays in sight while the text is selected. The box comes into view when the
+  keyboard goes to it, and **Copy** with its result or refusal each time a copy answers,
+  because a person can press from the body's edge.
+- `check_repo.py` holds the route to this button (question 4) as far as a text
+  search can. It refuses the words `navigator.clipboard` in any other non-test file
+  of the interface's source, and in this one anything but one `writeText` call. It
+  does not see `const { clipboard } = navigator`, `navigator["clipboard"]` or
+  `document.execCommand("copy")`, so those are for review to refuse.
+- The release guide's list points at the button from the first release that has
+  it; beta 1's guide describes beta 1, which does not.
+
+*As built, 2026-11-04, not an owner decision:*
+
+- The answer shows the new text from its first line wherever the keyboard is. A
+  reader who has moved keeps the keyboard and, when the text answers, the body where
+  they are; a failure comes into view.
+- A Tab with Ctrl, Alt or Meta held moves no focus, so it does not count as a Tab,
+  and pressing the text after one does not scroll.
+
 ## Alternatives
 
 - **Record errors at each command in `lib.rs`.** Exact about what was returned,
@@ -260,6 +384,7 @@ route on 2026-10-30 (question 4, A0063). The release guide's
   `msconvert.exe` digest. Draft PR #161 adds that constant; this lane would have
   been a fourth copy of it. The digest itself is in the summary, so support can
   compare it today.
+  *Adopted on 2026-11-03, once #161 had merged, reading that constant (decision 1).*
 - **The account check on every value**, as an earlier draft of this record did.
   Withholds a value the name can only match by chance, and the withheld line
   then points at the name: `jan` loses `Jan 13 2026` while `Release: 3.0.26013`
@@ -302,6 +427,11 @@ route on 2026-10-30 (question 4, A0063). The release guide's
 - When ADR 0060's slice 2 gives the session a view cache, the `[View cache]`
   section reports its usage and `Format` stays `1` only if the keys do not
   change.
+- *2026-11-03:* the frontend calls the command, so the registration test no longer
+  exempts it. `Format` is `2` (decision 6), and the line above holds for `2`. Slice 2
+  has landed and the section does not report usage yet; the note under decision 1
+  says why. `VERIFIED_MSCONVERT_SHA256` is public from the ProteoWizard adapter, so
+  this summary and ADR 0055's tier read one value.
 
 ## Owner decision, 2026-10-30 (A0063)
 
@@ -316,11 +446,14 @@ questions 1–5, and each is answered as recommended:
    accepting that an error built and then discarded counts.
 3. **The verified-build line:** add `Verified build: yes/no` once PR #161
    merges, reading its constant rather than a copy. Not done yet: #161 is open.
+   *Done on 2026-11-03. It also says `unknown`, which is not an owner decision (the
+   note under decision 1).*
 4. **The interface and the copy route (decision 10):** a Settings button, a
    read-only preview and the platform text clipboard written from that
    button's click. The departure from ADR 0030 and ADR 0034's "the clipboard is
    reached from Rust" is accepted for this button only; those records are not
    amended. The interface lane builds the button after PR #164.
+   *Done on 2026-11-03.*
 5. **Workspace contents by family:** left out until a support case needs it.
    That a recent error code can name a vendor or a feature (decision 5) is
    accepted; no code allowlist or category is added to the ring.
@@ -344,6 +477,16 @@ recommended"). Both are answered as recommended:
    #161 merges, not on this branch. Decision 2 says that the ring will then
    also hold conversion outcomes; until that slice lands it holds only
    `PreviewErrorDto` kinds, as decision 5 states.
+   *Done on 2026-11-03; the notes beside decisions 2 and 5 say what the ring now
+   holds and where each is recorded.*
+
+## Owner decision, 2026-11-03
+
+Shown a list of decisions on 2026-11-03, question 8 of this record among them
+(P202), the owner replied "全部按推荐" ("all as recommended"). It is answered as
+recommended:
+
+8. **The sentence of decision 10:** not shown. #202 as built stands.
 
 ## Open questions for the owner
 
@@ -372,3 +515,19 @@ recommended"). Both are answered as recommended:
    decision 2 now says that the ring will name conversion outcomes too. The
    alternatives were the `Ok`-carried refusals as well, or the ring as it is,
    with decision 5 saying what it leaves out.
+8. *Answered on 2026-11-03 ([owner decision](#owner-decision-2026-11-03)):*
+   **The sentence of decision 10.** Added on 2026-11-03. Decision 10, accepted
+   on 2026-10-30, lists one sentence saying that nothing was sent and that the user
+   should read the text before sharing. Question 4 as A0063 showed it to the owner
+   lists a Settings button, a read-only preview and the text clipboard, and no
+   sentence. The rule of 2026-10-28 removes secondary explanations and keeps
+   "recovery paths, no-overwrite and irreversible-action warnings, the
+   scientific-honesty statements and accessible names", which does not say whether
+   this reminder stays. As recommended: left out, as built. The text is in front
+   of the user before anything is copied, and it holds no backend text. The
+   conversion failure export keeps a sentence like it ("Review the file before
+   sharing", ADR 0017), but that file holds redacted backend text the user has not
+   seen when saving it. The alternative was one line beside the preview, in en and
+   zh-CN.
+   *Note, 2026-11-03:* "no backend text" here means none beyond the three identity
+   tokens the Context lists (the release, the build date and the source revision).
