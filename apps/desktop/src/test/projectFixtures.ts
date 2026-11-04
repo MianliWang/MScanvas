@@ -31,6 +31,7 @@ import {
   type TargetedMs1Plan,
   type TargetedNewRuns,
   type TargetedTableFormat,
+  type TargetedTableView,
 } from "../features/project/projectApi";
 
 export interface FakeProjectApi extends ProjectApi {
@@ -665,6 +666,17 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
           format === "spreadsheetCsv" ? "-spreadsheet.csv" : `.${format}`
         }`,
         rowCount: targeted.rows.length,
+      })),
+    ),
+    exportTargetedMs1TableView: vi.fn((artifactId: string, format: TargetedTableFormat, view: TargetedTableView) =>
+      dialog("exportTargetedMs1TableView", () => ({
+        status: "saved" as const,
+        format,
+        // The names Rust suggests: the view's count, so not the whole table's name.
+        fileName: `mscanvas-targeted-ms1-${artifactId.slice(0, 8)}-results-view-${view.targetIds.length}-of-${targeted.rows.length}${
+          format === "spreadsheetCsv" ? "-spreadsheet.csv" : `.${format}`
+        }`,
+        rowCount: view.targetIds.length,
       })),
     ),
     // Not recorded in `calls`, like the progress poll: every report asks it

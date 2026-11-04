@@ -26,5 +26,12 @@ cannot change what is compared without the test failing. Against `results.csv`
 it differs in exactly the `#format` value and the apostrophes ADR 0054 adds to
 the declared text fields.
 
+`view.csv`, `view.tsv` and `view-spreadsheet.csv` are one view of the same result
+(S-7.1), the rows of `mscanvas_targeted_ms1_results_view` and
+`mscanvas_targeted_ms1_results_view_spreadsheet` schema 1 that `view_table`
+writes, pinned by `a_view_table_is_its_golden_document_in_every_format`: two rows
+kept by the filter text `=`, sorted out of plan order, one of them never
+extracted. The spreadsheet fixture holds the text after the mark, as above.
+
 Regenerating a fixture means writing what the test's call returns; there is no
 separate tool, because the test is the specification of what the file holds.
