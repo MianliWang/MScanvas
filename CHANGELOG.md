@@ -49,6 +49,13 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **A mark at the end of a run stands clear of the frame.** On screen and in
+  every exported figure, each end of the x axis is drawn a small inset inside the
+  plot's frame, so the first and last marks no longer sit on it and a selected
+  scan at the first retention time no longer shares the y axis. **Every exported
+  SVG and PNG changes by this inset**, though no colour, word or height does. The
+  range itself does not change: a pointer in the inset reads as that end of the
+  range, and a range you draw or export is the true one.
 - **"Not verified by MSCanvas" follows a labelled output further.** The viewer's
   file title, the Metadata tab's File row, the figure dialog and the figure
   itself say it: a labelled source's SVG, PNG, copied image and preview draw the

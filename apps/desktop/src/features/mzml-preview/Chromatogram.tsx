@@ -6,7 +6,7 @@ import type { UiMessage } from "../preferences/i18n";
 
 import { PlotRangeActions, plotGestureHelpId, usePlotRangeEditor } from "./PlotRangeActions";
 import type { PlotMenuItem } from "./QuickFigureActions";
-import { niceTicks, paintGridlines, paintTicks, withHeadroom } from "./viewer/plotAxes";
+import { niceTicks, paintGridlines, paintTicks, withHeadroom, xAt, xBand } from "./viewer/plotAxes";
 import { retentionTimeInput } from "./viewer/plotInputAdapters";
 import { usePlotInput } from "./viewer/usePlotInput";
 import { usePlotTextSize } from "./viewer/usePlotTextSize";
@@ -53,8 +53,21 @@ const PADDING_RIGHT = 12;
 /** Deep enough that the value title in the corner clears the headroom's top. */
 const PADDING_TOP = 12;
 const BASELINE_Y = PLOT_HEIGHT - 4;
-const USABLE_WIDTH = PLOT_WIDTH - PADDING_LEFT - PADDING_RIGHT;
+const FRAME_WIDTH = PLOT_WIDTH - PADDING_LEFT - PADDING_RIGHT;
 const USABLE_HEIGHT = BASELINE_Y - PADDING_TOP;
+
+/** Where the range on screen is drawn, and what a pointer is resolved against. */
+export const CHROMATOGRAM_PLOT_BAND = xBand(PADDING_LEFT, PLOT_WIDTH - PADDING_RIGHT);
+
+/**
+ * Whether a place is on the range on screen, which a rule and its label ask: the
+ * frame's clip no longer hides what lands in the inset. A hair's width either way,
+ * since a flush-right range can end a unit in the last place short of the run.
+ */
+function inBand(x: number): boolean {
+  const { left, drawnWidth } = CHROMATOGRAM_PLOT_BAND;
+  return x >= left - 1e-6 && x <= left + drawnWidth + 1e-6;
+}
 
 const TRACES: readonly {
   readonly trace: TraceKind;
@@ -468,9 +481,9 @@ function ChromatogramPlot({
     }
     for (const [kind, index] of [["selected", state.selection?.index], ["hover", state.hover?.spectrumIndex]] as const) {
       const group = node.querySelector(`.chromatogram-${kind}`); const point = index === undefined ? undefined : byIndex.get(index);
-      group?.setAttribute("visibility", point === undefined ? "hidden" : "visible");
-      if (point !== undefined) {
-        const x = scaleNow.x(point.retentionTime);
+      const x = point === undefined ? null : scaleNow.x(point.retentionTime);
+      group?.setAttribute("visibility", x !== null && inBand(x) ? "visible" : "hidden");
+      if (x !== null) {
         group?.querySelector("line")?.setAttribute("x1", String(x)); group?.querySelector("line")?.setAttribute("x2", String(x));
         if (kind === "selected") {
           // The rule's label follows it through a gesture, like the rule.
@@ -478,7 +491,7 @@ function ChromatogramPlot({
           const at = (x / PLOT_WIDTH) * 100;
           if (label) {
             label.style.left = `${at.toFixed(3)}%`; label.dataset.side = at > 60 ? "left" : "right";
-            label.hidden = x < PADDING_LEFT || x > PLOT_WIDTH - PADDING_RIGHT;
+            label.hidden = !inBand(x);
           }
         }
       }
@@ -488,7 +501,7 @@ function ChromatogramPlot({
     if (line) line.textContent = t("viewerShowing", { low: shown.low.toFixed(4), high: withRetentionTimeUnit(shown.high, unit) }) +
       (state.committedDomain === null && state.gesture === null ? t("viewerFullRange") : "");
   }, [readInteraction, activeTraces, points, byIndex, t, domain, extent, scale, marks, unit]);
-  const input = usePlotInput({ port: inputPort, geometry: { width: PLOT_WIDTH, left: PADDING_LEFT, drawnWidth: USABLE_WIDTH }, paintFrame,
+  const input = usePlotInput({ port: inputPort, geometry: { width: PLOT_WIDTH, ...CHROMATOGRAM_PLOT_BAND }, paintFrame,
     onInspect: retentionTime => {
       if (selectionAvailability.status !== "available") return;
       const scan = nearestScan(points, retentionTime); if (scan) onSelect(scan.spectrumIndex);
@@ -539,7 +552,7 @@ function ChromatogramPlot({
         >
           <defs>
             <clipPath id="chromatogram-clip">
-              <rect height={USABLE_HEIGHT} width={USABLE_WIDTH} x={PADDING_LEFT} y={PADDING_TOP} />
+              <rect height={USABLE_HEIGHT} width={FRAME_WIDTH} x={PADDING_LEFT} y={PADDING_TOP} />
             </clipPath>
           </defs>
           {/* Light rules at the value ticks, under everything drawn. */}
@@ -561,7 +574,7 @@ function ChromatogramPlot({
               <text
                 className="chromatogram-hidden-note"
                 textAnchor="middle"
-                x={PADDING_LEFT + USABLE_WIDTH / 2}
+                x={PADDING_LEFT + FRAME_WIDTH / 2}
                 y={PADDING_TOP + USABLE_HEIGHT / 2}
               >
                 {t("viewerTracesHidden")}
@@ -603,7 +616,7 @@ function ChromatogramPlot({
           const at = (x / PLOT_WIDTH) * 100;
           // Off the range on screen, the rule is clipped and so is its label.
           return <span aria-hidden="true" className="chromatogram-cursor-label" data-side={at > 60 ? "left" : "right"}
-            hidden={x < PADDING_LEFT || x > PLOT_WIDTH - PADDING_RIGHT}
+            hidden={!inBand(x)}
             style={{ left: `${at.toFixed(3)}%` }}>
             {t("viewerCursorLabel", { scan: selectedPoint.scanNumber === null ? formatCount(selectedPoint.spectrumIndex) : formatCount(selectedPoint.scanNumber),
               rt: withRetentionTimeUnit(selectedPoint.retentionTime, unit) })}
@@ -639,23 +652,20 @@ function ChromatogramPlot({
 /**
  * How a value and a retention time become viewBox coordinates.
  *
- * The retention-time axis is the range on screen exactly. The value axis is the
- * visible extent with headroom, so the tallest visible point sits below the
- * frame rather than on it; `valueLow`/`valueHigh` are that axis, for its ticks.
+ * The retention-time axis is the range on screen, drawn over the band inside
+ * the frame, so a scan at its end stands clear of the value axis. The value axis
+ * is the visible extent with headroom, so the tallest visible point sits below
+ * the frame rather than on it; `valueLow`/`valueHigh` are that axis, for its ticks.
  */
 function scaleFor(domain: RetentionTimeDomain, extent: ValueExtent) {
-  const span = domain.high - domain.low;
   const axis = withHeadroom(extent.low, extent.high);
   const valueSpan = axis.high - axis.low;
-  // Both guards are about the same thing: a divisor that is zero, or that
-  // overflowed adding two finite extremes, would put `NaN` or `Infinity` into
-  // an SVG coordinate -- which draws nothing and says nothing about why.
-  const usableX = Number.isFinite(span) && span > 0;
+  // A divisor that is zero, or that overflowed adding two finite extremes, would
+  // put `NaN` or `Infinity` into an SVG coordinate -- which draws nothing and
+  // says nothing about why. `xAt` asks the same of its own.
   const usableY = Number.isFinite(valueSpan) && valueSpan > 0;
   return {
-    x: (retentionTime: number) =>
-      PADDING_LEFT +
-      (usableX ? ((retentionTime - domain.low) / span) * USABLE_WIDTH : USABLE_WIDTH / 2),
+    x: (retentionTime: number) => xAt(retentionTime, domain, CHROMATOGRAM_PLOT_BAND),
     y: (value: number) =>
       PADDING_TOP +
       (usableY ? ((axis.high - value) / valueSpan) * USABLE_HEIGHT : USABLE_HEIGHT),
