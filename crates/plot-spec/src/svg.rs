@@ -191,6 +191,16 @@ const DOMAIN_TITLE_DROP: f64 = 30.0;
 /// past zero would move the line a reader measures from.
 const HEADROOM: f64 = 0.05;
 
+/// How far inside the frame each end of the domain axis is drawn.
+///
+/// Space on the page and nothing else: a mark at the end of a run stands clear
+/// of the value axis rather than on it, and the rule and gridlines still run the
+/// frame's width. The domain stays the data's, so no tick lands in this space
+/// and the description states the same range. Larger than any mark drawn at a
+/// position. The screen's `DOMAIN_INSET` is this number, in its own viewBox
+/// units, and `fixtures/plot-ticks/axis-geometry.json` holds the two together.
+const DOMAIN_INSET: f64 = 8.0;
+
 /// How visible a gridline is, drawn in the axis colour.
 ///
 /// A reading aid rather than data: light enough that no trace has to compete
@@ -386,11 +396,7 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
                 // The contract guarantees a non-decreasing domain and the
                 // projection is monotonic, so these arrive in order and the
                 // difference needs no absolute value.
-                gap(
-                    &mut across,
-                    project(*at, drawn, frame.left, frame.right),
-                    true,
-                );
+                gap(&mut across, frame.x(*at, drawn), true);
                 let top = height(*value);
                 gap(&mut up, top, false);
                 // A discrete mark is a *length measured from the zero line*,
@@ -441,7 +447,7 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
             .markers
             .iter()
             .filter(|marker| marker.at() >= drawn.low() && marker.at() <= drawn.high())
-            .map(|marker| project(marker.at(), drawn, frame.left, frame.right))
+            .map(|marker| frame.x(marker.at(), drawn))
             .collect();
         // An interval's drawn ends are rules and band edges at a domain
         // position, asked the marker's question: two written at one x are one.
@@ -452,7 +458,7 @@ fn coordinate_precision(figure: &FigureSpec, frames: &[Frame]) -> Precision {
                 .iter()
                 .flat_map(|interval| [interval.low(), interval.high()])
                 .filter(|at| *at >= drawn.low() && *at <= drawn.high())
-                .map(|at| project(at, drawn, frame.left, frame.right)),
+                .map(|at| frame.x(at, drawn)),
         );
         placed.sort_unstable_by(f64::total_cmp);
         for pair in placed.windows(2) {
@@ -1282,6 +1288,8 @@ fn interval_treatments(panel: &PanelSpec, drawn: Domain) -> String {
 struct Frame {
     left: f64,
     right: f64,
+    /// Where the domain's two ends are drawn: [`domain_band`] of the frame.
+    band: (f64, f64),
     plot_top: f64,
     plot_bottom: f64,
     zero_y: f64,
@@ -1294,6 +1302,21 @@ struct Frame {
     domain_labels: Vec<AxisLabel>,
     /// The weight every line is drawn at.
     line: f64,
+}
+
+impl Frame {
+    /// Where a position on the domain axis is drawn.
+    ///
+    /// The one way from the domain to the page, for the precision decision as
+    /// much as for the drawing, so the two cannot come to disagree.
+    fn x(&self, at: f64, domain: Domain) -> f64 {
+        project(at, domain, self.band.0, self.band.1)
+    }
+}
+
+/// The part of a frame the domain axis is drawn over.
+fn domain_band(left: f64, right: f64) -> (f64, f64) {
+    (left + DOMAIN_INSET, right - DOMAIN_INSET)
 }
 
 /// One labelled position on an axis, and which way its text runs from it.
@@ -1471,12 +1494,12 @@ fn value_labels(
 /// Nice ticks centred on their positions where none collides and none leaves
 /// the document; otherwise the two ends, each held to its own end of the axis,
 /// or the one value a single-valued axis has, where its data is drawn.
-fn domain_labels(drawn: Domain, left: f64, right: f64, width: f64) -> Vec<AxisLabel> {
+fn domain_labels(drawn: Domain, band: (f64, f64), width: f64) -> Vec<AxisLabel> {
     let fits = |ticks: &[Tick]| {
         let boxes: Vec<(f64, f64)> = ticks
             .iter()
             .map(|tick| {
-                let x = project(tick.at, drawn, left, right);
+                let x = project(tick.at, drawn, band.0, band.1);
                 let half = text_width(&tick.label, TICK_LABEL_SIZE, false) / 2.0;
                 (x - half, x + half)
             })
@@ -1766,6 +1789,7 @@ fn panel_frames(figure: &FigureSpec, width: f64, height: f64) -> Vec<Frame> {
         .min(label_room);
     let left = (VALUE_TITLE_CLEARANCE + widest + TICK_LABEL_GAP + TICK_LENGTH).max(MIN_MARGIN_LEFT);
     let right = width - MARGIN_RIGHT;
+    let band = domain_band(left, right);
     figure
         .panels
         .iter()
@@ -1785,12 +1809,13 @@ fn panel_frames(figure: &FigureSpec, width: f64, height: f64) -> Vec<Frame> {
             Frame {
                 left,
                 right,
+                band,
                 plot_top,
                 plot_bottom,
                 zero_y,
                 values,
                 value_labels,
-                domain_labels: domain_labels(panel.drawn_domain(), left, right, width),
+                domain_labels: domain_labels(panel.drawn_domain(), band, width),
                 line: figure.size.line_width(),
             }
         })
@@ -1917,7 +1942,7 @@ fn render_panel(
         if marker.at < domain.low() || marker.at > domain.high() {
             continue;
         }
-        let x = project(marker.at, domain, frame.left, frame.right);
+        let x = frame.x(marker.at, domain);
         let _ = writeln!(
             out,
             "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" \
@@ -1961,19 +1986,18 @@ fn render_panel(
     }
     // A label held to one end of the axis may take half of it, so the two ends
     // cannot meet in the middle; a centred tick label was laid out to fit.
-    let end_room = (frame.right - frame.left) / 2.0;
+    let end_room = (frame.band.1 - frame.band.0) / 2.0;
     for label in &frame.domain_labels {
-        let x = project(label.at, domain, frame.left, frame.right);
+        let x = frame.x(label.at, domain);
         rule(out, (x, plot_bottom), (x, plot_bottom + TICK_LENGTH), "");
-        let (at, room) = match label.anchor {
-            Anchor::Start => (frame.left, end_room),
-            Anchor::End => (frame.right, end_room),
-            Anchor::Middle => (x, f64::INFINITY),
+        let room = match label.anchor {
+            Anchor::Start | Anchor::End => end_room,
+            Anchor::Middle => f64::INFINITY,
         };
         write_line(
             out,
             &Line {
-                x: at,
+                x,
                 y: plot_bottom + DOMAIN_LABEL_DROP,
                 size: TICK_LABEL_SIZE,
                 anchor: label.anchor,
@@ -2128,7 +2152,7 @@ fn render_series(
                 let _ = write!(
                     path,
                     "M{} {}",
-                    precision.coordinate(project(ax, domain, frame.left, frame.right)),
+                    precision.coordinate(frame.x(ax, domain)),
                     precision.coordinate(project(ay, values, plot_bottom, plot_top)),
                 );
                 pen_down = true;
@@ -2136,7 +2160,7 @@ fn render_series(
             let _ = write!(
                 path,
                 "L{} {}",
-                precision.coordinate(project(bx, domain, frame.left, frame.right)),
+                precision.coordinate(frame.x(bx, domain)),
                 precision.coordinate(project(by, values, plot_bottom, plot_top)),
             );
         }
@@ -2156,14 +2180,14 @@ fn render_series(
         if path.is_empty()
             && let Some((at, value)) = touched
         {
-            let x = project(at, domain, frame.left, frame.right);
+            let x = frame.x(at, domain);
             let y = project(value, values, plot_bottom, plot_top);
             let _ = write!(
                 path,
                 "M{} {}L{} {}",
-                precision.coordinate((x - LONE_SAMPLE_TICK).max(frame.left)),
+                precision.coordinate(x - LONE_SAMPLE_TICK),
                 precision.coordinate(y),
-                precision.coordinate((x + LONE_SAMPLE_TICK).min(frame.right)),
+                precision.coordinate(x + LONE_SAMPLE_TICK),
                 precision.coordinate(y),
             );
         }
@@ -2176,7 +2200,7 @@ fn render_series(
             if *x < low || *x > high {
                 continue;
             }
-            let at = project(*x, domain, frame.left, frame.right);
+            let at = frame.x(*x, domain);
             let top = project(*y, values, plot_bottom, plot_top);
             // A stick of zero length paints nothing, so a spectrum of measured
             // zeros drew an empty plotting area -- indistinguishable from a
@@ -2188,9 +2212,9 @@ fn render_series(
                 let _ = write!(
                     path,
                     "M{} {}L{} {}",
-                    precision.coordinate((at - LONE_SAMPLE_TICK).max(frame.left)),
+                    precision.coordinate(at - LONE_SAMPLE_TICK),
                     precision.coordinate(zero_y),
-                    precision.coordinate((at + LONE_SAMPLE_TICK).min(frame.right)),
+                    precision.coordinate(at + LONE_SAMPLE_TICK),
                     precision.coordinate(zero_y),
                 );
                 continue;
@@ -2227,7 +2251,7 @@ fn render_series(
                 sample_mark(
                     series.role(),
                     (
-                        project(*x, domain, frame.left, frame.right),
+                        frame.x(*x, domain),
                         project(*y, values, plot_bottom, plot_top),
                     ),
                     frame.line,
@@ -2293,7 +2317,7 @@ fn render_interval(
         return;
     }
     let rule = |at: f64, stroke: &str, dashes: &str| {
-        let x = project(at, domain, frame.left, frame.right);
+        let x = frame.x(at, domain);
         format!(
             "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{stroke}\" \
              stroke-width=\"{}\" stroke-dasharray=\"{dashes}\"/>",
@@ -2315,18 +2339,8 @@ fn render_interval(
             }
         }
         IntervalRole::Selected | IntervalRole::Considered => {
-            let left = project(
-                interval.low().max(domain.low()),
-                domain,
-                frame.left,
-                frame.right,
-            );
-            let right = project(
-                interval.high().min(domain.high()),
-                domain,
-                frame.left,
-                frame.right,
-            );
+            let left = frame.x(interval.low().max(domain.low()), domain);
+            let right = frame.x(interval.high().min(domain.high()), domain);
             let selected = interval.role() == IntervalRole::Selected;
             if right - left < NARROWEST_BAND {
                 let (stroke, dashes) = if selected {
@@ -2947,4 +2961,122 @@ fn format_number(value: f64, decimals: usize) -> String {
 /// the only thing wrong with it is how it prints.
 fn normalized_zero(value: f64) -> f64 {
     if value == 0.0 { 0.0 } else { value }
+}
+
+/// The table the screen's axes are held to: `plotAxes.test.ts` reads the same
+/// file and expects the same numbers, to the last bit.
+///
+/// `MSCANVAS_WRITE_TICK_TABLE=1 cargo test -p mscanvas-plot-spec shared_table`
+/// rewrites it, with the tick table; otherwise a difference fails, and a missing
+/// file with it.
+#[cfg(test)]
+mod shared_table {
+    use super::*;
+    use serde_json::json;
+
+    /// The screen's two frames, in its viewBox units, and two a figure has.
+    /// Dyadic, so `midpoint` and `left + width / 2` are one number.
+    const FRAMES: &[(f64, f64)] = &[(64.0, 988.0), (8.0, 992.0), (45.375, 1180.0), (80.0, 180.0)];
+
+    /// Ordinary ranges, ends where `low + 1 × span` misses `high` either way, and
+    /// no width.
+    const DOMAINS: &[(f64, f64)] = &[
+        (0.0, 1.0),
+        (0.2, 0.9),
+        (0.3, 0.9),
+        (333.3, 1000.12),
+        (10.0, 13.0),
+        (100.5, 500.0),
+        (300.5, 302.0),
+        (1000.12, 1000.12025),
+        (1000.0000001, 1000.0000004),
+        (1e-20, 4e-20),
+        (1e307, 2e307),
+        (-40.0, 60.0),
+        (5.0, 5.0),
+        (0.0, 0.0),
+    ];
+
+    /// What the value axis is given. The screen's ranges all hold zero, and
+    /// those carry their ticks; the rest pin the headroom alone.
+    const VALUES: &[(f64, f64)] = &[
+        (0.0, 9000.0),
+        // A round tick in the headroom, and one on the tallest value.
+        (0.0, 980.0),
+        (0.0, 1000.0),
+        (-40.0, 60.0),
+        (-945.0, 0.0),
+        (0.0, 2500.0),
+        (0.0, 5.2e6),
+        (-2_073_000.0, 1_625_000.0),
+        (0.0, 3.15e-4),
+        (0.0, 0.0),
+        // Headroom past the largest number there is: none, rather than infinity.
+        (0.0, 1.79e308),
+        (500.0, 9000.0),
+        (-9000.0, -500.0),
+        (5.0, 5.0),
+    ];
+
+    /// One row a line, so a moved number is a one-line difference.
+    fn table() -> String {
+        let x: Vec<String> = FRAMES
+            .iter()
+            .flat_map(|frame| DOMAINS.iter().map(move |domain| (frame, domain)))
+            .map(|(&(left, right), &(low, high))| {
+                let domain = Domain::new(low, high).expect("a table domain");
+                let (from, to) = domain_band(left, right);
+                let places: Vec<(f64, f64)> = [low, low + domain.span() / 3.0, high]
+                    .into_iter()
+                    .map(|at| (at, project(at, domain, from, to)))
+                    .collect();
+                json!({ "frame": [left, right], "low": low, "high": high, "at": places })
+                    .to_string()
+            })
+            .collect();
+        let values: Vec<String> = VALUES
+            .iter()
+            .map(|&(low, high)| {
+                let displayed = Domain::new(low, high).expect("a table range");
+                let axis = value_axis(displayed);
+                // Tall enough and wide enough that nothing is thinned out: the
+                // screen has no collision check.
+                let ticks = (low <= 0.0 && high >= 0.0).then(|| {
+                    value_labels(displayed, axis, 0.0, 1e12, f64::INFINITY)
+                        .into_iter()
+                        .map(|label| (label.at, label.text))
+                        .collect::<Vec<_>>()
+                });
+                json!({
+                    "low": low,
+                    "high": high,
+                    "axis": [axis.low(), axis.high()],
+                    "ticks": ticks,
+                })
+                .to_string()
+            })
+            .collect();
+        format!(
+            "{{\n\"domain_inset\": {},\n\"headroom\": {},\n\"x\": [\n{}\n],\n\"values\": [\n{}\n]\n}}\n",
+            json!(DOMAIN_INSET),
+            json!(HEADROOM),
+            x.join(",\n"),
+            values.join(",\n"),
+        )
+    }
+
+    #[test]
+    fn the_file_is_what_the_geometry_gives() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/plot-ticks/axis-geometry.json"
+        );
+        if std::env::var_os("MSCANVAS_WRITE_TICK_TABLE").is_some() {
+            std::fs::write(path, table()).expect("the table is written");
+        }
+        assert_eq!(
+            std::fs::read_to_string(path).expect("the table is read"),
+            table()
+        );
+    }
 }
