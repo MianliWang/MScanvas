@@ -36,6 +36,11 @@ export function conversionErrorMessage(error: PreviewError, t: UiMessage): strin
   return key === undefined ? ownedErrorMessage(error, t) : t(key);
 }
 
+/** What an adoption under way is doing, in the summary column and the status bar. */
+export function adoptionInFlightKey(adoptingOutput: string | null) {
+  return adoptingOutput === null ? "m74CnvAdoptInFlight" : "m74CnvAdoptOneInFlight";
+}
+
 const NOTICE_MESSAGE = {
   "staging-reclaiming": "m74CnvNoticeStagingReclaiming",
   "backend-quarantined": "m74CnvNoticeBackendQuarantined",

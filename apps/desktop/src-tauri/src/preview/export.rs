@@ -75,7 +75,7 @@ use super::figure::{
 };
 use super::installation::InstallationIdentity;
 use super::projection::{self, ProjectionRefusal, ViewportDomain};
-use super::selection::DatasetId;
+use super::selection::{DatasetId, NotVerifiedByMscanvas};
 
 /// The version a **full-source** data document answers to.
 ///
@@ -639,6 +639,9 @@ pub struct ClaimedChromatogramExport {
     /// for the same reason: only the output that has a resolution holds one.
     pub(super) settings: Option<FigureRenderSettings>,
     pub(super) dpi: Option<PngDpi>,
+    /// The source row's label, read when the export is claimed: a row removed
+    /// while the save dialog is open must not take the label off the figure.
+    pub(super) source_label: Option<Box<NotVerifiedByMscanvas>>,
 }
 
 impl ClaimedChromatogramExport {
@@ -651,6 +654,19 @@ impl ClaimedChromatogramExport {
     pub(super) fn figure_settings(&self) -> FigureRenderSettings {
         self.settings
             .expect("a figure export reserved the settings it is drawn at")
+    }
+
+    /// The figure this export draws, with its source's label.
+    pub(super) fn figure(&self) -> Result<FigureSpec, SpecError> {
+        labelled_figure(
+            super::chromatogram::figure_spec(
+                self.snapshot.source(),
+                self.range,
+                self.traces,
+                self.figure_settings(),
+            ),
+            self.source_label.as_deref(),
+        )
     }
 
     /// How this export's save dialog presents itself.
@@ -687,6 +703,8 @@ pub struct ClaimedLinkedFigureExport {
     pub(super) traces: TraceSet,
     pub(super) settings: FigureRenderSettings,
     pub(super) dpi: Option<PngDpi>,
+    /// As [`ClaimedChromatogramExport::source_label`].
+    pub(super) source_label: Option<Box<NotVerifiedByMscanvas>>,
 }
 
 impl ClaimedLinkedFigureExport {
@@ -941,7 +959,7 @@ enum ExportState {
         /// a selection, a preview, a viewport or a settings change that lands
         /// in between cannot move an export that has already been started onto
         /// different science.
-        export: ClaimedExport,
+        export: Box<ClaimedExport>,
     },
     /// A destination was chosen and the bytes are being written.
     Writing,
@@ -981,9 +999,19 @@ pub struct ClaimedSpectrumExport {
     pub(super) range: ResolvedSpectrumRange,
     pub(super) settings: FigureRenderSettings,
     pub(super) dpi: Option<PngDpi>,
+    /// As [`ClaimedChromatogramExport::source_label`].
+    pub(super) source_label: Option<Box<NotVerifiedByMscanvas>>,
 }
 
 impl ClaimedSpectrumExport {
+    /// The figure this export draws, with its source's label.
+    pub(super) fn figure(&self) -> Result<FigureSpec, SpecError> {
+        labelled_figure(
+            figure_spec(self.snapshot.spectrum(), self.settings, self.range),
+            self.source_label.as_deref(),
+        )
+    }
+
     /// How this export's save dialog presents itself.
     #[must_use]
     pub const fn dialog(&self) -> SaveDialogFacts {
@@ -1387,7 +1415,7 @@ impl ScientificExportSlots {
         self.lane = ExportState::AwaitingDestination {
             reservation,
             claimed: false,
-            export,
+            export: Box::new(export),
         };
         Ok(reservation)
     }
@@ -1485,6 +1513,7 @@ impl ScientificExportSlots {
             range,
             settings,
             dpi,
+            source_label: None,
         }))
     }
 
@@ -1523,6 +1552,7 @@ impl ScientificExportSlots {
             traces,
             settings,
             dpi,
+            source_label: None,
         }))
     }
 
@@ -1566,6 +1596,7 @@ impl ScientificExportSlots {
             traces,
             settings,
             dpi,
+            source_label: None,
         }))
     }
 
@@ -2228,11 +2259,30 @@ pub(super) fn known_unit(unit: &str) -> Result<UnitState, SpecError> {
     })
 }
 
-/// Renders one selected spectrum as the SVG document a user receives.
+/// One built figure, saying what its source row says about itself (ADR 0055;
+/// owner decision A0055 (a), 2026-10-31), on every surface the figure reaches:
+/// the file, the clipboard and the dialog's preview.
+///
+/// # Errors
+///
+/// The figure's own refusal, or a release too strange to print: refused rather
+/// than exported without the label.
+pub(super) fn labelled_figure(
+    figure: Result<FigureSpec, SpecError>,
+    label: Option<&NotVerifiedByMscanvas>,
+) -> Result<FigureSpec, SpecError> {
+    match label {
+        Some(label) => Ok(figure?.with_source_note(Label::new(label.figure_note())?)),
+        None => figure,
+    }
+}
+
+/// Renders one unlabelled spectrum as the SVG document a user receives.
 ///
 /// # Errors
 ///
 /// Answers with the contract's refusal where the spectrum cannot be specified.
+#[cfg(test)]
 pub(super) fn svg_document(
     spectrum: &SelectedSpectrumResult,
     settings: FigureRenderSettings,
@@ -2258,6 +2308,7 @@ pub(super) enum FigureFailure {
 /// pixel grid. There is no second scientific renderer here and there must never
 /// be one: two of them would be two answers to what the figure says, and the
 /// user would have no way to know which file they were holding.
+#[cfg(test)]
 pub(super) fn figure_raster(
     spectrum: &SelectedSpectrumResult,
     settings: FigureRenderSettings,
@@ -2385,7 +2436,8 @@ pub(super) fn tiff_at(figure: &FigureSpec, plan: RasterPlan) -> Result<Vec<u8>, 
     encode_tiff(&raster_at(figure, plan)?, plan.dpi().get()).map_err(FigureFailure::Raster)
 }
 
-/// Renders one selected spectrum as the PNG document a user receives.
+/// Renders one unlabelled spectrum as the PNG document a user receives.
+#[cfg(test)]
 pub(super) fn png_document(
     spectrum: &SelectedSpectrumResult,
     settings: FigureRenderSettings,

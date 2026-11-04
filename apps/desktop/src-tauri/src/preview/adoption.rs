@@ -166,6 +166,10 @@ impl FinalizedOutputAdoptionTicket {
         self.not_verified.as_ref()
     }
 
+    pub(super) const fn object_identity(&self) -> Option<(u64, [u8; 16])> {
+        self.finalized.object_identity()
+    }
+
     pub(super) fn output_id(&self) -> &str {
         &self.output_id
     }

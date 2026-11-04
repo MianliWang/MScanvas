@@ -324,7 +324,9 @@ export interface SelectedFile {
   readonly relativeContext: string | null;
   /**
    * The "not verified by MSCanvas" label of the conversion this session
-   * adopted the row's object from (ADR 0055; owner decision 2 of 2026-10-29).
+   * finalized the row's object from (ADR 0055; owner decisions of 2026-10-29 and
+   * 2026-10-31; for a row from a drop or a project, as built in PR #201,
+   * 2026-11-03, not an owner decision).
    * `null` is never a claim of verification. Optional only until fixtures
    * carry it; Rust always sends it.
    */
@@ -1339,12 +1341,17 @@ export type ConversionProcessOutcome =
     };
 
 /**
- * What an adoption did with one item's finalized outputs.
+ * What the latest adoption did with one item's finalized outputs.
  *
  * Historical, and about this settling of this queue: it says what an adoption
  * did, not what the workspace holds now. Removing a row afterwards leaves this
  * unchanged, because removing a row deletes no file and undoes no past process
  * outcome.
+ *
+ * The latest answer, queue-wide or per-output (ADR 0052 decision 5), replacing
+ * what the item held. After a per-output Add of one set member the counts are
+ * about that member alone, so they can sum to less than the item's outputs, and
+ * which members are in the workspace is the roster's answer.
  */
 export type ConversionItemAdoption =
   /** Nobody has asked yet, which is not the same as having been refused. */

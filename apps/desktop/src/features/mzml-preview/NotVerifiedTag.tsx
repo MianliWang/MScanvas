@@ -32,5 +32,6 @@ export function NotVerifiedTag({ label, id }: {
 }): ReactElement | null {
   const t = useUiMessages();
   if (label == null) return null;
-  return <span className="not-verified-tag" data-not-verified="" id={id}>{notVerifiedText(label, t)}</span>;
+  const text = notVerifiedText(label, t);
+  return <span className="not-verified-tag" data-not-verified="" id={id} title={text}>{text}</span>;
 }

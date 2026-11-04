@@ -12,12 +12,14 @@ import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { App } from "../../app/App";
 import {
   availableBackend,
+  buildPreview,
   completeCatalog,
   createFakePreviewApi,
   createFakeWorkspaceDropTransport,
   finalizedAttemptFacts,
   queueItem,
   queueOf,
+  selectedFile,
 } from "../../test/previewFixtures";
 import type { FakePreviewApi } from "../../test/previewFixtures";
 import type { ConversionPlanOutcome, ConversionQueueItem, ConversionReport, SelectedFile, WorkspaceConversionState } from "./contracts";
@@ -126,6 +128,24 @@ describe("the not-verified label", () => {
     expect(panel.querySelector(".conversion-run-list [data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
   });
 
+  it("stays on a finalized row while its queue runs, where no Add carries it", async () => {
+    // A finalized item holds a ticket whatever the queue is doing, so only the
+    // count Rust sends says the queue has not settled: 0 until it has.
+    const running: WorkspaceConversionState = {
+      status: "running",
+      operationId: "1",
+      queue: {
+        ...queueOf([finalized(ROWS[0]!), queueItem("file-2", "run-2.raw", { state: "running", attempts: 1 })]),
+        adoptableOutputCount: 0,
+      },
+    };
+    renderApp(createFakePreviewApi({ initialDatasets: ROWS, availability: availableBackend, initialConversion: running }));
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-run-list [data-not-verified]")).toHaveLength(1));
+    expect(panel.querySelector(".conversion-run-list [data-not-verified]")?.textContent).toBe(BUILD_LABEL);
+    expect(within(panel.querySelector<HTMLElement>(".conversion-run-list")!).queryByRole("button", { name: /^Add /u })).toBeNull();
+  });
+
   it("is said beside Add, which it describes, and on the roster row an adopted output becomes", async () => {
     const terminal: WorkspaceConversionState = {
       status: "terminal",
@@ -149,6 +169,37 @@ describe("the not-verified label", () => {
     const roster = within(screen.getByRole("treegrid", { name: "Acquisitions" }));
     const row = roster.getByRole("row", { name: new RegExp(BUILD_LABEL.replace(/[.]/gu, "\\.")) });
     expect(row.querySelector("[data-not-verified]")?.textContent).toBe(BUILD_LABEL);
+  });
+
+  it("is beside the viewer's title, not in it", async () => {
+    const label = { unverifiedSettings: false, unverifiedBuildRelease: RELEASE };
+    const file: SelectedFile = { ...selectedFile, notVerifiedByMscanvas: label };
+    render(
+      <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={createFakePreviewApi({ initialDatasets: [file], availability: availableBackend, preview: { ...buildPreview(), file } })}>
+          <App />
+        </PreviewApiProvider>
+      </WorkspaceDropTransportProvider>,
+    );
+    fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
+    const title = await screen.findByRole("heading", { level: 1, name: file.fileName });
+    expect(title.textContent).toBe(file.fileName);
+    expect(title.parentElement?.querySelector("[data-not-verified]")?.textContent).toBe(BUILD_LABEL);
+  });
+
+  it("carries a row Add files… recognised as a finalized output, and a project reference's own record", async () => {
+    // Rust matches the object and answers with the label on the row; the
+    // interface's whole part is to show what it was told, on every surface.
+    const label = { unverifiedSettings: true, unverifiedBuildRelease: null };
+    const recognised: SelectedFile = { handle: "recognised", fileName: "moved.mzML", byteLength: 1, sourceKind: "mzml", relativeContext: null, notVerifiedByMscanvas: label };
+    const copy: SelectedFile = { handle: "copy", fileName: "copy.mzML", byteLength: 1, sourceKind: "mzml", relativeContext: null, notVerifiedByMscanvas: null };
+    renderApp(createFakePreviewApi({ initialDatasets: [], availability: availableBackend, pickedFiles: [recognised, copy] }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Workbench" }))[0]!);
+    fireEvent.click((await screen.findAllByRole("button", { name: en.addFiles }))[0]!);
+    const roster = within(await screen.findByRole("treegrid", { name: "Acquisitions" }));
+    const labelled = await roster.findByRole("row", { name: /moved\.mzML/u });
+    expect(labelled.querySelector("[data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
+    expect(roster.getByRole("row", { name: /copy\.mzML/u }).querySelector("[data-not-verified]")).toBeNull();
   });
 
   it("has both bundles, and names the build where the build is why", () => {

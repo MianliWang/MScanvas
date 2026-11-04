@@ -296,6 +296,10 @@ artifact and a target; that belongs with decision 8.
 
 ## What this does not claim
 
+- **The "not verified" note, as of 2026-11-03.** Reopening regenerates through
+  the unlabelled builders, so a labelled source's reopened figure carries no
+  source note (ADR 0055, PR #201). The command that first reaches reopening has
+  to add it.
 - **Byte identity across builds.** Within one build, save then reopen gives the
   same `FigureSpec` and the same SVG bytes; the goldens prove it for every
   figure kind. A later renderer may draw the same specification differently, as

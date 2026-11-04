@@ -2921,6 +2921,26 @@ impl ProjectStore {
                 ),
                 EvidenceRefusal::NotDrawable => TargetedFigureRefusal::NotDrawable,
             })?;
+        // What the reference says about itself, from the document and not from
+        // a live row, so a reopened result still says it (ADR 0055; owner
+        // decision A0055 (a)). A run keeps its reference from being removed, so
+        // one missing here is a damaged document and not an unlabelled figure.
+        let label = self
+            .locked()
+            .open()
+            .map_err(TargetedFigureRefusal::Project)?
+            .document
+            .input(stored.plan.input_id)
+            .ok_or(TargetedFigureRefusal::Project(ProjectError::UnknownRecord))?
+            .not_verified_by_mscanvas
+            .clone();
+        let figure = match label {
+            Some(label) => figure.with_source_note(
+                mscanvas_plot_spec::spec::Label::new(label.figure_note())
+                    .map_err(|_| TargetedFigureRefusal::NotDrawable)?,
+            ),
+            None => figure,
+        };
         Ok((figure, position))
     }
 
