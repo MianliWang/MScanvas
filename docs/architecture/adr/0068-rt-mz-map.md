@@ -6,8 +6,9 @@ version 2026-11-03.2: see
 [Owner decision, 2026-11-03](#owner-decision-2026-11-03). Slice 1, the library,
 is implemented in `crates/proteowizard/src/rt_mz_map.rs`, with one map per
 polarity and per representation; no command, screen or export uses it. MAP-1.9
-is decided and not built yet (decision 1). ADR 0070's table of records still
-lists this record as Proposed; that row changes in its own commit, after the
+is decided and not built yet (decision 1). ADR 0070's table of records lists
+this record as Accepted, by that row's own commit in this record's PR, #183. ADR
+0057's amendment (MAP-1.7) and ADR 0056's widening (MAP-1.9) come after it, in the
 second records PR.
 Related: [0005](0005-mzml-preview-boundary.md),
 [0028](0028-figure-renderer-and-semantic-specification.md),
