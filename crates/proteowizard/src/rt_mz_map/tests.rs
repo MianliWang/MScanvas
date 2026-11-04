@@ -998,14 +998,25 @@ fn a_cell_past_the_mz_axis_is_not_the_next_rows_cell() {
 #[test]
 fn the_result_keeps_the_request_exactly() {
     let document = document(&[ms1(0, "0.1", &[500.0], &[1.0])]);
-    // Each upper bound needs all 17 significant digits: rounded to fewer, it changes.
-    let view = request(
-        (0.002538333333, 0.30000000000000004),
-        3,
-        (400.500793457031, 1399.7896728515627),
-        7,
-    );
-    assert_eq!(map(&document, view).expect("maps").request(), &view);
+    // Each end of each axis has, in one view or the other, a value that needs all
+    // 17 significant digits: with fewer it changes. In the second view, unlike
+    // the first, `low + step * bins` misses each upper bound.
+    for view in [
+        request(
+            (0.0025383333333333334, 0.30000000000000004),
+            3,
+            (400.500793457031, 1399.7896728515627),
+            7,
+        ),
+        request(
+            (0.002538333333, 0.30000000000000043),
+            9,
+            (400.50079345703125, 1399.7896728515627),
+            13,
+        ),
+    ] {
+        assert_eq!(map(&document, view).expect("maps").request(), &view);
+    }
 }
 
 #[test]
