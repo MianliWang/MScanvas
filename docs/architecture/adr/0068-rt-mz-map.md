@@ -86,7 +86,8 @@ its table row reports each spectrum's polarity. It states no scan type yet.
     window.
   - A file where no MS1 spectrum declares one has one map, whose caption states
     "polarity not reported". A polarity-switching file that declares nothing
-    shares that one map. That is a known risk, stated on the figure.
+    shares that one map. That is a known risk, stated on the figure (as built
+    2026-11-04, not an owner decision: MAP-1.6 does not answer this case).
   - A polarity stated two ways or unreadably is not reported, which is the
     reader's rule (#182), so it counts as not declared here (as built 2026-11-04,
     not an owner decision).
@@ -140,6 +141,10 @@ its table row reports each spectrum's polarity. It states no scan type yet.
   state (MS:1000528, MS:1000527), when every one of them states both. That is a
   selection from read values (`ms1_extent`). Each map has its own ranges (as
   built 2026-11-04, not an owner decision).
+- **A map whose spectra share one retention time,** such as a file's only
+  centroid MS1 spectrum, has no first view: its retention-time range is empty, and
+  a request over it is refused (`map_bounds_invalid`). What the screen does then
+  belongs to analysis-ms1-map (as built 2026-11-04, not an owner decision).
 - **When the spectra do not state an m/z range (MAP-1.5),** the map has no first
   m/z range: the user enters one, and the reason is stated. No extra pass finds
   it.
@@ -205,7 +210,8 @@ its table row reports each spectrum's polarity. It states no scan type yet.
   - A file where only some MS1 spectra declare one has no map: it is refused
     (`partly_declared_representation`).
   - A file where no MS1 spectrum declares one has one map, whose caption states
-    "representation not reported".
+    "representation not reported" (as built 2026-11-04, not an owner decision:
+    MAP-1.8 does not answer this case).
 
 ### 4. Units and "not reported"
 
@@ -292,6 +298,15 @@ partial raster.
   the polarity, the representation and the window. It is a new format with its
   own version. It never contains the arrays; a spectrum's own export already
   does.
+- **Both exports carry the same provenance (2026-11-04, ADR 0070 decision 3's items
+  9 and 10; following that list is a reading, not an owner decision).** The data
+  document's preamble and the figure's description also state the source and its
+  generation; this record; the bounds and bin counts, kept exactly; the spectra
+  used and those left out (the other maps', those beyond the window, the
+  narrow-window scans), by count; and the points outside the m/z range. None is
+  counted as refused, because a refused spectrum refuses the map (decision 5).
+- **Both are written through the existing no-overwrite export path,** so an export
+  never replaces a file.
 
 ### 8. What this record allows
 
@@ -389,8 +404,9 @@ ProteoWizard program ran for this measurement.
 Release build of the example at commit `6ed6ccee`, on the same files by digest.
 Other builds were running on the machine (about 49% CPU when sampled), so these
 are counts, not timings: the times they print are not a measurement, and those
-above stand. No ProteoWizard program ran. The LTQ Velos file's console output,
-verbatim, first run:
+above stand. No ProteoWizard program ran. The table and map lines of the LTQ Velos
+file's console output, verbatim, first run; the example's four lines on the largest
+spectrum's m/z spacing, which follow them, are left out:
 
 ```text
 table: 85 rows, 9 ms
@@ -447,7 +463,8 @@ zoomed: 2 spectra; 2044 points binned, 18855 outside m/z; 2044 of 2097152 cells 
 - A file where only some MS1 spectra declare a polarity or a representation has
   no map.
 - A file that declares no polarity maps everything into one map, even if it
-  switches polarity, and says "polarity not reported".
+  switches polarity, and says "polarity not reported" (decision 1, as built
+  2026-11-04, not an owner decision).
 - A numpress file has no map.
 - Until `be/map-scan-type` lands, the library maps zoom or SIM scans with the
   full scans of their representation and states nothing about them, so MAP-1.9
@@ -486,7 +503,8 @@ decision 7's record for this one computation, and its scope is its limit.
   retention-time bins (decision 2), the command, the plot kind and the screen:
   those belong to analysis-ms1-map.
 - The rest of this record. The raster cap, the bin edges, the narrow-range
-  refusal and the desktop design in decision 6 are the design of 2026-10-30 and
+  refusal, the one map of a file that declares no polarity or no representation
+  and the desktop design in decision 6 are the design of 2026-10-30 and
   the library as built. The owner was not asked about them: not an owner decision.
 
 **Written elsewhere, not here, and not yet on `main` on 2026-11-04:** ADR 0057's
@@ -510,8 +528,8 @@ does not do yet.
 | 6. Arithmetic | Decision 1: the maximum of stored values as `f64`. ADR 0056's selected read widens each exactly or refuses it, and refuses a non-finite value, so none reaches a cell | |
 | 7. Retention | Decision 2: at most 2^21 `f64` cells, returned to the caller; nothing is cached and no array outlives its spectrum's step | Where the desktop keeps it and when that ends (slice 2) |
 | 8. Running | Decision 6: cancellation between spectra, and progress as spectra read out of the table's count | Supersession and the generation check (slice 2) |
-| 9. Provenance | The result carries the map's polarity and representation, bounds, bins, units and counts of spectra and points. Spectra excluded: the other maps' counts, and the map's own beyond the window, from `ms1_extent`. Refused: none, because a refused spectrum refuses the map | The source, its generation and this record's name (slice 2); the count of narrow scans left out (`be/map-scan-type`) |
-| 10. Export | Decision 7, through the shared specification and the existing no-overwrite export path | All of it (slice 3) |
+| 9. Provenance | The result carries the map's polarity and representation, bounds, bins, units and counts of spectra and points. Spectra excluded: the other maps' counts, and the map's own beyond the window, from `ms1_extent`. Refused: none, because a refused spectrum refuses the map. Decision 7: both exports carry the same | The source, its generation and this record's name (slice 2); the count of narrow scans left out (`be/map-scan-type`); the exports (slice 3) |
+| 10. Export | Decision 7, through the shared specification and the existing no-overwrite export path, with a data document that carries item 9 | All of it (slice 3) |
 | 11. Evidence | Evidence: time and memory on real files, release build, judged with no threshold set in advance. The tests' fixtures are hand-computed; `ltq_check.py` is an independent reference for the LTQ Velos counts it made | |
 
 ## Open questions for the owner

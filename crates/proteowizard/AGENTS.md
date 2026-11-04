@@ -26,7 +26,7 @@ This crate translates typed MSCanvas intent into validated ProteoWizard executab
 
 - `rt_mz_map.rs` reads MS1 spectra only through the viewing reader's selected read, at the table's offsets, over one handle per pass, and decodes nothing itself. Its one computation over the arrays is ADR 0068's: the greatest stored intensity per cell. Add no other without a record.
 - An empty cell is not zero. Nothing is smoothed, centroided, interpolated or converted between units; mixed units refuse the map, a refused spectrum refuses the whole map, and a cancelled pass returns no raster.
-- A map is of one polarity and one representation. A file where only some MS1 spectra declare one has no map; a file where none do has one map, stating it as not reported.
+- A map is of one polarity and one representation. A file where only some MS1 spectra declare one has no map; a file where none do has one map, stating it as not reported (as built 2026-11-04, not an owner decision).
 
 ## mzML viewing reader (ADR 0056)
 
