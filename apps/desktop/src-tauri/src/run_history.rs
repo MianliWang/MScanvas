@@ -1443,7 +1443,7 @@ fn kept_aside(directory: &Path, name: &str) -> bool {
 /// refuses the removal, which `sweep` counts.
 fn is_abandoned_sibling(name: &str, path: &Path) -> bool {
     local_document::is_temporary_name(name, TEMPORARY_PREFIX)
-        && fs::symlink_metadata(path).is_ok_and(|metadata| {
+        && fs::metadata(path).is_ok_and(|metadata| {
             local_document::is_ordinary_file(&metadata)
                 && metadata.modified().is_ok_and(|written| {
                     SystemTime::now()
