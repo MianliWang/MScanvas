@@ -421,6 +421,9 @@ store now does with such a sibling:
   run listed beside it waits for a later run's Clear, or for Off. That includes one
   a holder kept from a Clear: the answer says it remains, and the next read refuses
   Clear as having nothing to clear.
+  That Clear stays refused while only a sibling remains, and that the answer and the
+  next read then say different things, is as built on 2026-11-04, not an owner
+  decision, and the owner has not been asked.
 - **One that cannot be removed** counts in `notRemoved`, as a file kept aside does.
   The sweep goes on, no run's outcome changes, and one already gone counts as
   removed. The list read after it has no row for a sibling, so only the answer says
