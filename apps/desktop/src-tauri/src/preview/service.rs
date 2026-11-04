@@ -8140,6 +8140,18 @@ mod native_projection_tests {
                 Some("mz:unit_not_an_accession"),
             ),
             (
+                spectrum_refused(array(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)),
+                "spectrum_refused",
+                false,
+                Some("mz:payload_stated_twice"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Intensity, ArrayProblem::ElementInPayload)),
+                "spectrum_refused",
+                false,
+                Some("intensity:element_in_payload"),
+            ),
+            (
                 spectrum_refused(MzmlSpectrumError::ArrayLengthsDiffer),
                 "spectrum_refused",
                 false,

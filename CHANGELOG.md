@@ -78,6 +78,16 @@ All notable changes will be documented here once versioned releases begin.
   before you save it in this version.** Beta 1's roll back reinstalls the
   program; it does not convert a project back.
 
+### Fixed
+
+- **A malformed mzML file can no longer show a spectrum joined from separate
+  pieces.** Two `<binary>` elements in one m/z or intensity array, or an element
+  inside its `<binary>`, read as one array whenever the pieces held the declared
+  length, and text in a `<binary>` nested elsewhere in the array was joined on
+  too. That spectrum is now refused, and the file still opens and its other
+  spectra still read
+  ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
+
 ### Known limitations
 
 - **A beta-1 project close to the 4 MiB size limit opens but cannot be

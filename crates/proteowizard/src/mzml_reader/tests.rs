@@ -792,6 +792,332 @@ fn character_references_in_a_payload_are_their_characters() {
     assert_eq!(read.mz().values(), [1.0, 2.0, 3.0]);
 }
 
+// ---------------------------------------------------------------------------
+// One array, one payload: nothing is joined
+// ---------------------------------------------------------------------------
+
+/// The refusal of spectrum 0 under a namespace prefix, as `ms1_refusal` at the
+/// default declared length.
+fn prefixed_refusal(arrays: &[String]) -> MzmlSpectrumError {
+    selected(&prefixed(&document(&[ms1(0, arrays)]), "ms"), 0).expect_err("refused")
+}
+
+#[test]
+fn two_payloads_in_one_array_are_refused_and_never_joined() {
+    let plain_mz = [term(F64), term(NONE), mz_term()];
+    let plain_intensity = [term(F64), term(NONE), intensity_term()];
+    let six = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let mz_six = array(&plain_mz, &b64(&le_f64(&six)));
+    let intensity_six = array(&plain_intensity, &b64(&le_f64(&six)));
+    let whole = b64(&le_f64(&six));
+    // Three doubles are 32 base64 characters with no padding, so each of these
+    // joins into exactly the six declared values. That is the case that matters:
+    // nothing else would notice.
+    let (first, second) = whole.split_at(32);
+    for payload in [
+        format!("{first}</binary><binary>{second}"),
+        format!("</binary><binary>{whole}"),
+        format!("{whole}</binary><binary>"),
+        format!("{first}</binary><binary></binary><binary>{second}"),
+    ] {
+        assert_eq!(
+            ms1_refusal(6, &[array(&plain_mz, &payload), intensity_six.clone()]),
+            refused(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice),
+            "{payload}"
+        );
+        assert_eq!(
+            ms1_refusal(6, &[mz_six.clone(), array(&plain_intensity, &payload)]),
+            refused(ArrayRole::Intensity, ArrayProblem::PayloadStatedTwice),
+            "{payload}"
+        );
+    }
+    // A self-closed `binary` starts a payload too.
+    let self_closed = array(&plain_mz, &format!("</binary><binary>{whole}")).replacen(
+        "<binary></binary>",
+        "<binary/>",
+        1,
+    );
+    assert!(self_closed.contains("<binary/>"));
+    assert_eq!(
+        ms1_refusal(6, &[self_closed, intensity_six.clone()]),
+        refused(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)
+    );
+    // Under zlib, one stream stated in two parts.
+    let stream = b64(&zlib(&le_f64(&six)));
+    let (start, rest) = stream.split_at(8);
+    let split = array(
+        &[term(F64), term(ZLIB), mz_term()],
+        &format!("{start}</binary><binary>{rest}"),
+    );
+    assert_eq!(
+        ms1_refusal(6, &[split, intensity_six.clone()]),
+        refused(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)
+    );
+    // One double ends in padding, so a join would be corrupt base64: the refusal
+    // names what the file did, not what the join did to it.
+    let padded = array(
+        &plain_mz,
+        &format!(
+            "{}</binary><binary>{}",
+            b64(&le_f64(&[1.0])),
+            b64(&le_f64(&[2.0]))
+        ),
+    );
+    assert_eq!(
+        ms1_refusal(
+            2,
+            &[padded, array(&plain_intensity, &b64(&le_f64(&[1.0, 2.0])))]
+        ),
+        refused(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)
+    );
+    // At a declared length of 0 there is nothing to join, and still two payloads.
+    let empty = array(&plain_mz, "</binary><binary>");
+    assert_eq!(
+        ms1_refusal(0, &[empty, array(&plain_intensity, "")]),
+        refused(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)
+    );
+    // The same under a namespace prefix.
+    assert_eq!(
+        prefixed_refusal(&[
+            array(
+                &plain_mz,
+                &format!("</binary><binary>{}", b64(&le_f64(&[1.0, 2.0, 3.0])))
+            ),
+            array(&plain_intensity, &b64(&le_f64(&[1.0, 2.0, 3.0]))),
+        ]),
+        refused(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)
+    );
+
+    // A role stated between the two is still refused, for the term after the
+    // payload: this array had no decoded payload when the first one started.
+    let between = array(
+        &[term(F64), term(NONE)],
+        &format!("{first}</binary>{}<binary>{second}", mz_term()),
+    );
+    assert_eq!(
+        ms1_refusal(3, &[between, array(&plain_intensity, first)]),
+        MzmlSpectrumError::TermAfterPayload
+    );
+
+    // It is that one spectrum's refusal: the open and the others stand.
+    let bad = ms1(
+        0,
+        &[
+            array(
+                &plain_mz,
+                &format!("{}</binary><binary>", b64(&le_f64(&[1.0, 2.0, 3.0]))),
+            ),
+            intensity_array(&[1.0, 2.0, 3.0]),
+        ],
+    );
+    let document = document(&[bad, ms2(1)]);
+    let table = table(&document).expect("the open stands");
+    assert_eq!(table.rows().len(), 2);
+    let read = |index| read_selected_spectrum_from(Cursor::new(document.as_bytes()), &table, index);
+    let refusal = read(0).expect_err("refused");
+    assert_eq!(refusal.stable_id(), "payload_stated_twice");
+    assert_eq!(read(1).expect("decodes").mz().values(), [150.0, 175.5]);
+}
+
+#[test]
+fn an_element_inside_a_payload_refuses_the_array_and_is_never_joined_around() {
+    let plain_mz = [term(F64), term(NONE), mz_term()];
+    let plain_intensity = [term(F64), term(NONE), intensity_term()];
+    let stored = [1.0, 2.0, 3.0];
+    let whole = b64(&le_f64(&stored));
+    let (head, tail) = whole.split_at(8);
+    let mz = array(&plain_mz, &whole);
+    let intensity = array(&plain_intensity, &whole);
+    // Each of these holds exactly the declared values around or beside the child,
+    // so nothing else would notice.
+    for payload in [
+        format!("{head}<x/>{tail}"),
+        format!("{head}<x></x>{tail}"),
+        format!("{head}<x>QUJD</x>{tail}"),
+        format!("{head}<x><y/></x>{tail}"),
+        format!("{whole}<x/>"),
+        format!("<x/>{whole}"),
+        format!("{head}<binary>{tail}</binary>"),
+        format!("{head}<binary/>{tail}"),
+        format!("{head}{}{tail}", term(F64)),
+        format!("{head}<referenceableParamGroupRef ref=\"ms2\"/>{tail}"),
+        format!(r#"{head}<spectrum index="9" id="in-payload" defaultArrayLength="0"/>{tail}"#),
+        format!(r#"{head}<z:x xmlns:z="urn:other"/>{tail}"#),
+    ] {
+        assert_eq!(
+            ms1_refusal(3, &[array(&plain_mz, &payload), intensity.clone()]),
+            refused(ArrayRole::Mz, ArrayProblem::ElementInPayload),
+            "{payload}"
+        );
+        assert_eq!(
+            ms1_refusal(3, &[mz.clone(), array(&plain_intensity, &payload)]),
+            refused(ArrayRole::Intensity, ArrayProblem::ElementInPayload),
+            "{payload}"
+        );
+    }
+    // Under zlib.
+    let stream = b64(&zlib(&le_f64(&stored)));
+    let (start, rest) = stream.split_at(8);
+    for payload in [
+        format!("{start}<x/>{rest}"),
+        format!("{stream}<x/>"),
+        format!("<x/>{stream}"),
+    ] {
+        assert_eq!(
+            ms1_refusal(
+                3,
+                &[
+                    array(&[term(F64), term(ZLIB), mz_term()], &payload),
+                    intensity.clone()
+                ]
+            ),
+            refused(ArrayRole::Mz, ArrayProblem::ElementInPayload),
+            "{payload}"
+        );
+    }
+    // At a declared length of 0, where the payload is otherwise empty.
+    assert_eq!(
+        ms1_refusal(0, &[array(&plain_mz, "<x/>"), array(&plain_intensity, "")]),
+        refused(ArrayRole::Mz, ArrayProblem::ElementInPayload)
+    );
+    // The same under a namespace prefix.
+    assert_eq!(
+        prefixed_refusal(&[
+            array(&plain_mz, &format!("{head}<x/>{tail}")),
+            intensity.clone()
+        ]),
+        refused(ArrayRole::Mz, ArrayProblem::ElementInPayload)
+    );
+
+    // It is that one spectrum's refusal: the open and the others stand.
+    let bad = ms1(
+        0,
+        &[
+            array(&plain_mz, &format!("{head}<x/>{tail}")),
+            intensity.clone(),
+        ],
+    );
+    let document_of_two = document(&[bad, ms2(1)]);
+    let opened = table(&document_of_two).expect("the open stands");
+    assert_eq!(opened.rows().len(), 2);
+    let read = |index| {
+        read_selected_spectrum_from(Cursor::new(document_of_two.as_bytes()), &opened, index)
+    };
+    assert_eq!(
+        read(0).expect_err("refused").stable_id(),
+        "element_in_payload"
+    );
+    assert_eq!(read(1).expect("decodes").mz().values(), [150.0, 175.5]);
+
+    // A comment, a CDATA section and a processing instruction are not elements:
+    // the text around each stays one text.
+    for payload in [
+        format!("{head}<!-- a note -->{tail}"),
+        format!("{head}<![CDATA[{tail}]]>"),
+        format!("<![CDATA[{head}]]>{tail}"),
+        format!("{head}<?note?>{tail}"),
+    ] {
+        let spectrum = ms1(0, &[array(&plain_mz, &payload), intensity.clone()]);
+        let read = selected(&document(&[spectrum]), 0).expect("one text");
+        assert_eq!(read.mz().values(), stored, "{payload}");
+    }
+
+    // Neither refusal applies to an array this reader does not decode.
+    let other = array(
+        &[
+            term(F64),
+            term(NONE),
+            cv("MS:1000786", "non-standard data array", "a"),
+        ],
+        &format!("{head}<x/>{tail}</binary><binary>{whole}"),
+    );
+    let spectrum = ms1(0, &[mz, other, intensity]);
+    let read = selected(&document(&[spectrum]), 0).expect("decodes");
+    assert_eq!(read.mz().values(), stored);
+}
+
+#[test]
+fn a_binary_element_elsewhere_in_the_array_is_not_its_payload() {
+    let plain_mz = [term(F64), term(NONE), mz_term()];
+    let plain_intensity = [term(F64), term(NONE), intensity_term()];
+    // Values whose bits would show any rounding, including a negative zero.
+    let stored = [445.123_456_789_012_3, -0.0, f64::MIN_POSITIVE];
+    let intensities = [1.5, 1e300, 0.1];
+    let bits = |values: &[f64]| {
+        values
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>()
+    };
+    let mz = array(&plain_mz, &b64(&le_f64(&stored)));
+    let intensity = array(&plain_intensity, &b64(&le_f64(&intensities)));
+    let other = b64(&le_f64(&[4.0, 5.0, 6.0]));
+    let after = |nested: &str| mz.replace("</binary>", &format!("</binary>{nested}"));
+    let before = |nested: &str| mz.replace("<binary>", &format!("{nested}<binary>"));
+    let long = "A".repeat(64 * 1024);
+
+    // A good file reads to exactly its stored bits, and each of these reads to the
+    // same bits: what is in the nested element is neither joined on nor judged.
+    for mz in [
+        mz.clone(),
+        after(&format!("<other><binary>{other}</binary></other>")),
+        before(&format!("<other><binary>{other}</binary></other>")),
+        after("<other><binary/></other>"),
+        after("<other><binary>&amp;<y/></binary></other>"),
+        after("<other><binary>&#42;</binary></other>"),
+        after(&format!("<other><binary>{long}</binary></other>")),
+        after(&format!(
+            "<other><binary>{other}<y/>{other}</binary></other>"
+        )),
+        after(&format!(
+            "<other><binary>{other}</binary><binary>{other}</binary></other>"
+        )),
+        // In another namespace it is no `binary` of this document's at all.
+        after(&format!(r#"<binary xmlns="urn:other">{other}</binary>"#)),
+    ] {
+        let spectrum = ms1(0, &[mz.clone(), intensity.clone()]);
+        let read = selected(&document(&[spectrum]), 0).unwrap_or_else(|error| {
+            panic!("{error}: {}", mz.chars().take(400).collect::<String>())
+        });
+        assert_eq!(bits(read.mz().values()), bits(&stored));
+        assert_eq!(bits(read.intensity().values()), bits(&intensities));
+    }
+
+    // Declaring the joined length does not make it the array's: its own payload
+    // holds three values.
+    let six = array(
+        &plain_intensity,
+        &b64(&le_f64(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0])),
+    );
+    assert_eq!(
+        ms1_refusal(
+            6,
+            &[
+                after(&format!("<other><binary>{other}</binary></other>")),
+                six
+            ]
+        ),
+        refused(ArrayRole::Mz, ArrayProblem::DecodedShorterThanDeclared)
+    );
+
+    // A limit tripped in there is the document's, not that array's. Only a table
+    // read with other limits can get this far.
+    let tripping = document(&[ms1(
+        0,
+        &[
+            after(&format!("<other><binary>{long}</binary></other>")),
+            intensity.clone(),
+        ],
+    )]);
+    let mut opened = table(&tripping).expect("opens");
+    opened.limits.max_text_run_bytes = 1024;
+    let reader = std::io::BufReader::with_capacity(64, Cursor::new(tripping.as_bytes()));
+    assert_eq!(
+        read_selected_spectrum_from(reader, &opened, 0).expect_err("refused"),
+        MzmlSpectrumError::Document(MzmlScanError::LimitExceeded(MzmlLimitKind::TextRunBytes))
+    );
+}
+
 #[test]
 fn which_array_is_which_must_be_unambiguous() {
     let intensity = intensity_array(&[1.0, 2.0, 3.0]);
