@@ -7022,6 +7022,15 @@ fn a_source_note_is_drawn_and_described_and_absent_otherwise() {
         y > lowest_other,
         "under everything else: {y} > {lowest_other}"
     );
+    // The panels give up the note's whole band, so its line meets no axis title.
+    let lowest_plain = drawn_texts(&plain_text.svg)
+        .into_iter()
+        .map(|(_, y, _, _)| y)
+        .fold(f64::MIN, f64::max);
+    assert!(
+        (lowest_plain - lowest_other - 16.0).abs() < 0.01,
+        "a band of 16 units: {lowest_plain} - {lowest_other}"
+    );
 
     // Part of the contract: it round-trips, and a title does not displace it.
     let decoded = FigureSpec::from_json(&noted.to_json().expect("serializes")).expect("readable");

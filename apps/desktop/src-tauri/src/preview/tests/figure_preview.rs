@@ -299,34 +299,47 @@ fn a_labelled_row_s_figures_say_so_in_the_preview_and_in_every_saved_document() 
     assert_eq!(saved_spectrum("svg", "spectrum.svg"), preview.into_bytes());
     assert!(String::from_utf8_lossy(&saved_spectrum("png", "spectrum.png")).contains(NOTE));
 
-    let reservation = service
-        .begin_chromatogram_export(
-            &pair.chromatogram,
-            "png",
-            &full_run_range(),
-            both_traces(),
-            &default_figure_settings(),
-        )
-        .expect("reserve");
-    let claimed = service
-        .claim_chromatogram_export(&reservation)
-        .expect("claim");
-    let chromatogram_png = file.directory.join("chromatogram.png");
-    service
-        .write_chromatogram_export(&claimed, &chromatogram_png)
-        .expect("write");
-    assert!(String::from_utf8_lossy(&fs::read(chromatogram_png).expect("saved")).contains(NOTE));
+    let saved_chromatogram = |format: &str, name: &str| {
+        let destination = file.directory.join(name);
+        let reservation = service
+            .begin_chromatogram_export(
+                &pair.chromatogram,
+                format,
+                &full_run_range(),
+                both_traces(),
+                &default_figure_settings(),
+            )
+            .expect("reserve");
+        let claimed = service
+            .claim_chromatogram_export(&reservation)
+            .expect("claim");
+        service
+            .write_chromatogram_export(&claimed, &destination)
+            .expect("write");
+        fs::read(destination).expect("saved")
+    };
+    let (preview, _) = render(&service, chromatogram(), default_figure_settings());
+    assert_eq!(
+        saved_chromatogram("svg", "chromatogram.svg"),
+        preview.into_bytes()
+    );
+    assert!(String::from_utf8_lossy(&saved_chromatogram("png", "chromatogram.png")).contains(NOTE));
 
-    let linked_png = file.directory.join("linked.png");
-    linked_saved_as(
-        &service,
-        &pair.chromatogram,
-        &pair.spectrum,
-        "png",
-        &linked_png,
-    )
-    .expect("write");
-    assert!(String::from_utf8_lossy(&fs::read(linked_png).expect("saved")).contains(NOTE));
+    let saved_linked = |format: &str, name: &str| {
+        let destination = file.directory.join(name);
+        linked_saved_as(
+            &service,
+            &pair.chromatogram,
+            &pair.spectrum,
+            format,
+            &destination,
+        )
+        .expect("write");
+        fs::read(destination).expect("saved")
+    };
+    let (preview, _) = render(&service, linked(), default_figure_settings());
+    assert_eq!(saved_linked("svg", "linked.svg"), preview.into_bytes());
+    assert!(String::from_utf8_lossy(&saved_linked("png", "linked.png")).contains(NOTE));
 
     // The label is read when the export is claimed: a row removed while the
     // save dialog is open does not take it off the figure.
