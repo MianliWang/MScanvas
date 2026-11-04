@@ -1130,6 +1130,301 @@ describe("a stored result reused (M9.2)", () => {
     expect(status("table").textContent).toBe("Saved one.csv as spreadsheet CSV with 1 target row.");
   });
 
+  describe("the rows shown (S-7.1)", () => {
+    const rowIds = () =>
+      [...document.querySelectorAll("[data-targeted-row]")].map((row) => row.getAttribute("data-targeted-row"));
+    const sortBy = (key: string) => query<HTMLButtonElement>(`[data-targeted-sort="${key}"]`);
+    const outcome = (word: string) => query<HTMLButtonElement>(`[data-targeted-view-outcome="${word}"]`);
+    const text = () => query<HTMLInputElement>("[data-targeted-view-text]");
+    const count = () => query("[data-targeted-view-count]");
+    const reset = () => query<HTMLButtonElement>("[data-targeted-view-reset]");
+    const save = () => query<HTMLButtonElement>("[data-targeted-view-save-button]");
+    const saveFormat = (format: string) => query<HTMLButtonElement>(`[data-targeted-view-export="${format}"]`);
+
+    it("offers no save and no Reset until a filter or a sort is active", async () => {
+      await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      expect(document.querySelector("[data-targeted-view-save]")).toBeNull();
+      expect(document.querySelector("[data-targeted-view-reset]")).toBeNull();
+      expect(count().textContent).toBe("");
+      expect(rowIds()).toEqual([DETECTED, ABSENT]);
+    });
+
+    it("sorts by a pressed head, says so, keeps missing values last and goes back on Reset", async () => {
+      await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      const head = () => sortBy("raw_area").closest("th");
+      expect(head()).not.toHaveAttribute("aria-sort");
+
+      await press(sortBy("raw_area"));
+      expect(head()).toHaveAttribute("aria-sort", "ascending");
+      expect(rowIds()).toEqual([DETECTED, ABSENT]);
+      expect(count().textContent).toBe(
+        `2 of 2 rows Sorted by ${en.targetedColumnRawArea}, ascending. Missing values last.`,
+      );
+      await screen.findByText(`Targets, by ${en.targetedColumnRawArea}, ascending`);
+
+      await press(sortBy("raw_area"));
+      expect(head()).toHaveAttribute("aria-sort", "descending");
+      expect(rowIds()).toEqual([DETECTED, ABSENT]);
+
+      await press(sortBy("outcome"));
+      expect(head()).not.toHaveAttribute("aria-sort");
+      expect(sortBy("outcome").closest("th")).toHaveAttribute("aria-sort", "ascending");
+      await press(sortBy("outcome"));
+      expect(rowIds()).toEqual([ABSENT, DETECTED]);
+      // Row keys hold: the head keeps focus, and nothing is reread to reorder.
+      sortBy("outcome").focus();
+      await press(sortBy("outcome"));
+      expect(document.activeElement).toBe(sortBy("outcome"));
+
+      reset().focus();
+      await press(reset());
+      expect(rowIds()).toEqual([DETECTED, ABSENT]);
+      expect(sortBy("outcome").closest("th")).not.toHaveAttribute("aria-sort");
+      expect(count().textContent).toBe("");
+      await screen.findByText(en.targetedRowsCaption);
+      expect(document.querySelector("[data-targeted-view-reset]")).toBeNull();
+      expect(document.activeElement).toBe(text());
+    });
+
+    it("keeps its controls in reading order for the keyboard, each a real button", async () => {
+      await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      await press(sortBy("raw_area"));
+      const controls = [
+        ...document.querySelectorAll<HTMLElement>(
+          "[data-targeted-view-text], [data-targeted-view-outcome], [data-targeted-view-reset], [data-targeted-sort]",
+        ),
+      ];
+      expect(
+        controls.map(
+          (control) =>
+            control.getAttribute("data-targeted-view-outcome") ??
+            control.getAttribute("data-targeted-sort") ??
+            (control.hasAttribute("data-targeted-view-reset") ? "reset" : "text"),
+        ),
+      ).toEqual(["text", "DETECTED", "NOT_DETECTED", "reset", "label", "outcome", "feature_apex_rt_s", "raw_area"]);
+      expect(controls.slice(1).every((control) => control.tagName === "BUTTON" && control.tabIndex === 0)).toBe(true);
+      // The save comes before them, with the table's own exports.
+      expect(precedes(save(), text())).toBe(true);
+    });
+
+    it("counts each outcome under the text and filters by what is pressed", async () => {
+      await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      expect(outcome("DETECTED").textContent).toContain(`${en.targetedOutcomeDetected} 1`);
+      expect(outcome("NOT_DETECTED").textContent).toContain(`${en.targetedOutcomeNotDetected} 1`);
+      expect(document.querySelector('[data-targeted-view-outcome="FAILED"]')).toBeNull();
+      expect(outcome("DETECTED")).toHaveAttribute("aria-pressed", "false");
+
+      await press(outcome("DETECTED"));
+      expect(outcome("DETECTED")).toHaveAttribute("aria-pressed", "true");
+      expect(rowIds()).toEqual([DETECTED]);
+      expect(save().textContent).toBe("Save 1 of 2 rows…");
+      await press(outcome("NOT_DETECTED"));
+      expect(rowIds()).toEqual([DETECTED, ABSENT]);
+      expect(save().textContent).toBe("Save 2 of 2 rows…");
+      await press(reset());
+
+      await type(text(), "CAFF");
+      expect(rowIds()).toEqual([DETECTED]);
+      expect(count().textContent).toBe("1 of 2 rows");
+      expect(outcome("DETECTED").textContent).toContain(`${en.targetedOutcomeDetected} 1`);
+      expect(outcome("NOT_DETECTED").textContent).toContain(`${en.targetedOutcomeNotDetected} 0`);
+    });
+
+    it("searches the formula as well as the name", async () => {
+      await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      await type(text(), "c9h9");
+      expect(rowIds()).toEqual([ABSENT]);
+    });
+
+    it("refuses the save of no rows, with its reason beside it, and Reset undoes it", async () => {
+      const api = await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      await type(text(), "no such target");
+      expect(rowIds()).toEqual([]);
+      expect(count().textContent).toBe("0 of 2 rows");
+      expect(reset()).toBeTruthy();
+      expect(save().textContent).toBe("Save 0 of 2 rows…");
+      expect(save()).toHaveAttribute("aria-disabled", "true");
+      expect(save()).toHaveAccessibleDescription(en.targetedViewNoRows);
+      expect(query("[data-targeted-view-refusal]").textContent).toBe(en.targetedViewNoRows);
+      await press(save());
+      expect(api.exportTargetedMs1TableView).not.toHaveBeenCalled();
+      expect(document.querySelector("[data-targeted-view-formats]")).toBeNull();
+
+      await press(reset());
+      expect(rowIds()).toEqual([DETECTED, ABSENT]);
+      expect(text().value).toBe("");
+      expect(document.querySelector("[data-targeted-view-refusal]")).toBeNull();
+    });
+
+    it("names the count in the button and sends the ids in the order shown, for each format", async () => {
+      const api = await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      await press(sortBy("outcome"));
+      await press(sortBy("outcome"));
+      expect(save().textContent).toBe("Save 2 of 2 rows…");
+      await press(save());
+      expect(save()).toHaveAttribute("aria-expanded", "true");
+      // Bare format names in a group named by the count: never the whole table's
+      // words, on the buttons beside them, for fewer rows.
+      expect(
+        [...screen.getByRole("group", { name: "Save 2 of 2 rows…" }).querySelectorAll("button")].map(
+          (control) => control.textContent,
+        ),
+      ).toEqual(["CSV…", "TSV…", "Spreadsheet CSV…"]);
+      expect(button("csv").textContent).toBe("Export CSV…");
+      expect(button("spreadsheetCsv").textContent).toBe("Export spreadsheet CSV…");
+
+      const view = {
+        targetIds: [ABSENT, DETECTED],
+        outcomes: ["DETECTED", "DETECTED_AMBIGUOUS", "SHARED", "SUPPRESSED_BY_OVERLAP", "NOT_DETECTED", "FAILED"],
+        text: "",
+        sort: { key: "outcome", direction: "descending" },
+      };
+      await press(saveFormat("csv"));
+      expect(api.exportTargetedMs1TableView).toHaveBeenLastCalledWith(ARTIFACT, "csv", view);
+      expect(status("table").textContent).toBe(
+        "Saved mscanvas-targeted-ms1-eeeeeeee-results-view-2-of-2.csv with 2 of 2 target rows.",
+      );
+      await press(saveFormat("tsv"));
+      expect(api.exportTargetedMs1TableView).toHaveBeenLastCalledWith(ARTIFACT, "tsv", view);
+      await press(saveFormat("spreadsheetCsv"));
+      expect(api.exportTargetedMs1TableView).toHaveBeenLastCalledWith(ARTIFACT, "spreadsheetCsv", view);
+      expect(status("table").textContent).toBe(
+        "Saved mscanvas-targeted-ms1-eeeeeeee-results-view-2-of-2-spreadsheet.csv as spreadsheet CSV with 2 of 2 target rows.",
+      );
+      // The whole table's export is another command, as it was.
+      expect(api.exportTargetedMs1Table).not.toHaveBeenCalled();
+      await press(button("csv"));
+      expect(api.exportTargetedMs1Table).toHaveBeenLastCalledWith(ARTIFACT, "csv");
+      expect(status("table").textContent).toBe(
+        "Saved mscanvas-targeted-ms1-eeeeeeee-results.csv with 2 target rows.",
+      );
+    });
+
+    it("closes the formats with the view, by Reset or by clearing it by hand", async () => {
+      await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      const openSave = async () => {
+        await press(outcome("DETECTED"));
+        expect(save()).toHaveAttribute("aria-expanded", "false");
+        await press(save());
+        expect(save()).toHaveAttribute("aria-expanded", "true");
+      };
+
+      await openSave();
+      await press(reset());
+      expect(document.querySelector("[data-targeted-view-save]")).toBeNull();
+
+      await openSave();
+      await press(outcome("DETECTED"));
+      expect(document.querySelector("[data-targeted-view-save]")).toBeNull();
+
+      await openSave();
+    });
+
+    it("sends only the rows a filter keeps, and the filter", async () => {
+      const api = await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      await press(outcome("NOT_DETECTED"));
+      await type(text(), "  abs ");
+      await press(save());
+      await press(saveFormat("csv"));
+      expect(api.exportTargetedMs1TableView).toHaveBeenLastCalledWith(ARTIFACT, "csv", {
+        targetIds: [ABSENT],
+        outcomes: ["NOT_DETECTED"],
+        text: "abs",
+        sort: null,
+      });
+    });
+
+    it("refuses other outputs while the picker is out, and says a cancel and a refusal", async () => {
+      const api = await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      await press(sortBy("label"));
+      await press(save());
+      const release = api.holdOnce("exportTargetedMs1TableView");
+      await press(saveFormat("tsv"));
+      expect(status("table").textContent).toBe(en.targetedViewChoose);
+      expect(saveFormat("tsv").textContent).toBe("Exporting TSV…");
+      expect(button("tsv").textContent).toBe("Export TSV…");
+      expect(button("csv")).toHaveAttribute("aria-disabled", "true");
+      expect(button("csv")).toHaveAccessibleDescription(en.targetedViewChoose);
+      expect(saveFormat("csv")).toHaveAttribute("aria-disabled", "true");
+      await press(button("csv"));
+      expect(api.exportTargetedMs1Table).not.toHaveBeenCalled();
+      await act(async () => {
+        release();
+      });
+
+      api.cancelOnce("exportTargetedMs1TableView");
+      await press(saveFormat("csv"));
+      expect(status("table").textContent).toBe(en.viewerExportCancelled);
+
+      api.refuseOnce("exportTargetedMs1TableView", "targeted_table_view_refused");
+      await press(saveFormat("csv"));
+      expect(status("table").textContent).toBe(en.m92ErrorTableViewRefused);
+      expect(saveFormat("csv")).not.toHaveAttribute("aria-disabled");
+    });
+
+    it("takes the rows off the screen when a save finds the result gone, as every other output does", async () => {
+      const api = await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      await press(sortBy("label"));
+      await press(save());
+      api.refuseOnce("exportTargetedMs1TableView", "payloadCorrupt");
+      await press(saveFormat("csv"));
+      expect(query('[data-targeted-unavailable="payloadCorrupt"]').getAttribute("role")).toBe("alert");
+      expect(document.querySelector("[data-targeted-view]")).toBeNull();
+      expect(document.querySelector("[data-targeted-row]")).toBeNull();
+    });
+
+    it("offers no view over a page that does not hold every row", async () => {
+      const api = await inspectResult(targetedProject(), (fake) => {
+        vi.mocked(fake.readTargetedMs1Rows).mockResolvedValue({ total: 501, offset: 0, rows: [detectedRow()] });
+      });
+      await screen.findByText(en.targetedRowsCaption);
+      expect(document.querySelector("[data-targeted-view]")).toBeNull();
+      expect(document.querySelector("[data-targeted-sort]")).toBeNull();
+      expect(document.querySelector("[data-targeted-view-save]")).toBeNull();
+      expect(screen.getByRole("columnheader", { name: en.targetedColumnApex })).toBeTruthy();
+      expect(api.exportTargetedMs1TableView).not.toHaveBeenCalled();
+    });
+
+    it("says all of it in Chinese in a Chinese session", async () => {
+      await inspectResult(targetedProject(), undefined, "zh-CN");
+      await screen.findByText(zh.targetedRowsCaption);
+      await press(sortBy("feature_apex_rt_s"));
+      expect(count().textContent).toBe(
+        `2 行中的 2 行 已按${zh.targetedColumnApex}升序排序，缺失值排在最后。`,
+      );
+      await screen.findByText(`目标（按${zh.targetedColumnApex}升序）`);
+      expect(save().textContent).toBe("保存 2 行中的 2 行…");
+      expect(reset().textContent).toBe("重置");
+      await type(text(), "没有这个目标");
+      expect(query("[data-targeted-view-refusal]").textContent).toBe("没有可保存的行。");
+      expect(text().getAttribute("placeholder")).toBe("名称或分子式");
+    });
+
+    it("claims nothing about formula protection in either language (EXP-17)", () => {
+      for (const copy of [en, zh]) {
+        const words = Object.entries(copy)
+          .filter(([key]) => key.startsWith("targetedView") || key === "m92ErrorTableViewRefused")
+          .map(([, sentence]) => sentence)
+          .join(" ")
+          .toLowerCase();
+        for (const claim of ["safe", "protect", "neutrali", "公式", "安全", "保护"]) {
+          expect(words).not.toContain(claim);
+        }
+      }
+    });
+  });
+
   it("gives every refused output its reason whichever row is chosen while a figure's picker is out", async () => {
     const api = await inspectResult(targetedProject(), (fake) =>
       fake.setTargeted({

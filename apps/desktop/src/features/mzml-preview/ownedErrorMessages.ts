@@ -153,6 +153,7 @@ const MESSAGE = {
   targeted_export_format_unknown: "m92ErrorFormatUnknown",
   targeted_table_field_not_representable: "m92ErrorTsvField",
   targeted_table_not_exportable: "m92ErrorTableNotExportable",
+  targeted_table_view_refused: "m92ErrorTableViewRefused",
 } as const;
 
 /** Whether this build has a sentence of its own for a code. */

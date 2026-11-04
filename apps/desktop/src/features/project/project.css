@@ -851,15 +851,121 @@
   flex-basis: 100%;
 }
 
+/* The rows shown: their own line under the whole table's exports. */
+.targeted-view-save {
+  display: flex;
+  flex-wrap: wrap;
+  flex-basis: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.targeted-view-refusal {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* The rows' view: filter, count and Reset on one line that wraps. */
+.targeted-view {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.targeted-view-text {
+  position: relative;
+  flex: 0 1 200px;
+  min-width: 140px;
+}
+
+.targeted-view-text > .ui-icon {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  transform: translateY(-50%);
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+/* The scan table's search box: a bordered box at rest, as tall as its buttons. */
+.targeted-view-text > input {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px 4px 28px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-input);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.targeted-view-text > input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.targeted-view-outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.targeted-view-outcome-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Wraps as one, so Reset stays beside the count on a line of its own. */
+.targeted-view-tail {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.targeted-view-count {
+  margin: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+/* A column head as a compact control that fits the 30 px head. */
+.targeted-rows thead .targeted-sort {
+  min-height: 24px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 11px;
+  /* A long column name wraps between words rather than push the table sideways. */
+  white-space: normal;
+  overflow-wrap: normal;
+  text-align: start;
+}
+
+/* The two short names stay whole in either language; the numbers' long ones wrap. */
+.targeted-rows thead th:nth-child(-n + 2) .targeted-sort {
+  white-space: nowrap;
+}
+
+.targeted-sort svg {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
 /* The row table scrolls inside itself, so 200 targets never push the page.
    Flat: hairline rows of 28 px under a 30 px head that stays in view; the
    row's Details is a compact control that fits the row (V9, V10). */
 .targeted-rows {
   max-height: 320px;
   overflow: auto;
-  /* Shift+Tab stops clear of the sticky head, with the focus ring's reach, and
-     the last row keeps room for the ring under it. */
-  scroll-padding-top: 34px;
+  /* Shift+Tab stops clear of the sticky head, at the two lines it wraps to beside
+     both docked panels, with the focus ring's reach, and the last row keeps room
+     for the ring under it. */
+  scroll-padding-top: 54px;
   padding-bottom: 3px;
 }
 

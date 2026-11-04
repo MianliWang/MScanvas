@@ -33,6 +33,15 @@ All notable changes will be documented here once versioned releases begin.
   not altered. The CSV and TSV files do not change. The check of how Excel,
   LibreOffice and WPS open it is pending
   ([ADR 0054](docs/architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)).
+- **Sort, filter and save the rows shown of a stored targeted result.** The
+  results table sorts by a pressed column head, with missing values last and ties
+  in plan order, and filters by outcome and by text over target name and formula.
+  **Save 12 of 40 rows…** writes those rows, in that order, as CSV, TSV or
+  spreadsheet CSV. The file is a format of its own,
+  `mscanvas_targeted_ms1_results_view` or `…_view_spreadsheet` schema 1, and says
+  in its preamble which rows it holds and which of how many. Nothing is
+  recomputed, and the whole table's three exports do not change. The owner's
+  check of the spreadsheet CSV in Excel, LibreOffice and WPS is still pending.
 
 ### Changed
 
