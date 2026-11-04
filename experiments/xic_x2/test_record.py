@@ -89,7 +89,7 @@ class RetainedRuns(unittest.TestCase):
                 for record in self.records(f"discrimination/{mutation}/{folder}")
                 if record["status"] != "PASS"
             ]
-            self.assertTrue(failed or mutation == "m4_no_integer_size_rule")
+            self.assertTrue(failed)
             self.assertEqual(sum(code == 3 for code in failed), count, mutation)
             self.assertTrue(all(code in (0, 3) for code in failed))
 
