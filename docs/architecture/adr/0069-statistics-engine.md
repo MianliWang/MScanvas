@@ -1,10 +1,13 @@
 # ADR 0069 — A statistics engine in Rust: PCA, Welch's test, Benjamini-Hochberg and QC metrics
 
-Status: **Proposed** 2026-10-30. Its dependency request is approved: owner
-decision D7, 2026-10-30 (decision 2). The definitions that change numbers are
-open questions for the owner, decision D9 ([at the end](#open-questions-for-the-owner)).
-The library implements the recommended answer to each and changes if the owner
-chooses another. The library is `crates/stats` (`mscanvas-stats`). Nothing calls
+Status: **Accepted** 2026-11-03; Proposed 2026-10-30. The owner approved the
+dependencies on 2026-10-30 (S-1, which the research synthesis calls D7; decision
+2) and answered the definitions that change numbers on 2026-11-03 (S-2, which it
+calls D9, with S-3, S-4, S-5, CK-3 and CK-5; decision table version 2026-11-03.2;
+[the answers](#the-owners-answers)). They are cited here by id and date; the
+first records PR, #212, writes them into section 1d of
+[`OWNER_DECISIONS_V511.md`](../../development/OWNER_DECISIONS_V511.md). The
+library is `crates/stats` (`mscanvas-stats`). Nothing calls
 it: no Tauri command and no interface. The governance amendment that
 un-defers analysis in `AGENTS.md` was decided by the owner on 2026-10-30 (G1);
 the command waits for the feature-table import and its own slice.
@@ -48,13 +51,14 @@ does not depend on it yet. The command that does is a later slice, after the
 feature-table import; the governance amendment it waited for was decided on
 2026-10-30 (G1).
 
-### 2. Dependencies (owner decision D7)
+### 2. Dependencies (owner decision S-1)
 
 **Approved by the owner on 2026-10-30, in chat**, in reply to the request to add
 `nalgebra` and `statrs` for the Rust statistics crate. The owner's message,
 verbatim: "批准". The approval covers the two crates below and the transitive
 crates they pull in. It does not cover `kodama`: clustering was not asked for,
-and v5.11's heatmap does not cluster.
+and v5.11's heatmap does not cluster. S-2.13 (2026-11-03) closes that item: no
+clustering in the first version, so no `kodama`.
 
 | Crate | Pin | Licence | Features |
 | --- | --- | --- | --- |
@@ -71,9 +75,11 @@ and v5.11's heatmap does not cluster.
 - **Pins** are in `[workspace.dependencies]`, in the `=` style of ADR 0056's
   `base64` and `flate2`.
 
-**The lockfile delta**, measured against `origin/main` at `7ac5a219`: 504
-`[[package]]` entries become 522, which is `mscanvas-stats` and 17 third-party
-packages.
+**The lockfile delta**, derived again at admission as S-1 asks, on 2026-11-04
+against `origin/main` at `9d52e39d` (first measured at `7ac5a219`, with the same
+numbers): 504 `[[package]]` entries become 522, which is `mscanvas-stats` and 17
+third-party packages. The merge's `Cargo.lock` diff adds 166 lines and removes
+none.
 
 | Compiled into `mscanvas-stats` (12) | Licence |
 | --- | --- |
@@ -100,18 +106,23 @@ lockfile; the 12 compiled crates are the same twelve it named.
 
 **The shipped binary does not change.** `cargo tree -p mscanvas-desktop --target
 x86_64-pc-windows-msvc -e normal,no-proc-macro` is the walk
-`scripts/generate_notices.py` makes. It lists 235 packages, none of them new, so
-`THIRD_PARTY_NOTICES.md` does not change. Every licence above is in that
+`scripts/generate_notices.py` makes. In the script's format, with repeats folded,
+it lists 198 packages, identically at `9d52e39d` and at this branch's merge of it
+(`cbfe6e00`): 194 third-party, the count `THIRD_PARTY_NOTICES.md` prints, and the
+four project crates. None of the 17 is among them, and
+`generate_notices.py --check` passes, so `THIRD_PARTY_NOTICES.md` does not
+change. The 235 this record first gave was a miscount: it counted a repeat's
+`(*)` line as a package. Every licence above is in that
 script's `KNOWN_LICENCE_TERMS`, so the notices regenerate without a new licence
 class once a desktop command depends on the crate. No `NOTICE` file is in the
 published `nalgebra`, `simba` or `approx` crate, so Apache-2.0 §4(d) adds
 nothing today. Dependabot's cargo entry covers the workspace root with
 `dependency-name: "*"`, so the new crates are already in scope.
 
-**Development only, not covered by D7:** numpy 2.5.4, scipy 1.18.1 and
+**Development only, as S-1 says:** numpy 2.5.4, scipy 1.18.1 and
 statsmodels 0.15.0, pinned in the fixture generator (decision 7), which `uv`
-runs. They are not dependencies of the product, and neither CI nor the tests
-run them. Their own dependencies (pandas, patsy and others) are not pinned.
+runs. Its outputs are committed and nothing from it ships. The three are not
+dependencies of the product, and neither CI nor the tests run them. Their own dependencies (pandas, patsy and others) are not pinned.
 
 ### 3. What the library computes
 
@@ -147,20 +158,30 @@ The crate forbids `unsafe` code. No input panics it.
 ### 4. Missing and non-positive values in this slice: excluded or refused, never imputed
 
 - **Welch.** A missing value is left out and counted (`observed_a`,
-  `observed_b`). Fewer than two observed values in a group gives
+  `observed_b`; S-2.6). Fewer than two observed values in a group gives
   `TooFewObservations`. That feature is then not tested and is not in the BH
   family. Both groups constant gives `ZeroVariance`, not a p-value. One constant
-  group is still a valid test.
-- **PCA.** A feature with any missing value is left out and listed as `Missing`.
-  No 1/5-minimum and no zero is filled in. A zero-variance feature is left out
-  and listed as `ZeroVariance`.
+  group is still a valid test. *Those last two sentences are as built
+  (2026-10-30), not an owner decision.*
+- **PCA.** A feature with any missing value is left out and listed as `Missing`,
+  S-2.8's default. No zero is filled in. A zero-variance feature is left out
+  and listed as `ZeroVariance` (S-2.10).
+- **PCA's opt-in, the single class-E case admitted.** S-2.8 (a), 2026-11-03: a
+  labelled 1/5-minimum per feature, with the replaced cell count on the figure
+  and in the export. It assumes every missing value is below the detection
+  limit. The row says choosing it is the approval and that it needs its record:
+  this paragraph is that record. The crate does not implement it yet. It is
+  built with its first caller (N-A7).
 - **QC.** A missing value counts toward the missing fraction and against the
   detection rate. Any present value counts as detected and enters the RSD,
   zero and negative ones included. That holds only because the import maps
-  "not detected" to missing (open question 7).
+  "not detected" to missing (question 7). *As built (2026-10-30), not an owner
+  decision.*
 - **A non-positive intensity** in either tested group refuses the call, naming
-  the feature and the sample. It has no log2, and flooring it would invent a
-  value. A zero in a feature table may mean "not detected" or may be an export
+  the feature and the sample (S-2.7 (b)). It has no log2, and flooring it would
+  invent a value. One such value hides the whole volcano until the user goes
+  back to the import and declares it again. A zero in a feature table may mean
+  "not detected" or may be an export
   artefact. The import slice must say which, and record any mapping of "not
   detected" to missing.
 
@@ -179,7 +200,7 @@ The crate forbids `unsafe` code. No input panics it.
     `matrixmultiply` picks its SIMD kernels at run time.
   - Everything runs on one thread (`matrixmultiply`'s threading feature is
     off).
-- **Bounds:**
+- **Bounds** (*as built, 2026-10-30, not an owner decision*):
   - PCA refuses more than `MAX_PCA_SAMPLES` = 1,000 samples or more than
     `MAX_PCA_CELLS` = 20,000,000 cells (`TooLarge`).
   - Measured on 2026-10-30, release build, one thread, Intel Core i7-12700H, one
@@ -188,16 +209,25 @@ The crate forbids `unsafe` code. No input panics it.
   - Welch and QC are O(samples × features) and have no bound beyond the matrix.
   - Above the bound, a top-k Lanczos solver or `faer` would be the upgrade.
     Either needs its own decision.
-- **Rank:** a component with λ ≤ √ε·λ₁ is not reported. Through the Gram route
+  - **A record mismatch, stated here and not fixed.** Section 7 of
+    [`ROADMAP_V511_AND_ANALYSIS.md`](../../development/ROADMAP_V511_AND_ANALYSIS.md)
+    gives N-A1 a gate of PCA timing at 10^5 × 500 on Actions. That is 5e7 cells,
+    above `MAX_PCA_CELLS`, so the crate refuses it as `TooLarge`, and no such run
+    exists. The bound stays. The measured top is the local 1,000 × 20,000 in
+    3.39 s. Raising the bound needs a real table and its own timing, and N-A7
+    decides that.
+- **Rank** (*as built, 2026-10-30, not an owner decision*): a component with
+  λ ≤ √ε·λ₁ is not reported. Through the Gram route
   its loadings carry a relative error of about ε·λ₁/λ, so it is not resolved.
   Asking for more components than are resolved, or more than n − 1, is
   `ComponentsOutOfRange`.
-- **Convergence:** the symmetric eigen solver is bounded to 30·n sweeps,
+- **Convergence** (*as built, 2026-10-30, not an owner decision*): the symmetric
+  eigen solver is bounded to 30·n sweeps,
   LAPACK's own bound, and reports `NotConverged` past it rather than looping.
 
 ### 6. What is never done
 
-- **No q-value without a recorded family.** q comes only from
+- **No q-value without a recorded family** (S-2.4). q comes only from
   `benjamini_hochberg` over the slice the caller passes. `volcano`'s family is
   the tested features of its slice. Filters are applied before the call, so a
   view filter never changes a q-value. The family is stored with the result in
@@ -208,10 +238,11 @@ The crate forbids `unsafe` code. No input panics it.
   (an unscaled matrix of values near 1e-170), and a zero or subnormal largest
   eigenvalue. That last one occurs only under a normal trace: λ₁ ≤ trace, so
   with a finite trace the eigenvalue cannot overflow.
-- **No imputation, no normalisation, no drift or batch correction** (classes D,
-  E and F below).
+- **No imputation, no normalisation, no drift or batch correction in the crate
+  today.** What the owner admitted arrives with its first caller
+  ([classes D, E and F](#classes-d-e-and-f-what-was-admitted)).
 - **No floor for log2,** and no p-value for an untestable feature.
-- **No clustering.**
+- **No clustering** (S-2.13).
 
 ### 7. Reference tests
 
@@ -272,69 +303,108 @@ df 2e4, far above a cohort's.
 - NIST StRD NumAcc1 (sd exactly 1) and NumAcc4 (mean exact, sd within 1e-8
   relative, the precision of its decimal data as doubles).
 
-## Classes that are out of scope
+### 8. Which cell states a statistic uses
 
-Each needs its own approval and record before any code exists:
+ADR 0067 decision 7 (#184, Proposed on 2026-11-04, not on `main`) leaves this to
+this record. As proposed, its table has six states; B-6.5 (2026-11-03) makes the
+engine's discard a seventh, `engineDiscarded`.
 
-- **D, value-changing:** normalisation (sum/TIC, median, PQN, internal
-  standard).
-- **E, value-inventing:** imputation (1/5-minimum, half-minimum, zero, kNN,
-  random forest, QRILC).
-- **F, value-correcting:** drift and batch correction (QC median alignment,
-  QC-RLSC/LOESS, QC-RSC, SERRF).
+| State | In a statistic | Basis |
+| --- | --- | --- |
+| `measured`, `imported` | enters | S-2.6 says observed values and no row names the states: a reading, not an owner decision |
+| `reintegrated` | does not enter, for now | CK-3 |
+| `engineImputed` | never | ADR 0067 decision 7 |
+| `engineDiscarded` | never | B-6.5 makes it a state, a whole fit's failure and not a finding about one feature; that it never enters is a reading, not an owner decision |
+| `missing`, `undecided` | have no value | ADR 0067 decision 7 |
 
-The D-ratio and the blank ratio belong with the class-C filters (ANA-002). The
-blank reference (mean or maximum) is the owner's decision.
+Track A tables hold only `imported` and `missing`. The rest are left out and
+counted apart from missing. Whether `undecided` counts in a QC denominator is
+[open](#still-open).
 
-## Open questions for the owner
+## Classes D, E and F: what was admitted
 
-Decision D9. Each answer below is the recommended one and is what the library
-does today; another answer changes the named function.
+What was admitted arrives with its first caller. None of it is in the crate
+today.
 
-1. **The log2 fold-change definition.**
-   - (a) mean(log2 A) − mean(log2 B). **Recommended and implemented:** the test
-     runs on log2 values, so the volcano's two axes describe one scale.
-   - (b) log2(mean A / mean B), MZmine's. Choose it for MZmine parity.
-2. **The t-test variant.**
-   - Two-sided Welch, at least 2 observed values per group. **Recommended and
-     implemented.** The observed counts are reported, so a low-power mark below
-     3 is the interface's choice.
-   - Alternatives: Student's pooled-variance t, which assumes equal variances;
-     one-sided tests; Mann-Whitney U, a different statistic with its own
-     record.
-3. **The BH family.**
-   - Every feature with a valid test in the run, after the recorded class-C
-     filters, stored with the result. **Recommended and implemented** as
-     "exactly the tested features of the slice passed".
-   - Alternatives: the visible subset, as the v5.11 demo does, refused because
-     q would change with a view; Benjamini-Yekutieli, valid under any
-     dependence and more conservative.
-4. **PCA centring and scaling.**
-   - Mean-centring always. Auto scaling is the dashboard default (as in v5.11),
-     with Pareto and none offered. Log2 is applied by the caller before PCA, in
-     the prepared-matrix slice. **Recommended and implemented.**
-   - Alternatives: median centring, range or vast scaling (not implemented).
-   - PCA counts sd ≤ n·ε·max\|x\| as zero variance, a conservative heuristic
-     (decision 3); Welch and QC count only identical values. **Implemented;
-     the owner confirms or replaces the bound.**
-5. **The variance denominator.**
-   - n − 1 everywhere, as scipy's `ddof=1` and R's `sd`. **Recommended and
-     implemented.**
-   - Alternative: n.
-6. **Missing values in this slice.**
-   - Excluded with a recorded reason, never imputed (decision 4). **Recommended
-     and implemented.**
-   - Alternatives: a labelled 1/5-minimum per feature as a PCA opt-in, with a
-     count of replaced cells, which is class E and needs approval; zero.
-7. **Non-positive intensities.**
-   - The call is refused, and the import slice maps "not detected" to missing
-     with its own record. **Recommended and implemented.**
-   - Alternative: the research's own recommendation, treating them as missing
-     and counting them.
-8. **The QC RSD scale.**
-   - Raw-scale 100·sd/mean, as Broadhurst et al. 2018 and the demo do.
-     **Recommended and implemented.**
-   - Alternative: a log-based RSD.
+- **D, value-changing: admitted (S-3.1), built in N-A10.** Sum over the features
+  present in all samples, median, PQN and internal standard. The default is none
+  and the originals are kept. PQN's reference is the QC median with at least 3
+  QC, otherwise all non-blank samples, and the result says which (S-3.3). PQN
+  sum-normalises first, then takes the median of the quotients (S-3.4). An
+  absolute multi-file overlay is enough for VIEW-008, labelled not normalised
+  (S-3.2).
+- **E, value-inventing: only S-2.8's opt-in** (decision 4).
+  S-4.2's pick of random forest and QRILC is a direction, not an admission: CK-5
+  schedules it after A-22's backfill results, with no effort and no dependency
+  now. Half-minimum, zero and kNN are not admitted.
+- **F, value-correcting: diagnostics only (S-4.1).** No correction until a user
+  asks. QC median alignment, QC-RLSC/LOESS, QC-RSC and SERRF are not admitted.
+
+## ANA-002: the QC recipe's definitions (S-5)
+
+Answered on 2026-11-03. The crate computes QC detection, QC RSD and missing
+fraction today. The D-ratio and the blank ratio are added to it with their first
+caller, N-A9.
+
+| Id | Definition |
+| --- | --- |
+| S-5.1 | Rust computes five metrics: QC detection, QC RSD, D-ratio, blank ratio and missing fraction. RT drift, mass error and injection-order plots are display only |
+| S-5.2 | Filters exclude and keep a rejected list with a reason per feature |
+| S-5.3 | Defaults: detection above 70 %, RSD below 30 %, D-ratio below 50 % |
+| S-5.4 | Defaults: blank ratio at least 5, missing at most 30 %, on by default |
+| S-5.5 | The blank reference is the maximum of the detected blanks |
+| S-5.6 | A feature absent from every blank is kept |
+| S-5.7 | D-ratio = 100·sd_QC/sd_sample |
+| S-5.8 | The sample side of the blank ratio is the observed mean of the control and treatment samples |
+
+## The owner's answers
+
+S-2, answered on 2026-11-03 (decision table version 2026-11-03.2). The numbers
+are those of the open questions this section replaces; the crate's comments cite
+them. Each answer is what the library does today, except where the last column
+says otherwise. S-3, S-4 and CK-5 are under classes D, E and F above, and S-5
+under ANA-002.
+
+| Question | Id | Answer | In the crate |
+| --- | --- | --- | --- |
+| 1. log2 fold change | S-2.1 | mean(log2 A) − mean(log2 B). The numbers differ from MZmine's log2 of the ratio of means | Implemented |
+| 2. The test | S-2.2 | Two-sided Welch | Implemented |
+| 2. Group size | S-2.3 | Fewer than 2 per group refused; fewer than 3 marked low power, in the interface and in exports | The refusal, and the observed counts. The mark is the caller's (N-A8) |
+| 3. BH family | S-2.4, S-2.14 | Benjamini-Hochberg over every valid test of the run, after the recorded filters | BH over exactly the tested features of the slice passed. The filters and the stored family are the caller's |
+| 4. PCA scaling | S-2.9 | Auto by default, Pareto and none offered | All three. The default is the caller's (N-A7) |
+| 4. Near-zero variance | S-2.10 | Excluded and counted, with the rounding bound as implemented (decision 3) | Implemented |
+| 4. PCA sign | S-2.12 | Fixed by the largest loading | Implemented |
+| 5. Variance denominator | S-2.5 | n − 1 | Implemented |
+| 6. Missing, in a test | S-2.6 | Observed values only; missing left out and counted | Implemented |
+| 6. Missing, in PCA | S-2.8 (a) | Complete features by default; a labelled 1/5-minimum per feature as an opt-in (decision 4) | The default. The opt-in is not built |
+| 7. Non-positive intensities | S-2.7 (b) | A zero or negative value reaching the test refuses the whole run, naming feature and sample. The recommendation text in `OWNER_DECISIONS_V511.md` S-2 (treated as missing) was not chosen | Implemented |
+| 8. QC RSD scale | S-2.11 | Raw scale, 100·sd/mean | Implemented |
+| Not numbered | S-2.13 | No clustering in the first version, sorted by group and q, so no `kodama` | Nothing to build |
+| Not numbered | CK-3 `no` | Backfilled cells do not enter tests for now. A-22 measures, then the owner decides | Decision 8 |
+
+### As built, not an owner decision
+
+Dated 2026-10-30. No row above answers these, and they stand until one does:
+
+- mean-centring always, and log2 applied by the caller before PCA (S-2.9 names
+  only the scaling);
+- the numerics of decisions 3 and 5, such as the corrected two-pass deviation, p
+  above 1/2 through its complement and single-threaded determinism;
+- what decisions 4 and 5 mark in place: a constant group in Welch, a present QC
+  value counting as detected, the PCA bounds, the rank floor and the sweep bound.
+
+### Still open
+
+Not answered here:
+
+- CK-3's decision after A-22's measurement.
+- A0067-D6, where an imported table is stored. It has no effect here, since
+  nothing calls the crate.
+- Raising the PCA bound (decision 5), for N-A7.
+- S-3.4's source check: the row notes the source's step is not yet checked.
+- S-5.7's note that the source says non-Gaussian data should be transformed
+  first or use MAD.
+- Whether `undecided` counts in a QC denominator. No Track A table holds one.
 
 ## Alternatives rejected
 
@@ -357,6 +427,8 @@ does today; another answer changes the named function.
   this library. Each still needs the promotion gate in
   [`ANALYSIS_CAPABILITY_MAP.md`](../../product/ANALYSIS_CAPABILITY_MAP.md),
   which G1 kept (2026-10-30), the feature-table import and its own slice.
+- The D-ratio, the blank ratio, the 1/5-minimum and normalisation change the
+  crate when their first callers arrive (N-A9, N-A7, N-A10).
 
 ## Evidence
 
@@ -368,11 +440,12 @@ does today; another answer changes the named function.
   - the PCA times in decision 5;
   - the lockfile delta in decision 2;
   - the shipped-tree walk in decision 2.
+- **Admission**, on 2026-11-04: the lockfile delta and the shipped-tree walk
+  derived again at `9d52e39d` and `cbfe6e00` (decision 2).
 
 ## What this amends
 
-Nothing while Proposed. `AGENTS.md`'s "Analysis is deferred" (line 19) was
+Nothing. `AGENTS.md`'s "Analysis is deferred" (line 19) was
 amended by the owner's governance decision G1 of 2026-10-30, applied by #194,
-not by this record. The definitions of decision D9 (S-2 in
-[`OWNER_DECISIONS_V511.md`](../../development/OWNER_DECISIONS_V511.md)) stay
-open.
+not by this record. Decision 8 is the part ADR 0067 decision 7 leaves to the
+statistics record.

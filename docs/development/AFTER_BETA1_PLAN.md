@@ -733,9 +733,10 @@ preview is refused too.*
     statistics page (PCA, Welch's test with a log2 fold change,
     Benjamini-Hochberg, volcano rows, QC RSD, detection rate and missing
     fraction) is `crates/stats`, with no command or interface. Its definitions
-    are Proposed in
-    [ADR 0069](../architecture/adr/0069-statistics-engine.md), and its two
-    crates are owner-approved (decision D7).
+    are in
+    [ADR 0069](../architecture/adr/0069-statistics-engine.md), Accepted
+    2026-11-03 with the owner's answers (S-2 to S-5), and its two
+    crates are owner-approved (S-1).
 - Later: other adducts, charges, negative mode and profile input for targeted
   MS1; history pruning; a preview cache only on a measured need; a vendor
   reader self-test; G16 cross-session staging ownership.
