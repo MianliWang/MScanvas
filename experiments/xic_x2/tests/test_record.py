@@ -6,7 +6,9 @@
 
 The retained runs are local, so without the variable those cases are reported as
 skipped. Run by hand, like the runners: nothing in CI reads this. It sits in its own
-folder because the runners record the digest of every `*.py` beside them.
+folder because the runners record the digest of every `*.py` beside them. The manifest
+and compiler-pin cases mean something only until this PR merges: a later change to those
+files fails them and owes nothing.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import os
 import pathlib
 import re
 import statistics
+import subprocess
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
@@ -48,12 +51,25 @@ class Record(unittest.TestCase):
         self.assertEqual({path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in beside}, runner_table())
 
     def test_the_record_names_this_trees_source_manifest(self) -> None:
-        # As harness_x2.identity() lists it. A merge that changes one of these files owes a rerun.
+        # As harness_x2.identity() lists it. Until this PR merges, a merge that changes one of these files owes a rerun.
         paths = [REPO / "Cargo.toml", REPO / "Cargo.lock", REPO / "crates/proteowizard/Cargo.toml"]
         paths += sorted((REPO / "crates/proteowizard/src").rglob("*.rs"))
         paths += [REPO / "crates/proteowizard/examples/xic_candidate.rs"]
         lines = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(REPO).as_posix()}\n" for path in paths)
         self.assertIn(f"`{hashlib.sha256(lines.encode()).hexdigest()}`", X2_TEXT)
+
+    def test_the_compiler_pin_the_manifest_leaves_out_is_the_records(self) -> None:
+        # A new compiler owes a rerun too, until this PR merges, and the manifest case cannot see it.
+        rustc = re.search(r"rustc (\S+)", X2_TEXT).group(1)
+        self.assertIn(f'channel = "{rustc}"', (REPO / "rust-toolchain.toml").read_text(encoding="utf-8"))
+
+    def test_a_named_commit_this_branch_does_not_hold_is_said_to_be_unpushed(self) -> None:
+        # A reader of the PR has the branch, not this machine's reflog.
+        for text in (X2, ADR):
+            for sentence in re.split(r"(?<=\.) ", text):
+                for commit in re.findall(r"`([0-9a-f]{8})`", sentence):
+                    held = subprocess.run(["git", "merge-base", "--is-ancestor", commit, "HEAD"], cwd=REPO, capture_output=True)
+                    self.assertTrue(held.returncode == 0 or "never pushed" in sentence, sentence)
 
     def test_window_width_is_stated_set_by_set_from_the_table(self) -> None:
         narrow = timings("R0 profile file, narrow window")
@@ -85,6 +101,8 @@ class Record(unittest.TestCase):
             (X2, "which adds a read of the whole file", "at least one more read of the whole file"),
             (X2, "all 189 run records", "the 187 per-invocation records"),
             (ADR, "nothing calls the library", "no product code calls the library"),
+            (X2, "Baseline: `origin/main` at", "Started from `origin/main` at `9f98504e`"),
+            (X2, "They were built from", "The four mutations were built from `abc6b443`"),
         ):
             self.assertNotIn(gone, text)
             self.assertIn(present, text)
@@ -128,11 +146,17 @@ class RetainedRuns(unittest.TestCase):
         identity = json.loads(pathlib.Path(EVIDENCE, "final-4/build/identity.json").read_text(encoding="utf-8"))
         self.assertIn(f"`{identity['binary_sha256']}`", X2_TEXT)
         self.assertIn(f"`{identity['source_manifest_sha256']}`", X2_TEXT)
+        self.assertIn(f"the scored build is at `{identity['built_at_commit'][:8]}`", X2)
         scored = [path for folder in ("main", "supplement", "integer-scored") for path in pathlib.Path(EVIDENCE, "final-4", folder).glob("*/science.json")]
         self.assertEqual(len(scored), 187)
         for path in scored:
             earlier = pathlib.Path(EVIDENCE, "final-3", *path.parts[-3:])
             self.assertEqual(path.read_bytes(), earlier.read_bytes(), path)
+
+    def test_earlier_builds_are_at_the_commits_named(self) -> None:
+        for folder in ("superseded-1", "superseded-2", "superseded-3"):
+            identity = json.loads(pathlib.Path(EVIDENCE, folder, "build/identity.json").read_text(encoding="utf-8"))
+            self.assertIn(f"`{identity['binary_sha256'][:8]}…` is at `{identity['built_at_commit'][:8]}`", X2)
 
     def test_unsampled_sets_are_all_listed(self) -> None:
         for folder, build in (("superseded-1", "02690522"), ("superseded-2", "541880b9"), ("superseded-3", "73266bea")):

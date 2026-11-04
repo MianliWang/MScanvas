@@ -1,7 +1,8 @@
 # XIC X2 — candidate C′ over the 77 frozen rows
 
-Status: **evidence only.** Date: 2026-11-04. Baseline: `origin/main` at `9f98504e`,
-PR #207 merged. Authority: [ADR 0071](../architecture/adr/0071-xic-re-entry-and-its-first-version.md),
+Status: **evidence only.** Date: 2026-11-04. Started from `origin/main` at `9f98504e`,
+PR #207 merged; the scored build is at `520ea2de`, which merges `main` at `b5058731`, and its
+`crates/proteowizard/src` is the same. Authority: [ADR 0071](../architecture/adr/0071-xic-re-entry-and-its-first-version.md),
 decisions 8 and 9, and the owner's X-1 and X-2. The decision this feeds is
 [ADR 0072](../architecture/adr/0072-xic-candidate-decision-x3.md), which is Proposed.
 
@@ -121,7 +122,10 @@ from `a7c6705c…`'s in the example only: where the pass is timed, one `match` a
 reads a number with spaces around it, how a read failure exits and one helper's body. Each
 manifest shows `crates/proteowizard/src` is the same in all six. The first, `46509d36…`, built
 an uncommitted example and its source was not kept, only that digest, so "where the pass is
-timed" cannot be checked. The other three are at `6fef86a0`, `bfa5a762` and `8c9b8ec6`.
+timed" cannot be checked. `02690522…` is at `6fef86a0`, amended and never pushed, so outside
+this machine's reflog its example too is only a digest, and "one `match` arm" cannot be checked
+from this branch. `541880b9…` is at `bfa5a762`, also amended and never pushed, and `59d19105`,
+on this branch, reproduces its source manifest. `73266bea…` is at `8c9b8ec6`.
 
 | Ledger row | ADR named case | Subjects | Status | Runs |
 | --- | --- | --- | --- | --- |
@@ -228,7 +232,7 @@ Both stay `Evaluated`, so `must_disagree` scores a scientific disagreement.
 Four mutations of `mzml_xic.rs`, each built and run alone over the 73 rows and the 17
 integer rows in a throwaway worktree and undone before the next, with the tree checked
 clean each time. None is in this PR or in the matrix above. The supplement's 4 rows were
-not part of these runs. They were built from `abc6b443`, before #190, and were not run again:
+not part of these runs. The four mutations were built from `abc6b443`, before #190, and were not run again:
 #190 changes neither `mzml_xic.rs` nor any package version.
 
 | Mutation | 73 rows, PASS / FAIL | 17 integer rows, PASS / FAIL | Rows it fails, among others |
