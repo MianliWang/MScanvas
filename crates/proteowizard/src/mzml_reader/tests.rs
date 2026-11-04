@@ -842,6 +842,17 @@ fn two_payloads_in_one_array_are_refused_and_never_joined() {
         ms1_refusal(6, &[self_closed, intensity_six.clone()]),
         refused(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)
     );
+    // So does a second one that is self-closed, after a first that holds all six.
+    let second_self_closed = array(&plain_mz, &format!("{whole}</binary><binary>")).replacen(
+        "<binary></binary>",
+        "<binary/>",
+        1,
+    );
+    assert!(second_self_closed.contains("</binary><binary/>"));
+    assert_eq!(
+        ms1_refusal(6, &[second_self_closed, intensity_six.clone()]),
+        refused(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)
+    );
     // Under zlib, one stream stated in two parts.
     let stream = b64(&zlib(&le_f64(&six)));
     let (start, rest) = stream.split_at(8);
