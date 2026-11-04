@@ -1320,6 +1320,28 @@ const STOPS: readonly Stop[] = [
     anchor: '[data-targeted-table-export] [data-targeted-output="savedTable"]',
   },
   {
+    // The rows shown, sorted and filtered, and those rows just saved (S-7.1).
+    name: "targeted-table-view-saved",
+    table: (locale) => ({
+      ...scenario("projectWithResult", locale),
+      export_targeted_ms1_table_view: {
+        status: "saved",
+        format: "csv",
+        fileName: "mscanvas-targeted-ms1-eeeeeeee-results-view-1-of-2.csv",
+        rowCount: 1,
+      },
+    }),
+    drive: async () => {
+      await go(3);
+      await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+      await browser.$('[data-targeted-sort="raw_area"]').click();
+      await browser.$("[data-targeted-view-outcome]").click();
+      await browser.$("[data-targeted-view-save-button]").click();
+      await browser.$('[data-targeted-view-export="csv"]').click();
+    },
+    anchor: '[data-targeted-table-export] [data-targeted-output="savedTable"]',
+  },
+  {
     // Open project… refused by Rust: the refusal in words, with the head's buttons to try again.
     name: "project-open-failed",
     table: (locale) => ({ ...emptyTable(locale), open_project: { __reject: { kind: "unreadable" } } }),

@@ -6,7 +6,8 @@
 //! validated managed payload and the plan the document recorded -- and from
 //! nothing else. Nothing here reads the source, starts a worker, re-extracts a
 //! trace, fits a peak or decides an outcome: a stored result is history, and an
-//! export of it is a copy of that history in another shape.
+//! export of it is a copy of that history in another shape. The rows a person
+//! kept and ordered in the page are the same history, in a table that says so.
 //!
 //! Absent is empty, never zero. A value the row does not carry is an empty
 //! cell and an undrawn interval, because a zero would be a measurement nobody
@@ -64,6 +65,32 @@ pub const SPREADSHEET_TEXT_COLUMNS: [&str; 3] = ["label", "adduct", "model_statu
 /// The preamble values that are the engine's report about itself.
 pub const SPREADSHEET_TEXT_PREAMBLE_KEYS: [&str; 3] =
     ["engine_pyopenms", "engine_openms", "engine_openms_revision"];
+
+/// The rows a person was looking at (S-7.1). A format of its own, as the
+/// spreadsheet CSV is: `mscanvas_targeted_ms1_results` schema 1 promises one row
+/// per plan target in plan order, so a reader can tell from the first line that
+/// this file does not hold the whole table.
+pub const VIEW_TABLE_FORMAT_ID: &str = "mscanvas_targeted_ms1_results_view";
+
+/// The view table's own schema version.
+pub const VIEW_TABLE_SCHEMA_VERSION: u32 = 1;
+
+/// The view table for spreadsheets: ADR 0054's mark and its rule, on these rows.
+pub const SPREADSHEET_VIEW_TABLE_FORMAT_ID: &str = "mscanvas_targeted_ms1_results_view_spreadsheet";
+
+/// The spreadsheet view table's own schema version.
+pub const SPREADSHEET_VIEW_TABLE_SCHEMA_VERSION: u32 = 1;
+
+/// [`SPREADSHEET_TEXT_PREAMBLE_KEYS`], and the text a person typed to filter.
+pub const SPREADSHEET_VIEW_TEXT_PREAMBLE_KEYS: [&str; 4] = [
+    "engine_pyopenms",
+    "engine_openms",
+    "engine_openms_revision",
+    "view_text",
+];
+
+/// The columns a view can be sorted by, named as the table names them.
+pub const VIEW_SORT_COLUMNS: [&str; 4] = ["label", "outcome", "feature_apex_rt_s", "raw_area"];
 
 /// What makes a spreadsheet read a cell as a formula when it starts one.
 const FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
@@ -495,6 +522,92 @@ pub enum TableRefusal {
     FieldNotRepresentable,
     /// A row carries a number of traces this contract has no columns for.
     UnexpectedTraceCount,
+    /// The rows named are not the rows the view describes: none at all, one
+    /// named twice, one this result does not have, or not those its filter keeps.
+    ViewNotOfResult,
+}
+
+// The webview sorts and filters a result in the page, which holds only while a
+// whole result fits the one page it reads (`targetedTableView.ts`).
+const _: () = assert!(super::payload::MAX_PAGE_ROWS >= super::record::MAX_TARGETS);
+
+/// What a person's view of the table is, as the webview describes it (S-7.1).
+///
+/// The webview sorts and filters what it has loaded, and sends the ids in the
+/// order shown. Which rows those are is checked against the stored result; the
+/// order under a sort is the webview's, since the sort itself runs there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableView {
+    targets: Vec<TargetId>,
+    outcomes: Vec<RowOutcome>,
+    text: String,
+    sort: Option<(&'static str, &'static str)>,
+}
+
+impl TableView {
+    /// Reads the wire's words, or `None` for one this contract does not have.
+    ///
+    /// `outcomes` is explicit, so no filter on outcome is every outcome, never
+    /// an empty list. `text` is as filtered on: neither side trims it again.
+    #[must_use]
+    pub fn from_wire(
+        targets: &[String],
+        outcomes: &[String],
+        text: String,
+        sort: Option<(&str, &str)>,
+    ) -> Option<Self> {
+        let targets = targets
+            .iter()
+            .map(|target| target.parse().ok())
+            .collect::<Option<Vec<TargetId>>>()?;
+        let word_known = |word: &String| {
+            ROW_OUTCOMES
+                .iter()
+                .any(|known| row_outcome_word(*known) == word)
+        };
+        if outcomes.is_empty() || !outcomes.iter().all(word_known) {
+            return None;
+        }
+        // In one order whatever order they came in, so the same view always
+        // writes the same line.
+        let outcomes = ROW_OUTCOMES
+            .into_iter()
+            .filter(|known| outcomes.iter().any(|word| word == row_outcome_word(*known)))
+            .collect();
+        // Longer than any name or formula matches nothing; a control character
+        // is what a name refuses, and what a TSV cannot carry.
+        if text.chars().count() > super::record::MAX_LABEL_CHARS
+            || text.chars().any(char::is_control)
+        {
+            return None;
+        }
+        let sort = match sort {
+            None => None,
+            Some((key, direction)) => Some((
+                *VIEW_SORT_COLUMNS.iter().find(|column| **column == key)?,
+                match direction {
+                    "ascending" => "ascending",
+                    "descending" => "descending",
+                    _ => return None,
+                },
+            )),
+        };
+        Some(Self {
+            targets,
+            outcomes,
+            text,
+            sort,
+        })
+    }
+
+    /// Whether the view's filter keeps this row. Case does not matter, as in
+    /// the webview: a name is typed by a person and read by another.
+    fn keeps(&self, definition: &TargetDefinition, row: &PayloadRow) -> bool {
+        let text = self.text.to_lowercase();
+        self.outcomes.contains(&row.outcome)
+            && (definition.label.to_lowercase().contains(&text)
+                || definition.formula.to_lowercase().contains(&text))
+    }
 }
 
 /// The columns, in order. The contract of `mscanvas_targeted_ms1_results`
@@ -609,13 +722,7 @@ pub fn result_table(
     stored: &StoredResult,
     format: TableFormat,
 ) -> Result<(String, usize), TableRefusal> {
-    let execution = &stored.execution;
-    let attempt = execution.attempt.as_ref();
-    let report = attempt.and_then(|attempt| attempt.engine_report.as_ref());
-    let source = execution.consumed_content.first();
-    let text = |value: &str| value.to_owned();
-    let spreadsheet = format == TableFormat::SpreadsheetCsv;
-    let (format_id, schema_version) = if spreadsheet {
+    let (format_id, schema_version) = if format == TableFormat::SpreadsheetCsv {
         (
             SPREADSHEET_TABLE_FORMAT_ID,
             SPREADSHEET_TABLE_SCHEMA_VERSION,
@@ -623,7 +730,122 @@ pub fn result_table(
     } else {
         (TABLE_FORMAT_ID, TABLE_SCHEMA_VERSION)
     };
-    let preamble: Vec<(&str, String)> = vec![
+    let table = written_table(
+        &provenance(stored, format_id, schema_version, "plan"),
+        &SPREADSHEET_TEXT_PREAMBLE_KEYS,
+        stored
+            .plan
+            .targets
+            .iter()
+            .zip(&stored.rows)
+            .enumerate()
+            .map(|(index, (definition, row))| (index, definition, row)),
+        format,
+    )?;
+    Ok((table, stored.rows.len()))
+}
+
+/// The rows of one view, in its order, with the view named above them.
+///
+/// Answers the table and its row count. The same document as the whole table
+/// but for its name, its row order and the lines that say what was kept; a row
+/// keeps its position in the plan, in `target_position`, whatever the order.
+///
+/// # Errors
+///
+/// [`TableRefusal`].
+pub fn view_table(
+    stored: &StoredResult,
+    format: TableFormat,
+    view: &TableView,
+) -> Result<(String, usize), TableRefusal> {
+    let mut rows = Vec::with_capacity(view.targets.len());
+    for target in &view.targets {
+        rows.push(
+            stored
+                .target(*target)
+                .ok_or(TableRefusal::ViewNotOfResult)?,
+        );
+    }
+    let kept = stored
+        .plan
+        .targets
+        .iter()
+        .zip(&stored.rows)
+        .filter(|(definition, row)| view.keeps(definition, row))
+        .count();
+    let mut positions: Vec<usize> = rows.iter().map(|(index, ..)| *index).collect();
+    let in_plan_order = positions.is_sorted();
+    positions.sort_unstable();
+    positions.dedup();
+    if rows.is_empty()
+        || positions.len() != rows.len()
+        || rows.len() != kept
+        || rows
+            .iter()
+            .any(|(_, definition, row)| !view.keeps(definition, row))
+        || (view.sort.is_none() && !in_plan_order)
+    {
+        return Err(TableRefusal::ViewNotOfResult);
+    }
+
+    let (format_id, schema_version) = if format == TableFormat::SpreadsheetCsv {
+        (
+            SPREADSHEET_VIEW_TABLE_FORMAT_ID,
+            SPREADSHEET_VIEW_TABLE_SCHEMA_VERSION,
+        )
+    } else {
+        (VIEW_TABLE_FORMAT_ID, VIEW_TABLE_SCHEMA_VERSION)
+    };
+    let row_order = if view.sort.is_some() { "view" } else { "plan" };
+    let mut preamble = provenance(stored, format_id, schema_version, row_order);
+    preamble.extend([
+        (
+            "view_rows",
+            format!("{} of {}", rows.len(), stored.rows.len()),
+        ),
+        (
+            "view_outcomes",
+            view.outcomes
+                .iter()
+                .map(|outcome| row_outcome_word(*outcome))
+                .collect::<Vec<_>>()
+                .join(";"),
+        ),
+        ("view_text", view.text.clone()),
+        (
+            "view_sort_key",
+            view.sort
+                .map_or_else(String::new, |(key, _)| key.to_owned()),
+        ),
+        (
+            "view_sort_direction",
+            view.sort
+                .map_or_else(String::new, |(_, direction)| direction.to_owned()),
+        ),
+    ]);
+    let table = written_table(
+        &preamble,
+        &SPREADSHEET_VIEW_TEXT_PREAMBLE_KEYS,
+        rows.iter().copied(),
+        format,
+    )?;
+    Ok((table, rows.len()))
+}
+
+/// What the result is, in the order every table names it.
+fn provenance(
+    stored: &StoredResult,
+    format_id: &str,
+    schema_version: u32,
+    row_order: &str,
+) -> Vec<(&'static str, String)> {
+    let execution = &stored.execution;
+    let attempt = execution.attempt.as_ref();
+    let report = attempt.and_then(|attempt| attempt.engine_report.as_ref());
+    let source = execution.consumed_content.first();
+    let text = |value: &str| value.to_owned();
+    vec![
         ("format", text(format_id)),
         ("schema_version", schema_version.to_string()),
         ("recipe", text("targetedMs1")),
@@ -687,20 +909,30 @@ pub fn result_table(
             stored.result.payload.manifest_sha256.clone(),
         ),
         ("target_count", stored.rows.len().to_string()),
-        ("row_order", text("plan")),
+        ("row_order", text(row_order)),
         ("retention_time_unit", text("s")),
         ("intensity_unit", text("unreported")),
-    ];
+    ]
+}
 
-    let mut out = String::with_capacity(4_096 + stored.rows.len() * 512);
+/// The preamble, the header and these rows, as the format carries them.
+/// `declared_keys` names the preamble values the spreadsheet CSV may change.
+fn written_table<'a>(
+    preamble: &[(&str, String)],
+    declared_keys: &[&str],
+    rows: impl Iterator<Item = (usize, &'a TargetDefinition, &'a PayloadRow)>,
+    format: TableFormat,
+) -> Result<String, TableRefusal> {
+    let spreadsheet = format == TableFormat::SpreadsheetCsv;
+    let mut out = String::with_capacity(4_096 + rows.size_hint().0 * 512);
     if spreadsheet {
         // So a spreadsheet opening the file by double-click reads UTF-8.
         out.push('\u{FEFF}');
     }
-    for (key, value) in &preamble {
+    for (key, value) in preamble {
         // Every preamble line starts with `#`, the convention every reader of
         // this application's data documents already skips.
-        let value = if spreadsheet && SPREADSHEET_TEXT_PREAMBLE_KEYS.contains(key) {
+        let value = if spreadsheet && declared_keys.contains(key) {
             spreadsheet_text(value)
         } else {
             value.clone()
@@ -719,7 +951,7 @@ pub fn result_table(
         format,
     )?);
 
-    for (index, (definition, row)) in stored.plan.targets.iter().zip(&stored.rows).enumerate() {
+    for (index, definition, row) in rows {
         let mut fields = row_fields(index, definition, row)?;
         if spreadsheet {
             for (name, value) in TABLE_COLUMNS.iter().zip(&mut fields) {
@@ -730,7 +962,7 @@ pub fn result_table(
         }
         out.push_str(&line(&fields, format)?);
     }
-    Ok((out, stored.rows.len()))
+    Ok(out)
 }
 
 fn row_fields(
@@ -857,6 +1089,16 @@ fn row_fields(
     debug_assert_eq!(fields.len(), TABLE_COLUMNS.len());
     Ok(fields)
 }
+
+/// Every outcome, in the order the report counts them.
+const ROW_OUTCOMES: [RowOutcome; 6] = [
+    RowOutcome::Detected,
+    RowOutcome::DetectedAmbiguous,
+    RowOutcome::Shared,
+    RowOutcome::SuppressedByOverlap,
+    RowOutcome::NotDetected,
+    RowOutcome::Failed,
+];
 
 /// The payload's own outcome word, so the table and the stored rows agree.
 const fn row_outcome_word(outcome: RowOutcome) -> &'static str {
