@@ -677,3 +677,10 @@ stored result and its history read as one task:
 
 Reopening a project still checks, relinks and admits nothing until asked. See
 [slice-06](../phases/pm9/slice-06.md).
+
+*2026-11-04 (S-7.1, the owner's answer of 2026-11-03):* the report's rows, still
+in plan order at first, sort by a pressed column head and filter by outcome and
+by text over target name and formula. **Save N of M rows…** then writes the rows
+shown, in that order, as CSV, TSV or spreadsheet CSV, in a document that says it
+is a view; **Reset** returns to the table, and **Export** still writes every row.
+See FIG-010 in the [feature catalog](FEATURE_CATALOG.md).
