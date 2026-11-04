@@ -1646,10 +1646,11 @@ impl PreviewService {
         Some(identities)
     }
 
-    /// The "not verified by MSCanvas" label of the row whose primary is the
-    /// object `identity` names, where this session finalized it from a labelled
-    /// conversion or a project's reference brought the label to the row
-    /// (ADR 0055; owner decisions of 2026-10-29 and 2026-10-31).
+    /// The "not verified by MSCanvas" label of the object `identity` names, where
+    /// this session finalized it from a labelled conversion (ADR 0055; owner
+    /// decisions of 2026-10-29 and 2026-10-31) or a project's reference brought
+    /// the label to its row (ADR 0055: as built, review of 2026-10-31 (PR #161),
+    /// not an owner decision).
     ///
     /// Asked by a project registration about the object it just hashed, so
     /// the label follows the object whatever route the user registers it by, as
@@ -1657,9 +1658,10 @@ impl PreviewService {
     /// session has none, so none is recorded (ADR 0055: as built in PR #201,
     /// 2026-11-03, not an owner decision).
     /// A row's identity is one its lease holds, so a match is that row's own
-    /// object. A finalized output with no row answers for itself (ADR 0055: as
-    /// built in PR #201, 2026-11-03, not an owner decision). Memory only; reads
-    /// nothing.
+    /// object. The row is asked first because where a finalized output holds no
+    /// identity, as off Windows, the table never hears of it. With no row the
+    /// table answers (ADR 0055: as built in PR #201, 2026-11-03, not an owner
+    /// decision). Memory only; reads nothing.
     pub(crate) fn not_verified_label_of_object(
         &self,
         identity: (u64, [u8; 16]),
@@ -1674,7 +1676,7 @@ impl PreviewService {
                 .find(|dataset| dataset.object_identities().first() == Some(&identity))
                 .and_then(|dataset| dataset.not_verified().cloned())
         };
-        of_row.or_else(|| self.conversion_slot().finalized_label(identity))
+        of_row.or_else(|| self.conversion_slot().object_label(identity))
     }
 
     /// Registers one admitted file, with the label it carries as one of this
@@ -1683,9 +1685,10 @@ impl PreviewService {
     /// carried back, as built in PR #201, 2026-11-03, not an owner decision).
     ///
     /// Every route a user adds a file by comes through here, so within the
-    /// process that finalized an output a route cannot lose the label. The table
-    /// ends with that process and the restore document keeps no label, so a row
-    /// Restore workspace puts back in a later session has none (ADR 0055: as built
+    /// process that finalized an output, or that a project's reference brought a
+    /// label to, a route cannot lose the label. The table ends with that process
+    /// and the restore document keeps no label, so a row Restore workspace puts
+    /// back in a later session has none (ADR 0055: as built
     /// in PR #201, 2026-11-03, not an owner decision). By object identity and never
     /// by name: an output moved on its volume keeps it, and a copy under any name
     /// is a new object without it. The slot is asked first and let go of, as
@@ -1697,7 +1700,7 @@ impl PreviewService {
     ) -> AddDatasetOutcome {
         let label = self
             .conversion_slot()
-            .finalized_label(accepted.identity().as_pair());
+            .object_label(accepted.identity().as_pair());
         let mut workspace = self.workspace();
         let outcome = add(&mut workspace.registry, accepted);
         if let (Some(label), Some(id)) = (label, outcome.registered_id()) {
@@ -1739,13 +1742,16 @@ impl PreviewService {
     }
 
     /// Gives the row a project reference was admitted as the label the
-    /// project recorded for that object, and says it in the add's own answer.
+    /// project recorded for that object, says it in the add's own answer, and
+    /// keeps it in the slot's table, so the row leaving does not forget it (ADR
+    /// 0055: as built in PR #201, 2026-11-03, not an owner decision).
     ///
     /// The other half of `not_verified_label_of_object`: the label is a
     /// property of the object, so a reference carried back into the Workbench
-    /// brings it to the row (ADR 0055; owner decision 2 of 2026-10-29). Called
-    /// only once the project has claimed `handle`, which is what proves the
-    /// row is the object the label was recorded for. Memory only.
+    /// brings it to the row (ADR 0055: as built, review of 2026-10-31 (PR #161),
+    /// not an owner decision). Called only once the project has claimed `handle`,
+    /// which is what proves the row is the object the label was recorded for.
+    /// Memory only.
     pub(crate) fn label_admitted_row(
         &self,
         result: &mut WorkspaceAddResultDto,
@@ -1761,8 +1767,16 @@ impl PreviewService {
             return;
         };
         result.roster = roster_of(&workspace);
+        let primary = workspace
+            .registry
+            .get(id)
+            .and_then(|row| row.object_identities().first().copied());
         drop(workspace);
         drop(gate);
+        if let Some(identity) = primary {
+            self.conversion_slot()
+                .remember_object_label(identity, held.clone());
+        }
         for outcome in &mut result.outcomes {
             if let WorkspaceAddOutcomeDto::Added { dataset }
             | WorkspaceAddOutcomeDto::Duplicate { existing: dataset } = outcome

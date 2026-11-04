@@ -1539,13 +1539,16 @@ pub(super) struct ConversionSlot {
     /// The "not verified by MSCanvas" label of every labelled output this
     /// session finalized, by object identity (ADR 0055; owner decision A0055
     /// (b), 2026-10-31), so Add files… recognises one after its queue is gone.
+    /// Also the label a project's reference brought to a row, so that row leaving
+    /// does not forget it (ADR 0055: as built in PR #201, 2026-11-03, not an owner
+    /// decision).
     ///
     /// Nothing keeps these objects open: the user's finished file is not held
     /// for the life of the process. So an identity can outlive its file and a
     /// filesystem may reissue it. Unlike `DatasetRegistry::by_identity`, this
     /// decides no row: the worst a reissued identity does is label one file
     /// that needed no label, and the label only ever claims less.
-    finalized_labels: HashMap<(u64, [u8; 16]), NotVerifiedByMscanvas>,
+    object_labels: HashMap<(u64, [u8; 16]), NotVerifiedByMscanvas>,
 }
 
 impl Default for ConversionSlot {
@@ -1564,19 +1567,25 @@ impl Default for ConversionSlot {
             pending_item_stop: None,
             view: None,
             views_begun: 0,
-            finalized_labels: HashMap::new(),
+            object_labels: HashMap::new(),
         }
     }
 }
 
 impl ConversionSlot {
-    /// The label of the object `identity` names, when it is one of this
-    /// session's finalized outputs and has one. Memory only.
-    pub(super) fn finalized_label(
-        &self,
+    /// The label this process knows for the object `identity` names. Memory only.
+    pub(super) fn object_label(&self, identity: (u64, [u8; 16])) -> Option<NotVerifiedByMscanvas> {
+        self.object_labels.get(&identity).cloned()
+    }
+
+    /// Keeps the whole label of a row's object. A row took what this table held
+    /// when it was registered, so nothing here says more than `label` does.
+    pub(super) fn remember_object_label(
+        &mut self,
         identity: (u64, [u8; 16]),
-    ) -> Option<NotVerifiedByMscanvas> {
-        self.finalized_labels.get(&identity).cloned()
+        label: NotVerifiedByMscanvas,
+    ) {
+        self.object_labels.insert(identity, label);
     }
 
     pub(super) fn attach_staging_recovery(
@@ -2553,7 +2562,7 @@ impl ConversionSlot {
         // Counted rather than incremented: the queue's own position is "how
         // many are done", and after the last item that is the item count.
         queue.recount();
-        self.finalized_labels.extend(labelled);
+        self.object_labels.extend(labelled);
         self.advance();
         true
     }
