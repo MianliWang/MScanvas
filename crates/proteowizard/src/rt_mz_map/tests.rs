@@ -970,6 +970,21 @@ fn a_stated_mz_range_that_is_empty_or_inverted_has_no_first_view() {
             Err(MapError::InvalidBounds)
         );
     }
+
+    let both_inverted = document(&[
+        spectrum(0, 1, PROFILE, ("2", MINUTE), 1, &observed("500", "100")),
+        spectrum(1, 1, PROFILE, ("3", MINUTE), 1, &observed("600", "400")),
+    ]);
+    let stated = ms1_extent(&table(&both_inverted)).expect("has MS1")[0].mz();
+    assert_eq!(
+        stated,
+        Some((500.0, 400.0)),
+        "the lowest low and the highest high, not ordered"
+    );
+    assert_eq!(
+        map(&both_inverted, request((0.0, 4.0), 1, (500.0, 400.0), 1)),
+        Err(MapError::InvalidBounds)
+    );
 }
 
 #[test]
@@ -982,8 +997,15 @@ fn a_cell_past_the_mz_axis_is_not_the_next_rows_cell() {
 
 #[test]
 fn the_result_keeps_the_request_exactly() {
-    let document = document(&[ms1(0, "1", &[100.0], &[1.0])]);
-    let view = request((0.1, 0.7), 3, (99.1, 101.7), 7);
+    let document = document(&[ms1(0, "0.1", &[500.0], &[1.0])]);
+    // Each upper bound needs all 17 significant digits, so rounding to any number
+    // of decimals changes it.
+    let view = request(
+        (0.002538333333, 0.30000000000000004),
+        3,
+        (400.500793457031, 1399.7896728515627),
+        7,
+    );
     assert_eq!(map(&document, view).expect("maps").request(), &view);
 }
 
@@ -1017,6 +1039,10 @@ fn the_stable_ids_decision_5_lists_do_not_change() {
         ),
         (
             MapError::MixedArrayUnits(ArrayRole::Mz),
+            "mixed_array_units",
+        ),
+        (
+            MapError::MixedArrayUnits(ArrayRole::Intensity),
             "mixed_array_units",
         ),
         (MapError::Cancelled, "cancelled"),

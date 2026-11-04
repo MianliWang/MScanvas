@@ -150,7 +150,8 @@ impl Ms1Extent {
     }
 
     /// The lowest and highest observed m/z the spectra state (MS:1000528,
-    /// MS:1000527); `None` unless every spectrum of this map states both.
+    /// MS:1000527); `None` unless every spectrum of this map states both. They are
+    /// not ordered: equal or inverted is not a range a map can be drawn over.
     #[must_use]
     pub const fn mz(&self) -> Option<(f64, f64)> {
         self.mz
