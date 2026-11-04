@@ -1653,8 +1653,9 @@ impl PreviewService {
     /// Asked by a project registration about the object it just hashed, so
     /// the label follows the object whatever route the user registers it by.
     /// A row's identity is one its lease holds, so a match is that row's own
-    /// object. A finalized output with no row answers for itself (ADR 0055;
-    /// owner decision A0055 (b), 2026-10-31). Memory only; reads nothing.
+    /// object. A finalized output with no row answers for itself (ADR 0055: as
+    /// built in PR #201, 2026-11-03, not an owner decision). Memory only; reads
+    /// nothing.
     pub(crate) fn not_verified_label_of_object(
         &self,
         identity: (u64, [u8; 16]),
@@ -1674,7 +1675,8 @@ impl PreviewService {
 
     /// Registers one admitted file, with the label it carries as one of this
     /// session's finalized outputs (ADR 0055; owner decision A0055 (b),
-    /// 2026-10-31).
+    /// 2026-10-31, for Add files… and Add mzML folder…; for a drop and a reference
+    /// carried back, as built in PR #201, 2026-11-03, not an owner decision).
     ///
     /// Every route a user adds a file by comes through here, so a route cannot
     /// lose the label. By object identity and never by name: an output moved on

@@ -264,12 +264,15 @@ default.
 >   or during a copy refuses it as stale, rather than drawing it unlabelled. A
 >   reopened `.msfigure`, which no command reaches yet, carries no note.
 > - (b) The session keeps the label of every labelled output it finalized, by
->   volume serial and file ID, for the life of the process. Every add route
->   consults it: Add files…, Add mzML folder…, a drop and a reference carried
->   back from a project. A reference registered with no row asks it too. Nothing
->   keeps those objects open, so an identity can outlive its file and be
->   reissued; the worst that does is label a file that needed no label. A move
->   across volumes is a copy and carries none.
+>   volume serial and file ID, for the life of the process. Add files… and Add
+>   mzML folder… consult it, and a reference registered from such a row records
+>   the label. Nothing keeps those objects open, so an identity can outlive its
+>   file and be reissued; the worst that does is label a file that needed no
+>   label. A move across volumes is a copy and carries none.
+>   *As built in PR #201, 2026-11-03, not an owner decision: (b) names those two
+>   routes, and the build goes further. A drop and a reference carried back from
+>   a project consult the same table, and a reference registered with no row asks
+>   it too.*
 > - (c) `Describe again` is offered only after a failure Rust calls retryable.
 >
 > **Owner decision, 2026-11-03:** asked whether to draw "Not verified by MSCanvas"
@@ -835,10 +838,13 @@ Each later in its own slice:
   >   field is required on every input, and `unverifiedBuildRelease` is
   >   explicit `null` on a measured build, like every optional value in the
   >   document: an omitted one is `malformed`. A label with neither half set
-  >   is refused as inconsistent. *Decided by the owner on 2026-10-31: a row
-  >   from those routes carries the label, and a reference with no row asks the
-  >   same table, so neither records `null` for a labelled output (decision 3;
-  >   implemented in PR #201).*
+  >   is refused as inconsistent.
+  >   *Decided by the owner on 2026-10-31: a row from those routes carries the
+  >   label, and a project reference registered from such a row records the
+  >   label, not `null` (decision 3; implemented in PR #201).*
+  >   *As built in PR #201, 2026-11-03, not an owner decision: a row from a drop
+  >   carries it too, and a reference registered with no row asks the same table,
+  >   so neither records `null` for a labelled output.*
   > - ~~**A schema-4 document is refused as `unsupportedVersion`**, like every
   >   other version, and nothing migrates. Beta 1's projects therefore do not
   >   open in this build.~~ Replaced the same day by the read-and-upgrade

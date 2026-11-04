@@ -314,9 +314,10 @@ fn convert_advanced(
     (operation, service.resolve_claimed_conversion(operation))
 }
 
-/// ADR 0055, owner decision A0055 (b) of 2026-10-31: the session's finalized
-/// outputs are recognised on every add route by the object, never by the name.
-/// Windows only: elsewhere a finalized output holds no object identity.
+/// ADR 0055, owner decision A0055 (b) of 2026-10-31: Add files… and Add mzML
+/// folder… recognise the session's finalized outputs by the object, never by
+/// the name. A drop does too, as built in PR #201, 2026-11-03, not an owner
+/// decision. Windows only: elsewhere a finalized output holds no object identity.
 #[cfg(windows)]
 #[test]
 fn every_add_route_recognises_a_finalized_output_by_its_object_and_not_its_name() {
@@ -402,7 +403,8 @@ fn every_add_route_recognises_a_finalized_output_by_its_object_and_not_its_name(
 }
 
 /// A finalized output with no row still answers a project registration: the
-/// label is the object's, and a removed row does not unlabel it.
+/// label is the object's, and a removed row does not unlabel it. As built in PR
+/// #201, 2026-11-03, not an owner decision (ADR 0055).
 #[cfg(windows)]
 #[test]
 fn a_finalized_output_with_no_row_answers_a_project_registration() {

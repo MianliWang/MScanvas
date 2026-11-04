@@ -1631,9 +1631,10 @@ pub(super) struct RegisteredDataset {
     origin: DatasetOrigin,
     /// The "not verified by MSCanvas" label of the conversion that produced
     /// this row's object, when this session finalized it (ADR 0055; owner
-    /// decisions of 2026-10-29 and 2026-10-31). A property of the object, not
-    /// of the route: a row the user had already added keeps its origin and
-    /// gains the label when the same object is adopted.
+    /// decisions of 2026-10-29 and 2026-10-31; for a row from a drop or a project,
+    /// as built in PR #201, 2026-11-03, not an owner decision). A property of the
+    /// object, not of the route: a row the user had already added keeps its
+    /// origin and gains the label when the same object is adopted.
     not_verified: Option<NotVerifiedByMscanvas>,
 }
 
