@@ -27,13 +27,19 @@ unavailable. [Open question 2](#open-questions) is unanswered, so
 
 *Note, 2026-11-04, a status and not an owner decision:* the note above speaks of
 2026-11-03. The owner has since answered both [open questions](#open-questions),
-and each answer is noted there. In `crates/proteowizard/AGENTS.md`, under "mzML
-viewing reader (ADR 0056)", PR #207 changes two lines: the one that says only the
-m/z and intensity arrays of one selected spectrum are decoded, and the one that
-says never "compute from the arrays". Each keeps its rule for everything else and
-names this ADR and ADR 0071 as the single exception, `mzml_xic.rs`. PR #183
-adjusts those lines if it lands after PR #207. Nothing calls the library, and
-VIEW-007 stays unavailable.
+each noted there, and the ISO-8859-1 question, noted at decision 2. In
+`crates/proteowizard/AGENTS.md`, under "mzML viewing reader (ADR 0056)", PR #207
+changes two lines: the one that says only the m/z and intensity arrays of one
+selected spectrum are decoded, and the one that says never "compute from the
+arrays". Each keeps its rule for everything else and names this ADR and ADR 0071
+as the single exception, `mzml_xic.rs`. Any other decode or computation stays
+forbidden until an accepted record under this ADR names it and its slice changes
+the line. The `mzml_reader.rs` module comment already carries the amendment that
+ADR 0071 decision 2 asks of X1. Whichever of PR #207 and PR #183 lands later
+adjusts those lines and that comment's "the one computation admitted so far". On
+question 1's eleven items: ADR 0068 on PR #183's branch, at head 86f19a56, carries
+an item-by-item check dated 2026-11-04, which it calls a reading, and ADR 0071 has
+none. Nothing calls the library, and VIEW-007 stays unavailable.
 
 ## Context
 
@@ -106,6 +112,13 @@ amendment for the XIC (XIC evaluation, section 11, item 1).
   read (ADR 0056 decision 3, ADR 0057). Which lane a pass takes, and how it
   interleaves with selected reads, is its record's: X0's for the XIC (X-1,
   section 11, item 12).
+
+*Owner decision, 2026-11-04:* for the XIC pass only, and against the letter of
+"A pass" above, whose citation of ADR 0056 decision 1's refusals includes a
+document that is not UTF-8: a file declaring ISO-8859-1 is read when everything
+after the declaration is ASCII, and refused at any other byte there (option
+`narrow`). The viewer's refusal does not change. The note at ADR 0071 decision 1
+holds the owner's reply and what it leaves open.
 
 ### 3. What each record states (open question 1)
 
@@ -183,11 +196,9 @@ stand under it.
   arrays") and the `mzml_reader.rs` module comment. They stay true until a
   record's code lands (open question 2).
 
-  *Owner decision, 2026-11-04:* a record's code lands in PR #207, so the two
-  lines of `crates/proteowizard/AGENTS.md` change in that PR
-  ([open question 2](#open-questions), option `with-code`), and PR #183 adjusts
-  them if it lands after it. The `mzml_reader.rs` module comment already carries
-  the amendment that ADR 0071 decision 2 asks of X1.
+  *Owner decision, 2026-11-04:* the two lines of `crates/proteowizard/AGENTS.md`
+  change together with the first record's code
+  ([open question 2](#open-questions), option `with-code`).
 
 ## Consequences
 
@@ -248,7 +259,7 @@ Added by this ADR; U7 does not answer them.
    answer does not close them: whether the fixed rules in items 2, 3 and 5
    (reversed bounds refused, no unit conversion, an empty window not zero) bind
    every record as rules, and whether ADR 0068 and ADR 0071 state all eleven
-   items, which nobody has checked item by item.
+   items, which the decision page did not check item by item.
 2. **The crate's guidance.** `crates/proteowizard/AGENTS.md` says the reader
    decodes "only the m/z and intensity arrays of one selected spectrum" and
    must never "compute from the arrays". Recommended: keep both lines until
@@ -257,9 +268,6 @@ Added by this ADR; U7 does not answer them.
    record names.
 
    *Owner decision, 2026-11-04:* option `with-code`, by the same reply as
-   question 1: the two lines change together with the first record's code. That
-   code is PR #207, and it makes the change. The line on what is decoded and the
-   line on "compute from the arrays" each keep their rule for everything else and
-   name this ADR and ADR 0071 as the single exception, `mzml_xic.rs`. A
-   computation no record names stays forbidden. PR #183 adjusts the lines if it
-   lands after PR #207.
+   question 1: the two lines change together with the first record's code. The
+   option states its cost: whichever of PR #207 and PR #183 lands later adjusts
+   the lines.
