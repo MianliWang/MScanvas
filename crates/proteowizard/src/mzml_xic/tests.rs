@@ -1220,6 +1220,95 @@ fn an_integer_above_two_to_the_53_refuses_its_scan_and_the_pass_goes_on() {
 }
 
 #[test]
+fn a_scan_that_yields_no_value_keeps_the_time_it_declares() {
+    // ADR 0046 §1 gives every row its time, and X4 places a gap by it. No frozen
+    // input declares an integer array, so X2's rows cannot see this on those.
+    let one = [101.0];
+    let rows = [
+        // An absent array, a NaN and a short m/z, a long intensity.
+        (1, vec![mz_array(&one)], XicScanState::NoUsableArrays),
+        (
+            1,
+            vec![mz_array(&[f64::NAN]), intensity_array(&one)],
+            XicScanState::NoUsableArrays,
+        ),
+        (
+            2,
+            vec![mz_array(&one), intensity_array(&one)],
+            XicScanState::NoUsableArrays,
+        ),
+        (
+            1,
+            vec![mz_array(&one), intensity_array(&[1.0, 2.0])],
+            XicScanState::NoUsableArrays,
+        ),
+        // A refused array, by its payload and by the integer rule, on each role.
+        (
+            1,
+            vec![corrupt_mz(), intensity_array(&one)],
+            unreadable(ArrayRole::Mz, ArrayProblem::CorruptBase64),
+        ),
+        (
+            1,
+            vec![mz_array(&one), corrupt_intensity()],
+            unreadable(ArrayRole::Intensity, ArrayProblem::CorruptBase64),
+        ),
+        (
+            1,
+            vec![
+                array(
+                    &[&mz_role(MZ_UNIT), I64, ZLIB],
+                    &zlib(&le_i64(&[TWO_53 + 1])),
+                ),
+                intensity_array(&one),
+            ],
+            XicScanState::Unreadable {
+                role: ArrayRole::Mz,
+                reason: XicUnreadableReason::IntegerBeyondTwoTo53,
+            },
+        ),
+        (
+            1,
+            vec![mz_array(&one), i64_intensity(&[TWO_53 + 1])],
+            BEYOND_INTENSITY,
+        ),
+        // What the window finds.
+        (
+            1,
+            vec![mz_array(&one), intensity_array(&[f64::NAN])],
+            XicScanState::NonFiniteIntensity,
+        ),
+        (
+            2,
+            vec![
+                mz_array(&[100.0, 101.0]),
+                intensity_array(&[f64::MAX, f64::MAX]),
+            ],
+            XicScanState::SumNotRepresentable,
+        ),
+    ];
+    // Each scan its own time, so that a neighbour's would show.
+    let scans: Vec<_> = (0_u32..)
+        .zip(&rows)
+        .map(|(index, (length, arrays, _))| {
+            let time = scan_list(60.0 + f64::from(index));
+            spectrum(index.into(), *length, &level(1), &time, arrays)
+        })
+        .collect();
+    let result = evaluate(&scans);
+    assert_eq!(result.rows().len(), rows.len());
+    assert_eq!(result.coverage_gaps(), rows.len() as u64);
+    for ((index, row), (_, _, state)) in (0_u32..).zip(result.rows()).zip(&rows) {
+        assert_eq!(row.state(), *state, "{index}");
+        assert_eq!(
+            row.retention_time(),
+            Some(60.0 + f64::from(index)),
+            "{index}"
+        );
+    }
+}
+
+#[test]
 fn what_comes_first_in_the_scan_still_comes_before_the_integer_rule() {
     let intensity = i64_intensity(&[TWO_53 + 2]);
     let mz = mz_array(&[101.0]);
@@ -2323,6 +2412,32 @@ fn an_element_inside_a_payload_refuses_the_array_and_is_never_joined_around() {
             only_state(&[two_array_scan(1, mz_array(&[101.0]), intensity)]),
             refused(ArrayRole::Intensity),
             "{payload}"
+        );
+    }
+    // The same under zlib, where the oracle's answer differs from no compression's.
+    let stream = zlib(&le_f64(&[101.0]));
+    let (start, rest) = stream.split_at(4);
+    for payload in [
+        format!("{start}<x/>{rest}"),
+        format!("{stream}<x/>"),
+        format!("<x/>{stream}"),
+    ] {
+        let mz = array(&[&mz_role, F64, ZLIB], &payload);
+        assert_eq!(
+            only_state(&[two_array_scan(1, mz, intensity_array(&[101.0]))]),
+            refused(ArrayRole::Mz),
+            "{payload}"
+        );
+    }
+    // And at declared length 0, where the oracle finds an empty array: its
+    // `Measured` with no compression, its `Unreadable` under zlib (as built
+    // 2026-11-03, not an owner decision).
+    for compression in [NO_COMPRESSION, ZLIB] {
+        let mz = array(&[&mz_role, F64, compression], "<x/>");
+        let intensity = array(&[&intensity_role, F64, compression], "<x/>");
+        assert_eq!(
+            only_state(&[two_array_scan(0, mz, intensity)]),
+            refused(ArrayRole::Mz)
         );
     }
     // An array refused already keeps its first reason, and the pass goes on.
