@@ -10,6 +10,7 @@
 import { MZML_ROW, SETTLED_AUTHORITY, VENDOR_ROW, ipcTable } from "./fixtures";
 import { targetedTable } from "./targeted";
 import {
+  ENVIRONMENT_DIAGNOSTICS,
   FAKE_WORKSPACE_CAPACITY,
   collidingFile,
   finalizedAttemptFacts,
@@ -455,6 +456,7 @@ export function scenario(name: Scenario, locale: Locale = "en"): Record<string, 
   table.begin_project_job = { operationId: "project-job-1" };
   table.cancel_project_job = { outcome: "cancelled" };
   table.get_targeted_ms1_runtime = { newRuns: "available" };
+  table.read_environment_diagnostics = ENVIRONMENT_DIAGNOSTICS;
   // A working native drop subscription, as M7.2 answers it. The shared
   // table's `null` makes the shell report drop as unavailable, which is true
   // of that answer but not of the state these scenarios describe, and its

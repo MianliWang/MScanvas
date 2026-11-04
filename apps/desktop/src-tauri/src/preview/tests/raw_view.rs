@@ -5,18 +5,22 @@
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::time::Instant;
 
+use super::recent_error_ring::noted_during;
 use super::*;
 use crate::presets::{
     PresetDeleteRequest, PresetListDto, PresetRenameRequest, PresetSaveRequest, PresetWriteDto,
 };
 use crate::preview::dto::{
     ConversionIntentWireDto, FigurePreviewOutcomeDto, FigurePreviewRequestDto,
-    FigurePreviewSourceDto, PreviewDto,
+    FigurePreviewSourceDto, PreviewDto, backend_quarantined, conversion_busy,
 };
 use crate::preview::raw_view::{
     MAX_RAW_BYTES, RawViewAvailabilityDto, RawViewBeginRequestDto, RawViewOperationRequestDto,
-    RawViewPhaseDto, RawViewStateDto, RawViewStateRequestDto, ViewCacheSummaryDto,
+    RawViewPhaseDto, RawViewStateDto, RawViewStateRequestDto, ViewCacheSummaryDto, raw_view_busy,
+    raw_view_unsupported_source, view_cache_entry_too_large, view_cache_root_unrecognized,
+    view_cache_unavailable,
 };
+use crate::preview::selection::unknown_dataset;
 use crate::preview::service::RetainedSummaryRefusal;
 
 /// An advanced intent (ADR 0055): MS1 only at 64/32, which no row holds.
@@ -1896,14 +1900,24 @@ fn operation_of(state: &RawViewStateDto) -> u64 {
 // Slice 3: what the interface reads
 // ---------------------------------------------------------------------------
 
+/// Whatever it answers, asking leaves nothing in the recent-error ring: a refusal
+/// carried in an `Ok` outcome is not in it (ADR 0063, decision 5), and this answer
+/// is polled. Read whole, not through `noted_during`: a look at a path here would
+/// build `file_not_resolvable` on every poll, and that filter would hide it.
 fn availability(session: &Viewing, handle: &str) -> RawViewAvailabilityDto {
-    session
+    use crate::environment_diagnostics::NOTED_ON_THIS_THREAD;
+
+    NOTED_ON_THIS_THREAD.take();
+    let answer = session
         .service
         .raw_view_snapshot(&RawViewStateRequestDto {
             handle: Some(handle.to_owned()),
         })
         .availability
-        .expect("a row was named")
+        .expect("a row was named");
+    let noted = NOTED_ON_THIS_THREAD.take();
+    assert!(noted.is_empty(), "{answer:?} noted {noted:?}");
+    answer
 }
 
 fn refusal(session: &Viewing, handle: &str) -> String {
@@ -2116,6 +2130,108 @@ fn a_build_reporting_no_release_is_refused_and_a_quarantine_comes_first() {
     assert_eq!(session.launches.load(Ordering::SeqCst), 0);
     session.service.quarantine_backend_now();
     assert_eq!(refusal(&session, &session.handle), "backend_quarantined");
+}
+
+/// The availability answer names these by hand so that it builds no error, and
+/// each stays what a press that is refused answers with.
+#[test]
+fn the_codes_the_availability_answer_names_are_what_a_press_answers_with() {
+    for (code, error) in [
+        ("unknown_file_handle", unknown_dataset()),
+        ("backend_quarantined", backend_quarantined()),
+        ("raw_view_busy", raw_view_busy()),
+        ("conversion_busy", conversion_busy()),
+        ("raw_view_unsupported_source", raw_view_unsupported_source()),
+        ("view_cache_unavailable", view_cache_unavailable()),
+        (
+            "view_cache_root_unrecognized",
+            view_cache_root_unrecognized(),
+        ),
+        ("view_cache_entry_too_large", view_cache_entry_too_large()),
+    ] {
+        assert_eq!(code, error.kind);
+    }
+}
+
+/// The webview asks about the highlighted row all through a view, as this does
+/// at each phase. A view that succeeded leaves no error behind.
+#[test]
+fn a_view_watched_to_its_end_notes_nothing() {
+    let session = viewing("ring-view-watched");
+    observed(&session);
+    let polls = Arc::new(AtomicUsize::new(0));
+    {
+        let service = Arc::downgrade(&session.service);
+        let handle = session.handle.clone();
+        let polls = Arc::clone(&polls);
+        session.service.set_raw_view_phase_hook(move |_, _| {
+            let answer = service
+                .upgrade()
+                .expect("the session outlives its view")
+                .raw_view_snapshot(&RawViewStateRequestDto {
+                    handle: Some(handle.clone()),
+                })
+                .availability;
+            assert_eq!(
+                answer,
+                Some(RawViewAvailabilityDto::Refused {
+                    available: false,
+                    code: "raw_view_busy".to_owned(),
+                })
+            );
+            polls.fetch_add(1, Ordering::SeqCst);
+        });
+    }
+    let (state, noted) = noted_during(|| session.view());
+    assert!(!ready(&state).1, "the view ran the whole conversion");
+    assert!(
+        polls.load(Ordering::SeqCst) > 0,
+        "the view was never polled"
+    );
+    assert!(noted.is_empty(), "{noted:?}");
+}
+
+/// A press that is refused is an `Err` at the boundary, so it does join the ring,
+/// beside an availability answer that names the same code and does not.
+#[test]
+fn a_press_refused_while_a_queue_holds_the_slot_notes_its_code() {
+    let session = viewing("ring-view-refused-press");
+    observed(&session);
+    let answered = session.service.begin_conversion_queue(
+        &begin_request(
+            std::slice::from_ref(&session.handle),
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            current_receipt(&session.service),
+        ),
+        current_document(&session.service),
+    );
+    assert!(matches!(
+        answered.outcome,
+        ConversionBeginOutcomeDto::Reserved { .. }
+    ));
+    assert_eq!(refusal(&session, &session.handle), "conversion_busy");
+    let (answer, noted) = noted_during(|| session.begin());
+    assert_eq!(answer.expect_err("refused").kind, "conversion_busy");
+    assert_eq!(noted, ["conversion_busy"]);
+}
+
+/// ADR 0063, decision 5: a view conversion is recorded once, as the kind of the
+/// error the run returns, and reading the failed state again adds nothing.
+#[test]
+fn a_failed_view_notes_its_code_once_however_often_it_is_read() {
+    let runner = FakeConversionRunner::new(BackendAct::Fail);
+    let arguments = runner.arguments();
+    let session = viewing_with("ring-view-failed", runner, arguments, open_responses());
+    let (state, noted) = noted_during(|| session.view());
+    assert_eq!(failed(&state).0, "backend_rejected");
+    assert_eq!(noted, ["backend_rejected"]);
+    let (_, noted) = noted_during(|| {
+        for _ in 0..5 {
+            session.service.raw_view_state();
+        }
+    });
+    assert!(noted.is_empty(), "{noted:?}");
 }
 
 #[test]
