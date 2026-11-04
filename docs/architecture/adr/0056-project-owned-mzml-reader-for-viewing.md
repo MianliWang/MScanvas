@@ -749,7 +749,7 @@ read values, not a computation.
 > computation. ADR 0075 is reserved for it and is not written. The parts of N-V3 and
 > N-V4 it covers merge only after the owner accepts that record; their other parts do
 > not wait. The question did not ask about the preview's range above, so that sentence
-> stands as written
+> stands as written; that is a reading, not an owner decision
 > ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 
 ### 8. Re-measure before implementing
