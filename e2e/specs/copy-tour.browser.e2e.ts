@@ -632,6 +632,11 @@ function viewFailedOpenWorld(locale: Locale) {
 
 const FAILED_OPEN_AGAIN = '#workbench-evidence[data-evidence="failed"] .evidence-actions button';
 
+/** A ready view whose open fails for a reason of the file: reading it again would fail the same way. */
+function viewFinalOpenWorld(locale: Locale) {
+  return { ...viewWorld(viewReady())(locale), open_raw_view: { __reject: { kind: "spectrum_table_refused", summary: "Controlled", detail: null, retryable: false } } };
+}
+
 async function failTheOpen() {
   await highlight(FIRST);
   await browser.$("[data-raw-view-open]").click();
@@ -1409,6 +1414,7 @@ const STOPS: readonly Stop[] = [
   { name: "view-open-refused-reading", table: viewWorld(viewReady()), hold: ["open_mzml_preview"], drive: async () => { await pressOpenRow(); await highlight(FIRST); }, anchor: "[data-raw-view-open-reason]" },
   { name: "view-open-refused-backend", table: (locale) => ({ ...viewWorld(viewReady())(locale), inspect_backend: unavailableBackend }), drive: () => highlight(FIRST), anchor: '[data-raw-view-open][aria-disabled="true"]' },
   { name: "view-read-failed", table: viewFailedOpenWorld, drive: failTheOpen, anchor: '#workbench-evidence[data-evidence="failed"] [data-raw-view-convert]' },
+  { name: "view-read-failed-final", table: viewFinalOpenWorld, drive: failTheOpen, anchor: '#workbench-evidence[data-evidence="failed"] [data-raw-view-convert]' },
   { name: "view-reread-running", table: viewFailedOpenWorld, keepFocus: true, drive: rereadTheFailedOpen, anchor: '[data-raw-view-phase="checkingSource"] [data-raw-view-cancel]:focus' },
   { name: "view-reread-failed", table: viewFailedOpenWorld, drive: async () => {
     await rereadTheFailedOpen();

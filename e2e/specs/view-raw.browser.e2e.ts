@@ -9,7 +9,7 @@
  * no provider or engine runs; decision 14's native QA is a later hold release.
  */
 import { cdp, metrics } from "../support/cdp";
-import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeRejection, setInvokeResult } from "../support/harness";
+import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, holdInvoke, horizontalOverflow, installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeRejection, setInvokeResult } from "../support/harness";
 import { NO_PROJECT, scenario, type Locale } from "../support/pm9Scenarios";
 import { readBackSavedPreferences, revealRosterRow, selectTheSpectrum } from "../support/viewer";
 import { availableBackend, chosenBackend, completeCatalog, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
@@ -123,6 +123,23 @@ async function holdEnter(repeats = 12) {
 
 const focusOn = (css: string) => browser.execute((target: string) => document.querySelector<HTMLElement>(target)?.focus(), css);
 
+/** A press of Cancel. Every read from before it to after its answer says what Rust then says, so no poll takes the button first. */
+async function cancelBy(table: Record<string, unknown>, press: () => Promise<unknown>) {
+  await holdInvoke("get_raw_view_state");
+  await step(table["cancel_raw_view"]);
+  await press();
+  await releaseInvokeHold("get_raw_view_state");
+}
+
+/** The keyboard on the evidence, with its ring inside the card that clips it. */
+async function ringOnEvidence() {
+  const ring = await browser.execute(() => {
+    const on = document.activeElement;
+    return on?.id === "workbench-evidence" && on.matches(":focus-visible") ? getComputedStyle(on).outlineOffset : "no ring on the evidence";
+  });
+  expect(ring).toBe("-2px");
+}
+
 async function clean() {
   const unexpected = (await consoleEntries())
     .filter((entry) => !ALLOWED_CONSOLE_SUBSTRINGS.some((allowed) => entry.text.includes(allowed)))
@@ -212,8 +229,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         expect(await calls("begin_raw_view")).toBe(1);
         expect(await calls("cancel_raw_view")).toBe(0);
 
-        await step(table["cancel_raw_view"]);
-        await holdEnter();
+        await cancelBy(table, holdEnter);
         await browser.$('[data-raw-view="cancelled"]').waitForExist({ timeout: 10_000 });
         await browser.waitUntil(async () => browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-view") === true), { timeout: 10_000, timeoutMsg: "the keyboard did not reach View" });
         expect(await calls("cancel_raw_view")).toBe(1);
@@ -232,6 +248,7 @@ for (const locale of ["en", "zh-CN"] as const) {
           await browser.pause(500);
           const where = await browser.execute(() => document.activeElement === document.body ? "body" : document.activeElement?.id === "workbench-evidence" ? "evidence" : document.activeElement?.matches("[data-handle]") ? "row" : "pane");
           expect(where).toBe(narrow ? "evidence" : "row");
+          if (narrow) await ringOnEvidence();
         };
         const withState = (state: unknown, availability: unknown = AVAILABLE) => {
           const table = world(locale);
@@ -349,8 +366,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         await highlight(FIRST);
         await pressView(running("converting"));
         await phase("converting");
-        await step(table["cancel_raw_view"]);
-        await browser.$("[data-raw-view-cancel]").click();
+        await cancelBy(table, () => browser.$("[data-raw-view-cancel]").click());
         await browser.$('[data-raw-view="cancelled"]').waitForExist({ timeout: 10_000 });
         await offered("[data-raw-view-view]");
         expect(await calls("cancel_raw_view")).toBe(1);
@@ -462,6 +478,37 @@ for (const locale of ["en", "zh-CN"] as const) {
         await clean();
       });
 
+      it("a failed open that is not retryable offers Convert alone, unless its words ask for a read", async () => {
+        const failing = '#workbench-evidence[data-evidence="failed"]';
+        for (const [kind, reads] of [["spectrum_table_refused", false], ["raw_view_not_ready", true]] as const) {
+          const table = world(locale);
+          table.get_raw_view_state = { state: ready(), availability: AVAILABLE };
+          table.open_raw_view = { __reject: { kind, summary: "Controlled", detail: null, retryable: false } };
+          await open(locale, viewport, table);
+          await highlight(FIRST);
+          await browser.$("[data-raw-view-open]").click();
+          await browser.$(`${failing} [data-raw-view-convert]`).waitForExist({ timeout: 10_000 });
+          expect(await browser.$$(`${failing} .evidence-actions button`).length).toBe(reads ? 2 : 1);
+          await clean();
+        }
+      });
+
+      it("a view-cache folder moved away: Try again asks, and View is back", async () => {
+        const table = world(locale);
+        table.get_raw_view_state = { state: { state: "idle" }, availability: { available: false, code: "view_cache_root_unrecognized" } };
+        await open(locale, viewport, table);
+        await highlight(FIRST);
+        await browser.$("[data-raw-view-reask]").waitForExist({ timeout: 10_000 });
+        expect(await browser.$("[data-raw-view-view]").getAttribute("aria-disabled")).toBe("true");
+        await step({ state: "idle" });
+        await browser.$("[data-raw-view-reask]").click();
+        await offered("[data-raw-view-view]");
+        expect(await browser.$("[data-raw-view-reask]").isExisting()).toBe(false);
+        expect(await browser.$("[data-raw-view-refusal]").isExisting()).toBe(false);
+        expect(await calls("begin_raw_view")).toBe(0);
+        await clean();
+      });
+
       it("a re-read of a failed open runs in the pane, with Cancel, and its failure shows", async () => {
         const table = world(locale);
         table.get_raw_view_state = { state: ready(), availability: AVAILABLE };
@@ -570,14 +617,14 @@ for (const locale of ["en", "zh-CN"] as const) {
           await browser.keys("Enter");
         } else {
           // The drawer folded and the keyboard moved to the pane; Tab reaches View.
+          await ringOnEvidence();
           await browser.keys("Tab");
           expect(await browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-view"))).toBe(true);
           await browser.keys("Enter");
         }
         await phase("converting");
         await browser.execute(() => document.querySelector<HTMLElement>("[data-raw-view-cancel]")?.focus());
-        await step(table["cancel_raw_view"]);
-        await browser.keys("Enter");
+        await cancelBy(table, () => browser.keys("Enter"));
         await browser.$('[data-raw-view="cancelled"]').waitForExist({ timeout: 10_000 });
         // The button that was pressed left; the keyboard stayed in the pane.
         expect(await browser.execute(() => document.activeElement?.closest("[data-raw-view-pane]") !== null)).toBe(true);

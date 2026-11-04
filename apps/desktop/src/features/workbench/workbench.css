@@ -89,6 +89,8 @@
    boxed again (GOALS V12); the first run's dashed drop target is a cue, not a
    region, as v5.11's own dashed .module-empty is inside its cards. */
 .workbench-shell .workspace-layout { grid-area: content; position: relative; display: grid; gap: 0; margin: 8px 24px; padding: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+/* The card clips what is drawn outside it, so a region's own ring stays inside. */
+.workbench-shell .workspace-layout > [tabindex]:focus-visible { outline-offset: -2px; }
 .workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr); grid-template-areas: "roster main"; }
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }
 .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }

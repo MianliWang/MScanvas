@@ -492,6 +492,7 @@ export function PreviewWorkspace() {
     || (focusedRawOperation?.state === "ready" && focusedRawOperation.openable)
     || workspace.rawView.refusal?.handle === focusedRaw?.handle;
   const rawPaneRow = focusedRaw !== null && (focusedRaw.handle !== previewedHandle || rawOperationSpeaks) ? focusedRaw : null;
+  const readAgainOffered = preview.status === "failed" && (preview.error.retryable || preview.error.kind === "selection_superseded" || preview.error.kind === "raw_view_not_ready");
   const rawViewLocalReason = busyReason === null || busyReason === "conversion" || busyReason === rawViewReason ? null : busyReason;
   const nameOfRow = (handle: string) => roster.datasets.find(row => row.handle === handle)?.fileName ?? null;
   /** Checks one row and shows the Conversion surface. Nothing is read. */
@@ -1279,14 +1280,13 @@ export function PreviewWorkspace() {
                 // said the failure was retryable -- and it repeats the step that
                 // actually failed. A superseded open is not retryable as such,
                 // but where it is the one on screen (two opens can reach Rust
-                // out of order) reading the row again is the way on.
-                // A RAW row's failed open left its entry in the cache, so viewing it
-                // again is always the way on, whatever the failure was.
-                action={(preview.error.retryable || preview.error.kind === "selection_superseded" || workspace.activeDataset?.sourceKind === "thermo_raw") && workspace.activeDataset !== null ? (
+                // out of order) reading the row again is the way on. So it is for a
+                // view no longer ready, whose own sentence says to view the file again.
+                action={(readAgainOffered || workspace.activeDataset?.sourceKind === "thermo_raw") && workspace.activeDataset !== null ? (
                   <div className="evidence-actions" onKeyDownCapture={refuseHeldEnter}>
-                    <Button variant="secondary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
+                    {readAgainOffered ? <Button variant="secondary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
                       {t("retryEvidence")}
-                    </Button>
+                    </Button> : null}
                     {/* Decision 10: the route with full diagnostics is always there. */}
                     {workspace.activeDataset.sourceKind === "thermo_raw" ? <Button data-raw-view-convert="" onClick={() => convertRow(workspace.activeDataset?.handle ?? "")}>{t("rawViewConvert")}</Button> : null}
                   </div>

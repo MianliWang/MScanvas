@@ -161,7 +161,7 @@ truncation refusals below remain. See the
 
 **Success:** user can confirm identity and inspect a relevant scan without changing modes.
 
-**A Thermo RAW row takes one more press** ([ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).
+**A Thermo RAW row takes one more press** ([ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md), 2026-11-03).
 Activating it starts nothing and shows its pane. View converts it with the
 verified default into MSCanvas's view cache, with its phases and Cancel on screen,
 and then opens it as above, while the row stays highlighted. Otherwise it waits
@@ -290,7 +290,7 @@ availability, queue, adoption and export contracts.
    Both scopes exclude unsupported rows and show requested/eligible/excluded
    counts; a bounded disclosure names the excluded rows without changing
    membership, eligibility or order (PM9.4 O2). The three families may be mixed. Vendor rows cannot be previewed,
-   and say so, except a Thermo RAW row, which is read through View (ADR 0060). There is no `Convert visible` scope: search changes presentation
+   and say so, except a Thermo RAW row, which is read through View (ADR 0060, 2026-11-03). There is no `Convert visible` scope: search changes presentation
    only; the selected/all actions remain available.
 3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
    groups — peak processing, spectra included, numeric precision, array

@@ -170,13 +170,15 @@ export function RawViewPane({ row, view, localReason, runningName, canOpen, open
   const refused = localReason !== null || availabilityCode !== null || view.availability === null || view.busy;
   const reason = refusedHere === null ? null : <span id={REASON_ID} className="raw-view-reason" title={runningName ?? undefined} data-raw-view-refusal={refusedCode ?? "local"}>{refusedHere}</span>;
   const describedBy = refusedHere === null ? undefined : REASON_ID;
+  // Nothing on this side would ask again: the read itself failed, or the cure is
+  // a folder moved outside the application.
+  const reask = availabilityCode === "unexpected_error" || availabilityCode === "view_cache_root_unrecognized";
   const recovery = (code: string | null) => <>
     {code === "backend_not_found" || code === "provider_build_not_evidenced" ? <Button onClick={onChooseFolder}>{t("rawViewChooseFolder")}</Button> : null}
     {code === "backend_quarantined" ? <Button onClick={onShowBackend}>{t("rawViewShowBackend")}</Button> : null}
     {code === "conversion_busy" ? <Button onClick={onShowConversion}>{t("rawViewShowConversion")}</Button> : null}
     {code === "raw_view_busy" && runningName !== null ? <Button aria-label={t("rawViewShow", { name: runningName })} title={runningName} onClick={onShowRunning}>{t("rawViewShow", { name: shortFileName(runningName) })}</Button> : null}
-    {/* The read itself failed, so nothing on this side would ask again. */}
-    {availabilityCode === "unexpected_error" ? <Button data-raw-view-reask="" onClick={view.refresh}>{t("rawViewTryAgain")}</Button> : null}
+    {reask ? <Button data-raw-view-reask="" onClick={view.refresh}>{t("rawViewTryAgain")}</Button> : null}
   </>;
 
   const convert = <Button onClick={onConvert}>{t("rawViewConvert")}</Button>;
@@ -233,7 +235,8 @@ export function RawViewPane({ row, view, localReason, runningName, canOpen, open
       <span role="alert" data-raw-view="failed" data-raw-view-code={own.code}>{rawViewFailureText(own, t)}</span>
       {said && refusedCode !== own.code ? reason : null}
     </>} action={<div className="evidence-actions">
-      {canRetry ? <Button refused={refused} aria-describedby={describedBy} data-raw-view-retry="" onClick={() => view.begin(row.handle)}>{t("rawViewTryAgain")}</Button> : null}
+      {/* Asking again comes first: two buttons of one name, and only one could be pressed. */}
+      {canRetry && !reask ? <Button refused={refused} aria-describedby={describedBy} data-raw-view-retry="" onClick={() => view.begin(row.handle)}>{t("rawViewTryAgain")}</Button> : null}
       {said ? recovery(refusedCode ?? (bindingFailure ? own.code : null)) : null}
       {convert}
     </div>} />;

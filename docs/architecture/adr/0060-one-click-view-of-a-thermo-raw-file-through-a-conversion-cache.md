@@ -391,7 +391,7 @@ under the `e2e` feature it is the same task-owned QA root.
   Owner decision, 2026-11-03 (DEF-2): option (b). Always remove the cache folder on
   uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets and preferences
   stay opt-in behind "Delete the application data".
-  Not an owner decision: no hook is built yet, so until one lands the sentence above
+  Not an owner decision: no hook is on `main` yet, so until one lands the sentence above
   still describes an uninstall; see [slice 3 note 9](#slice-3-notes-2026-11-03).
 
 **Ownership marker.** The marker, `.mscanvas-view-cache-owner`, holds a
@@ -1395,8 +1395,8 @@ unless it carries "Owner decision, 2026-11-03".
      its own code, as a press would. The webview reads the answer again when the
      catalog arrives. The worker's own answer of slice 2 note 6 stays, for a race.
    - The root is looked at by `ViewCache::inspect`, which makes nothing: a root
-     that is not there is not a refusal, and `unreadable` is left to the press,
-     which can offer Try again.
+     that is not there is not a refusal. `inspect` has no path to `unreadable`
+     today; the answer leaves it to the press, which can offer Try again.
    - The length asked of the 1.5 GiB limit is the row's admitted length, as
      `begin_raw_view` asks it, not one read through the lease handle. A RAW that
      grew since is refused at Checking file's first chunk (slice 2 note 8).
@@ -1482,7 +1482,7 @@ unless it carries "Owner decision, 2026-11-03".
      change: an NSIS hook.
      Not an owner decision: this change writes no hook, so until one lands no uninstall
      removes the cache unless "Delete the application data" is checked. The hook is
-     planned as a separate change, `be/uninstall-view-cache`, which does not exist yet.
+     [draft PR #211](https://github.com/MianliWang/MScanvas/pull/211), not merged.
      Whether it must land before this change merges is not answered: the decision page
      says DEF-2 blocks shipping the view cache, and the answer names no order.
    - **The split of View with… and the Settings row** (note 7). Until the row exists
@@ -1505,6 +1505,27 @@ unless it carries "Owner decision, 2026-11-03".
       highlighted RAW row over an open preview, and does not name a re-read.
     - Clear's copy, the settings line and the scan's refusal name the view rather
       than a conversion.
+    - **The phases' words.** Decision 3 has "Checking QC_pool_01.raw" and "Converting
+      QC_pool_01.raw for viewing", and A0060 (2026-10-30) took the phases "as written".
+      As built they are "Checking the file" and "Converting for viewing", beside the
+      name in the pane's head. The owner has not seen this change of words.
+    - **The sentences of decisions 4 and 9.** Decision 9's sentences read "The
+      application-data drive needs about {needed} GiB free and has {free} GiB. Free
+      space, or convert this file to another drive." and "{free} GiB are free on the
+      application-data drive." Decision 4's proposed "ProteoWizard is not available."
+      and "This ProteoWizard does not report its release, so it cannot convert vendor
+      files." are those codes' existing messages, "ProteoWizard was not found." and
+      "MSCanvas has no conversion evidence for that acquisition format on the installed
+      ProteoWizard build."
+    - **A failed open answered `raw_view_not_ready`** offers Try reading this file again
+      though it is not retryable, because its own sentence says to view the file again;
+      a superseded open does too, as an mzML row's does. Any other failed open that is
+      not retryable offers Convert this file… alone (note 7).
+    - **`view_cache_root_unrecognized` also offers Try again,** which asks Rust again and
+      presses nothing. Decision 4's recovery is Convert this file… alone, and its reason
+      asks for a move outside the application, which nothing in decision 12 would read
+      again. Beside a retryable failure it takes the place of that failure's Try again
+      until Rust answers, so two buttons do not share one name.
 
 ## Alternatives rejected
 

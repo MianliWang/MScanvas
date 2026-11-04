@@ -9,7 +9,7 @@ Budgets are design hypotheses. Prototype tests may revise them, but regressions 
 | Remove selected rows | selection + 1 action | 0 | 0 | Count removed; source files unchanged |
 | Clear idle workspace | 1 action | 0 | 0 | Empty state and optional Undo |
 | View TIC for a file | 1 row activation | 0 | 0 | Loading then trace/error |
-| View a Thermo RAW file | 2: activate the row, then View; or Enter twice | 0 | 0 | The phase and elapsed time, Cancel, then the view with its source and conversion facts |
+| View a Thermo RAW file (2026-11-03, ADR 0060) | 2: activate the row, then View; or Enter twice | 0 | 0 | The phase and elapsed time, Cancel, then the view with its source and conversion facts |
 | View spectrum near an RT | 1 plot activation | 0 | 0 | Persistent marker and linked scan metadata |
 | Move to adjacent scan | 1 key/action | 0 | 0 | All linked views update |
 | Convert all with defaults | at most 2 explicit actions | 0–1 | 0 | Scope/format/output summary before run |

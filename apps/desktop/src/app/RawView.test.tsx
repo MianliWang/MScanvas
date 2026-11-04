@@ -13,9 +13,12 @@ import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTra
 import { rawViewFailureText, shortFileName, viewSourceSettings } from "../features/mzml-preview/RawViewPane";
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { spectrumSelectionAvailability } from "../features/mzml-preview/viewer/selectionAvailability";
+import { ProjectApiProvider, type ProjectState } from "../features/project/projectApi";
 import { chooseRosterAction, rosterActionRefused } from "../test/rosterActions";
 import { showBackendBanner } from "../test/backendBanner";
 import { availableBackend, buildPreview, chosenBackend, createFakePreviewApi, createFakeWorkspaceDropTransport, selectedFile, shippedIntent, unavailableBackend, type FakePreviewApiOptions } from "../test/previewFixtures";
+import { createFakeProjectApi, openProject, projectInput, projectLayer } from "../test/projectFixtures";
+import { openProjectSurface } from "../test/projectMenu";
 
 const words = UI_RESOURCES.en;
 const RAW: SelectedFile = { handle: "raw-1", fileName: "QC_pool_01.raw", byteLength: 78_309, sourceKind: "thermo_raw", relativeContext: null };
@@ -48,7 +51,7 @@ const failed = (code: string, retryable: boolean, extra: Partial<RawViewState> =
 } as RawViewState);
 
 /** A session whose view the test moves by hand. */
-function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"]; chosenInstallation?: FakePreviewApiOptions["chosenInstallation"] } = {}) {
+function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; checkingInstallation?: boolean; project?: ProjectState; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"]; chosenInstallation?: FakePreviewApiOptions["chosenInstallation"] } = {}) {
   const world = { state: initial.state ?? ({ state: "idle" } as RawViewState), availability: initial.availability ?? ({ available: true, unverifiedBuildRelease: null } as RawViewAvailability) };
   const begun: string[] = [];
   const cancelled: number[] = [];
@@ -58,7 +61,7 @@ function session(initial: { state?: RawViewState; availability?: RawViewAvailabi
     availability: handle === null ? null : world.availability,
   }));
   const api = createFakePreviewApi({
-    availability: initial.available === false ? unavailableBackend : availableBackend,
+    availability: initial.checkingInstallation === true ? () => new Promise(() => {}) : initial.available === false ? unavailableBackend : availableBackend,
     initialDatasets: initial.datasets ?? [RAW, OTHER, selectedFile],
     ...(initial.planWorkspaceClear === undefined ? {} : { planWorkspaceClear: initial.planWorkspaceClear }),
     ...(initial.preview === undefined ? {} : { preview: initial.preview }),
@@ -73,9 +76,10 @@ function session(initial: { state?: RawViewState; availability?: RawViewAvailabi
       return Promise.resolve({ ...buildPreview(), file: RAW, qcSnapshotToken: null, qcProducerIdentified: false, viewSource: SOURCE });
     },
   });
-  render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+  const app = <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
     <PreviewApiProvider value={api}><App /></PreviewApiProvider>
-  </WorkspaceDropTransportProvider>);
+  </WorkspaceDropTransportProvider>;
+  render(initial.project === undefined ? app : <ProjectApiProvider value={createFakeProjectApi(initial.project)}>{app}</ProjectApiProvider>);
   return { world, api, begun, cancelled, opened, read };
 }
 
@@ -102,6 +106,9 @@ describe("viewing a Thermo RAW row", () => {
     const { begun, api, read } = session();
     await highlight();
     await waitFor(() => expect(viewButton()).not.toHaveAttribute("aria-disabled"));
+    // A second press of the row, and a double click, are still only the highlight.
+    await act(async () => { fireEvent.click(await row(RAW)); });
+    await act(async () => { fireEvent.click(await row(RAW)); });
     expect(begun).toEqual([]);
     expect(api.openCount()).toBe(0);
     expect(read).toHaveBeenCalledWith(RAW.handle);
@@ -249,7 +256,7 @@ describe("viewing a Thermo RAW row", () => {
     ["provider_build_not_evidenced", words.errProviderBuildNotEvidenced, words.rawViewChooseFolder],
     ["conversion_busy", words.rawViewConversionBusy, words.rawViewShowConversion],
     ["view_cache_unavailable", words.errViewCacheUnavailable, null],
-    ["view_cache_root_unrecognized", words.errViewCacheRootUnrecognized, null],
+    ["view_cache_root_unrecognized", words.errViewCacheRootUnrecognized, words.rawViewTryAgain],
     ["view_cache_entry_too_large", words.rawViewTooLarge, null],
   ])("refuses %s before the press, with its reason and its recovery", async (code, reason, recovery) => {
     const { begun } = session({ availability: { available: false, code } });
@@ -267,6 +274,43 @@ describe("viewing a Thermo RAW row", () => {
     expect(within(evidence()).getByRole("button", { name: words.rawViewConvert })).toBeVisible();
     await act(async () => { fireEvent.click(refused); });
     expect(begun).toEqual([]);
+  });
+
+  describe("a view-cache folder MSCanvas did not make", () => {
+    const refused: RawViewAvailability = { available: false, code: "view_cache_root_unrecognized" };
+
+    it("asks again once it has been moved, which nothing inside the application would notice", async () => {
+      const { world, begun } = session({ availability: refused });
+      await highlight();
+      const again = await within(evidence()).findByRole("button", { name: words.rawViewTryAgain });
+      expect(viewButton()).toHaveAttribute("aria-disabled", "true");
+
+      // Still there: asking changes nothing, and the reason stays.
+      await act(async () => { fireEvent.click(again); });
+      expect(viewButton()).toHaveAttribute("aria-disabled", "true");
+      expect(document.querySelector("[data-raw-view-refusal='view_cache_root_unrecognized']")).not.toBeNull();
+
+      world.availability = { available: true, unverifiedBuildRelease: null };
+      await act(async () => { fireEvent.click(within(evidence()).getByRole("button", { name: words.rawViewTryAgain })); });
+      await waitFor(() => expect(viewButton()).not.toHaveAttribute("aria-disabled"));
+      expect(document.querySelector("[data-raw-view-refusal]")).toBeNull();
+      expect(begun).toEqual([]);
+    });
+
+    it("offers one Try again beside a failure, the one that can be pressed", async () => {
+      const { world, begun } = session({ state: failed("raw_view_source_changed", true), availability: refused });
+      await highlight();
+      const again = await within(evidence()).findByRole("button", { name: words.rawViewTryAgain });
+      expect(within(evidence()).getAllByRole("button", { name: words.rawViewTryAgain })).toHaveLength(1);
+      expect(again).not.toHaveAttribute("aria-disabled");
+
+      world.availability = { available: true, unverifiedBuildRelease: null };
+      await act(async () => { fireEvent.click(again); });
+      expect(begun).toEqual([]);
+      await waitFor(() => expect(document.querySelector("[data-raw-view-reask]")).toBeNull());
+      await act(async () => { fireEvent.click(within(evidence()).getByRole("button", { name: words.rawViewTryAgain })); });
+      expect(begun).toEqual([RAW.handle]);
+    });
   });
 
   it("names the file another view holds the slot for, and goes to it", async () => {
@@ -302,6 +346,20 @@ describe("viewing a Thermo RAW row", () => {
     await waitFor(() => expect(within(evidence()).getByText("Not verified by MSCanvas: ProteoWizard 3.0.26204")).toBeVisible());
     world.state = running("converting", { unverifiedBuildRelease: "3.0.26204" } as Partial<RawViewState>);
     await waitFor(() => expect(within(evidence()).getByText("Not verified by MSCanvas: ProteoWizard 3.0.26204")).toBeVisible(), { timeout: 2_000 });
+  });
+
+  it("labels Ready, and the Metadata of what it opens, on an unmeasured build", async () => {
+    const label = "Not verified by MSCanvas: ProteoWizard 3.0.26204";
+    const { world, api } = session({ state: ready({ unverifiedBuildRelease: "3.0.26204" } as Partial<RawViewState>) });
+    api.openRawView = () => {
+      world.state = ready({ openable: false, unverifiedBuildRelease: "3.0.26204" } as Partial<RawViewState>);
+      return Promise.resolve({ ...buildPreview(), file: RAW, qcSnapshotToken: null, qcProducerIdentified: false, viewSource: { ...SOURCE, verified: false, unverifiedBuildRelease: "3.0.26204" } });
+    };
+    await highlight();
+    await waitFor(() => expect(within(evidence()).getByText(label)).toBeVisible());
+    await act(async () => { fireEvent.click(within(evidence()).getByRole("button", { name: words.rawViewOpen })); });
+    await act(async () => { fireEvent.click(await within(evidence()).findByRole("tab", { name: words.viewerTabMetadata })); });
+    expect(within(document.querySelector<HTMLElement>("[data-view-source]")!).getByText(label)).toBeVisible();
   });
 
   it("refuses Add files and another read while a view holds the slot", async () => {
@@ -371,6 +429,28 @@ describe("viewing a Thermo RAW row", () => {
       expect(begun).toEqual([]);
       expect(opened).toEqual([1]);
       expect(api.openCount()).toBe(reads);
+    });
+
+    it("presses nothing on Enter while the installation is being checked, as View itself refuses", async () => {
+      const { begun } = session({ checkingInstallation: true });
+      await row(RAW);
+      await act(async () => { fireEvent.keyDown(grid(), { key: "Home" }); });
+      await act(async () => { fireEvent.keyDown(grid(), { key: "Enter" }); });
+      await waitFor(() => expect(document.querySelector("[data-raw-view-refusal='local']")).not.toBeNull());
+      await waitFor(() => expect(evidence().querySelector("[data-raw-view-view]")).not.toBeNull());
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+      await act(async () => { fireEvent.keyDown(grid(), { key: "Enter" }); });
+      expect(begun).toEqual([]);
+    });
+
+    it("spends no open on Enter over a Ready row while a read is refused", async () => {
+      const { opened } = session({ state: ready(), available: false });
+      await row(RAW);
+      await act(async () => { fireEvent.keyDown(grid(), { key: "Home" }); });
+      await act(async () => { fireEvent.keyDown(grid(), { key: "Enter" }); });
+      await waitFor(() => expect(within(evidence()).getByRole("button", { name: words.rawViewOpen })).toHaveAttribute("aria-disabled", "true"));
+      await act(async () => { fireEvent.keyDown(grid(), { key: "Enter" }); });
+      expect(opened).toEqual([]);
     });
 
     it("presses nothing under a held Enter, on any button the keyboard can land on", async () => {
@@ -474,6 +554,28 @@ describe("viewing a Thermo RAW row", () => {
       world.state = failed("view_cache_not_stored", true);
       await waitFor(() => expect(within(evidence()).getByRole("alert")).toHaveTextContent(words.errViewCacheNotStored), { timeout: 2_000 });
       expect(within(evidence()).getByRole("button", { name: words.rawViewConvert })).toBeVisible();
+    });
+
+    describe("a failed open that is not retryable", () => {
+      async function failedOpen(kind: string) {
+        const { world, api } = session({ state: ready() });
+        api.openRawView = () => { world.state = ready({ openable: false }); return Promise.reject({ kind, summary: "x", detail: null, retryable: false }); };
+        await highlight();
+        await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.rawViewOpen })); });
+        await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "failed"));
+      }
+
+      it("offers Convert this file… alone when reading it again would fail the same way", async () => {
+        await failedOpen("spectrum_table_refused");
+        expect(within(evidence()).queryByRole("button", { name: words.retryEvidence })).toBeNull();
+        expect(within(evidence()).getByRole("button", { name: words.rawViewConvert })).toBeVisible();
+      });
+
+      it("offers the read its own words ask for when the view is no longer ready", async () => {
+        await failedOpen("raw_view_not_ready");
+        expect(evidence()).toHaveTextContent(words.errRawViewNotReady);
+        expect(within(evidence()).getByRole("button", { name: words.retryEvidence })).toBeVisible();
+      });
     });
 
     describe("a re-read of a row the reader has left highlighted no longer", () => {
@@ -842,10 +944,20 @@ describe("viewing a Thermo RAW row", () => {
     });
   });
 
-  it("refuses a QC capture of a viewed preview by its own reason", async () => {
-    const { qcUnavailable } = await import("../features/project/lineage");
-    const source = { id: "input", label: RAW.fileName, workbenchDatasetHandle: RAW.handle } as never;
-    const viewed = { handle: RAW.handle, token: null, producerIdentified: false, viewedThroughCache: true };
-    expect(qcUnavailable(source, new Set([RAW.handle]), viewed)).toBe("qcViewedThroughCache");
+  it("refuses a QC capture of the view on screen, on the Project page, by its own reason", async () => {
+    const input = "11111111-5555-4111-8111-111111111111";
+    const layer = "dddddddd-5555-4111-8111-111111111111";
+    session({
+      state: ready(),
+      project: openProject({
+        inputs: [projectInput({ id: input, label: RAW.fileName, verification: "matchingRecordedContent", workbenchDatasetHandle: RAW.handle })],
+        layers: [projectLayer({ id: layer, sourceInputId: input })],
+      }),
+    });
+    await highlight();
+    await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.rawViewOpen })); });
+    await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "loaded"));
+    await openProjectSurface();
+    await waitFor(() => expect(document.querySelector(`[data-project-capture-qc="${layer}"]`)).toHaveAttribute("data-project-qc-unavailable", "qcViewedThroughCache"));
   });
 });
