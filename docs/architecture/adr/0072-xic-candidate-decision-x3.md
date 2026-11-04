@@ -163,7 +163,10 @@ the retained evidence, and none of it is merged.
 | 960×640 | 499 | 220 | 221 | 279 → 240 | 198 → 160 | 7 | 39 | 183 |
 
 CSS pixels. Without the panel the column does not scroll at any of the three, and the
-whole spectrum plot is on screen. No size overflows horizontally.
+whole spectrum plot is on screen. No size overflows horizontally. PR #203 merged after this
+was measured. It leaves an mzML file's rows as they were, and it gives a viewed Thermo RAW
+file's row one more line, so that case has less room than this table, by an amount not
+measured.
 
 **What it means.** A panel of the chromatogram's own height takes 221 to 427 px. The
 lower row falls to its 240 px floor at all three sizes, so the spectrum plot loses 38 to
