@@ -587,8 +587,8 @@ a reserved slot. This closes, for study runs, the M9 closure's limit that
 - **Reuse.** A later run of a per-sample step can reuse a completed output whose
   **key** is equal. The key is the SHA-256 of the canonical per-sample request
   (recipe binding, parameters, and every upstream input the invocation is
-  given) together with the consumed content's digest. For U1, CK-6 keeps the
-  thread count in the key, as a parameter, until real files prove the result does
+  given) together with the consumed content's digest. For U1, CK-6 also keeps the
+  thread count in the key until real files prove the result does
   not change. The key holds nothing
   else of the study: not the revision digest, and not the sample's role,
   group, batch or order, so editing the study or a layer's block, or adding
@@ -700,6 +700,9 @@ sample whose import failed; decision 9's polarity at the import's review; and
 decision 12's first consumer of the study words. Decision 11's sample CSV import is
 a different import: its rows that address layers do not rest on it, and its rows
 that address imported samples do, because only that import review creates them.
+For the same reason, so does every sentence of decisions 1 and 2 about an imported
+sample, among them S-6.4-home and the revision's source and copy for an imported
+column (B-6.2's "stored elsewhere" itself is answered).
 
 **Imported tables** (Track A) are written into the same format when they are
 imported. The table file is first a project reference; how it becomes one is
@@ -737,12 +740,15 @@ point sum, not the imputed number, and is `engineImputed`, not `reintegrated`. T
 keeps the failed fit visible and keeps the cell out of tests even if A-22 lets
 `reintegrated` in. One state byte cannot say which of two quantities a cell holds,
 and nothing else in the format says so per cell, so this is a rule of
-`mscanvas.studyMatrix/1`: an `engineImputed` value is always the raw point sum, and
-the engine's imputed number is never stored in a matrix. A step that could supply
+`mscanvas.studyMatrix/1`: an `engineImputed` value is the raw point sum or, in a
+value-changing step's output (this decision's last bullet), that sum as the step
+transformed it, and the engine's imputed number is never stored in a matrix. Which
+of the two holds for a whole artifact, and its run's plan names the step, so the
+byte still means one quantity within a matrix. A step that could supply
 only the imputed number needs a new version of the format with a state word of its
 own, which B-6.5's seven do not include and the owner would have to add. The state's
-legend and the export's state column say that the value is a raw point sum, not an
-imputed number.
+legend and the export's state column say that the value is a raw point sum, or that
+sum as the named step transformed it, not an imputed number.
 
 - **A failure is not a missing value.** A cell is `undecided` where the step
   could not decide: the M9 `FAILED` reasons `EXTRACTION_AT_SPECTRUM_EDGE`,
@@ -1198,7 +1204,8 @@ No answer approves a dependency.*
 - **Question 10's reading:** the commit limit and the worker count's place (decision
   3) were not asked.
 - **A backfilled cell whose fit failed:** its state, its value and the rule that an
-  `engineImputed` value is always the raw point sum are a reading (decision 7).
+  `engineImputed` value is the raw point sum, or that sum as a value-changing step
+  transformed it, are a reading (decision 7).
 - **For U2's recipe record:** which QC is the reference when several are marked,
   what B-6.3 does with a `null` role (decision 1), the LOWESS span, and KD's
   internal warp.
