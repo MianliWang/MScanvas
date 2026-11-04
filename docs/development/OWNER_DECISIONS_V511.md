@@ -58,7 +58,7 @@ which opened at 14:38 UTC.
   - `docs/runtime-release-adr`: ADR 0066 (Proposed), draft PR #188, docs only;
   - `be/map2d`: ADR 0068 (Proposed) and the MS1 map library, draft PR #183, stacked on #175;
   - `docs/study-model-adr`: ADR 0067 (Proposed), draft PR #184 at `8870e36e`.
-  - *2026-11-04, a status:* this list speaks of 2026-10-30. #184 merged as `e9dd0a9e`, with ADR 0067 Accepted.
+  - *2026-11-04, a status:* this list speaks of 2026-10-30. #184 merged as `e9dd0a9e`, with ADR 0067 Accepted, and #183 as `c927a458`, with ADR 0068 Accepted.
 
 **How to read it:**
 
@@ -217,7 +217,7 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 - **B-10.4.** Nothing is sent outside the project. A draft is shown to the owner when that step is reached.
 
 **What this section does not do.** It records answers. No answer here means the work is built, and the costs are the page's, not new measurements. The records an answer names (ADR 0055, ADR 0060, ADR 0061, ADR 0063, ADR 0065, ADR 0066, ADR 0067, ADR 0068, ADR 0069, ADR 0071 and others) take it in their own PRs. On 2026-11-04, ADR 0066, ADR 0067, ADR 0068 and ADR 0069 are still on their open branches, which have taken it (#188, #184, #183, #190), and #201, #203, #202 and #207 carry it for ADR 0055, ADR 0060, ADR 0063 and ADR 0071. None of this has merged, and the rest waits for a later records PR, after #201 to #204 merge (#205 has); ADR 0065 takes its notes with item 5's PR.
-*2026-11-04, later, a status:* #184 (ADR 0067), #190 (ADR 0069), #201, #202, #203, #204, #207 and #215 have merged, and the second records PR writes the rest beside the text it answers (ADR 0005, ADR 0006, ADR 0033, ADR 0034, ADR 0055, ADR 0056, ADR 0057, ADR 0060, ADR 0061, ADR 0062, ADR 0063, ADR 0064, ADR 0071). ADR 0066 (#188) and ADR 0068 (#183) are still on their open branches.
+*2026-11-04, later, a status:* #183 (ADR 0068), #184 (ADR 0067), #190 (ADR 0069), #201, #202, #203, #204, #207 and #215 have merged, and the second records PR writes the rest beside the text it answers (ADR 0005, ADR 0006, ADR 0033, ADR 0034, ADR 0055, ADR 0056, ADR 0057, ADR 0060, ADR 0061, ADR 0062, ADR 0063, ADR 0064, ADR 0071). ADR 0066 (#188) is still on its open branch.
 
 **New ids.** They came after section 2 was written, so sections 2 and 9 still count 53 decisions. An id with a dotted suffix belongs to the decision before the dot. The others belong as follows: F-177, P177, P204, Q8-exception and A0006-amendment to A0061; P201 to A0055; P202 to A0063; A0060-split, P203, VIEW-A and VIEW-B to A0060; A0062.8 to A0062; A0071-Q2 to X-2 (ADR 0071); A0065-section-7 and HIST-1.1 and HIST-1.2 to RUN-1; RT-1 and RT-3 to B-1 (ADR 0066 questions 3 and 9); RO-1 to S-6; XML-1 to N-C2 (ADR 0055 decision 6); U1-1 and U1-2.1 to U1-2.3 to U1's recipe (A-15, B-4, B-11); CK-1 to B-8, CK-2 to B-2, CK-3 to B-7, CK-4 to B-6, CK-5 to S-4, CK-6 to U1-1, CK-7 to B-4 and B-11, CK-8 to C-2.
 
@@ -420,7 +420,7 @@ The owner answered three times on 2026-11-04.
 
 | Id | Answer | Left open, or work that follows |
 | --- | --- | --- |
-| A0070-Q2 | **The two lines change with the first record's code.** The guidance never admits a computation no record names; no separate change; ADR 0070's own recommendation. Cost: whichever of #207 and #183 merges later adjusts the lines; work not estimated | Done by #207 for its code. #183 adjusts the lines if it lands later |
+| A0070-Q2 | **The two lines change with the first record's code.** The guidance never admits a computation no record names; no separate change; ADR 0070's own recommendation. Cost: whichever of #207 and #183 merges later adjusts the lines; work not estimated | Done: #207 changed the two lines for its code, and #183, which landed later, adjusted them for the map |
 | A0070-Q1 | **Yes: every record states all eleven items of ADR 0070 decision 3.** Units, empty values, sources and evidence are not left out; #207's refusal of a negative window width has its basis; reviews check against one list. Cost: a small computation states every item too, with a sentence for one it has no use for; work not estimated | Open: whether the fixed rules in items 2, 3 and 5 bind every record, and whether ADR 0068 and ADR 0071 state all eleven (ADR 0070 question 1's note) |
 | ISO-8859-1 | **The XIC engine reads such a file only when it is all ASCII; the viewer does not change (as built on #207).** The frozen row no longer fails on its encoding; the viewer's refusal and the frozen answers do not move. Cost: one more difference between engine and viewer; the all-ASCII rule stays for good | Whether the viewer opens up too is not in this question and needs its own decision (ADR 0056) |
 | A0067-D6 | **A chunked matrix; the CSV is at most 64 MiB.** The imported table and U2's and U3's matrices read one way; paging verifies only the chunks it touches; a wider CSV limit later needs no new storage. Cost: it replaces G2's "chunked only on a measured need"; 64 MiB moves from the stored file's limit to the CSV's; the import needs A-09's 2-3 slices (already before it in the roadmap, so no new wait) and N-A4's 5, each with 1 slice of window reads | Not built. Work: A-09, then N-A4. Open: how a page reads U1's outputs (ADR 0067, Still open) |
@@ -970,6 +970,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
   - (c) no computation over arrays, so the XIC and the map stay refused.
 - **Recommendation: (a).** Both are simple projections of documented values (a sum inside a window, a statistic per bin), not reimplemented mature algorithms. Asking once avoids two parallel amendments of the same invariant, and each record still fixes its own semantics and tests.
   - The first per-algorithm record now exists: ADR 0068 (Proposed, `origin/be/map2d`) is decision 7's record for "the greatest stored intensity per cell of a bounded raster" and allows nothing else. It does not claim the umbrella, so it stands under (a) or (b). It reads each MS1 spectrum through the reader's selected read and keeps one spectrum at a time, so it needs no change to the retention invariant.
+    *2026-11-04, a status:* #183 merged as `c927a458`, so [ADR 0068](../architecture/adr/0068-rt-mz-map.md) is Accepted on `main`.
 - **Blocks:** N-13 (XIC X0), N-14 (accepting ADR 0068) and N-X4 (MAP-1's MS1 map).
 - **Urgency:** now. **Kind:** choice.
 - **Sources:** ADR 0056:554–570 and :394; XIC §11.1; SYN §5.2 (2D map); internal.md H4.
@@ -1267,6 +1268,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 ### MAP-1. The 2D map (二维特征分布)
 
 *Answered 2026-11-03, see 1d (MAP-1.1 to MAP-1.9).*
+
+*2026-11-04, a status:* #183 merged as `c927a458`, so [ADR 0068](../architecture/adr/0068-rt-mz-map.md) is Accepted on `main`, with its library. "(Proposed)" below speaks of 2026-10-30. No command, screen or export uses the library, and MAP-1.9 is not built.
 
 - **Question.** VW-38 (decorative in v5.11) is in the owner's direction. Since the first version of this document, the MS1 map has its record and library: ADR 0068 (Proposed) in draft PR #183 (`be/map2d`, stacked on #175), with slice 1 (`crates/proteowizard/src/rt_mz_map.rs`) implemented and measured. On the R0 546 MB Orbitrap profile file a full-extent map of 1,024 × 2,048 cells took 3.8–4.8 s and a tenth of each axis 0.3 s, with a peak working set of 36–37 MB. The questions:
   1. **First form.** An MS2 precursor map (RT × precursor m/z from the scan table, UI only, no array computation), the MS1 intensity map, or both.

@@ -239,7 +239,8 @@ its own source.
 > row will state whether a spectrum declares a narrow scan: zoom scan (MS:1000497)
 > or SIM spectrum (MS:1000582). R-1's widening does not include this reading, so it
 > is a widening of its own. The MS1 map leaves such spectra out and states how many
-> ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+> ([ADR 0068](0068-rt-mz-map.md) decision 1,
+> [section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 > The work is not estimated and has no roadmap item yet. The answer says "a scan type
 > or window" and gives no width; reading "narrow" by those two terms is this record's
 > reading, not an owner decision.

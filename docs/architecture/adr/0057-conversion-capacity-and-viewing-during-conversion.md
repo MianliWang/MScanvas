@@ -94,7 +94,8 @@ then a selected spectrum is an `msaccess` process, and it stays refused with
     cursor, and memory stays one map and one spectrum. Accepted cost: two reads at
     once may slow each other on a slow disk (not measured)
     ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
-    Its record is ADR 0068, on PR #183, not yet on `main`.
+    Its record is [ADR 0068](0068-rt-mz-map.md) decision 6, accepted 2026-11-03,
+    PR #183.
 
 **What does not change:**
 
