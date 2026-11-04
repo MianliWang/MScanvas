@@ -10,7 +10,7 @@ import { metrics } from "../support/cdp";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { consoleEntries, holdInvoke, horizontalOverflow, installIpcBoundary, ipcCalls, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { revealRosterRow } from "../support/viewer";
-import { queueItem, queueOf, settledAt } from "../../apps/desktop/src/test/previewFixtures";
+import { queueItem, queueOf, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 
 const ROW_STATES = ["changed", "missing", "unreachable", "unreadable", "unsafe"] as const;
@@ -27,6 +27,7 @@ const FIRST_RUN = read([]);
 const OFFER = read([row(0, "QC_01.raw", "matching", { checked: true }), row(1, "QC_02.raw", "matching")]);
 const MARKED = read(ROW_STATES.map((state, index) => row(index, `${state}.raw`, state)));
 const MIXED = read([row(0, "QC_01.raw", "matching"), row(1, "QC.raw", "missing", { context: "batch-1" }), row(2, "QC.raw", "changed", { context: "batch-2" })]);
+const RAW_ROW = { handle: "raw-row", fileName: "QC_pool.raw", byteLength: 52_428_800, sourceKind: "thermo_raw", relativeContext: null };
 
 function world(answers: Record<string, unknown>, rows: readonly unknown[] = []) {
   return {
@@ -716,6 +717,45 @@ describe("WSP-010 Restore workspace, rendered", () => {
     expect(await browser.$("[data-restore-action]").getAttribute("aria-disabled")).toBe("true");
     await browser.$("[data-restore-action]").click();
     expect(await calls("restore_workspace")).toEqual([]);
+    await expectCleanConsole();
+  });
+
+  it("is refused with the view's reason while a view runs, and the refusal lifts when it ends", async () => {
+    const running = {
+      state: "running", operation: 1, handle: RAW_ROW.handle, fileName: RAW_ROW.fileName, phase: "converting", elapsedMs: 12_000,
+      bytesRead: null, bytesTotal: null, intentId: shippedIntent.id, unverifiedBuildRelease: null, cachedCopyDamaged: false,
+    };
+    await start({ read_workspace_restore: OFFER, get_raw_view_state: { state: running, availability: { available: false, code: "raw_view_busy" } } }, [RAW_ROW]);
+    const action = browser.$("[data-restore-action]");
+    await action.waitForDisplayed();
+    await browser.waitUntil(async () => (await browser.$("#restore-reason").isExisting()) && (await text("#restore-reason")) === en.rawViewBusy.replace("{{name}}", RAW_ROW.fileName));
+    expect(await action.getAttribute("aria-disabled")).toBe("true");
+    expect(await action.getAttribute("aria-describedby")).toBe("restore-reason");
+    await action.click();
+    expect(await calls("restore_workspace")).toEqual([]);
+    await setInvokeResult("get_raw_view_state", { state: { state: "idle" }, availability: { available: true, unverifiedBuildRelease: null } });
+    await browser.waitUntil(async () => (await action.getAttribute("aria-disabled")) === null);
+    expect(await browser.$("#restore-reason").isExisting()).toBe(false);
+    await expectCleanConsole();
+  });
+
+  it("highlights a RAW row a put-back added, shows its pane and starts nothing", async () => {
+    await start({
+      read_workspace_restore: OFFER,
+      restore_workspace: {
+        workspace: { roster: { datasets: [MZML_ROW, RAW_ROW], capacity: 1024 }, outcomes: [{ outcome: "added", dataset: RAW_ROW }] },
+        placed: [{ handle: RAW_ROW.handle, group: 0, checked: true, added: true }],
+      },
+    }, [MZML_ROW]);
+    const action = browser.$("[data-restore-action]");
+    await action.waitForClickable();
+    await setInvokeResult("read_workspace_restore", FIRST_RUN);
+    await action.click();
+    await browser.$(`[data-raw-view-pane="${RAW_ROW.handle}"]`).waitForExist();
+    expect(await browser.$(`.grouped-roster [data-handle="${RAW_ROW.handle}"]`).getAttribute("aria-selected")).toBe("true");
+    expect(await calls("begin_raw_view")).toEqual([]);
+    expect(await calls("open_raw_view")).toEqual([]);
+    expect(await calls("open_mzml_preview")).toEqual([]);
     await expectCleanConsole();
   });
 
