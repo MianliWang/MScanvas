@@ -2311,21 +2311,24 @@ fn an_explicit_null_is_no_label_and_a_neighbours_label_stands() {
     );
 }
 
-/// The ceiling `StoredRow`'s comment names: past the parser's depth the document
-/// is one it cannot parse, refused whole and left as found (ADR 0061, decision 6).
+/// The ceiling `StoredRow`'s comment names: a value the parser cannot hold makes a
+/// document it cannot parse, refused whole and left as found (ADR 0061, decision 6).
 #[test]
-fn a_value_nested_past_the_parser_is_refused_with_the_document() {
-    let scratch = Scratch::new("restore-label-deep");
+fn a_value_the_parser_cannot_hold_is_refused_with_the_document() {
+    let scratch = Scratch::new("restore-label-unparsable");
     let a = scratch.write("a.mzML", b"<mzML/>");
     saved_with_label(&scratch, &a, both_halves());
     let good = both_halves_as_stored();
     let text = String::from_utf8(stored_bytes(&scratch)).expect("UTF-8");
     assert!(text.contains(&good));
     let deep = format!("{}{}", "[".repeat(129), "]".repeat(129));
-    assert_eq!(
-        read_document(text.replace(&good, &deep).as_bytes()),
-        Err(DocumentProblem::Malformed)
-    );
+    for value in [deep.as_str(), "1e999", "\"\\uD800\""] {
+        assert_eq!(
+            read_document(text.replace(&good, value).as_bytes()),
+            Err(DocumentProblem::Malformed),
+            "{value}"
+        );
+    }
 }
 
 /// A reference made from a put-back row records the label, not `null`, and the

@@ -153,8 +153,9 @@ row.
   no label and refuses nothing. This is the one field that does not follow decision
   6, which every other unreadable field does: it stays as found while the row waits
   and is gone once the row is put back and saved. Nothing says so on screen.
-- A value nested past the parser's 128 levels is a document it cannot parse, so
-  decision 6 refuses that one whole. No build writes one.
+- A value the parser cannot hold (nested past 128 levels, a number out of range, a
+  lone surrogate) makes a document it cannot parse, as damage to the JSON anywhere
+  does, so decision 6 refuses that one whole. No build writes one.
 - Restore workspace over a row already in the Workbench gives that row the stored
   label, merged with any it has, on the same object proof.
 - The label is a flag and a bounded, redacted release: it adds no path (decision 7).

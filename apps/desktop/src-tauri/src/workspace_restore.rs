@@ -187,9 +187,10 @@ pub struct StoredRow {
     /// Held as found and read only through [`StoredRow::label`], and no rule of
     /// [`RestoreDocument::valid`] looks at it, so it can refuse no read or save.
     ///
-    /// ponytail: a value nested past `serde_json`'s 128 levels fails the parse, so
-    /// that document is refused whole like any other it cannot parse; a lazy value
-    /// type closes that if a build ever writes one, and none does.
+    /// ponytail: a value `serde_json` cannot hold (past 128 levels, a number out of
+    /// range, a lone surrogate) fails the parse, so that document is refused whole,
+    /// as damage to its JSON anywhere is; a lazy value type closes that if a build
+    /// ever writes one, and none does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_verified_by_mscanvas: Option<serde_json::Value>,
 }
