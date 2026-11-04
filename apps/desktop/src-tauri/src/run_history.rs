@@ -901,7 +901,7 @@ impl ConversionHistory {
     /// being written, here or in another instance, is kept, and so is one this
     /// build cannot judge -- a later build's, or one it cannot read now --
     /// which may be one too. A crashed write's old private sibling goes as well
-    /// ([`is_abandoned_sibling`]).
+    /// (`is_abandoned_sibling`).
     #[must_use]
     pub fn clear(&self) -> RunHistoryWriteDto {
         self.sweep(false)

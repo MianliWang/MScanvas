@@ -35,6 +35,13 @@ All notable changes will be documented here once versioned releases begin.
   forgets ended runs and **Turn off…** in Settings forgets every run and records
   none; neither touches an acquisition or a converted file
   ([ADR 0065](docs/architecture/adr/0065-conversion-run-history.md)).
+- **Clear history… and Turn off… also remove what a crashed write left, once it
+  is a day old.** A write that crashed can leave a private file beside the runs,
+  holding a whole record with its paths. Both now remove such a file when it has
+  been untouched for over 24 hours. One written more recently can still remain,
+  and none is counted or shown. If another program holds one, the answer counts it
+  among the files that could not be removed
+  ([ADR 0065](docs/architecture/adr/0065-conversion-run-history.md)).
 - **A saved PNG figure now carries the figure's title and description.** Every
   PNG saved from a spectrum, a chromatogram, the linked figure or a stored
   targeted result holds two uncompressed `iTXt` text chunks, `Title` and
