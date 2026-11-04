@@ -17,9 +17,15 @@
 //! array is decoded, and the rest of the document is still read for an earlier
 //! reason. A malformed document comes first, named by its first problem in source
 //! order, then the run-wide unit rules, then decision 4's rules over the in-scope
-//! scans. Two refusals are not reasons about the document's metadata, and end the
-//! pass where they occur: cancellation, and the provisional refusal of an integer
-//! above 2^53.
+//! scans. One refusal is not a reason about the document's metadata, and ends the
+//! pass where it occurs: cancellation.
+//!
+//! **Integers.** A 64-bit integer above 2^53 makes its array `Unreadable`, and
+//! there is no exact 64-bit integer sum (the owner's answer to ADR 0071 open
+//! question 2, 2026-11-03). That includes a value `f64` could hold, such as 2^60,
+//! which the viewer's widening admits. Reading the rule by magnitude, so that the
+//! negative side is refused the same way, is as built 2026-11-03 and not an owner
+//! decision.
 //!
 //! **Its own encoding rule, as built 2026-11-03 and not an owner decision.** ADR
 //! 0071 decision 1 does not carry the viewer's refusal of a document that is not
@@ -47,7 +53,7 @@ use crate::mzml::{
     attribute_value, capture_attributes, parse_u64_decimal,
 };
 use crate::mzml_reader::{
-    ArrayParse, ArrayProblem, ArrayRole, El, EventPass, Facts, MAX_PARAM_GROUPS,
+    ArrayParse, ArrayProblem, ArrayRole, BinaryDataType, El, EventPass, Facts, MAX_PARAM_GROUPS,
     MAX_TERMS_PER_PARAM_GROUP, MzmlDeclared, MzmlOpenError, MzmlPolarity, MzmlRepresentation,
     ReaderLimitKind, SPECTRUM_ARRAY, SPECTRUM_SCAN, check_element, check_version, drive, element,
     fact, parse_finite, prepare_array, stated_term, stored_bytes, term, widen_keeping_non_finite,
@@ -69,6 +75,7 @@ const TIME_ARRAY: &str = "MS:1000595";
 const FAIMS_COMPENSATION_VOLTAGE: &str = "MS:1001581";
 const SCAN_WINDOW_LOWER: &str = "MS:1000501";
 const SCAN_WINDOW_UPPER: &str = "MS:1000500";
+const TWO_POW_53: f64 = 9_007_199_254_740_992.0;
 
 const SPECTRUM_SCAN_WINDOW: &[El] = &[
     El::Spectrum,
@@ -320,13 +327,6 @@ pub enum XicRefusal {
     MixedRepresentation,
     #[error("the pass was cancelled")]
     Cancelled,
-    /// **Provisional, and not an owner decision (2026-11-03).** A 64-bit integer
-    /// that `f64` cannot hold exactly, in an array the pass decoded. ADR 0071
-    /// open question 2 is unanswered: this refusal maps to `Unreadable`, or the
-    /// sum takes 64-bit integers exactly. This variant takes neither side. It
-    /// maps to no ADR 0046 state, and it goes when the question is answered.
-    #[error("the {} array holds an integer above 2^53, which waits on a decision", .0.stable_id())]
-    IntegerNotExact(ArrayRole),
 }
 
 impl XicRefusal {
@@ -342,7 +342,6 @@ impl XicRefusal {
             Self::MixedFaimsCompensationVoltage => "mixed_faims_compensation_voltage",
             Self::MixedRepresentation => "mixed_representation",
             Self::Cancelled => "cancelled",
-            Self::IntegerNotExact(_) => "integer_not_exact",
         }
     }
 }
@@ -377,6 +376,11 @@ pub enum XicUnreadableReason {
     TermAfterPayload,
     /// The stored bytes are not a whole number of values.
     NotWholeValues,
+    /// A 64-bit integer above 2^53 in magnitude, anywhere in the array, in or out
+    /// of the window. Its bytes may be well formed: the owner's answer to ADR 0071
+    /// open question 2 (2026-11-03) refuses the array here and does not sum 64-bit
+    /// integers exactly.
+    IntegerBeyondTwoTo53,
 }
 
 impl XicUnreadableReason {
@@ -389,6 +393,7 @@ impl XicUnreadableReason {
             Self::ElementInPayload => "element_in_payload",
             Self::TermAfterPayload => "term_after_payload",
             Self::NotWholeValues => "not_whole_values",
+            Self::IntegerBeyondTwoTo53 => "integer_beyond_2_pow_53",
         }
     }
 }
@@ -409,6 +414,8 @@ pub enum XicScanState {
     MsLevelUndeclared,
     /// An array is absent, the lengths disagree, or the m/z array holds a NaN.
     NoUsableArrays,
+    /// Both arrays are present and one could not be decoded, or holds an integer
+    /// this pass does not admit ([`XicUnreadableReason::IntegerBeyondTwoTo53`]).
     Unreadable {
         role: ArrayRole,
         reason: XicUnreadableReason,
@@ -1520,7 +1527,7 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
         let (state, decode_attempted) = match ms_level {
             None => (XicScanState::MsLevelUndeclared, false),
             Some(_) if !in_scope => (XicScanState::ExcludedByMsLevel, false),
-            Some(_) => self.evaluate(&mut spectrum, &mut retention_time)?,
+            Some(_) => self.evaluate(&mut spectrum, &mut retention_time),
         };
         self.rows.push(XicScan {
             identity: SpectrumIdentity::from_native_identifier(spectrum.index, spectrum.id),
@@ -1540,31 +1547,31 @@ impl<'a, T: XicSpectrumTransform, C: FnMut() -> bool> XicPass<'a, T, C> {
         &mut self,
         spectrum: &mut OpenSpectrum,
         retention_time: &mut Option<f64>,
-    ) -> Result<(XicScanState, bool), XicRefusal> {
+    ) -> (XicScanState, bool) {
         let (Some(mz), Some(intensity)) = (spectrum.mz.take(), spectrum.intensity.take()) else {
-            return Ok((XicScanState::NoUsableArrays, false));
+            return (XicScanState::NoUsableArrays, false);
         };
-        let mut mz = match decode_array(mz, ArrayRole::Mz)? {
+        let mut mz = match decode_array(mz) {
             Decoded::Values(values) if !values.iter().any(|value| value.is_nan()) => values,
             Decoded::Values(_) | Decoded::LengthDiffers => {
-                return Ok((XicScanState::NoUsableArrays, true));
+                return (XicScanState::NoUsableArrays, true);
             }
             Decoded::Unreadable(reason) => {
                 let role = ArrayRole::Mz;
-                return Ok((XicScanState::Unreadable { role, reason }, true));
+                return (XicScanState::Unreadable { role, reason }, true);
             }
         };
-        let mut intensity = match decode_array(intensity, ArrayRole::Intensity)? {
+        let mut intensity = match decode_array(intensity) {
             Decoded::Values(values) => values,
-            Decoded::LengthDiffers => return Ok((XicScanState::NoUsableArrays, true)),
+            Decoded::LengthDiffers => return (XicScanState::NoUsableArrays, true),
             Decoded::Unreadable(reason) => {
                 let role = ArrayRole::Intensity;
-                return Ok((XicScanState::Unreadable { role, reason }, true));
+                return (XicScanState::Unreadable { role, reason }, true);
             }
         };
         self.transform
             .apply(retention_time, &mut mz, &mut intensity);
-        Ok((window_sum(&mz, &intensity, self.query), true))
+        (window_sum(&mz, &intensity, self.query), true)
     }
 
     fn finish(mut self) -> Result<XicResult, XicRefusal> {
@@ -1656,35 +1663,44 @@ enum Decoded {
 /// non-finite values for the state policy to judge. A length that differs from
 /// the declared one is the scan's `NoUsableArrays`; the inflate that stops one
 /// byte past it counts, since the bound leaves nothing more to measure.
-fn decode_array(mut array: OpenArray, role: ArrayRole) -> Result<Decoded, XicRefusal> {
+fn decode_array(mut array: OpenArray) -> Decoded {
     use XicUnreadableReason as Reason;
     // Ahead of any recorded reason, which may be a term judged missing that this
     // late term states.
     if array.parse.late_term {
-        return Ok(Decoded::Unreadable(Reason::TermAfterPayload));
+        return Decoded::Unreadable(Reason::TermAfterPayload);
     }
     if let Some(reason) = array.refused {
-        return Ok(Decoded::Unreadable(reason));
+        return Decoded::Unreadable(reason);
     }
     let Some(prepared) = array.parse.prepared else {
-        return Ok(Decoded::Unreadable(Reason::PayloadAbsent));
+        return Decoded::Unreadable(Reason::PayloadAbsent);
     };
     let encoded = std::mem::take(&mut array.parse.encoded);
     let bytes = match stored_bytes(prepared, encoded) {
         Ok(bytes) => bytes,
-        Err(ArrayProblem::DecodedLongerThanDeclared) => return Ok(Decoded::LengthDiffers),
-        Err(problem) => return Ok(Decoded::Unreadable(Reason::Array(problem))),
+        Err(ArrayProblem::DecodedLongerThanDeclared) => return Decoded::LengthDiffers,
+        Err(problem) => return Decoded::Unreadable(Reason::Array(problem)),
     };
     if !bytes.len().is_multiple_of(prepared.data_type.width()) {
-        return Ok(Decoded::Unreadable(Reason::NotWholeValues));
+        return Decoded::Unreadable(Reason::NotWholeValues);
     }
     if bytes.len() as u64 != prepared.bytes {
-        return Ok(Decoded::LengthDiffers);
+        return Decoded::LengthDiffers;
     }
     match widen_keeping_non_finite(&bytes, prepared.data_type) {
-        Ok(values) => Ok(Decoded::Values(values)),
-        Err(ArrayProblem::IntegerNotExact) => Err(XicRefusal::IntegerNotExact(role)),
-        Err(problem) => Ok(Decoded::Unreadable(Reason::Array(problem))),
+        // The widening holds a value `f64` can hold, such as 2^60. The rule is
+        // the size of the value, so that value is refused too.
+        Ok(values)
+            if matches!(prepared.data_type, BinaryDataType::Integer64)
+                && values.iter().any(|value| value.abs() > TWO_POW_53) =>
+        {
+            Decoded::Unreadable(Reason::IntegerBeyondTwoTo53)
+        }
+        Ok(values) => Decoded::Values(values),
+        // `f64` holds every integer up to 2^53, so what it cannot hold is beyond.
+        Err(ArrayProblem::IntegerNotExact) => Decoded::Unreadable(Reason::IntegerBeyondTwoTo53),
+        Err(problem) => Decoded::Unreadable(Reason::Array(problem)),
     }
 }
 

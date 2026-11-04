@@ -26,8 +26,9 @@ workspace, not committed; cited below as "the evaluation, §n").
 
 *Note, 2026-11-03, a status and not an owner decision:* PR #207 lands X1's
 library, `crates/proteowizard/src/mzml_xic.rs`. Nothing calls it, and VIEW-007
-stays unavailable. X1 is not complete: its gate, the integer-array question
-([open question 2](#open-questions)), is unanswered.
+stays unavailable. X1's gate, the integer-array question, is answered, and the
+owner's answer is noted at [open question 2](#open-questions). ADR 0070's own
+open questions are unanswered, so `crates/proteowizard/AGENTS.md` is not changed.
 
 ## Context
 
@@ -411,6 +412,20 @@ which ADR 0070 records.
    maps to `Unreadable`, which stretches "could not be decoded", or the
    superaccumulator sums 64-bit integers exactly. The frozen oracle decodes
    floats only, so either choice needs new rows with an independent reference.
+
+   *Owner's answer, 2026-11-03:* an integer array with a value above 2^53 is
+   refused as `Unreadable`. There is no exact 64-bit integer summing. Intensities
+   are not expected to reach that size, which is a judgment and not a
+   measurement. New rows with an independent reference are still needed. Given
+   the list holding this question, the owner replied verbatim: "全部按推荐" ("all
+   as recommended").
+
+   *As built, 2026-11-03, not an owner decision:* the reader's widening refuses
+   only what `f64` cannot hold, so it admits 2^53 + 2, 2^60 and -2^63. The XIC
+   pass refuses those too, by the answer's words, and the viewer is unchanged.
+   The negative side is read by magnitude, as the answer does not say. The state
+   is `Unreadable` with the reason `integer_beyond_2_pow_53`. The new rows are in
+   `crates/proteowizard/src/mzml_xic/tests.rs`, each worked by hand beside it.
 3. **Carried to X4, not decided here:** whether a partial or truncated read is
    returned with typed coverage or refused, and whether the in-place-rewrite
    window is closed by a digest revalidated after the read or stated as a

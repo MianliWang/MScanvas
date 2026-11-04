@@ -968,21 +968,306 @@ fn stored_values_widen_exactly_whatever_their_data_type() {
     );
 }
 
-/// Pins the provisional refusal and nothing more. ADR 0071 open question 2 is
-/// unanswered, so no state is asserted, and this goes with the answer.
-#[test]
-fn an_integer_above_two_to_the_53_is_a_provisional_refusal_with_no_state() {
-    let integers = [
-        mz_array(&[101.0]),
-        array(
-            &[&intensity_role(INTENSITY_UNIT), I64, ZLIB],
-            &zlib(&((1_i64 << 53) + 1).to_le_bytes()),
-        ),
-    ];
+// ---------------------------------------------------------------------------
+// Integer arrays: the owner's answer to ADR 0071 open question 2 (2026-11-03)
+//
+// An integer array with a value above 2^53 is refused as `Unreadable`, and there
+// is no exact 64-bit integer sum. The frozen oracle decodes floats only, so these
+// rows have no oracle. Each expected value is worked out by hand beside its row,
+// from the integers alone, and every literal is written out rather than computed.
+// Above 2^53 `f64` holds only even integers; 2^53 = 9007199254740992, and XIC-S3
+// rounds the exact sum once, to nearest with ties to an even significand. A
+// multiple of 2 between 2^53 and 2^54 has the significand value / 2.
+// ---------------------------------------------------------------------------
+
+const TWO_53: i64 = 9_007_199_254_740_992;
+
+const BEYOND_INTENSITY: XicScanState = XicScanState::Unreadable {
+    role: ArrayRole::Intensity,
+    reason: XicUnreadableReason::IntegerBeyondTwoTo53,
+};
+
+fn le_i64(values: &[i64]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+fn le_i32(values: &[i32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+fn i64_intensity(values: &[i64]) -> String {
+    array(
+        &[&intensity_role(INTENSITY_UNIT), I64, ZLIB],
+        &zlib(&le_i64(values)),
+    )
+}
+
+fn ms1_arrays(index: u64, length: usize, arrays: &[String]) -> String {
+    spectrum(index, length as u64, &level(1), &scan_list(60.0), arrays)
+}
+
+/// One MS1 scan with every point at m/z 101, in the test window.
+fn i64_scan(values: &[i64]) -> String {
+    ms1_arrays(
+        0,
+        values.len(),
+        &[mz_array(&vec![101.0; values.len()]), i64_intensity(values)],
+    )
+}
+
+/// By bits, so that a zero's sign and a rounding both count.
+#[track_caller]
+fn assert_sum(state: XicScanState, sum: f64, points: u64) {
+    let XicScanState::Measured {
+        sum: measured,
+        points_in_window,
+    } = state
+    else {
+        panic!("{state:?}, expected a sum of {sum}");
+    };
     assert_eq!(
-        refuse(&[spectrum(0, 1, &level(1), &scan_list(60.0), &integers)]),
-        XicRefusal::IntegerNotExact(ArrayRole::Intensity)
+        (measured.to_bits(), points_in_window),
+        (sum.to_bits(), points),
+        "{measured} over {points_in_window} points, expected {sum} over {points}"
     );
+}
+
+#[test]
+fn thirty_two_bit_integers_sum_exactly() {
+    let rows: &[(&[i32], f64)] = &[
+        // 1 + 2 + 3
+        (&[1, 2, 3], 6.0),
+        // One value above 2^24, which a float would round to 2147483648.
+        (&[i32::MAX], 2_147_483_647.0),
+        // 2 * 2147483647. A 32-bit sum would wrap to -2.
+        (&[i32::MAX, i32::MAX], 4_294_967_294.0),
+        // 2 * -2147483648. A 32-bit sum would wrap to 0.
+        (&[i32::MIN, i32::MIN], -4_294_967_296.0),
+        // -2147483648 + 2147483647
+        (&[i32::MIN, i32::MAX], -1.0),
+        // An exact zero is +0.
+        (&[-1, 1], 0.0),
+    ];
+    for &(values, sum) in rows {
+        let bytes = le_i32(values);
+        for payload in [(ZLIB, zlib(&bytes)), (NO_COMPRESSION, plain(&bytes))] {
+            let scan = ms1_arrays(
+                0,
+                values.len(),
+                &[
+                    mz_array(&vec![101.0; values.len()]),
+                    array(
+                        &[&intensity_role(INTENSITY_UNIT), I32, payload.0],
+                        &payload.1,
+                    ),
+                ],
+            );
+            assert_sum(only_state(&[scan]), sum, values.len() as u64);
+        }
+    }
+}
+
+#[test]
+fn sixty_four_bit_integers_up_to_two_to_the_53_sum_exactly_and_round_once() {
+    let rows: &[(&[i64], f64)] = &[
+        // 1 + 2 + 3
+        (&[1, 2, 3], 6.0),
+        // 2^53 - 1, stored and summed as it is.
+        (&[TWO_53 - 1], 9_007_199_254_740_991.0),
+        // Exactly 2^53 is admitted.
+        (&[TWO_53], 9_007_199_254_740_992.0),
+        // The negative side is admitted up to the same size.
+        (&[-TWO_53 + 1], -9_007_199_254_740_991.0),
+        (&[-TWO_53], -9_007_199_254_740_992.0),
+        // 2 * 2^53 = 2^54. The rule is on stored values, not on the sum.
+        (&[TWO_53, TWO_53], 18_014_398_509_481_984.0),
+        // 2^53 + 1 is halfway between ...992 (significand 2^52, even) and ...994
+        // (2^52 + 1, odd), so ...992.
+        (&[TWO_53, 1], 9_007_199_254_740_992.0),
+        // 2^53 + 3 is halfway between ...994 (odd) and ...996 (2^52 + 2, even), so
+        // ...996.
+        (&[TWO_53, 3], 9_007_199_254_740_996.0),
+        // 2^53 + 1 + 1 = ...994 exactly. Adding one at a time in `f64` gives ...992.
+        (&[TWO_53, 1, 1], 9_007_199_254_740_994.0),
+        // The same ties, mirrored.
+        (&[-TWO_53, -1], -9_007_199_254_740_992.0),
+        (&[-TWO_53, -3], -9_007_199_254_740_996.0),
+        // 2^53 + 1 - 2^53 = 1. Adding in order in `f64` gives 0.
+        (&[TWO_53, 1, -TWO_53], 1.0),
+        // An exact zero is +0.
+        (&[TWO_53, -TWO_53], 0.0),
+    ];
+    for &(values, sum) in rows {
+        assert_sum(only_state(&[i64_scan(values)]), sum, values.len() as u64);
+    }
+}
+
+#[test]
+fn an_integer_array_as_m_z_is_compared_as_its_values() {
+    // m/z 50, 101 and 300 against [100, 102]: only the middle point, intensity 11.
+    let intensity = i64_intensity(&[7, 11, 13]);
+    let mz_32 = array(
+        &[&mz_role(MZ_UNIT), I32, ZLIB],
+        &zlib(&le_i32(&[50, 101, 300])),
+    );
+    let mz_64 = array(
+        &[&mz_role(MZ_UNIT), I64, ZLIB],
+        &zlib(&le_i64(&[50, 101, 300])),
+    );
+    for mz in [mz_32, mz_64] {
+        let scan = ms1_arrays(0, 3, &[mz, intensity.clone()]);
+        assert_sum(only_state(&[scan]), 11.0, 1);
+    }
+}
+
+#[test]
+fn an_integer_above_two_to_the_53_makes_its_array_unreadable() {
+    let beyond = [
+        // `f64` cannot hold these.
+        TWO_53 + 1,
+        TWO_53 + 3,
+        i64::MAX,
+        -TWO_53 - 1,
+        -TWO_53 - 3,
+        // `f64` holds these exactly, and they are above 2^53 all the same.
+        TWO_53 + 2,
+        2 * TWO_53,
+        1 << 60,
+        -TWO_53 - 2,
+        -(1 << 60),
+        i64::MIN,
+    ];
+    for value in beyond {
+        // Alone, or beside values that are admitted, wherever it sits.
+        for values in [vec![value], vec![1, value], vec![value, 1]] {
+            let result = evaluate(&[i64_scan(&values)]);
+            let row = &result.rows()[0];
+            assert_eq!(row.state(), BEYOND_INTENSITY, "{value} in {values:?}");
+            assert!(row.decode_attempted(), "{value}");
+        }
+        let uncompressed = ms1_arrays(
+            0,
+            1,
+            &[
+                mz_array(&[101.0]),
+                array(
+                    &[&intensity_role(INTENSITY_UNIT), I64, NO_COMPRESSION],
+                    &plain(&le_i64(&[value])),
+                ),
+            ],
+        );
+        assert_eq!(only_state(&[uncompressed]), BEYOND_INTENSITY, "{value}");
+    }
+}
+
+#[test]
+fn the_refusal_is_of_the_array_so_a_value_outside_the_window_counts() {
+    // m/z 50 is outside [100, 102], and its value still refuses the array.
+    let scan = ms1_arrays(
+        0,
+        2,
+        &[mz_array(&[50.0, 101.0]), i64_intensity(&[TWO_53 + 2, 1])],
+    );
+    assert_eq!(only_state(&[scan]), BEYOND_INTENSITY);
+}
+
+#[test]
+fn an_m_z_integer_above_two_to_the_53_ends_the_scan_before_intensity_is_decoded() {
+    for value in [TWO_53 + 1, TWO_53 + 2, -TWO_53 - 1, -TWO_53 - 2] {
+        let mz = array(
+            &[&mz_role(MZ_UNIT), I64, ZLIB],
+            &zlib(&le_i64(&[101, value])),
+        );
+        // A corrupt intensity would name itself if it were decoded first.
+        for intensity in [corrupt_intensity(), i64_intensity(&[1, TWO_53 + 2])] {
+            let scan = ms1_arrays(0, 2, &[mz.clone(), intensity]);
+            assert_eq!(
+                only_state(&[scan]),
+                XicScanState::Unreadable {
+                    role: ArrayRole::Mz,
+                    reason: XicUnreadableReason::IntegerBeyondTwoTo53,
+                },
+                "{value}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_integer_above_two_to_the_53_refuses_its_scan_and_the_pass_goes_on() {
+    let scan = |index, intensity| ms1_arrays(index, 1, &[mz_array(&[101.0]), intensity]);
+    let result = evaluate(&[
+        scan(0, i64_intensity(&[TWO_53 + 1])),
+        scan(1, intensity_array(&[5.0])),
+        scan(2, i64_intensity(&[TWO_53 + 2])),
+        scan(3, intensity_array(&[7.0])),
+    ]);
+    let states: Vec<_> = result.rows().iter().map(XicScan::state).collect();
+    assert_eq!(states.len(), 4);
+    assert_eq!(states[0], BEYOND_INTENSITY);
+    assert_sum(states[1], 5.0, 1);
+    assert_eq!(states[2], BEYOND_INTENSITY);
+    assert_sum(states[3], 7.0, 1);
+    // Both refused scans are gaps, and nothing joins across them.
+    assert_eq!(result.coverage_gaps(), 2);
+    assert!(!result.is_complete());
+}
+
+#[test]
+fn what_comes_first_in_the_scan_still_comes_before_the_integer_rule() {
+    let intensity = i64_intensity(&[TWO_53 + 2]);
+    let mz = mz_array(&[101.0]);
+
+    // Out of scope, or with no level: filtered on metadata, never decoded.
+    for (terms, state) in [
+        (level(2), XicScanState::ExcludedByMsLevel),
+        (String::new(), XicScanState::MsLevelUndeclared),
+    ] {
+        let scan = spectrum(
+            0,
+            1,
+            &terms,
+            &scan_list(60.0),
+            &[mz.clone(), intensity.clone()],
+        );
+        let result = evaluate(&[scan]);
+        assert_eq!(result.rows()[0].state(), state);
+        assert!(!result.rows()[0].decode_attempted());
+    }
+    // A NaN in m/z ends the scan before intensity is decoded.
+    let scan = ms1_arrays(0, 1, &[mz_array(&[f64::NAN]), intensity.clone()]);
+    assert_eq!(only_state(&[scan]), XicScanState::NoUsableArrays);
+    // Lengths that disagree are found before any value is read: one value stored
+    // against a declared length of two.
+    let scan = ms1_arrays(0, 2, &[mz_array(&[101.0, 102.0]), intensity]);
+    assert_eq!(only_state(&[scan]), XicScanState::NoUsableArrays);
+}
+
+#[test]
+fn the_rule_is_on_integers_so_a_float_of_any_size_is_summed() {
+    // Each is a float the rule would refuse if it were an integer, and each is its
+    // own sum: 2^53 + 2, 2^60 and 1e300, in binary64 and then 2^60 in binary32.
+    for value in [9_007_199_254_740_994.0, 1_152_921_504_606_846_976.0, 1e300] {
+        assert_sum(only_state(&[ms1(0, &[101.0], &[value])]), value, 1);
+    }
+    let binary32 = ms1_arrays(
+        0,
+        1,
+        &[
+            mz_array(&[101.0]),
+            array(
+                &[&intensity_role(INTENSITY_UNIT), F32, ZLIB],
+                &zlib(&1_152_921_504_606_846_976.0_f32.to_le_bytes()),
+            ),
+        ],
+    );
+    assert_sum(only_state(&[binary32]), 1_152_921_504_606_846_976.0, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -2852,24 +3137,12 @@ fn no_array_is_decoded_once_a_refusal_is_certain() {
             1,
         ),
     ];
-    // This scan's integer would otherwise end the pass with another reason.
-    let integer = spectrum(
-        2,
-        1,
-        &level(1),
-        &scan_list(60.0),
-        &[
-            array(
-                &[&mz_role(MZ_UNIT), I64, ZLIB],
-                &zlib(&((1_i64 << 53) + 1).to_le_bytes()),
-            ),
-            intensity_array(&[1.0]),
-        ],
-    );
+    // Decoded, this scan would reach the transform and be counted.
+    let last = with_terms(2, &level(1));
     for ([first, second], expected, decoded) in cases {
         let mut transform = Narrowing::default();
         let refused = read_xic_from(
-            Cursor::new(document(&[first, second, integer.clone()])),
+            Cursor::new(document(&[first, second, last.clone()])),
             &window(100.0, 102.0),
             MzmlScanLimits::default(),
             &mut transform,
@@ -3218,8 +3491,8 @@ fn every_state_and_refusal_has_a_stable_identifier_with_no_document_text() {
         "missing_required_value"
     );
     assert_eq!(
-        XicRefusal::IntegerNotExact(ArrayRole::Mz).stable_id(),
-        "integer_not_exact"
+        XicUnreadableReason::IntegerBeyondTwoTo53.stable_id(),
+        "integer_beyond_2_pow_53"
     );
     assert_eq!(
         XicUnreadableReason::Array(ArrayProblem::Numpress).stable_id(),
