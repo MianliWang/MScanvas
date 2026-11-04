@@ -327,6 +327,11 @@ Unchanged from M9.3.C1 and confirmed in the assembled code:
   `+`, `-` or `@` may be interpreted by a spreadsheet as a formula. Neutralizing it would alter
   scientific data, so it was not done silently; the decision belongs to the
   release security review (§13).
+  *2026-11-03: decided by
+  [ADR 0054](../architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md),
+  with the owner's answers of 2026-10-28: an opt-in spreadsheet CSV beside the
+  unchanged CSV and TSV, offered on the results table. The owner's check in
+  Excel, LibreOffice and WPS is pending, so no text claims formula protection.*
 
 ## 8. Document growth
 
@@ -453,7 +458,7 @@ and batch correction stay later (S-4); both decisions are open.
 | Native save dialogs for stored-result exports not natively qualified | write path tested in Rust; dialog mocked in the browser | no known defect | native harness run | installed qualification |
 | PNG is not self-describing | provenance travels with SVG/CSV only | no | a decision on PNG metadata. *2026-10-30: decided by [ADR 0053](../architecture/adr/0053-png-text-metadata.md); a saved PNG carries the SVG's title and description, whose caption names the result and plan identifiers* | release |
 | No drawn figure text says *experimental* or *not proof of absence*; the title is the label and the outcome word | an exported figure shown alone can read more certain than the result is | no (the qualifiers are in the SVG `<desc>`, the report and the table's help) | a figure-caption design decision | UI/UX cleanup or release |
-| Spreadsheet formula interpretation of exported text | a spreadsheet may evaluate a label such as `=…` | **security/interoperability decision open** | release security review: keep raw, add a separate spreadsheet-safe export, or document | before public release |
+| Spreadsheet formula interpretation of exported text | a spreadsheet may evaluate a label such as `=…` | **security/interoperability decision open** | release security review: keep raw, add a separate spreadsheet-safe export, or document. *2026-11-03: decided by [ADR 0054](../architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md), with the owner's answers of 2026-10-28: an opt-in spreadsheet CSV beside the unchanged CSV and TSV, offered on the results table. The owner's check in Excel, LibreOffice and WPS is pending, so no text claims formula protection* | before public release |
 | History is append-only | nothing can be pruned; a full project stays full | no | history pruning design | later |
 | Every plan stores its whole target list | ≈ 0.84 MiB per 16 × 200 batch with short labels (four fit), up to ≈ 3.1 MB with 200-character CJK labels (one fits) | no | shared target-list storage | future storage-model revision |
 | The 4 MiB bound is met after the member's worker ran | up to 10 minutes of work discarded; the sentence says the project is too large, not what to do | no (nothing corrupted) | a size check before the attempt; clearer wording. *2026-10-30: a run whose new plan alone does not fit is refused before its worker starts; one that fits with its plan is still measured after its attempt, and the wording is unchanged* | UI/UX cleanup |

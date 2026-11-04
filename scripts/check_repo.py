@@ -4045,17 +4045,39 @@ def validate_the_targeted_task_path_lists_the_spreadsheet_csv(errors: list[str])
     """The targeted MS1 task path names the spreadsheet CSV among its exports.
 
     ADR 0054's third table document reached the results table while this current
-    task path still listed CSV or TSV only. A rewrite may move the sentence; it
-    may not drop the document.
+    task path still listed CSV or TSV only. A rewrite may reflow the paragraph; the
+    sentence of its **Export** step must still name the document.
     """
-    source = ROOT / "docs/product/PRIMARY_WORKFLOWS.md"
-    lines = source.read_text(encoding="utf-8").splitlines()
-    if not any("→ **Export**" in line and "spreadsheet CSV" in line for line in lines):
+    text = (ROOT / "docs/product/PRIMARY_WORKFLOWS.md").read_text(encoding="utf-8")
+    at = text.find("**Implemented for one recipe: targeted MS1")
+    paragraph = " ".join(text[at : text.find("\n\n", at)].split()) if at != -1 else ""
+    if not re.search(r"→ \*\*Export\*\*[^.→]*spreadsheet CSV", paragraph, re.IGNORECASE):
         fail(
             "docs/product/PRIMARY_WORKFLOWS.md: the targeted MS1 task path's **Export** "
-            "line does not name the spreadsheet CSV the results table offers (ADR 0054)",
+            "step does not name the spreadsheet CSV the results table offers (ADR 0054)",
             errors,
         )
+
+
+def validate_the_m9_closure_points_at_the_spreadsheet_csv_decision(errors: list[str]) -> None:
+    """Both places the M9 closure leaves the formula question open point at ADR 0054.
+
+    The closure calls itself the authority for M9, and it kept saying the question
+    was open after ADR 0054 decided it. Its original sentences stay; a dated note
+    beside each says what decided them.
+    """
+    closure = (ROOT / "docs/product/M9_CLOSURE.md").read_text(encoding="utf-8")
+    for passage, end in (
+        ("- **Spreadsheet formula interpretation is a pre-release decision", "\n\n"),
+        ("| Spreadsheet formula interpretation of exported text |", "\n"),
+    ):
+        at = closure.find(passage)
+        if at == -1 or "adr/0054-" not in closure[at : closure.find(end, at)]:
+            fail(
+                f"docs/product/M9_CLOSURE.md: '{passage}' does not point at ADR 0054, "
+                "which decided the question it leaves open",
+                errors,
+            )
 
 
 
@@ -5797,6 +5819,7 @@ def main() -> int:
         validate_the_cancellation_claim_has_one_origin(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
         validate_the_targeted_task_path_lists_the_spreadsheet_csv(errors)
+        validate_the_m9_closure_points_at_the_spreadsheet_csv_decision(errors)
 
     if errors:
         print("Repository validation failed:")
