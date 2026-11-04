@@ -386,6 +386,37 @@ fn a_labelled_reference_brings_its_label_to_the_row_it_is_admitted_as() {
     }
 }
 
+/// A reference registered from a row records the row's label when the session
+/// finalized nothing, which is how a label reaches a later process: its table
+/// is empty, and only the row a project brought back can answer (ADR 0055;
+/// owner decision A0055 (b), 2026-10-31).
+#[cfg(windows)]
+#[test]
+fn a_row_labelled_by_a_reference_gives_its_label_to_the_next_registration() {
+    let label = NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    let scratch = Scratch::new("reattach-labelled-onward");
+    let path = scratch.write("converted.mzML", b"<mzML/>");
+    let carried_back = ProjectStore::new();
+    carried_back
+        .create("Labelled".to_owned(), false)
+        .expect("a new project");
+    let id = carried_back
+        .register_input_labelled(&path, |_| label.clone())
+        .expect("register the labelled reference");
+    let service = workspace();
+    add(&carried_back, &service, id).expect("admitted");
+
+    let next = ProjectStore::new();
+    next.create("Next".to_owned(), false)
+        .expect("a new project");
+    next.register_input_labelled(&path, |identity| {
+        service.not_verified_label_of_object(identity)
+    })
+    .expect("register the row's object");
+
+    assert_eq!(next.describe().inputs[0].not_verified_by_mscanvas, label);
+}
+
 // ---------------------------------------------------------------------------
 // Lifetime: neither collection owns the other
 // ---------------------------------------------------------------------------
