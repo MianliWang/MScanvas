@@ -586,11 +586,14 @@ Four parts of this are as built on 2026-11-04, each a reading, not an owner
 decision:
 
 - How a commit behaves under the switch. A commit that leaves remembering off is
-  not written and answers `notRemembered`; the session keeps the choice and says
-  it is this session's. The commit that turns it off writes that switch and no
-  other change. The commit that turns it on is written whole, and so is a confirmed
-  replacement of an unusable record, because that confirmation says it stores the
-  preferences shown.
+  not written and answers `notRemembered`, and the session keeps the choice. An
+  appearance commit says it is this session's. A panel commit says nothing, because
+  the user asked for this by turning remembering off, so a moved panel goes back at
+  the next launch with no word on screen. A panel reset still says it reset, and not
+  that this lasts only for the session. The commit that turns it off writes that
+  switch and no other change. The commit that turns it on is written whole, and so
+  is a confirmed replacement of an unusable record, because that confirmation says
+  it stores the preferences shown.
 - Turning remembering off leaves what was stored in place, so the next launch
   still starts on it. The v5.11 demo removes it instead, and the gain V-7.3 was
   chosen with, "不想留记录的人有开关" (people who want no record have a switch),
