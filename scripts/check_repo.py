@@ -4060,22 +4060,25 @@ def validate_the_targeted_task_path_lists_the_spreadsheet_csv(errors: list[str])
 
 
 def validate_the_m9_closure_points_at_the_spreadsheet_csv_decision(errors: list[str]) -> None:
-    """Both places the M9 closure leaves the formula question open point at ADR 0054.
+    """The M9 closure's passages on the formula question and table exports point at ADR 0054.
 
-    The closure calls itself the authority for M9, and it kept saying the question
-    was open after ADR 0054 decided it. Its original sentences stay; a dated note
-    beside each says what decided them.
+    The closure calls itself the authority for M9. It kept saying the question was
+    open after ADR 0054 decided it, and it listed two table documents after the
+    results table offered a third, in a table that lists even an absent capability.
+    Its original sentences stay; a dated note beside each says what changed.
     """
     closure = (ROOT / "docs/product/M9_CLOSURE.md").read_text(encoding="utf-8")
     for passage, end in (
         ("- **Spreadsheet formula interpretation is a pre-release decision", "\n\n"),
         ("| Spreadsheet formula interpretation of exported text |", "\n"),
+        ("| CSV / TSV | `export_targeted_ms1_table`", "\n"),
+        ("- **In exports:**", "\n\n"),
     ):
         at = closure.find(passage)
         if at == -1 or "adr/0054-" not in closure[at : closure.find(end, at)]:
             fail(
                 f"docs/product/M9_CLOSURE.md: '{passage}' does not point at ADR 0054, "
-                "which decided the question it leaves open",
+                "which decided the spreadsheet CSV",
                 errors,
             )
 
