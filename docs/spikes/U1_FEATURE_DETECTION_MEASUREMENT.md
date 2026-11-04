@@ -503,8 +503,9 @@ The ids below are that page's, and the labels are its labels in English. None of
 this is built yet. The rest of this section stays as written, as the evidence of
 what was recommended on 2026-10-30. Where the two differ, this note replaces the
 recommendation. Each "Cost" comes from the page's list for the option chosen.
-B-11.2's hold-release fallback, and U1-1's synthetic-file comparison and OpenBLAS
-per-thread memory, are not repeated here.
+B-11.2's usable QTOF file (MTBLS449, about 1.6 GiB) and hold-release fallback, and
+U1-1's synthetic-file comparison and OpenBLAS per-thread memory, are not repeated
+here.
 
 - **B-11.4, U1-2.2: "4 GiB, two tiers".** The recommendation stands: a 4 GiB Job
   commit cap, and a typed refusal above 150 M MS1 peaks at noise 1e4 or more and
