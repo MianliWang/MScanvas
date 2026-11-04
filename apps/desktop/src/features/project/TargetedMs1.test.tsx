@@ -1046,22 +1046,22 @@ describe("a stored result reused (M9.2)", () => {
         control.getAttribute("data-targeted-export"),
       ),
     ).toEqual(["csv", "tsv", "spreadsheetCsv"]);
-    expect(button("spreadsheetCsv").textContent).toBe("Export Spreadsheet CSV…");
+    expect(button("spreadsheetCsv").textContent).toBe("Export spreadsheet CSV…");
 
     const release = api.holdOnce("exportTargetedMs1Table");
     await press(button("spreadsheetCsv"));
     expect(api.exportTargetedMs1Table).toHaveBeenLastCalledWith(ARTIFACT, "spreadsheetCsv");
-    expect(status("table").textContent).toBe("Choose where to save the Spreadsheet CSV file.");
-    expect(button("spreadsheetCsv").textContent).toBe("Exporting Spreadsheet CSV…");
+    expect(status("table").textContent).toBe("Choose where to save the spreadsheet CSV file.");
+    expect(button("spreadsheetCsv").textContent).toBe("Exporting spreadsheet CSV…");
     for (const other of ["csv", "tsv"]) {
       expect(button(other).getAttribute("aria-disabled"), other).toBe("true");
-      expect(button(other), other).toHaveAccessibleDescription("Choose where to save the Spreadsheet CSV file.");
+      expect(button(other), other).toHaveAccessibleDescription("Choose where to save the spreadsheet CSV file.");
     }
     await act(async () => {
       release();
     });
     expect(status("table").textContent).toBe(
-      "Saved mscanvas-targeted-ms1-eeeeeeee-results-spreadsheet.csv as Spreadsheet CSV with 2 target rows.",
+      "Saved mscanvas-targeted-ms1-eeeeeeee-results-spreadsheet.csv as spreadsheet CSV with 2 target rows.",
     );
 
     api.cancelOnce("exportTargetedMs1Table");
@@ -1127,7 +1127,7 @@ describe("a stored result reused (M9.2)", () => {
       rowCount: 1,
     });
     await press(button("csv"));
-    expect(status("table").textContent).toBe("Saved one.csv as Spreadsheet CSV with 1 target row.");
+    expect(status("table").textContent).toBe("Saved one.csv as spreadsheet CSV with 1 target row.");
   });
 
   it("gives every refused output its reason whichever row is chosen while a figure's picker is out", async () => {

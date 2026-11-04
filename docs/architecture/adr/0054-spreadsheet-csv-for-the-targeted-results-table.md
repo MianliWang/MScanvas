@@ -3,7 +3,7 @@
 Status: **Accepted**, with the owner's answers of 2026-10-28
 ([after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md), sections 2 and
 6.4). The Rust side is implemented: the closed word, the document and its
-tests. The results table offers it as a third export button, "Spreadsheet CSV"
+tests. The results table offers it as a third export button, "spreadsheet CSV"
 / "电子表格 CSV". The check in Excel, LibreOffice and WPS is the owner's and is
 **pending**. Until it passes, no help, release or interface text claims
 formula protection.
