@@ -2,10 +2,11 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { Button, Icon, IconButton, SegmentedControl } from "../../components/ui";
-import type { FigurePreviewKind, FigurePreviewOutcome, FigurePreviewQuestion, FigurePreviewRequest, FigureTheme, RetentionTimeUnit,
+import type { FigurePreviewKind, FigurePreviewOutcome, FigurePreviewQuestion, FigurePreviewRequest, FigureTheme, NotVerifiedByMscanvas, RetentionTimeUnit,
   SpectrumRangeAvailability } from "./contracts";
 import { withRetentionTimeUnit } from "./format";
 import { dpiProblemId, FigureSettingsFields } from "./FigureSettingsFields";
+import { NotVerifiedTag } from "./NotVerifiedTag";
 import { ownedErrorMessage } from "./ownedErrorMessages";
 import type { FigureSettingsValidation } from "./figureSettingsValidation";
 import type { FigureSettingsDraft, FigureSettingsField } from "./usePreviewWorkspace";
@@ -17,6 +18,8 @@ type PreviewState =
 export interface ExportFigureDialogProps {
   readonly kind: FigurePreviewKind;
   readonly sourceLabel: string;
+  /** ADR 0055's label of the file this figure is drawn from. */
+  readonly notVerified?: NotVerifiedByMscanvas | null;
   readonly question: FigurePreviewQuestion | null;
   readonly preview: (request: FigurePreviewRequest) => Promise<FigurePreviewOutcome>;
   readonly onExport: (question: FigurePreviewQuestion, format: "svg" | "png") => boolean;
@@ -147,7 +150,8 @@ export function ExportFigureDialog(props: ExportFigureDialogProps) {
         }} onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => event.stopImmediatePropagation()}>
         <header className="figure-export-head">
           <div className="figure-export-heading"><Dialog.Title>{t("figureExportTitle")}</Dialog.Title>
-            <p className="figure-export-source" title={props.sourceLabel}>{props.sourceLabel}</p></div>
+            <p className="figure-export-source" title={props.sourceLabel}>{props.sourceLabel}</p>
+            <NotVerifiedTag label={props.notVerified} /></div>
           <IconButton ref={close} icon={<Icon name="close" />} label={t("figureExportReturn")} onClick={props.onClose} />
         </header>
         <div className="figure-export-body">

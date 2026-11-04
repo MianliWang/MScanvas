@@ -63,6 +63,12 @@ describe("the status bar's context items", () => {
     expect(texts({ ...NOTHING, conversionStatus: status })).toEqual([["conversionActivity", "conversion", text]]);
   });
 
+  it("says an adoption of the finished queue while it is under way", () => {
+    expect(texts({ ...NOTHING, conversionStatus: "terminal", conversionAdopting: "m74CnvAdoptOneInFlight" })).toEqual([
+      ["conversionActivity", "conversion", "In progress: Adding one converted output…"],
+    ]);
+  });
+
   it("uses the Project surface's own sentence for what the project is doing", () => {
     expect(texts({ ...NOTHING, projectActivity: "projectBusyAnalysing" })).toEqual([
       ["projectActivity", "project", `In progress: ${en("projectBusyAnalysing")}`],

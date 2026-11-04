@@ -22,6 +22,8 @@ export interface ShellContextFacts {
   readonly projectActivity: MessageKey | null;
   /** The conversion lane's own status, as Rust last reported it. */
   readonly conversionStatus: WorkspaceConversionState["status"];
+  /** The sentence for an adoption of the finished queue under way, or `null`. */
+  readonly conversionAdopting?: MessageKey | null;
 }
 
 export type ShellContextItemId = "conversionActivity" | "projectActivity" | "project";
@@ -47,7 +49,12 @@ export function shellContextItems(facts: ShellContextFacts, t: UiMessage): reado
 
   const status = facts.conversionStatus;
   if (status === "terminal") {
-    items.push({ id: "conversionActivity", target: "conversion", text: t("shellConversionRetained") });
+    const adopting = facts.conversionAdopting ?? null;
+    items.push({
+      id: "conversionActivity",
+      target: "conversion",
+      text: adopting === null ? t("shellConversionRetained") : t("shellContextActivity", { activity: t(adopting as "m74CnvAdoptInFlight") }),
+    });
   } else if (status !== "idle") {
     items.push({
       id: "conversionActivity",
