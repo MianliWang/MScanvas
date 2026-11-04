@@ -217,6 +217,7 @@ function harness(
   const empty: WorkspaceRoster = { datasets: [], capacity: FAKE_WORKSPACE_CAPACITY };
   const api: PreviewApi = {
     previewFigure: async (request) => ({ status: "refused", requestId: request.requestId, error: { kind: "spectrum_export_stale", summary: "Select a spectrum.", detail: null, retryable: false } }),
+    readEnvironmentDiagnostics: () => Promise.resolve(""),
     inspectBackend: () => service.inspectBackend(),
     chooseInstallation: () => service.chooseInstallation(options.dismissPicker ?? false),
     beginRawView: () => Promise.reject(new Error("this test never views a RAW file")),

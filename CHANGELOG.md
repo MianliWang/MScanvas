@@ -6,6 +6,15 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **Copy diagnostics.** Settings → Support → **Copy diagnostics** shows a short
+  environment summary in a read-only box, and **Copy** puts that text on
+  the clipboard, for you to paste into a bug report yourself. It holds the
+  MSCanvas, Windows, WebView2 and ProteoWizard versions, whether that
+  ProteoWizard is the verified build, and this session's recent error codes,
+  failed conversions among them. It holds no file name, path, user name or list
+  of what is in your workspace, though an error code can name a vendor or a
+  feature you used, and its time says when. Nothing is written or sent
+  ([ADR 0063](docs/architecture/adr/0063-copy-diagnostics.md)).
 - **Restore workspace.** MSCanvas remembers the Workbench's files, groups, order
   and checked rows for the next start, in one document in its own per-user folder.
   At the next start nothing comes back by itself: a notice says how many files can

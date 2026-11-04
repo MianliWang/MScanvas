@@ -4103,16 +4103,10 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // caller here and is deliberately not in this list.
     //
     // The registered commands no caller names yet: the view cache's Settings
-    // row, which ADR 0060 slice 3 left for the next change, and ADR 0063's
-    // environment summary, which has no caller until the interface lane adds
-    // Copy diagnostics. Declared rather than skipped, so the list cannot grow
-    // silently, and the declaration retires itself: once the frontend calls
-    // one, this list must lose it.
-    let awaiting_a_caller = [
-        "describe_view_cache",
-        "clear_view_cache",
-        "read_environment_diagnostics",
-    ];
+    // row, which ADR 0060 slice 3 left for the next change. Declared rather than
+    // skipped, so the list cannot grow silently, and the declaration retires
+    // itself: once the frontend calls one, this list must lose it.
+    let awaiting_a_caller = ["describe_view_cache", "clear_view_cache"];
     for name in &registered[1..] {
         let called = api.contains(&format!("\"{name}\""))
             || drop_transport.contains(&format!("\"{name}\""))
@@ -31339,5 +31333,6 @@ mod native_reader;
 mod output_opening;
 mod per_output_adoption;
 mod raw_view;
+mod recent_error_ring;
 mod run_history;
 mod staging_recovery;

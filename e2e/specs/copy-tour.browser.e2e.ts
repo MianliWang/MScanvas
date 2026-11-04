@@ -23,12 +23,13 @@ import { fileURLToPath } from "node:url";
 import { cdp, metrics } from "../support/cdp";
 import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
 import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered } from "../support/conversion";
-import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
+import { IPC_TABLE_KEY, holdInvoke, installIpcBoundary, pressAt, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
 import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, REFUSED_END, REFUSED_END_ITEMS, REQUEST_REFUSED, RETRYING, RETRY_WAITING_ITEM, RUNNING, RUNNING_ITEMS, SET_ITEM, STOPPED, STOPPED_ITEMS, STOP_FAILED, STOP_FAILED_ITEMS, WHOLE_SET_ITEM, found, listed } from "../support/runHistory";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
+  ENVIRONMENT_DIAGNOSTICS,
   admittedIntents,
   availableBackend,
   chosenBackend,
@@ -458,6 +459,33 @@ function withBackend(verdict: unknown) {
 }
 
 const populated = (locale: Locale) => scenario("populated", locale);
+const withDiagnostics = (locale: Locale) => ({ ...populated(locale), read_environment_diagnostics: ENVIRONMENT_DIAGNOSTICS });
+
+/** Settings open, and Copy diagnostics pressed. */
+async function readDiagnostics() {
+  await browser.$("[data-settings-entry]").click();
+  await browser.$("[data-settings-dialog]").waitForDisplayed();
+  await browser.$("[data-diagnostics-read]").click();
+}
+
+/** The text read, a stand-in for the machine's clipboard answering, and Copy pressed. */
+async function copyDiagnostics(refuse: boolean, onTheEdge = false) {
+  await readDiagnostics();
+  await browser.$("[data-diagnostics-preview]").waitForExist();
+  await browser.execute((refused: boolean) => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      configurable: true,
+      value: () => (refused ? Promise.reject(new DOMException("denied", "NotAllowedError")) : Promise.resolve()),
+    });
+  }, refuse);
+  if (!onTheEdge) {
+    await browser.$("[data-diagnostics-copy]").click();
+    return;
+  }
+  // Against the body's lower edge, where a wheel or a Tab can leave it.
+  await browser.execute(() => document.querySelector("[data-diagnostics-copy]")?.scrollIntoView({ block: "end" }));
+  await pressAt("[data-diagnostics-copy]");
+}
 
 // ---------------------------------------------------------- workspace restore
 
@@ -1633,6 +1661,96 @@ const STOPS: readonly Stop[] = [
       await frames();
     },
     anchor: '[data-layout-reset][aria-disabled="true"]:focus-visible',
+  },
+  // Copy diagnostics (ADR 0063, decision 10): its row is in the `settings` stop.
+  {
+    name: "diagnostics-reading",
+    table: withDiagnostics,
+    hold: ["read_environment_diagnostics"],
+    drive: readDiagnostics,
+    anchor: '[data-diagnostics-read][aria-disabled="true"]',
+  },
+  {
+    name: "diagnostics-reading-again",
+    table: withDiagnostics,
+    drive: async () => {
+      await readDiagnostics();
+      await browser.$("[data-diagnostics-preview]").waitForExist();
+      await holdInvoke("read_environment_diagnostics");
+      await browser.$("[data-diagnostics-read]").click();
+    },
+    anchor: '[data-diagnostics-copy][aria-disabled="true"]',
+  },
+  {
+    name: "diagnostics-read",
+    table: withDiagnostics,
+    drive: readDiagnostics,
+    anchor: "[data-diagnostics-preview]",
+  },
+  {
+    name: "diagnostics-read-failed",
+    table: (locale) => ({ ...populated(locale), read_environment_diagnostics: { __reject: { kind: "preview_worker_unavailable", summary: "", detail: null, retryable: true } } }),
+    drive: readDiagnostics,
+    anchor: "[data-diagnostics-failed]",
+  },
+  {
+    name: "diagnostics-copied",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(false),
+    anchor: "[data-diagnostics-copied]:not(:empty)",
+  },
+  {
+    name: "diagnostics-copy-refused",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(true),
+    anchor: "[data-diagnostics-copy-failed]",
+  },
+  {
+    name: "diagnostics-read-from-the-end",
+    table: withDiagnostics,
+    drive: async () => {
+      await browser.$("[data-settings-entry]").click();
+      await browser.$("[data-settings-dialog]").waitForDisplayed();
+      // Support is last, so this is where a person who wheels down to it presses.
+      await browser.execute(() => {
+        const body = document.querySelector(".settings-dialog-body");
+        if (body !== null) body.scrollTop = body.scrollHeight;
+      });
+      await pressAt("[data-diagnostics-read]");
+    },
+    anchor: "[data-diagnostics-preview]:focus",
+  },
+  {
+    name: "diagnostics-copied-on-the-edge",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(false, true),
+    anchor: "[data-diagnostics-copied]:not(:empty)",
+  },
+  {
+    name: "diagnostics-copy-refused-on-the-edge",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(true, true),
+    anchor: "[data-diagnostics-copy-failed]",
+  },
+  {
+    name: "settings-save-failed-after-read",
+    table: (locale) => ({ ...withDiagnostics(locale), save_ui_preferences: { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false, revision: 1 } }),
+    drive: async () => {
+      await readDiagnostics();
+      await browser.$("[data-diagnostics-preview]").waitForExist();
+      await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="compact"])').click();
+    },
+    anchor: "[data-save='failed']",
+  },
+  {
+    // The text read with a restore refusal above it: the tallest Settings there is.
+    name: "diagnostics-read-below-restore-refusal",
+    table: (locale) => ({ ...restoreTable({ outcome: "refused", problem: "malformed", leftoverCopies: 1 })(locale), read_environment_diagnostics: ENVIRONMENT_DIAGNOSTICS }),
+    drive: async () => {
+      await openRestoreSettings('[data-restore-settings="refused"]');
+      await browser.$("[data-diagnostics-read]").click();
+    },
+    anchor: "[data-diagnostics-preview]",
   },
   // One-click view of a Thermo RAW file (ADR 0060 slice 3): every state of the
   // pane, each refusal of decision 4, and the view it opens.

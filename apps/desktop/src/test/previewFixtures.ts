@@ -843,12 +843,57 @@ export function fakeCopiedFigure(settings: FigureSettings): CopiedFigure {
   };
 }
 
+/** The shape Rust writes (ADR 0063, decision 6), English whatever the interface language. */
+export const ENVIRONMENT_DIAGNOSTICS = `MSCanvas diagnostics
+Format: 2
+Created: 2026-11-03T08:00:00Z
+
+[Application]
+Version: 0.1.0
+Build profile: release
+Build commit: 0123456789abcdef0123456789abcdef01234567
+Saved UI language: zh-CN
+UI preferences: loaded
+UI preferences problem: none
+
+[System]
+Windows version: 25H2
+Windows build: 26200.6899
+Windows edition: Core
+WebView2 Runtime: 141.0.3537.71
+
+[ProteoWizard]
+Checked this session: yes
+Quarantined: no
+State: available
+Origin: automatic
+Release: 3.0.26013
+Build date: Jan 13 2026
+Source revision: 47b13cf
+msconvert SHA-256: 9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD
+Verified build: yes
+Folder: <program-files>
+Failure: none
+Remembered folder: no
+Remembered folder refused at startup: none
+Remembered folder not saved: none
+
+[View cache]
+Usage: not in this build
+
+[Recent errors]
+Held: 2 (at most 32; older dropped: 0)
+- 2026-11-03T07:50:00Z missing_output
+- 2026-11-03T07:55:00Z preview_worker_unavailable (repeated until 2026-11-03T07:56:30Z)
+`;
+
 export interface FakePreviewApiOptions {
   readonly previewFigure?: PreviewApi["previewFigure"];
   readonly reclaimConversionStaging?: PreviewApi["reclaimConversionStaging"];
   readonly openFinalizedOutput?: PreviewApi["openFinalizedOutput"];
   readonly planWorkspaceClear?: PreviewApi["planWorkspaceClear"];
   readonly executeWorkspaceClear?: PreviewApi["executeWorkspaceClear"];
+  readonly readEnvironmentDiagnostics?: PreviewApi["readEnvironmentDiagnostics"];
   readonly availability?: BackendAvailability | (() => Promise<BackendAvailability>);
   /**
    * What the conversion-settings read answers with.
@@ -1922,6 +1967,7 @@ export function createFakePreviewApi(options: FakePreviewApiOptions = {}): FakeP
         },
       );
     },
+    readEnvironmentDiagnostics: options.readEnvironmentDiagnostics ?? (() => Promise.resolve(ENVIRONMENT_DIAGNOSTICS)),
     inspectBackend: () =>
       // A quarantined session answers every backend question the same way and
       // launches nothing to do it, exactly as Rust does. Modelled here rather
