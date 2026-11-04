@@ -31,7 +31,8 @@ limitations),
 [0056](0056-project-owned-mzml-reader-for-viewing.md) (the reader),
 [0059](0059-vendor-format-strategy-official-readers-thermo-first.md) (verified
 vendor centroiding), [0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)
-(an MSCanvas-owned cache). Records: the [M9 closure](../../product/M9_CLOSURE.md),
+(an MSCanvas-owned cache), [0061](0061-restore-workspace.md) (the roster stays out of
+the `.mscanvas` file). Records: the [M9 closure](../../product/M9_CLOSURE.md),
 PRJ-001…PRJ-006 in the [feature catalog](../../product/FEATURE_CATALOG.md), the
 [artifact model](../ARTIFACT_MODEL.md), the
 [analysis capability map](../../product/ANALYSIS_CAPABILITY_MAP.md) and the
@@ -789,6 +790,8 @@ only the imputed number needs a new version of the format with a state word of i
 own, which B-6.5's seven do not include and the owner would have to add. The state's
 legend and the export's state column say that the value is a raw point sum, or that
 sum as the named steps transformed it, not an imputed number.
+A `reintegrated` value in a value-changing step's output is likewise that sum as those
+steps transformed it, because its cell keeps its source state.
 
 - **A failure is not a missing value.** A cell is `undecided` where the step
   could not decide: the M9 `FAILED` reasons `EXTRACTION_AT_SPECTRUM_EDGE`,
