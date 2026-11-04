@@ -374,6 +374,9 @@ promotion gate in the
 - **Imported feature tables (G2).** An imported table is a project artifact
   with its own digest, import record and lineage. MZmine-2-style CSV comes
   first, up to the 64 MiB payload cap in v1.
+  *2026-11-04 ([A0067-D6](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)):*
+  the owner replaced the storage this implies: an imported table is a chunked
+  matrix, and 64 MiB is the CSV's limit. Not built.
 - **What stays refused (G3).** C17 (CWT centroiding), C28 (a custom output
   extension), C50 (ETA; live elapsed time, C51, is in progress), C41
   (built-in templates), the explanation texts removed on 2026-10-28 (RO-26,
@@ -382,6 +385,7 @@ promotion gate in the
   and a method text in Python or R (EXP-20) stay outside this roadmap. The
   rows decided separately stay open under their own decisions: VW-14 (V-4),
   VW-33 (V-1), VW-47 (V-5), C15 (HR-1) and VW-02's exports and panel (X-3).
+  *2026-11-03:* each of those has its answer ([section 1d](OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 - **Navigation (G4).** Each analysis page enters the navigation when its first
   working function ships, with no placeholder pages. The new look (FE-2)
   leaves room for five page tabs at 960 px.
@@ -704,6 +708,12 @@ writer and Rust's ownership of files.
     (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not changed; read with
     that run, not run itself: with the box checked, a junction under that folder
     loses its target's contents.
+    Owner decision, 2026-11-04 (P211-2, option `doc`): write it on the next install
+    page and do not change this step. The costs the page names: with a junction there
+    and the box checked, the target's contents are still deleted, and someone who has
+    not read the page does not know. That page is not written. A report to Tauri
+    upstream is outbound contact and is not asked
+    ([section 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
   - *2026-11-03, run on that runner and read from `view_cache.rs`, not an owner
     decision:* with the box checked and a file locked, that `RmDir /r` takes the
     marker first and leaves the locked file in a root with no marker. The hook then
@@ -713,6 +723,11 @@ writer and Rust's ownership of files.
     the box again with nothing locked. Clear view cache is in the next slice
     (A0060-split). Only converted copies are at stake, and no one has been asked
     about this state.
+    Owner decision, 2026-11-04 (P211-3, option `accept`): accepted, and written on the
+    next install page. The costs the page names: the refusal says the folder was not
+    created by MSCanvas when it was, and a person must move or rename it, or unlock it
+    and uninstall again with the box checked. That page is not written
+    ([section 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
   - *2026-11-03, read from `PageLeaveReinstall` and run on that runner (the same
     build, with the recorded version set to 0.0.1), not an owner decision:* no
     installer passes `/UPDATE` to the old uninstaller. One given `/UPDATE` jumps
@@ -726,6 +741,12 @@ writer and Rust's ownership of files.
     `/P` over the same version runs the uninstaller and the cache goes; `/P` over
     an older version runs none and the cache stays. The hook cannot tell these
     apart by its switches.
+    Owner decision, 2026-11-04 (P211-1, option `accept`): accepted, and written on the
+    next install page. The costs the page names: after a manual upgrade each file
+    converts again before it can be viewed, and "except on `/UPDATE`" does nothing for
+    an ordinary upgrade. Do not uninstall, or a silent upgrade with `/S`, keeps the
+    cache. That page is not written
+    ([section 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
   - *2026-11-03, run on that runner and read from `MUI_UNGETLANGUAGE`, not an owner
     decision:* a `/P` uninstall after a silent install had not finished when the
     job stopped it after five minutes. A silent install records no language, so
@@ -842,6 +863,13 @@ None can be delivered by engineering alone; each waits for one input.
   outside the admitted catalog, in-place spreadsheet-formula neutralization,
   rerun to replace a damaged result, diagnostics upload. "Terminal" means
   closed for the route that decided it, not impossible.
+  - *2026-11-04:* mzXML output does not stay refused. It returns as a labelled
+    advanced format through the two-run route, under
+    [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)
+    decision 6, accepted on 2026-10-29, with the comparison against the intermediate
+    that gate asks for. The owner answered how on 2026-11-03
+    ([XML-1](OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)). Not built: the
+    desktop still refuses it (N-C2).
 - **Reversible, not selected:** explicit overwrite (needs a new finalization
   contract), pause/resume (needs a measured need), the settings summary and the
   steppers (kept by PM9's freeze), target-file import (overlaps M10), on-screen
@@ -934,3 +962,8 @@ None can be delivered by engineering alone; each waits for one input.
 - *Answered 2026-10-30* (section 2): those 21, as recommended. This answers
   the frontend's target and ADR 0060's open question 8 in the first item
   above (FE-2 and A0060). The other 32 stay open.
+- *Answered 2026-11-03 and 2026-11-04:* those 32, then round two of the decision
+  page, A-03 and the open-PR cleanup
+  ([sections 1d and 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)). NEXT-RELEASE
+  sets the next release's conditions and approves no release, and each window is
+  asked for when its step comes.

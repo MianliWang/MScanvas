@@ -82,3 +82,11 @@ Owner decision, 2026-10-30, after PR #167 merged: none of these 44 alerts is
 dismissed. They stay open and are fixed later: Pillow at the next runtime
 re-provisioning, extract-zip with the WebdriverIO 10 migration, glib when Tauri's
 gtk-rs stack reaches 0.20. The proposed reasons above are kept as evidence only.
+
+*Owner decision, 2026-11-03 ([B-3.3](OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)),
+not built:* the Pillow 13.0.0 route above is left. The shipped runtime carries no
+Pillow and the experiment lock is deleted, so those 41 alerts close with that work
+(A-03, A-05); it rests on A-03 showing that every planned class runs without
+matplotlib and Pillow. Pillow fixes return with A-25's runtime (CK-1). *2026-11-04
+([D1, D2](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)):* #168, the Pillow bump,
+#218 and #195 were closed, and no alert was dismissed.
