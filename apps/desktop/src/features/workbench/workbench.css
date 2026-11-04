@@ -44,8 +44,13 @@
    keeps no height at all (PM9 L10). */
 .workbench-shell .shell-notices:not(:has(> .notice:not([data-backend-mode="popover"]))) { padding: 0; }
 /* A status that appears is bounded so it cannot take the workspace's height.
-   The setup help the reader opened was asked for, so the bound relaxes while
+   A restore refusal relaxes the bound while it stands: it stays on screen with
+   its reason, beside the rows it is about. So does any warning or failure beside
+   the offer, the workspace's own answer to Restore workspace among them. The
+   setup help the reader opened was asked for, so the bound relaxes further while
    it is open, and returns when it is not. */
+.workbench-shell .shell-notices:has(> [data-restore="stopped"], > [data-restore="action"], > [data-restore="problem"]),
+.workbench-shell .shell-notices:has(> .restore-notice):has(> .notice-warning, > .notice-danger) { max-height: min(40vh, 320px); }
 .workbench-shell .shell-notices:has([data-backend-mode="notice"] [data-backend-help][aria-expanded="true"]) { max-height: min(60vh, 520px); }
 .shell-notices > .notice { align-items: center; }
 .notice-dismiss { margin-left: auto; }
@@ -529,14 +534,25 @@
   .spectrum-head-facts { height: auto; max-height: 36px; }
 }
 
-/* The restore notice: the offer, then the marked rows, which scroll in their own
-   short list so Restore workspace and Start fresh stay on screen. */
+/* The restore notice: the offer, and joined under it the marked rows. The list
+   gives up height first, down to its 36 px, so the answers above it and the offer's
+   buttons stay on screen and a row of any height can be reached. Past that the
+   track scrolls too, and may show less than one row whole, also with no refusal
+   standing: a neutral notice does not relax its bound. A row's focus ring is drawn
+   inset: the list's top edge and the next row would cover one outside.
+   Each part of a row may take a line of its own and wrap there: a group name can
+   be 120 characters, and the file's name and reason still show. */
 .restore-notice .ui-button { flex: none; }
-.restore-marked { display: flex; flex-basis: 100%; flex-direction: column; gap: 2px; max-height: 84px; margin: 2px 0 0; padding: 0; overflow: auto; list-style: none; font-size: 12px; }
-.restore-marked li { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.restore-marked .ui-icon-button { width: 26px; height: 26px; min-width: 26px; min-height: 26px; padding: 0; }
-.restore-marked-name { min-width: 0; overflow-wrap: anywhere; color: var(--color-text-primary); font-weight: 600; }
-.restore-marked-group { flex: none; }
+/* The keyboard lands on the offer when its buttons go; the list sits flush under it. */
+.restore-notice:focus-visible { outline-offset: -2px; }
+.restore-notice:has(+ .restore-marked) { padding-bottom: 4px; border-bottom: 0; border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
+.shell-notices > .restore-marked { display: block; min-height: 36px; margin-top: -6px; padding: 2px 12px 8px; overflow: auto; border: 1px solid var(--color-border); border-top: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+.restore-marked ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.restore-marked li { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.restore-marked .ui-icon-button { flex: none; width: 26px; height: 26px; min-width: 26px; min-height: 26px; padding: 0; scroll-margin-block: 6px; }
+.restore-marked .ui-icon-button:focus-visible { outline-offset: -2px; }
+.restore-marked-text { display: flex; flex: 1; flex-wrap: wrap; gap: 0 8px; min-width: 0; padding-block: 3px; }
+.restore-marked-name, .restore-marked-group, .restore-marked-reason { min-width: 0; overflow-wrap: anywhere; }
+.restore-marked-name { color: var(--color-text-primary); font-weight: 600; }
 .restore-marked-group::before { content: "· "; }
-.restore-marked-reason { min-width: 0; overflow-wrap: anywhere; }
 .restore-reason { font-size: 12px; }

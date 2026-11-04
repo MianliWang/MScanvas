@@ -42,7 +42,8 @@ drive `Remove highlighted`, drag and Move to group. Hidden highlights survive
 search/collapse; Ctrl+A applies only within the roster. Group checkboxes apply to
 all group members, including filtered ones, and do not change highlights.
 
-One level of session-only groups references admitted dataset IDs. New arrivals
+One level of groups references admitted dataset IDs; a group with rows in it
+comes back after a restart only through Restore workspace (WSP-010). New arrivals
 enter Ungrouped. Create/rename/disclose/reorder and Move to group have keyboard
 and menu paths; dissolving a group returns its members to Ungrouped without
 removing acquisitions. Drag captures the full highlighted payload, including

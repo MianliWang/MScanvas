@@ -94,8 +94,9 @@ not scroll; the roster owns its scroll, and the evidence region owns the retaine
 plots/table/export flow. Hidden surfaces expose no tab stops.
 
 Viewed acquisition, highlighted row, focus and checked conversion membership
-have separate labels and visual cues. Group names are raw user labels; groups
-and browsing arrangement last for the session only. Group checkboxes explicitly
+have separate labels and visual cues. Group names are raw user labels; a group
+with rows in it comes back after a restart only through Restore workspace (WSP-010), and the
+browsing arrangement lasts for the session only. Group checkboxes explicitly
 cover the whole group, including filtered children.
 
 dnd-kit 0.5.0 owns sensors, geometry, collision, the overlay and auto-scroll.
