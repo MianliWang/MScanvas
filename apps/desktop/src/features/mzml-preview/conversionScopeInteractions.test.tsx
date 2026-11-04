@@ -403,6 +403,9 @@ describe("N-C3: Convert this file converts this file", () => {
     // The same row under Checked rows, then held alone, is asked again.
     act(() => hook.result.current.conversionPlan.describe(["raw-1"], "selected"));
     await waitFor(() => expect(hook.result.current.conversionPlan.current?.identity).toMatchObject({ scope: "selected", handles: ["raw-1"] }));
+    // The file is forgotten, so going to the scope it is already on changes nothing.
+    act(() => hook.result.current.setConversionScope("selected"));
+    expect(hook.result.current.conversionPlan.readCurrent()).not.toBeNull();
     const asked = api.planRequests().length;
     review = await reviewed(1);
     expect(review.identity.scope).toBe("file");
