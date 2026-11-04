@@ -30,7 +30,7 @@ import {
   settledAt,
   shippedIntent,
 } from "../../apps/desktop/src/test/previewFixtures";
-import type { SelectedFile } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import type { NotVerifiedByMscanvas, SelectedFile } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 
@@ -105,6 +105,28 @@ function labelledViewerWorld(locale: Locale, fileName: string): Record<string, u
   return table;
 }
 
+/** A RAW row opened through the view cache on an unmeasured build, its object labelled or not. */
+function viewedWorld(locale: Locale, rowLabel: NotVerifiedByMscanvas | null): Record<string, unknown> {
+  const file: SelectedFile = rowLabel === null ? RAW : { ...RAW, notVerifiedByMscanvas: rowLabel };
+  const table = conversionWorld(locale, [file], { status: "idle" });
+  table.get_raw_view_state = {
+    state: { state: "ready", operation: 1, handle: RAW.handle, intentId: shippedIntent.id, cacheHit: false, unverifiedBuildRelease: RELEASE, openable: true },
+    availability: { available: true, unverifiedBuildRelease: RELEASE },
+  };
+  table.open_raw_view = {
+    ...(table.open_mzml_preview as object),
+    file,
+    qcSnapshotToken: null,
+    qcProducerIdentified: false,
+    viewSource: {
+      kind: "viewCache", sourceFileName: RAW.fileName, sourceKind: "thermo_raw", sourceSha256: "a".repeat(64),
+      providerRelease: RELEASE, providerSha256: "b".repeat(64), intent: shippedIntent, verified: false, unverifiedBuildRelease: RELEASE,
+      convertedAt: "2026-11-03T04:12:09Z",
+    },
+  };
+  return table;
+}
+
 async function open(table: Record<string, unknown>, locale: Locale, width: number, height: number, hold: readonly string[] = []) {
   await metrics(width, height);
   await installIpcBoundary(table, { hold });
@@ -112,6 +134,50 @@ async function open(table: Record<string, unknown>, locale: Locale, width: numbe
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
   await browser.waitUntil(() => browser.execute((lang: string) => document.documentElement.lang === lang, locale));
   await readBackSavedPreferences();
+}
+
+/** Opens the RAW row's view and takes the roster off it where the roster is a drawer. */
+async function openTheView(table: Record<string, unknown>, locale: Locale, width: number, height: number) {
+  await open(table, locale, width, height);
+  await revealRosterRow(RAW.handle);
+  await browser.$(`.grouped-roster [data-handle="${RAW.handle}"]`).click();
+  await browser.$("[data-raw-view-open]").click();
+  await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 10_000 });
+  const toggle = browser.$('[aria-controls="workbench-roster"]');
+  if (width < 1050 && (await toggle.getAttribute("aria-expanded")) === "true") {
+    await toggle.click();
+    await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === "false");
+  }
+}
+
+/** The label each of the four places says, on the screen, with a shot of the row and of Metadata. */
+async function labelsOnTheFileRowAndMetadata(name: string) {
+  const fileRow = await browser.execute(() => {
+    const said = (css: string) => Array.from(document.querySelectorAll(css), (tag) => tag.textContent);
+    const box = (css: string) => document.querySelector(css)?.getBoundingClientRect();
+    const tabs = box(".viewer-tabs > .ui-tablist")!;
+    const titleTag = box(".viewer-file-title [data-not-verified]");
+    const convert = box("[data-raw-view-convert]");
+    return {
+      title: said(".viewer-file-title [data-not-verified]"),
+      facts: said(".viewer-file-facts [data-not-verified]"),
+      clipped: Array.from(document.querySelectorAll(".viewer-file [data-not-verified]")).filter((tag) => tag.scrollWidth > tag.clientWidth + 1).length,
+      overTabs: (titleTag !== undefined && titleTag.right > tabs.left + 1) || (convert !== undefined && convert.left < tabs.right - 1),
+      overflowX: document.documentElement.scrollWidth - innerWidth,
+    };
+  });
+  await shot(`${name}-file-row`);
+  await browser.$('.viewer-tabs [role="tab"]:nth-child(3)').click();
+  await browser.$(".preview-metadata").waitForExist({ timeout: 30_000 });
+  const metadata = await browser.execute(() => {
+    const said = (css: string) => Array.from(document.querySelectorAll(css), (tag) => tag.textContent);
+    return {
+      fileTerm: said(".preview-metadata .inspector-section:not([data-view-source]) [data-not-verified]"),
+      source: said(".preview-metadata [data-view-source] [data-not-verified]"),
+    };
+  });
+  await shot(`${name}-metadata`);
+  return { ...fileRow, ...metadata };
 }
 
 async function shot(name: string) {
@@ -248,6 +314,34 @@ describe("A0055 and ADR 0052, rendered", () => {
       });
       await shot(`metadata-long-labelled-${locale}-${String(width)}`);
       expect(row).toEqual({ termLines: 1, ddInsideList: true, tagInsideDd: true, overflowX: 0 });
+    });
+  }
+
+  // Two claims, which a view can hold at once. The object's label (A0055 (a)) stays
+  // beside the file's name and on its File row; the conversion's (ADR 0060 slice 3)
+  // stays on the line under the row and in the source section.
+  for (const [locale, width, height] of EVERY_SIZE) {
+    it(`keeps a row's label and a view's label, each in its place, ${locale} ${String(width)}x${String(height)}`, async () => {
+      const label = buildLabel(locale);
+      const prefix = `both-labels-${locale}-${String(width)}`;
+      await open(labelledViewerWorld(locale, MZML_ROW.fileName), locale, width, height);
+      await revealRosterRow(MZML_ROW.handle);
+      await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+      await selectTheSpectrum(0);
+      expect(await labelsOnTheFileRowAndMetadata(`${prefix}-row`)).toEqual({
+        title: [label], facts: [], fileTerm: [label], source: [], clipped: 0, overTabs: false, overflowX: 0,
+      });
+
+      await openTheView(viewedWorld(locale, null), locale, width, height);
+      expect(await labelsOnTheFileRowAndMetadata(`${prefix}-view`)).toEqual({
+        title: [], facts: [label], fileTerm: [], source: [label], clipped: 0, overTabs: false, overflowX: 0,
+      });
+
+      await openTheView(viewedWorld(locale, LABEL), locale, width, height);
+      expect(await labelsOnTheFileRowAndMetadata(`${prefix}-both`)).toEqual({
+        title: [label], facts: [label], fileTerm: [label], source: [label], clipped: 0, overTabs: false, overflowX: 0,
+      });
+      expect(await unexpectedConsole()).toEqual([]);
     });
   }
 
