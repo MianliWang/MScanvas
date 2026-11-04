@@ -687,6 +687,84 @@ describe("adding one converted output", () => {
     }
   });
 
+  it("offers Add only on the adoptable item of a mixed queue, and Open on them all", async () => {
+    // The queue's count is above zero here, so only the item's own state stands
+    // between a prefix or a failure and an Add (ADR 0052 decision 3, ADR 0027).
+    const api = apiWith(terminalOf([
+      offered("file-1", "run-1.raw"),
+      queueItem("file-2", "run-2.wiff", {
+        state: "finalized",
+        attempts: 1,
+        ...finalizedAttemptFacts(),
+        adoption: { kind: "nothingToAdopt" },
+        finalizedOutputs: [{ outputId: "out-prefix", fileName: "run-2.mzML" }],
+        result: { kind: "outputSet", report: outputSetReport("file-2", ["run-2.mzML"], { completeSetAdoptable: false }) },
+      }),
+      queueItem("file-3", "run-3.raw", {
+        state: "failed",
+        attempts: 1,
+        finalizedOutputs: [{ outputId: "out-refused", fileName: "run-3.mzML" }],
+      }),
+    ]));
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => { expect(addIn(panel, "run-1.mzML")).not.toHaveAttribute("aria-disabled"); });
+
+    expect(within(panel).getAllByRole("button", { name: /^Add run-/u })).toHaveLength(1);
+    for (const name of ["run-1.mzML", "run-2.mzML", "run-3.mzML"]) {
+      expect(within(group(panel, name)).getByRole("button", { name: UI_RESOURCES.en.outputOpenFile })).toBeVisible();
+    }
+  });
+
+  it("takes the Adds away while a retry runs, and the label goes back to its row", async () => {
+    const rerun = deferred<WorkspaceConversionState>();
+    const queue = terminalOf([
+      { ...offered("file-1", "run-1.raw"), notVerifiedByMscanvas: LABEL },
+      queueItem("file-2", "run-2.raw", { state: "failed", attempts: 1, retryable: true }),
+    ]);
+    renderApp(apiWith(queue, { retry: () => rerun.promise }));
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => { expect(addIn(panel, "run-1.mzML")).not.toHaveAttribute("aria-disabled"); });
+    expect(panel.querySelector(".conversion-run-label")).toBeNull();
+
+    fireEvent.click(await within(panel).findByRole("button", { name: "Retry 1 failed" }));
+    await within(panel).findByText("Retrying the failures…");
+    expect(within(panel).queryByRole("button", { name: /^Add run-/u })).toBeNull();
+    expect(panel.querySelector(".conversion-run-label [data-not-verified]")).toHaveTextContent(UI_RESOURCES.en.m74CnvNotVerified);
+    expect(within(group(panel, "run-1.mzML")).getByRole("button", { name: UI_RESOURCES.en.outputOpenFile })).toBeVisible();
+
+    rerun.resolve(queue);
+  });
+
+  it("takes an output's answer back when a retry settles the queue again", async () => {
+    const items = [
+      offered("file-1", "run-1.raw"),
+      queueItem("file-2", "run-2.raw", { state: "failed", attempts: 1, retryable: true }),
+    ];
+    // The same operation and the same output id: only the round says it is a
+    // new settling, which is what a retry between two polls looks like.
+    const settledAgain: WorkspaceConversionState = {
+      status: "terminal",
+      operationId: "1",
+      reason: "completed",
+      queue: { ...queueOf(items), retryRound: 1 },
+    };
+    renderApp(apiWith(terminalOf(items), { retry: () => Promise.resolve(settledAgain) }));
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    await waitFor(() => { expect(rows()).toHaveLength(2); });
+    fireEvent.click(await waitFor(() => addIn(panel, "run-1.mzML")));
+    await within(group(panel, "run-1.mzML")).findByText(UI_RESOURCES.en.outputAdded);
+    const showName = "Show in Workbench: run-1.mzML";
+    await within(panel).findByRole("button", { name: showName });
+    const retry = await within(panel).findByRole("button", { name: "Retry 1 failed" });
+    await waitFor(() => { expect(retry).not.toHaveAttribute("aria-disabled"); });
+
+    fireEvent.click(retry);
+    await waitFor(() => { expect(within(group(panel, "run-1.mzML")).getByRole("status")).toBeEmptyDOMElement(); });
+    expect(within(panel).queryByRole("button", { name: showName })).toBeNull();
+    await waitFor(() => { expect(addIn(panel, "run-1.mzML")).not.toHaveAttribute("aria-disabled"); });
+  });
+
   it("says a refused output on its own line, not in the queue's words", async () => {
     const api = apiWith(terminalOf([offered("file-1", "run-1.raw")]), {
       outputAdoption: () => Promise.reject(previewError({ kind: "outputs_not_adoptable", summary: "whole queue words", retryable: false })),
