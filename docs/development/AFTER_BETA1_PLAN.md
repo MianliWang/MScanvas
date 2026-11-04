@@ -513,6 +513,9 @@ writer and Rust's ownership of files.
   `spreadsheetCsv`) are implemented on `be/spreadsheet-csv`. The webview
   control follows after PR #164. The Excel, LibreOffice and WPS check is the
   owner's and pending, so no help or release text claims formula protection.
+- **Status, 2026-11-03:** the webview control, a third button on the results
+  table, is on `ui/targeted-spreadsheet-csv` (PR #206, draft). The Excel,
+  LibreOffice and WPS check is still the owner's and pending.
 
 ## 7. Backlog
 

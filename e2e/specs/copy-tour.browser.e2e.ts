@@ -26,7 +26,7 @@ import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered 
 import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
-import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, REFUSED_END, REFUSED_END_ITEMS, REQUEST_REFUSED, RUNNING, RUNNING_ITEMS, SET_ITEM, STOPPED, STOPPED_ITEMS, STOP_FAILED, STOP_FAILED_ITEMS, WHOLE_SET_ITEM, found, listed } from "../support/runHistory";
+import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, REFUSED_END, REFUSED_END_ITEMS, REQUEST_REFUSED, RETRYING, RETRY_WAITING_ITEM, RUNNING, RUNNING_ITEMS, SET_ITEM, STOPPED, STOPPED_ITEMS, STOP_FAILED, STOP_FAILED_ITEMS, WHOLE_SET_ITEM, found, listed } from "../support/runHistory";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
   admittedIntents,
@@ -1141,6 +1141,25 @@ const STOPS: readonly Stop[] = [
     anchor: "#workbench-inspector [data-provenance]",
   },
   {
+    // The results table's three exports, the spreadsheet CSV just saved (ADR 0054).
+    name: "targeted-table-spreadsheet-saved",
+    table: (locale) => ({
+      ...scenario("projectWithResult", locale),
+      export_targeted_ms1_table: {
+        status: "saved",
+        format: "spreadsheetCsv",
+        fileName: "mscanvas-targeted-ms1-eeeeeeee-results-spreadsheet.csv",
+        rowCount: 2,
+      },
+    }),
+    drive: async () => {
+      await go(3);
+      await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+      await browser.$('[data-targeted-export="spreadsheetCsv"]').click();
+    },
+    anchor: '[data-targeted-table-export] [data-targeted-output="savedTable"]',
+  },
+  {
     // Open project… refused by Rust: the refusal in words, with the head's buttons to try again.
     name: "project-open-failed",
     table: (locale) => ({ ...emptyTable(locale), open_project: { __reject: { kind: "unreadable" } } }),
@@ -1327,6 +1346,13 @@ const STOPS: readonly Stop[] = [
     anchor: '[data-run-history-note="newer"]',
   },
   {
+    // A run Off could not remove: still listed, with recording off and nothing owed.
+    name: "run-history-off-held",
+    table: runHistoryWorld(listed([ENDED], { recording: false }), found(ENDED, ENDED_ITEMS)),
+    drive: openRunHistory,
+    anchor: '[data-run-history-note="off"]',
+  },
+  {
     name: "run-history-unavailable",
     table: runHistoryWorld({ outcome: "unavailable", problem: "unsafeDirectory" }),
     drive: openRunHistory,
@@ -1369,6 +1395,13 @@ const STOPS: readonly Stop[] = [
     table: runHistoryWorld(listed([RUNNING, ENDED]), found(RUNNING, RUNNING_ITEMS)),
     drive: openRunHistory,
     anchor: `[data-run-detail="${RUNNING.runId}"] [data-run-item]`,
+  },
+  {
+    // A retry that has not reached this file yet: it waits, with no Details of its earlier attempt.
+    name: "run-history-retry-waiting",
+    table: runHistoryWorld(listed([RETRYING]), found(RETRYING, [RETRY_WAITING_ITEM, ...ENDED_ITEMS])),
+    drive: openRunHistory,
+    anchor: `[data-run-detail="${RETRYING.runId}"] [data-run-item][data-item-state="pending"]`,
   },
   {
     // A stop nobody could confirm: no code, because neither the queue nor its file keeps one.

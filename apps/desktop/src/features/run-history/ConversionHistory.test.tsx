@@ -100,6 +100,33 @@ describe("what a recorded failure says", () => {
     }
   });
 
+  it("says a set stopped at a member that did not pass, not that nothing was checked", async () => {
+    await failureOf(failedItem({
+      outcome: "refused", failure: "multi_output_member_rejected",
+      outputs: [{ ...FINALIZED, state: "rejected", byteLength: null, sha256: null }, { ...FINALIZED, fileName: "a-2.mzML", state: "not_published", byteLength: null, sha256: null }],
+      completeness: { kind: "notPosed" }, setAdoptable: false,
+    }));
+    fireEvent.click(document.querySelector("[data-run-item] .conversion-item-toggle")!);
+    const integrity = await waitFor(() => {
+      const found = document.querySelector("[data-run-item] .conversion-item-judgements dd");
+      if (found === null) throw new Error("no integrity line yet");
+      return found.textContent;
+    });
+    expect(integrity).toContain(en.cnvIntegritySetRefused);
+    expect(integrity).not.toContain(en.cnvIntegrityNone);
+  });
+
+  it("offers no Details for a file a retry has not reached: what it holds is an earlier attempt", async () => {
+    const earlier = { attempts: 1, outcome: "partial_group", failure: "file_unreadable", outputs: [FINALIZED, { ...FINALIZED, fileName: "a-2.mzML" }], completeness: { kind: "notPosed" }, setAdoptable: false } as const;
+    const read = (state: string): RunReadOutcome => ({ outcome: "found", run: RUN, items: [failedItem({ ...earlier, state })] });
+    for (const [state, toggles] of [["pending", 0], ["failed", 1]] as const) {
+      const view = withApi(api({ listRuns: () => Promise.resolve(listed([RUN])), readRun: () => Promise.resolve(read(state)) }), history);
+      await waitFor(() => expect(document.querySelector(`[data-run-item][data-item-state="${state}"]`)).not.toBeNull());
+      expect(document.querySelectorAll("[data-run-item] .conversion-item-toggle").length).toBe(toggles);
+      view.unmount();
+    }
+  });
+
   it("says what ended a queue as what happened, with the code beside it, and a stranger as itself", async () => {
     const cases = [
       ["backend_quarantined", en.runHistoryEndedUnconfirmedProcess],
