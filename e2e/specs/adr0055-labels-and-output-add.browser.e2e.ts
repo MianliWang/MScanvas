@@ -607,7 +607,8 @@ describe("A0055 and ADR 0052, rendered", () => {
         return {
           pressed: reason(`${one} ${button}`),
           other: reason(`${other} ${button}`),
-          tags: document.querySelectorAll(".conversion-run-list [data-not-verified]").length,
+          // Drawn, not merely in the document: every member's label stays on the screen.
+          tags: [...document.querySelectorAll(".conversion-run-list [data-not-verified]")].filter((each) => each.getBoundingClientRect().height > 0).length,
         };
       }, OUTPUT_ADD, pressed, group(locale, SET_NAMES[2]!));
       await shot(`set-member-adding${viewing ? "-viewing" : ""}${labelled ? "-labelled" : ""}-${locale}-${String(width)}`);
