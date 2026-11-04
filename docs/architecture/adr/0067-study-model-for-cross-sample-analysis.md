@@ -4,9 +4,8 @@ Status: **Accepted (2026-11-03)**, by the owner's answers in the decision table
 of that day (version 2026-11-03.2), listed by id
 [at the end](#open-questions-for-the-owner); proposed on 2026-10-30. The record
 of those answers is section 1d of
-[OWNER_DECISIONS_V511](../../development/OWNER_DECISIONS_V511.md), written by
-PR #212, which has not merged as this is written; until it does, the ids and the
-date here are the citation. The owner directed on 2026-10-30 that analysis is no
+[OWNER_DECISIONS_V511](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03), written by
+PR #212, merged on 2026-11-04. The owner directed on 2026-10-30 that analysis is no
 longer deferred and is to be planned and built (G1), and that amendment is on
 `main` (#194). Nothing here is implemented, and nothing here reaches the
 interface. The answers decide this record's ten questions and the ids listed
@@ -1169,9 +1168,9 @@ outcomes.
 ## Open questions for the owner
 
 *Answered by the owner on 2026-11-03, in the decision table of that day (version
-2026-11-03.2). Cited by id and date until PR #212 puts them in section 1d of
-[OWNER_DECISIONS_V511](../../development/OWNER_DECISIONS_V511.md), which also holds
-each option's full gains and costs; this table keeps those that shape this record.
+2026-11-03.2). Section 1d of
+[OWNER_DECISIONS_V511](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03) (PR #212) records them
+with each answer's gains and costs; this table keeps those that shape this record.
 No answer approves a dependency.*
 
 | Question | Id and option | Asked | Answer | Where |
