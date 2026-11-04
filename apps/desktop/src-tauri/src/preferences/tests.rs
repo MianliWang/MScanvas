@@ -766,6 +766,59 @@ fn a_layout_commit_and_an_appearance_commit_keep_each_others_fields() {
     assert_eq!(after_appearance.appearance.locale, UiLocale::En);
 }
 
+/// The lanes that add the display rows add no Rust, so a display commit on its
+/// own is held here: over a stored folder and non-default groups on every side.
+#[test]
+fn a_commit_keeps_the_groups_and_the_folder_it_does_not_name() {
+    let root = Root::new("merge-display");
+    let store = root.store();
+    let folder = PathBuf::from(installation_folder());
+    saved(&store.save(&appearance(UiLocale::ZhCn, RosterDensity::Compact)));
+    saved(&store.save(&layout(PanelPresentation::Hidden, PanelPresentation::Shown)));
+    saved(&store.remember_backend_folder(Some(&folder)));
+
+    let chosen = DisplayPreferences {
+        text_size: TextSize::Large,
+        contrast: TextContrast::High,
+        ..DisplayPreferences::default()
+    };
+    let after_display = saved(&store.save(&display(chosen)));
+    assert_eq!(
+        after_display,
+        UiPreferences {
+            appearance: AppearancePreferences {
+                locale: UiLocale::ZhCn,
+                density: RosterDensity::Compact,
+            },
+            layout: LayoutPreferences {
+                roster: PanelPresentation::Hidden,
+                details: PanelPresentation::Shown,
+            },
+            display: chosen,
+            backend_folder: Some(installation_folder()),
+            ..UiPreferences::default()
+        }
+    );
+
+    let after_layout =
+        saved(&store.save(&layout(PanelPresentation::Shown, PanelPresentation::Hidden)));
+    assert_eq!(after_layout.display, chosen);
+
+    // Turning remembering off moves the switch and leaves the rest of its own
+    // group as stored, whatever the commit carried for it.
+    let off = saved(&store.save(&display(DisplayPreferences {
+        remember: false,
+        ..DisplayPreferences::default()
+    })));
+    assert_eq!(
+        off.display,
+        DisplayPreferences {
+            remember: false,
+            ..chosen
+        }
+    );
+}
+
 #[test]
 fn a_commit_merges_onto_what_is_on_disk_rather_than_onto_what_it_last_saw() {
     let root = Root::new("merge-base");
