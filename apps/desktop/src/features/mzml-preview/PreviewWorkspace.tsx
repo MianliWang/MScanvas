@@ -507,13 +507,14 @@ export function PreviewWorkspace() {
   const rawViewReadyName = rawViewFinished === null || rawViewFinished.handle === rawPaneRow?.handle
     ? null : nameOfRow(rawViewFinished.handle);
   /**
-   * A failure the reader has not seen: the row was not on screen when it ended.
-   * Written during the render that shows it, so the bar's line and the alert end
-   * the moment the row's pane says it.
+   * A failure the reader has not seen: the row was not on screen when it ended,
+   * or a drawer covered it, where the pane's alert is inert. Written during the
+   * render that shows it, so the bar's line and the alert end the moment the row's
+   * pane says it.
    */
   const rawViewFailed = workspace.rawView.state.state === "failed" ? workspace.rawView.state : null;
   const seenRawViewFailure = useRef<number | null>(null);
-  if (rawViewFailed !== null && surface === "workbench" && rawViewFailed.handle === rawPaneRow?.handle) seenRawViewFailure.current = rawViewFailed.operation;
+  if (rawViewFailed !== null && surface === "workbench" && drawer === null && rawViewFailed.handle === rawPaneRow?.handle) seenRawViewFailure.current = rawViewFailed.operation;
   const rawViewFailedUnseen = rawViewFailed !== null && seenRawViewFailure.current !== rawViewFailed.operation ? rawViewFailed : null;
   const rawViewFailedName = rawViewFailedUnseen === null ? null : nameOfRow(rawViewFailedUnseen.handle);
   const foldDrawerForRawPane = () => {
@@ -605,6 +606,23 @@ export function PreviewWorkspace() {
     if (!rawPaneOverOwnRead || document.activeElement !== document.body) return;
     evidenceRef.current?.querySelector<HTMLElement>("[data-raw-view-pane] button")?.focus({ preventScroll: true });
   }, [rawPaneOverOwnRead]);
+  /**
+   * A Show the view's end takes away, in the bar, on a pressed mzML row or on the
+   * Conversion page. Read in the ref's cleanup, as above. The keyboard continues at
+   * the surface on screen, not at the top of the page. A pane's own Show is the
+   * pane's to hand on.
+   */
+  const showHeldFocus = useRef(false);
+  const rawViewShowRef = useCallback((node: HTMLButtonElement | null) => {
+    if (node === null) return;
+    return () => { if (node === document.activeElement) showHeldFocus.current = true; };
+  }, []);
+  useLayoutEffect(() => {
+    if (!showHeldFocus.current) return;
+    showHeldFocus.current = false;
+    if (document.activeElement !== null && document.activeElement !== document.body) return;
+    document.getElementById(surface === "workbench" ? "workbench-evidence" : `workbench-${surface}`)?.focus({ preventScroll: true });
+  });
 
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
@@ -1062,6 +1080,7 @@ export function PreviewWorkspace() {
               showText: t("rawViewShow", { name: shortFileName(rawViewRunning.fileName) }),
               showLabel: t("rawViewShow", { name: rawViewRunning.fileName }),
               onShow: () => showRawRow(rawViewRunning.handle),
+              showRef: rawViewShowRef,
             }}
             hidden={runHistoryOpen}
             onOpenHistory={() => setRunHistoryOpen(true)}
@@ -1359,7 +1378,7 @@ export function PreviewWorkspace() {
               <EmptyState
                 className="evidence-state"
                 message={<><Icon name="clock" size={28} /><strong data-raw-view-held="" title={rawViewRunning.fileName}>{rawViewReason}</strong></>}
-                action={<Button aria-label={t("rawViewShow", { name: rawViewRunning.fileName })} onClick={() => showRawRow(rawViewRunning.handle)}>
+                action={<Button ref={rawViewShowRef} aria-label={t("rawViewShow", { name: rawViewRunning.fileName })} onClick={() => showRawRow(rawViewRunning.handle)}>
                   {t("rawViewShow", { name: shortFileName(rawViewRunning.fileName) })}
                 </Button>}
               />
@@ -1421,7 +1440,7 @@ export function PreviewWorkspace() {
           )}
         </aside>
       </main>
-      <WorkbenchStatusBar backend={backendItem} items={statusItems} busy={busyReason} rawView={rawViewStatus}
+      <WorkbenchStatusBar backend={backendItem} items={statusItems} busy={busyReason} rawView={rawViewStatus} rawViewShowRef={rawViewShowRef}
         dropStatus={workspace.dropSubscriptionStatus} onNavigate={setSurface} inert={drawer !== null}
         // Connectivity is not a failed import: Rust may still hold a valid
         // roster and the picker actions remain usable, so its recovery stays

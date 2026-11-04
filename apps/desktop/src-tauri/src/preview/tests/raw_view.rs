@@ -1967,6 +1967,21 @@ fn the_availability_answer_follows_decision_4s_table_and_touches_nothing() {
         .expect("a RAW one byte over the limit");
     let large = add_one_acquisition(&session.service, &large);
     assert_eq!(refusal(&session, &large), "view_cache_entry_too_large");
+    // At the limit itself View is offered, as a press there is admitted.
+    let at_limit = session.raws.thermo_raw("at-limit.raw");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&at_limit)
+        .and_then(|file| file.set_len(MAX_RAW_BYTES))
+        .expect("a RAW at the limit");
+    let at_limit = add_one_acquisition(&session.service, &at_limit);
+    assert_eq!(
+        availability(&session, &at_limit),
+        RawViewAvailabilityDto::Available {
+            available: true,
+            unverified_build_release: None,
+        }
+    );
 
     session.service.bind_view_cache(None);
     assert_eq!(refusal(&session, &large), "view_cache_unavailable");

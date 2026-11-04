@@ -391,8 +391,8 @@ under the `e2e` feature it is the same task-owned QA root.
   Owner decision, 2026-11-03 (DEF-2): option (b). Always remove the cache folder on
   uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets and preferences
   stay opt-in behind "Delete the application data".
-  Not an owner decision: no hook is on `main` yet, so until one lands the sentence above
-  still describes an uninstall; see [slice 3 note 9](#slice-3-notes-2026-11-03).
+  Not an owner decision: no hook is on `main` yet, so until one lands the first sentence
+  of this item still describes an uninstall; see [slice 3 note 9](#slice-3-notes-2026-11-03).
 
 **Ownership marker.** The marker, `.mscanvas-view-cache-owner`, holds a
 constant, `mscanvas-view-cache\n`, as the staging marker does: it proves which
@@ -1467,13 +1467,17 @@ unless it carries "Owner decision, 2026-11-03".
      Owner decision, 2026-11-03 (P203): accepted. Try again appears after a failure
      of the build once the cause has gone.
    - **A failure out of sight** has the status bar's line and Show {name} until its
-     row is looked at, and one `role="alert"`, as decision 1 asks.
+     row is looked at, and one `role="alert"`, as decision 1 asks. A failure under an
+     open drawer is out of sight too: the pane's alert is inert there.
    - **The keyboard.** Tabs, then Convert, then the panel (`Tabs` takes `actions`).
      Storing has no button, so the pane itself holds the keyboard. Open and a re-read
      hand it to the evidence and the pane. Show goes to the row, or where the list
      stays folded to the evidence, and Tab reaches the pane's first button. A held
      Enter presses nothing in the pane or on a failed open's actions, because each
-     press hands the keyboard to the next button.
+     press hands the keyboard to the next button. A button that leaves with no change
+     of state, such as a Try again answered by Rust or a Show whose view ended, hands
+     the keyboard to the pane's first button, refused or not. The Show of the bar, of a
+     pressed mzML row and of the Conversion page hands it to the surface on screen.
    - **Converted at** is in the reader's locale, with the recorded instant as its title.
 9. **What went to the owner.**
    - **DEF-2.** `OWNER_DECISIONS_V511.md` says it blocks shipping the view cache.
@@ -1510,10 +1514,14 @@ unless it carries "Owner decision, 2026-11-03".
       QC_pool_01.raw for viewing", and A0060 (2026-10-30) took the phases "as written".
       As built they are "Checking the file" and "Converting for viewing", beside the
       name in the pane's head. The owner has not seen this change of words.
-    - **The sentences of decisions 4 and 9.** Decision 9's sentences read "The
+    - **The sentences of decisions 4 and 9.** Decision 9 has "The drive that holds
+      MSCanvas's application data needs about {n} GiB free; {m} GiB are free. Free space
+      on it, or convert this file to a folder on another drive." and "{m} GiB are free
+      on the drive that holds MSCanvas's application data." As built they are "The
       application-data drive needs about {needed} GiB free and has {free} GiB. Free
       space, or convert this file to another drive." and "{free} GiB are free on the
-      application-data drive." Decision 4's proposed "ProteoWizard is not available."
+      application-data drive." The owner has not seen this change of words. Decision
+      4's proposed "ProteoWizard is not available."
       and "This ProteoWizard does not report its release, so it cannot convert vendor
       files." are those codes' existing messages, "ProteoWizard was not found." and
       "MSCanvas has no conversion evidence for that acquisition format on the installed
@@ -1527,6 +1535,16 @@ unless it carries "Owner decision, 2026-11-03".
       asks for a move outside the application, which nothing in decision 12 would read
       again. Beside a retryable failure it takes the place of that failure's Try again
       until Rust answers, so two buttons do not share one name.
+    - **A refusal's reason sits above View,** in the pane's message, with the buttons
+      under it. Decision 3's Refused row has "its reason below it".
+    - **Ready says less than decision 3.** Decision 3 has the status bar say Ready with
+      Show {name} "until the next operation". As built, while that row is highlighted
+      and its pane would show Ready, the bar has no line and the live region says
+      nothing, also when another surface or a drawer covers the pane.
+    - **The label in the first moments of a view.** Decision 4 puts it in the progress
+      line. Rust holds no label until the worker has bound the build, so
+      `begin_raw_view`'s answer and any read before that binding show none. This was
+      read from the code, not timed.
 
 ## Alternatives rejected
 

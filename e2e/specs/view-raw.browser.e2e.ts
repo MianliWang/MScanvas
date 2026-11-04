@@ -509,6 +509,95 @@ for (const locale of ["en", "zh-CN"] as const) {
         await clean();
       });
 
+      it("a button that leaves with no change of state hands the keyboard on, never to the body", async () => {
+        const keyboardOn = (css: string) => browser.waitUntil(
+          async () => browser.execute((target: string) => document.activeElement?.matches(target) === true, css),
+          { timeout: 10_000, timeoutMsg: `the keyboard never reached ${css}` },
+        );
+        const withState = (state: unknown, availability: unknown) => {
+          const table = world(locale);
+          table.get_raw_view_state = { state, availability };
+          return table;
+        };
+        const unrecognized = { available: false, code: "view_cache_root_unrecognized" };
+        const busy = { available: false, code: "raw_view_busy" };
+        const ended = { state: "cancelled", operation: 1, handle: FIRST.handle, stored: false };
+        const sourceChanged = { state: "failed", operation: 1, handle: FIRST.handle, intentId: shippedIntent.id, code: "raw_view_source_changed", message: "Controlled", retryable: true, neededBytes: null, freeBytes: null };
+
+        // A press whose answer changes no state: the pane's first button, refused or not.
+        await open(locale, viewport, withState({ state: "idle" }, unrecognized));
+        await highlight(FIRST);
+        await browser.$("[data-raw-view-reask]").waitForExist({ timeout: 10_000 });
+        await focusOn("[data-raw-view-reask]");
+        await step({ state: "idle" });
+        await browser.keys("Enter");
+        await keyboardOn("[data-raw-view-view]");
+
+        await open(locale, viewport, withState(sourceChanged, unrecognized));
+        await highlight(FIRST);
+        await browser.$("[data-raw-view-reask]").waitForExist({ timeout: 10_000 });
+        await focusOn("[data-raw-view-reask]");
+        await step(sourceChanged);
+        await browser.keys("Enter");
+        await keyboardOn("[data-raw-view-retry]");
+
+        // A Show the view's end takes away: the pane's own, then the surface on screen.
+        await open(locale, viewport, withState(running("converting"), busy));
+        await highlight(SECOND);
+        await browser.$("[data-raw-view-view] + button").waitForExist({ timeout: 10_000 });
+        await focusOn("[data-raw-view-view] + button");
+        await step(ended);
+        await keyboardOn("[data-raw-view-view]");
+
+        await open(locale, viewport, withState(running("converting"), busy));
+        await foldNarrowRoster();
+        await browser.$("[data-status-raw-view] button").waitForExist({ timeout: 10_000 });
+        await focusOn("[data-status-raw-view] button");
+        await step(ended);
+        await keyboardOn("#workbench-evidence");
+
+        await open(locale, viewport, withState(running("converting"), busy));
+        await revealRosterRow(OPEN.handle);
+        await browser.$(`.grouped-roster [data-handle="${OPEN.handle}"]`).click();
+        await browser.$("[data-raw-view-held]").waitForExist({ timeout: 10_000 });
+        await focusOn(".evidence-state:has([data-raw-view-held]) button");
+        await step(ended);
+        await keyboardOn("#workbench-evidence");
+
+        await open(locale, viewport, withState(running("converting"), busy));
+        await browser.$('.workbench-navigation [data-surface-tab="conversion"]').click();
+        await browser.$(".raw-view-notice button").waitForExist({ timeout: 10_000 });
+        await focusOn(".raw-view-notice button");
+        await step(ended);
+        await keyboardOn("#workbench-conversion");
+        await clean();
+      });
+
+      if (viewport[0] <= 1050) it("a failure under the open list is said outside it, once: the pane keeps it as the list folds", async () => {
+        const table = world(locale);
+        table.get_raw_view_state = { state: running("converting"), availability: { available: false, code: "raw_view_busy" } };
+        await open(locale, viewport, table);
+        await foldNarrowRoster();
+        await browser.$("[data-status-raw-view] button").click();
+        await phase("converting");
+        await revealRosterRow(FIRST.handle);
+        await browser.waitUntil(async () => browser.execute(() => document.getElementById("workbench-evidence")?.hasAttribute("inert") === true), { timeoutMsg: "the open list left the evidence live" });
+
+        await step({ state: "failed", operation: 1, handle: FIRST.handle, intentId: shippedIntent.id, code: "view_cache_not_stored", message: "Controlled", retryable: true, neededBytes: null, freeBytes: null });
+        const said = () => browser.execute(() => {
+          const pane = document.querySelector('[role="alert"][data-raw-view="failed"]');
+          return { outside: document.querySelector('[data-live-region="raw-view-alert"]')?.textContent ?? "", paneInert: pane?.closest("[inert]") !== null };
+        });
+        await browser.waitUntil(async () => (await said()).outside !== "", { timeout: 10_000, timeoutMsg: "a failure under the list was said nowhere it can be heard" });
+        expect((await said()).paneInert).toBe(true);
+
+        await readBackSavedPreferences();
+        await foldNarrowRoster();
+        await browser.waitUntil(async () => (await said()).outside === "", { timeout: 10_000, timeoutMsg: "the alert outside the list outlived the pane's own" });
+        expect((await said()).paneInert).toBe(false);
+        await clean();
+      });
+
       it("a re-read of a failed open runs in the pane, with Cancel, and its failure shows", async () => {
         const table = world(locale);
         table.get_raw_view_state = { state: ready(), availability: AVAILABLE };

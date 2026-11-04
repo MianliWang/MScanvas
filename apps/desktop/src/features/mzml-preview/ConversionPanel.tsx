@@ -1,7 +1,7 @@
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { ownedErrorDetail } from "./ownedErrorMessages";
 import { conversionCountParts, conversionErrorMessage, conversionJudgedOutputOnly, conversionNoticeMessage } from "./conversionMessages";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type Ref, type RefObject } from "react";
 import { useListWindow, type ListWindowRow } from "./conversionListWindow";
 
 import type {
@@ -92,6 +92,8 @@ export interface ConversionRawViewHolder {
   readonly showText: string;
   readonly showLabel: string;
   readonly onShow: () => void;
+  /** The view's end takes Show away, from under the keyboard if it is there. */
+  readonly showRef: Ref<HTMLButtonElement>;
 }
 
 export interface ConversionPanelProps {
@@ -579,7 +581,7 @@ function AvailabilityNotice({
         // (decision 5), because this surface has no Cancel for a view.
         <div className="notice notice-warning raw-view-notice" key={notice.reason}>
           <p id={notice.id} title={rawViewHolder.title}>{rawViewHolder.reason}</p>
-          <Button size="sm" aria-label={rawViewHolder.showLabel} title={rawViewHolder.title} onClick={rawViewHolder.onShow}>{rawViewHolder.showText}</Button>
+          <Button ref={rawViewHolder.showRef} size="sm" aria-label={rawViewHolder.showLabel} title={rawViewHolder.title} onClick={rawViewHolder.onShow}>{rawViewHolder.showText}</Button>
         </div>
       ) : (
         <p className="notice notice-warning" id={notice.id} key={notice.reason}>

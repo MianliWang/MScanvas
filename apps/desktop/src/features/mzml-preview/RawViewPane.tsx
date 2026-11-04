@@ -138,27 +138,25 @@ export function RawViewPane({ row, view, localReason, runningName, canOpen, open
   const name = formatDatasetLabel(row);
   const shownName = shortFileName(name, HEADING_NAME_LIMIT);
 
-  // The buttons change with the state, and the one pressed goes with it. The
-  // keyboard stays in the pane rather than falling to the body; a move of the
-  // reader's own is left alone, because only a change of state asks this.
-  // Storing is a change of its own: it has no button, so the pane itself holds
-  // the keyboard until the next state offers one.
+  // The button that held the keyboard can leave with a state, or with an answer
+  // that changes no state. The keyboard stays in the pane rather than falling to
+  // the body: on the first button, refused or not, because a refused one says why
+  // and a cancelled view's View is offered one read later. Storing has no button,
+  // so the pane itself holds it. A move of the reader's own is left alone: what
+  // they moved off is still in the document.
   const root = useRef<HTMLDivElement>(null);
-  const heldFocus = useRef(false);
-  const kind = own?.state === "running" && own.phase === "storing" ? "storing" : own?.state ?? "idle";
-  const shownKind = useRef(kind);
+  const held = useRef<Element | null>(null);
   useLayoutEffect(() => {
     const node = root.current;
     if (node === null) return;
-    if (shownKind.current !== kind && heldFocus.current && (document.activeElement === null || document.activeElement === document.body)) {
+    if (held.current?.isConnected === false && (document.activeElement === null || document.activeElement === document.body)) {
       (node.querySelector<HTMLElement>("button") ?? node).focus({ preventScroll: true });
     }
-    shownKind.current = kind;
-    heldFocus.current = node.contains(document.activeElement);
+    held.current = node.contains(document.activeElement) ? document.activeElement : null;
   });
   // Between renders too: a press right after the keyboard arrived renders nothing first.
-  const onFocus = () => { heldFocus.current = true; };
-  const onBlur = (event: FocusEvent) => { if (event.relatedTarget !== null) heldFocus.current = false; };
+  const onFocus = (event: FocusEvent) => { held.current = event.target; };
+  const onBlur = (event: FocusEvent) => { if (event.relatedTarget !== null) held.current = null; };
 
   // Rust's answer decides whether View or Try again can be pressed. A press it
   // refused after the last read is said here too, and holds nothing: it was

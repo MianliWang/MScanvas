@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type MouseEvent } from "react";
+import { useLayoutEffect, useRef, type MouseEvent, type Ref } from "react";
 
 import { Button, Icon, StatusBar, type IconName } from "../../components/ui";
 import type { UiMessage } from "../preferences/i18n";
@@ -79,12 +79,14 @@ export function statusBusyReason(flags: BusyFlags, t: UiMessage): string | "conv
  * then the layout's save state and a file drop that stopped working. Built
  * from existing state only; it starts no work.
  */
-export function WorkbenchStatusBar({ backend, items, busy, rawView = null, dropStatus, dropProblem = null, onReconnectDrop, onNavigate, inert = false }: {
+export function WorkbenchStatusBar({ backend, items, busy, rawView = null, rawViewShowRef, dropStatus, dropProblem = null, onReconnectDrop, onNavigate, inert = false }: {
   readonly backend: StatusBackend;
   readonly items: readonly ShellContextItem[];
   readonly busy: string | "conversion" | null;
   /** A one-click view under way, or ready while its row is not on screen. */
   readonly rawView?: StatusRawView | null;
+  /** That line's Show, which the view's end can take away from under the keyboard. */
+  readonly rawViewShowRef?: Ref<HTMLButtonElement>;
   readonly dropStatus: "available" | "connecting" | "unavailable";
   /** What went wrong connecting file drop, while it is unavailable. */
   readonly dropProblem?: string | null;
@@ -146,7 +148,7 @@ export function WorkbenchStatusBar({ backend, items, busy, rawView = null, dropS
       // The reason a refused workspace action points at, while this is it.
       id={busy !== null && busy === rawView.reason ? STATUS_BUSY_ID : undefined} title={rawView.title}>
       <span className="status-item-text">{rawView.text}</span>
-      <Button variant="secondary" size="sm" aria-label={rawView.showLabel} onClick={rawView.onShow}>{t("rawViewShowShort")}</Button>
+      <Button ref={rawViewShowRef} variant="secondary" size="sm" aria-label={rawView.showLabel} onClick={rawView.onShow}>{t("rawViewShowShort")}</Button>
     </span>}
   </>;
   const end = <>

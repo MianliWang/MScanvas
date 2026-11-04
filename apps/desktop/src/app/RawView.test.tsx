@@ -3,7 +3,8 @@
  * slice 3), over a fake boundary whose answers each test moves by hand.
  */
 
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -11,12 +12,12 @@ import { PreviewApiProvider } from "../features/mzml-preview/api";
 import type { RawViewAvailability, RawViewSnapshot, RawViewState, SelectedFile, ViewSource } from "../features/mzml-preview/contracts";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
 import { rawViewFailureText, shortFileName, viewSourceSettings } from "../features/mzml-preview/RawViewPane";
+import { usePreviewWorkspace } from "../features/mzml-preview/usePreviewWorkspace";
 import { UI_RESOURCES } from "../features/preferences/i18n";
-import { spectrumSelectionAvailability } from "../features/mzml-preview/viewer/selectionAvailability";
 import { ProjectApiProvider, type ProjectState } from "../features/project/projectApi";
 import { chooseRosterAction, rosterActionRefused } from "../test/rosterActions";
 import { showBackendBanner } from "../test/backendBanner";
-import { availableBackend, buildPreview, chosenBackend, createFakePreviewApi, createFakeWorkspaceDropTransport, selectedFile, shippedIntent, unavailableBackend, type FakePreviewApiOptions } from "../test/previewFixtures";
+import { availableBackend, buildPreview, chosenBackend, createFakePreviewApi, createFakeWorkspaceDropTransport, queueItem, queueOf, selectedFile, shippedIntent, unavailableBackend, type FakePreviewApiOptions } from "../test/previewFixtures";
 import { createFakeProjectApi, openProject, projectInput, projectLayer } from "../test/projectFixtures";
 import { openProjectSurface } from "../test/projectMenu";
 
@@ -51,7 +52,7 @@ const failed = (code: string, retryable: boolean, extra: Partial<RawViewState> =
 } as RawViewState);
 
 /** A session whose view the test moves by hand. */
-function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; checkingInstallation?: boolean; project?: ProjectState; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"]; chosenInstallation?: FakePreviewApiOptions["chosenInstallation"] } = {}) {
+function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; checkingInstallation?: boolean; project?: ProjectState; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"]; chosenInstallation?: FakePreviewApiOptions["chosenInstallation"]; initialConversion?: FakePreviewApiOptions["initialConversion"] } = {}) {
   const world = { state: initial.state ?? ({ state: "idle" } as RawViewState), availability: initial.availability ?? ({ available: true, unverifiedBuildRelease: null } as RawViewAvailability) };
   const begun: string[] = [];
   const cancelled: number[] = [];
@@ -67,6 +68,7 @@ function session(initial: { state?: RawViewState; availability?: RawViewAvailabi
     ...(initial.preview === undefined ? {} : { preview: initial.preview }),
     ...(initial.spectrum === undefined ? {} : { spectrum: initial.spectrum }),
     ...(initial.chosenInstallation === undefined ? {} : { chosenInstallation: initial.chosenInstallation }),
+    ...(initial.initialConversion === undefined ? {} : { initialConversion: initial.initialConversion }),
     getRawViewState: read,
     beginRawView: (handle) => { begun.push(handle); world.state = running("checkingSource"); return Promise.resolve(world.state); },
     cancelRawView: (operation) => { cancelled.push(operation); world.state = { state: "cancelled", operation, handle: RAW.handle, stored: false }; return Promise.resolve(world.state); },
@@ -485,6 +487,74 @@ describe("viewing a Thermo RAW row", () => {
       await act(async () => { fireEvent.click(view); });
       await waitFor(() => expect(within(evidence()).getByRole("button", { name: words.cancel })).toHaveFocus());
     });
+
+    describe("a button that leaves while the state stays the same", () => {
+      const refused = (code: string): RawViewAvailability => ({ available: false, code });
+      const free: RawViewAvailability = { available: true, unverifiedBuildRelease: null };
+      const press = async (button: HTMLElement) => { button.focus(); await act(async () => { fireEvent.click(button); }); };
+      const reask = () => within(evidence()).findByRole("button", { name: words.rawViewTryAgain });
+
+      it("hands on from the Try again that asked about a moved folder to View", async () => {
+        const { world } = session({ availability: refused("view_cache_root_unrecognized") });
+        await highlight();
+        const again = await reask();
+        world.availability = free;
+        await press(again);
+        await waitFor(() => expect(viewButton()).toHaveFocus());
+      });
+
+      it("hands on from it beside a failure to that failure's Try again", async () => {
+        const { world } = session({ state: failed("raw_view_source_changed", true), availability: refused("view_cache_root_unrecognized") });
+        await highlight();
+        const again = await reask();
+        world.availability = free;
+        await press(again);
+        await waitFor(() => expect(evidence().querySelector("[data-raw-view-retry]")).toHaveFocus());
+      });
+
+      it("hands on from the Try again after a read that failed to View", async () => {
+        const { read } = session();
+        await waitFor(() => expect(screen.getByRole("button", { name: words.rosterToggle })).not.toHaveAttribute("aria-disabled"));
+        const answer = read.getMockImplementation()!;
+        read.mockImplementation(() => Promise.reject(new Error("no answer")));
+        const found = await row(RAW);
+        await act(async () => { fireEvent.click(found); });
+        const again = await reask();
+        read.mockImplementation(answer);
+        await press(again);
+        await waitFor(() => expect(viewButton()).toHaveFocus());
+      });
+
+      it("hands on from the Choose folder that cured the row to View", async () => {
+        const { world } = session({ availability: refused("backend_not_found"), chosenInstallation: chosenBackend });
+        await highlight();
+        const choose = await within(evidence()).findByRole("button", { name: words.rawViewChooseFolder });
+        world.availability = free;
+        await press(choose);
+        await waitFor(() => expect(viewButton()).toHaveFocus());
+      });
+
+      it("hands on from Show to View when the other row's view ends", async () => {
+        const { world } = session({ state: running("converting"), availability: refused("raw_view_busy") });
+        await highlight(OTHER);
+        const show = await within(evidence()).findByRole("button", { name: `Show ${RAW.fileName}` });
+        show.focus();
+        world.state = { state: "cancelled", operation: 1, handle: RAW.handle, stored: false };
+        world.availability = free;
+        await waitFor(() => expect(viewButton()).toHaveFocus(), { timeout: 2_000 });
+      });
+
+      it("leaves a reader who moved off a button that stays where they went", async () => {
+        const { read } = session({ state: running("converting") });
+        await highlight();
+        const cancel = await within(evidence()).findByRole("button", { name: words.cancel });
+        cancel.focus();
+        cancel.blur();
+        const before = read.mock.calls.length;
+        await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(before + 1), { timeout: 2_000 });
+        expect(document.activeElement).toBe(document.body);
+      });
+    });
   });
 
   it("shortens a long name in the bar from its middle, keeping its end", () => {
@@ -835,10 +905,115 @@ describe("viewing a Thermo RAW row", () => {
       await waitFor(() => expect(document.querySelector("[data-raw-view-phase='converting']")).not.toBeNull());
     });
 
-    it("names the view, not a conversion, under a scan a reader cannot select", () => {
-      const lane = { hasLoadedPreview: true, backendUsable: true, backendBusy: false, conversionBusy: false, rawViewBusy: true };
-      expect(spectrumSelectionAvailability(lane)).toEqual({ status: "unavailable", reason: "raw-view-running" });
+    it("names the view, not a conversion, under a scan a reader cannot select, and reads nothing", async () => {
+      const { api } = session();
+      await waitFor(() => expect(screen.getByRole("button", { name: words.rosterToggle })).not.toHaveAttribute("aria-disabled"));
+      await act(async () => { fireEvent.click(await row(selectedFile)); });
+      await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "loaded"));
+      await highlight();
+      await waitFor(() => expect(viewButton()).not.toHaveAttribute("aria-disabled"));
+      await act(async () => { fireEvent.click(viewButton()); });
+      await act(async () => { fireEvent.click(await row(selectedFile)); });
+      await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "loaded"));
+
+      expect(within(evidence()).getAllByText(`Preparing ${RAW.fileName} for viewing.`)[0]).toBeVisible();
+      expect(within(evidence()).queryByText(words.viewerSelectAfterConversion)).toBeNull();
+      const reads = api.requestedSpectra.length;
+      await act(async () => { fireEvent.click(within(screen.getByRole("grid", { name: "Scans" })).getAllByRole("row")[1]!); });
+      expect(api.requestedSpectra).toHaveLength(reads);
     });
+
+    describe("in the tick View is pressed, before any render says so", () => {
+      function mountHook() {
+        let state: RawViewState = { state: "idle" };
+        const api = createFakePreviewApi({
+          availability: availableBackend,
+          initialDatasets: [RAW, selectedFile],
+          getRawViewState: () => Promise.resolve({ state, availability: null }),
+          beginRawView: () => { state = running("checkingSource"); return Promise.resolve(state); },
+        });
+        const { result } = renderHook(() => usePreviewWorkspace(), {
+          wrapper: ({ children }: { children: ReactNode }) => <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+            <PreviewApiProvider value={api}>{children}</PreviewApiProvider>
+          </WorkspaceDropTransportProvider>,
+        });
+        return { api, result };
+      }
+
+      it("refuses a scan", async () => {
+        const { api, result } = mountHook();
+        await waitFor(() => expect(result.current.rosterLoad.status).toBe("ready"));
+        await act(async () => { result.current.activateDataset(selectedFile.handle); });
+        await waitFor(() => expect(result.current.preview.status).toBe("loaded"));
+        const reads = api.requestedSpectra.length;
+        act(() => {
+          result.current.rawView.begin(RAW.handle);
+          result.current.selectSpectrum(1);
+        });
+        expect(api.requestedSpectra).toHaveLength(reads);
+        await waitFor(() => expect(result.current.rawView.state.state).toBe("running"));
+      });
+
+      it("refuses a conversion", async () => {
+        const { api, result } = mountHook();
+        await waitFor(() => expect(result.current.rosterLoad.status).toBe("ready"));
+        await waitFor(() => expect(result.current.conversion.lane.configurationProbing).toBe(false));
+        act(() => result.current.conversionPlan.describe([RAW.handle]));
+        await waitFor(() => expect(result.current.conversionPlan.current).not.toBeNull());
+        act(() => {
+          result.current.rawView.begin(RAW.handle);
+          result.current.conversion.convert(result.current.conversionPlan.current!.identity);
+        });
+        expect(api.beginRequests()).toHaveLength(0);
+        await waitFor(() => expect(result.current.rawView.state.state).toBe("running"));
+      });
+    });
+  });
+
+  describe("a Show that leaves as the view ends", () => {
+    const end = (world: ReturnType<typeof session>["world"]) => { world.state = { state: "cancelled", operation: 1, handle: RAW.handle, stored: false }; };
+
+    it("hands the bar's keyboard to the evidence", async () => {
+      const { world } = session({ state: running("converting") });
+      const show = await waitFor(() => { const found = statusBar()?.querySelector<HTMLElement>("button"); expect(found).toBeTruthy(); return found!; });
+      show.focus();
+      end(world);
+      await waitFor(() => expect(statusBar()).toBeNull(), { timeout: 2_000 });
+      expect(evidence()).toHaveFocus();
+    });
+
+    it("hands a pressed mzML row's keyboard to the evidence", async () => {
+      const { world } = session({ state: running("converting") });
+      await waitFor(() => expect(statusBar()).not.toBeNull());
+      await act(async () => { fireEvent.click(await row(selectedFile)); });
+      const show = await within(evidence()).findByRole("button", { name: `Show ${RAW.fileName}` });
+      show.focus();
+      end(world);
+      await waitFor(() => expect(evidence().querySelector("[data-raw-view-held]")).toBeNull(), { timeout: 2_000 });
+      expect(evidence()).toHaveFocus();
+    });
+
+    it("hands the Conversion page's keyboard to that page", async () => {
+      const { world } = session({ state: running("converting") });
+      await act(async () => { fireEvent.click(await screen.findByRole("button", { name: words.conversionTask })); });
+      const panel = document.getElementById("workbench-conversion")!;
+      const show = await within(panel).findByRole("button", { name: `Show ${RAW.fileName}` });
+      show.focus();
+      end(world);
+      await waitFor(() => expect(panel.querySelector(".raw-view-notice")).toBeNull(), { timeout: 2_000 });
+      expect(panel).toHaveFocus();
+    });
+  });
+
+  it("reads the row's answer again when the queue ends, so View comes back with no other press", async () => {
+    const queue = queueOf([queueItem(RAW.handle, RAW.fileName, { state: "running", attempts: 1 })]);
+    const { world, api } = session({ availability: { available: false, code: "conversion_busy" }, initialConversion: { status: "running", operationId: "queue", queue } });
+    await highlight();
+    await waitFor(() => expect(document.querySelector("[data-raw-view-refusal='conversion_busy']")).not.toBeNull());
+    world.availability = { available: true, unverifiedBuildRelease: null };
+    api.publishConversion({ status: "terminal", reason: "completed", operationId: "queue", queue });
+    await waitFor(() => expect(viewButton()).not.toHaveAttribute("aria-disabled"), { timeout: 4_000 });
+    expect(document.querySelector("[data-raw-view-refusal]")).toBeNull();
   });
 
   it("shortens a long name in the reason and Show, and keeps the whole on the element", async () => {
@@ -941,6 +1116,29 @@ describe("viewing a Thermo RAW row", () => {
       await act(async () => { fireEvent.click(show); });
       await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "raw-view"));
       expect(moved).toHaveBeenCalledOnce();
+    });
+
+    it("says a failure under the open list by the alert outside it, and once: the pane keeps it as the list folds", async () => {
+      const { world } = session({ state: running("converting") });
+      const show = await waitFor(() => { const found = statusBar()?.querySelector<HTMLElement>("button"); expect(found).toBeTruthy(); return found!; });
+      await act(async () => { fireEvent.click(show); });
+      await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "raw-view"));
+      const toggle = document.querySelector<HTMLElement>('[aria-controls="workbench-roster"]')!;
+      await act(async () => { fireEvent.click(toggle); });
+      await waitFor(() => expect(evidence()).toHaveAttribute("inert"));
+
+      world.state = failed("view_cache_not_stored", true);
+      const outside = document.querySelector('[data-live-region="raw-view-alert"]')!;
+      await waitFor(() => expect(outside).toHaveTextContent(words.errViewCacheNotStored), { timeout: 2_000 });
+      expect(outside.closest("[inert]")).toBeNull();
+      const pane = evidence().querySelector('[role="alert"][data-raw-view="failed"]');
+      expect(pane).not.toBeNull();
+
+      await act(async () => { fireEvent.click(toggle); });
+      await waitFor(() => expect(evidence()).not.toHaveAttribute("inert"));
+      expect(outside).toHaveTextContent("");
+      // The same node, not a new one: nothing was inserted to be said a second time.
+      expect(evidence().querySelector('[role="alert"][data-raw-view="failed"]')).toBe(pane);
     });
   });
 
