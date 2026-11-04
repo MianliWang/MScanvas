@@ -998,8 +998,7 @@ fn a_cell_past_the_mz_axis_is_not_the_next_rows_cell() {
 #[test]
 fn the_result_keeps_the_request_exactly() {
     let document = document(&[ms1(0, "0.1", &[500.0], &[1.0])]);
-    // Each upper bound needs all 17 significant digits, so rounding to any number
-    // of decimals changes it.
+    // Each upper bound needs all 17 significant digits: rounded to fewer, it changes.
     let view = request(
         (0.002538333333, 0.30000000000000004),
         3,
