@@ -16,6 +16,14 @@ All notable changes will be documented here once versioned releases begin.
   dismissed, and Settings turns restore off, saying that kept-aside copies remain.
   A file not taken is offered at the next start only; a marked file waits
   ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md)).
+- **Spreadsheet CSV on a stored targeted result's table.** The results table has
+  a third export, spreadsheet CSV / 电子表格 CSV, beside CSV and TSV. It is a
+  document of its own, `mscanvas_targeted_ms1_results_spreadsheet` schema 1, that
+  starts with a UTF-8 byte-order mark and adds one apostrophe before a formula
+  trigger in a declared text field; numbers, `formula` and code-owned fields are
+  not altered. The CSV and TSV files do not change. The check of how Excel,
+  LibreOffice and WPS open it is pending
+  ([ADR 0054](docs/architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)).
 
 ### Changed
 

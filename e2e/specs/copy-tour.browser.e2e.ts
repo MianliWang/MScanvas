@@ -1252,6 +1252,25 @@ const STOPS: readonly Stop[] = [
     anchor: "#workbench-inspector [data-provenance]",
   },
   {
+    // The results table's three exports, the spreadsheet CSV just saved (ADR 0054).
+    name: "targeted-table-spreadsheet-saved",
+    table: (locale) => ({
+      ...scenario("projectWithResult", locale),
+      export_targeted_ms1_table: {
+        status: "saved",
+        format: "spreadsheetCsv",
+        fileName: "mscanvas-targeted-ms1-eeeeeeee-results-spreadsheet.csv",
+        rowCount: 2,
+      },
+    }),
+    drive: async () => {
+      await go(3);
+      await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+      await browser.$('[data-targeted-export="spreadsheetCsv"]').click();
+    },
+    anchor: '[data-targeted-table-export] [data-targeted-output="savedTable"]',
+  },
+  {
     // Open project… refused by Rust: the refusal in words, with the head's buttons to try again.
     name: "project-open-failed",
     table: (locale) => ({ ...emptyTable(locale), open_project: { __reject: { kind: "unreadable" } } }),

@@ -60,8 +60,8 @@ None of them is in an installer or a release.
   typed list of up to 200 small-molecule targets is reviewed as a digest-named
   plan over one positive-mode, centroided mzML acquisition, or one plan each over
   2–16 of them, and run in a supervised pyOpenMS 3.5.0 worker. Each result is
-  stored beside the project and is read, drawn and exported as SVG, PNG and
-  CSV/TSV from the stored result alone. `[M+H]+` only. It is not identification,
+  stored beside the project and is read, drawn and exported as SVG, PNG,
+  CSV/TSV and spreadsheet CSV from the stored result alone. `[M+H]+` only. It is not identification,
   not a validated assay and not a general XIC, it compares nothing across
   acquisitions, and `NOT_DETECTED` is not proof of absence.
   **Its runtime is development-only:** CPython 3.13.15 with pyOpenMS under
@@ -219,7 +219,8 @@ history, complete raw converter logs, and sending a diagnostics file anywhere;
 and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV,
 the chromatogram's, the linked two-panel figure of the two, and a stored
 targeted-MS1 result's figure of one target (SVG, PNG) and its whole-result
-CSV/TSV table -- there is no
+CSV/TSV table and spreadsheet CSV
+([ADR 0054](docs/architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)) -- there is no
 saved figure specification, no figure composer, and figure settings are not
 remembered across a restart. mzXML output is refused at present
 ([ADR 0043, CNV-D1](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d1--output-formats)
