@@ -1,6 +1,6 @@
 # Owner decisions for the v5.11 backend roadmap
 
-Status: **Answered, with named items open: the owner answered the 21 decisions of section 3 on 2026-10-30 (section 1b), the follow-up questions of 2026-10-31 (section 1c), and the other 32 with every later question on 2026-11-03 (section 1d). Open: ADR 0070's two questions, asked after the table and still unanswered; and what each row of section 1d leaves open** ([OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md)). Nothing here authorizes a release, an upload, a dependency change or outbound contact; each keeps its own approval.
+Status: **Answered, with named items open: the owner answered the 21 decisions of section 3 on 2026-10-30 (section 1b), the follow-up questions of 2026-10-31 (section 1c), and the other 32 with every later question on 2026-11-03 (section 1d). Open: ADR 0070's two questions, asked after the table and still unanswered; and what section 1d lists as open** ([OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md)). Nothing here authorizes a release, an upload, a dependency change or outbound contact; each keeps its own approval.
 
 Date 2026-10-30. This document consolidates every decision the owner still has
 to make before or during the roadmap in `ROADMAP_V511_AND_ANALYSIS.md`. Nothing in it is decided
@@ -165,7 +165,7 @@ A0055, INST-1 and M198 are new ids. They came after section 2 was written and ga
 
 ### 1d. Decided on 2026-11-03
 
-The owner answered in two steps on 2026-11-03.
+The owner answered in two steps on 2026-11-03, and a later answer in chat settled one overlap (HIST-1.2's row).
 
 First, in chat. The owner was shown twelve ids (F-177, P177, P204, Q8-exception, A0006-amendment, P201, P202, DEF-2, A0060-split, P203, A0071-Q2 and A0065-section-7) and CK-1 to CK-8, the follow-ups to the owner's picks on the decision page, each with its recommendation. The owner replied, verbatim: "全部按推荐" ("all as recommended"). That reply covers those ids and nothing else.
 
@@ -201,7 +201,7 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 其余按推荐。
 ```
 
-**The counts.** The paste lists 16 picks that differ from a recommendation or have none: 13 differ (B-2.2, B-5, B-6.4, B-6.5, B-6.9, B-6.11, B-8.1, B-10.3, B-11.2, S-4.2, C-2, U1-1, U1-2.3) and 3 had no recommendation (B-2.1, B-4.6, B-7.2). Of the other 123 rows, 10 are picks equal to the recommendation, which the paste does not list (B-8.2, B-11.4, CK-1 to CK-8), and 113 are "其余按推荐" ("the rest as recommended"). HIST-1.2 is one of those 113 and is written below as open. DEF-2 is in both the chat list and the page, with the same answer, so 139 page rows and 12 chat ids make 150 rows. Each row gives the chosen option as the owner saw it, with every cost it names. Where a pick differs, the row says what the recommendation was.
+**The counts.** The paste lists 16 picks that differ from a recommendation or have none: 13 differ (B-2.2, B-5, B-6.4, B-6.5, B-6.9, B-6.11, B-8.1, B-10.3, B-11.2, S-4.2, C-2, U1-1, U1-2.3) and 3 had no recommendation (B-2.1, B-4.6, B-7.2). Of the other 123 rows, 10 are picks equal to the recommendation, which the paste does not list (B-8.2, B-11.4, CK-1 to CK-8), and 113 are "其余按推荐" ("the rest as recommended"). HIST-1.2 is one of those 113; a later answer in chat replaced what that resolved it to (its row below). DEF-2 is in both the chat list and the page, with the same answer, so 139 page rows and 12 chat ids make 150 rows. Each row gives the chosen option as the owner saw it, with every cost it names. Where a pick differs, the row says what the recommendation was.
 
 **How to read them:**
 
@@ -214,7 +214,7 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 - **Dependencies. No answer here approves a new dependency.** matchms, hdf5-reader, parquet, pyOpenMS 3.6.0 and its backend (`nanobind-backend`), and scikit-learn are each asked for when the work starts.
 - **B-10.4.** Nothing is sent outside the project. A draft is shown to the owner when that step is reached.
 
-**What this section does not do.** It records answers. No answer here means the work is built, and the costs are the page's, not new measurements. The records an answer names (ADR 0055, ADR 0060, ADR 0061, ADR 0063, ADR 0065, ADR 0066, ADR 0067, ADR 0068, ADR 0069, ADR 0071 and others) take it in their own PRs. On 2026-11-04, ADR 0066, ADR 0067, ADR 0068 and ADR 0069 are still on their open branches, which have taken it (#188, #184, #183, #190), and #201, #203, #202 and #207 carry it for ADR 0055, ADR 0060, ADR 0063 and ADR 0071. None of this has merged, and the rest waits for a later records PR, after #201 to #205 merge.
+**What this section does not do.** It records answers. No answer here means the work is built, and the costs are the page's, not new measurements. The records an answer names (ADR 0055, ADR 0060, ADR 0061, ADR 0063, ADR 0065, ADR 0066, ADR 0067, ADR 0068, ADR 0069, ADR 0071 and others) take it in their own PRs. On 2026-11-04, ADR 0066, ADR 0067, ADR 0068 and ADR 0069 are still on their open branches, which have taken it (#188, #184, #183, #190), and #201, #203, #202 and #207 carry it for ADR 0055, ADR 0060, ADR 0063 and ADR 0071. None of this has merged, and the rest waits for a later records PR, after #201 to #204 merge (#205 has); ADR 0065 takes its notes with item 5's PR.
 
 **New ids.** They came after section 2 was written, so sections 2 and 9 still count 53 decisions. An id with a dotted suffix belongs to the decision before the dot. The others belong as follows: F-177, P177, P204, Q8-exception and A0006-amendment to A0061; P201 to A0055; P202 to A0063; A0060-split, P203, VIEW-A and VIEW-B to A0060; A0062.8 to A0062; A0071-Q2 to X-2 (ADR 0071); A0065-section-7 and HIST-1.1 and HIST-1.2 to RUN-1; RT-1 and RT-3 to B-1 (ADR 0066 questions 3 and 9); RO-1 to S-6; XML-1 to N-C2 (ADR 0055 decision 6); U1-1 and U1-2.1 to U1-2.3 to U1's recipe (A-15, B-4, B-11); CK-1 to B-8, CK-2 to B-2, CK-3 to B-7, CK-4 to B-6, CK-5 to S-4, CK-6 to U1-1, CK-7 to B-4 and B-11, CK-8 to C-2.
 
@@ -233,7 +233,7 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 | A0060-split | View with… and Clear view cache (the Settings row) both move to the next slice. Accepted cost: until then only the 10 GiB cap evicts, and a person has no way to clear the cache by hand | Work: that slice, after #203 |
 | P203 | All four departures in #203 accepted: (1) a highlighted RAW row temporarily covers an open preview; (2) decision 1's one-line explanation is not shown; (3) Try again appears after a failure of the build once the cause has gone; (4) "Convert this file…" adds the row to the checked set, so the Conversion page lists every checked file, until N-C3, which comes right after | Work: #203, then N-C3 |
 | A0071-Q2 | Integer arrays above 2^53: refuse them as `Unreadable`. No exact 64-bit integer summation. Intensities are not expected to reach that size (a judgment, not a measurement). New rows with an independent reference are still needed, as the ADR says | Work: those rows, before X1's fixtures. ADR 0071 question 3 is carried to X4 and was not asked |
-| A0065-section-7 | The five edge cases of run history. Items 1 to 4 are accepted as documented. Item 5, the owner's answer: to change, so that Clear and Off also remove private siblings (`.mscanvas-run-history-*`) untouched for over 24 hours, with the Residue lines of ADR 0065 checked first. **Item 5 disagreed with HIST-1.2, and a later answer settled it:** item 5 stands, with no leftover count, see HIST-1.2 | Work: item 5, not built: one small PR after #205 (merged as `2ca8562e`) and #212, not estimated |
+| A0065-section-7 | The five edge cases of run history shown on 2026-11-03 (#205 added a sixth, in the open list below). Items 1 to 4 are accepted as documented. Item 5, the owner's answer: to change, so that Clear and Off also remove private siblings (`.mscanvas-run-history-*`) untouched for over 24 hours, with the Residue lines of ADR 0065 checked first. **Item 5 disagreed with HIST-1.2, and a later answer settled it:** item 5 stands, with no leftover count, see HIST-1.2 | Work: item 5, not built: one small PR after #205 (merged as `2ca8562e`) and #212, not estimated |
 
 **CK-1 to CK-8, the follow-ups to the owner's picks:**
 
@@ -273,7 +273,7 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 | FE-3.2 | **Never bundle one; use the system's YaHei.** The installer does not grow; same as v5.11; not asked again. Cost: Chinese display depends entirely on system fonts | None |
 | HR-1.1 | **Grant; run it when the interface is ready.** Real timing and cancel behaviour get evidence, and nothing runs before the interface is ready. Cost: an idle-desktop window; about 1 slice; if no suitable large file is found, only the search can be recorded | Work: N-R3. The window is approved when its turn comes (HR-1.7). This answers ADR 0060 Q6 |
 | HR-1.2 | **Grant when parallel conversion is on the plan.** The roadmap has not scheduled it, so it takes no time and an approval would not sit waiting. Cost: conversion stays serial, so large batches take as long as now; the roadmap says "only after measuring", so the two wait for each other until the owner speaks | Open: until the owner schedules parallel conversion |
-| HR-1.3 | **Fallback only: grant it only if no public file is found.** Public centroided data comes first, with no conversion, in line with B-11 and the roadmap. Cost: a public 1–2 GiB Orbitrap file must be looked for first; none may be found, and then the window is needed after all | Work: A-13. B-11.2's cost makes this fallback likely. If it comes to that, the window is still approved when its turn comes (HR-1.7) |
+| HR-1.3 | **Fallback only: grant it only if no public file is found.** Public centroided data comes first, with no conversion, in line with B-11 and the roadmap. Cost: a public 1–2 GiB Orbitrap file must be looked for first; none may be found, and then the window is needed after all | Work: A-13. B-11.2's cost makes this fallback likely. If it comes to that, the window is still asked for when its turn comes (HR-1.7) |
 | HR-1.4 | **A separate window.** Clear authority, because the 2026-10-20 release says it covers that occasion only; adds real-machine evidence after the reader changed path. Cost: an idle-desktop window | Work: #175's four native specs, when the window is approved (HR-1.7) |
 | HR-1.5 | **Wait until Thermo is done.** In line with Thermo first, and it takes no window. Cost: Shimadzu and SCIEX users cannot use vendor centroiding here for now | Open: until then |
 | HR-1.6 | **Grant one run, when this step is reached.** One short run on a public mzML, kept with the file's digest; the precondition of R-3's route. Cost: if the values do not match, `msaccess` stays in the open | Work: N-B1, when the window is approved (HR-1.7) |
@@ -388,7 +388,8 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 - **ADR 0070's two open questions were asked after the table and are still open.** Neither the later answer on HIST-1.2 nor U7 answers them:
   1. Decision 3's list: is it the minimum that each record states? Recommended: yes.
   2. The crate's guidance: keep the two lines of `crates/proteowizard/AGENTS.md` ("only the m/z and intensity arrays of one selected spectrum"; never "compute from the arrays") until the first record's code lands, and change them in that slice? Recommended: yes.
-- **"As built, not an owner decision".** Text marked so stays dated and marked so. On `main` that is ADR 0065 section 6's `schemaVersion` line; open PRs may carry more. No answer here accepts it.
+- **"As built, not an owner decision".** Text marked so stays dated and marked so. In ADR 0065 on `main`, since #205, that is the lines so marked in sections 2, 6 and 10, with section 6's `schemaVersion` line; open PRs may carry more. No answer here accepts them. Section 7's items 3 and 4 say "Shipped 2026-11-03, not an owner decision", and the owner accepted them as documented (A0065-section-7); its sixth bullet says the same, and no answer here accepts it.
+- **Three questions #205 left, which no row asked.** ADR 0065 section 7's sixth bullet, "A retry of a run Off could not remove": should such a retry go on writing its record, paths included? That bullet was not among the cases shown to the owner on 2026-11-03. Should the history and the queue agree on Details for a file a retry has not reached? Should the list itself say that a holder blocked a removal?
 - **Answers that depend on a result not yet in:** the 3.6.0 probes (A-03, which decide between B-2.1 and CK-2), whether the planned classes run without matplotlib and Pillow (A-03, B-3.3), the Qt opinion on CK-2's branch, the MSVC reading (RT-3), the BPI match (R-3, HR-1.6), and CK-3's decision after A-22.
 - **Open questions no row asked:** ADR 0071 question 3 (carried to X4); the roster in the project file, which section 1b says "comes back with S-6" and S-6's rows do not cover; the per-scan analyzer term and filter string from R-1 (#154's columns); which item reads the file's declared analyzer for B-4.6, since #182, as R-1 accepted it, widens instrument configurations for the library only; the open items each row names above.
 - **Not approved by any of this:** a new dependency, any hold-release window (each is approved separately when its step is reached, HR-1.7), a release, an upload and outbound contact. Each keeps its own approval.
@@ -880,7 +881,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 *Decided 2026-10-30: (a), as recommended (section 1b).*
 
-*ADR 0070's two open questions were asked after the table of 2026-11-03 and are still open (section 1d).*
+*2026-11-04:* ADR 0070's two open questions were asked after the table of 2026-11-03 and had no answer as of this note (section 1d).
 
 - **Question.** ADR 0056 decision 7 says: "Any computation over the decoded arrays is an algorithm, and it needs its own record." The reader keeps offsets, "never arrays" (:394). The XIC and the MS1 map both compute over the arrays of many spectra. Should one written decision:
   - admit project-owned computations over the reader's decoded arrays, each with its own per-algorithm record (XIC per-scan sum; MS1 map binning; later a summed spectrum);
