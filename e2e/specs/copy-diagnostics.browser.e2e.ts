@@ -360,7 +360,7 @@ describe("Copy diagnostics, rendered", () => {
       // A Tab before the press is what could make it scroll, and a drag would lose its start.
       // With a modifier held, Tab moves no focus, so nothing takes it back before the press.
       for (const modifier of [null, "Control", "Alt", "Meta"]) {
-        it(`a press in the text after a ${modifier === null ? "" : `${modifier}+`}Tab moves nothing, ${locale} ${String(width)}x${String(height)}`, async () => {
+        it(`a press in the text after ${modifier === null ? "a Tab" : `${modifier}+Tab`} moves nothing, ${locale} ${String(width)}x${String(height)}`, async () => {
           await open(locale, width, height);
           await standInClipboard(true);
           await browser.$(READ).click();
