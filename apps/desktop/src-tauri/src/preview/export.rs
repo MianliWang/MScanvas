@@ -959,7 +959,7 @@ enum ExportState {
         /// a selection, a preview, a viewport or a settings change that lands
         /// in between cannot move an export that has already been started onto
         /// different science.
-        export: ClaimedExport,
+        export: Box<ClaimedExport>,
     },
     /// A destination was chosen and the bytes are being written.
     Writing,
@@ -1415,7 +1415,7 @@ impl ScientificExportSlots {
         self.lane = ExportState::AwaitingDestination {
             reservation,
             claimed: false,
-            export,
+            export: Box::new(export),
         };
         Ok(reservation)
     }
