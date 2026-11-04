@@ -19,18 +19,18 @@ spec ran.
 
 | Binding | Exact identity |
 | --- | --- |
-| Scored executable, `xic_candidate.exe` | `73266bea785a5d71d6498b6c72b905524c9a8491cd8348767e85b14b06bd62ee` |
-| Source manifest, listing `Cargo.toml`, `Cargo.lock`, `crates/proteowizard/Cargo.toml`, every `crates/proteowizard/src/**/*.rs` and the example | `90549b3326a9c2ae82ab9b77c0be6f2da8e83f65ddbadb69937a394e895b5411` |
-| Build | `cargo build -p mscanvas-proteowizard --release --example xic_candidate --locked`, rustc 1.97.1 (8bab26f4f 2026-07-14), cargo 1.97.1 (c980f4866 2026-06-30), `x86_64-pc-windows-msvc`, release |
-| `experiments/xic_x2/harness_x2.py` | `9e66de731a6d3d9a730bf0ef1c0e264745d7cdcab12514d805730a30980fb177` |
-| `experiments/xic_x2/run_supplement_x2.py` | `e03f1ec63a62d57fd618d5de8c486a9eb4e134b248e68f1a598cf7c8183ca3b0` |
-| `experiments/xic_x2/combine_x2.py` | `82d6e8f0be31e33c10a47951a4c94f09a2d0a996d4ec7561af36a30c5c3a421c` |
-| `experiments/xic_x2/integer_rows.py` | `0d0e31fad43dbb2e40059dc731535d48bf4416fd46917bf2fe34777bbb43c5de` |
-| `experiments/xic_x2/observe_x2.py` | `f62231352c202658cbfc98d6428d6e6a32dd767b0416490db149521eab140d97` |
+| Scored executable, `xic_candidate.exe` | `a7c6705c95d1bd7165fa8a69342188ca735e85ebf38e4ceb578833571e201ad8` |
+| Source manifest, listing `Cargo.toml`, `Cargo.lock`, `crates/proteowizard/Cargo.toml`, every `crates/proteowizard/src/**/*.rs` and the example | `6784450639e98e0d83f266d5bbbf7a134d8e282eced5bb92a4dbd3eb5794116e` |
+| Build | `cargo build -p mscanvas-proteowizard --release --example xic_candidate --locked --target-dir target`, rustc 1.97.1 (8bab26f4f 2026-07-14), cargo 1.97.1 (c980f4866 2026-06-30), `x86_64-pc-windows-msvc`, release |
+| `experiments/xic_x2/harness_x2.py` | `94782e519e0167f66b3f2e7acdf87b23d64ac782207705d0172d4fa55f2872ff` |
+| `experiments/xic_x2/run_supplement_x2.py` | `6f00be3dac21c6943134932444d4d2c48d29e45ee6c1ac5255d14ead93f94398` |
+| `experiments/xic_x2/combine_x2.py` | `6b106dd2b8de6054288fc773c69639fd92872bfebef6bdb3694c64fbc0f73b84` |
+| `experiments/xic_x2/integer_rows.py` | `98261a2b1a1a95c8d8a391491beb5e20d11dbfd86f5c4cde43c23c51e1475eaa` |
+| `experiments/xic_x2/observe_x2.py` | `7033db210f8a34f39135c7e2fe8c310d6d10d0912774c8b12b4382fe9ddfff47` |
 
 `harness_x2.py identity` runs the build itself, refusing a tree whose sources or runners
 are uncommitted, so this binary is the one these sources make. It ran at commit
-`8c9b8ec6`, on this branch. The manifest binds the build to its source by content, so a
+`abc6b443`, on this branch. The manifest binds the build to its source by content, so a
 later documentation commit does not unbind it. A reader recomputes it at the PR's head,
 by the listing `identity` writes.
 
@@ -53,7 +53,9 @@ argv `[exe, source, ms_level, low, high, snapshot_path, mode]`.
 - **The snapshot.** The source is copied to `snapshot_path`, which must not exist, and
   everything after that reads the copy, so it is the exact bytes read. The runners hash
   it against the frozen source digest after each invocation.
-- **Normal rows** come from `read_xic`, the production entry point, unchanged.
+- **Normal rows** come from `read_xic`, the production entry point, unchanged. A file that
+  cannot be opened or read exits non-zero, because that says nothing about the document
+  and must not score as an honest refusal of one.
 - **`positions`.** The frozen answers state each measured row's point positions, which
   the product has no use for and `XicResult` does not hold. A second pass over the same
   bytes records them, through a `XicSpectrumTransform` that changes nothing. Its result
@@ -90,12 +92,12 @@ they are.
 
 The 73 rows of `harness_x2.py` and the 4 of `run_supplement_x2.py` ran on the same
 executable, and `combine_x2.py` refuses two builds. No result from an earlier build is
-in this matrix. Three earlier complete runs, while the example and runners were being
-written and reviewed, on builds `46509d36…`, `02690522…` and `541880b9…`, also passed 77
-of 77. They are retained as superseded and are not part of this result. The source
-differs from this build's in the example only: where the pass is timed, one `match` arm,
-and how the echo reads a number with spaces around it. `crates/proteowizard/src` is the
-same in all four.
+in this matrix. Four earlier complete runs, while the example and runners were being
+written and reviewed, on builds `46509d36…`, `02690522…`, `541880b9…` and `73266bea…`, also
+passed 77 of 77. They are retained as superseded and are not part of this result. Their
+source differs from this build's in the example only: where the pass is timed, one `match`
+arm, how the echo reads a number with spaces around it, and how a read failure exits.
+`crates/proteowizard/src` is the same in all five.
 
 | Ledger row | ADR named case | Subjects | Status | Runs |
 | --- | --- | --- | --- | --- |
@@ -230,16 +232,17 @@ row also states its expected states and sums by hand, and `freeze` refuses answe
 disagree. The frozen `compare()` scores each row, and the runner also checks each
 `Unreadable` row's array and its reason, `integer_beyond_2_pow_53`.
 
-**Two freezes.** The first, `integer/INTEGER-FROZEN.json`
+**Three freezes, one set of answers.** The first, `integer/INTEGER-FROZEN.json`
 (`bb80b19c159cdc6802919e86d9e31d12261477beff63d2e33e20de1a246a3972`, 2026-11-04T10:54:28Z),
 came before the candidate's first run on any of these rows. Its field
 `candidate_runs_before_freeze: 0` is a statement and not a check: what shows the order is
-that timestamp against the first scored folder's. A later review changed how the runner
-in the same file refuses, and the freeze binds that file, so
-`integer-2/INTEGER-FROZEN.json`
-(`ac2b0e5d5e5a5153f89579aa23c48fdc2b6a014b8b929d207b0342d58b2fda63`) supersedes it. The
-command that wrote it refuses unless every input and answer digest equals the first
-freeze's, and they do. No answer changed after a candidate saw these rows.
+that timestamp against the first scored folder's. Two reviews then changed the runner in
+the same file, and a freeze binds that file, so `integer-2/INTEGER-FROZEN.json`
+(`ac2b0e5d5e5a5153f89579aa23c48fdc2b6a014b8b929d207b0342d58b2fda63`) and
+`integer-3/INTEGER-FROZEN.json`
+(`6181025f6ddffba64f6c55bc3c60b6e39c224629e7d5c773ba4d8f38e8875213`) each supersede the one
+before. The command that writes one refuses unless every input and answer digest equals
+the earlier freeze's, and they do. No answer changed after a candidate saw these rows.
 
 | Rows | Answer |
 | --- | --- |
@@ -266,44 +269,52 @@ Observed, never thresholds. Host: `Windows-11-10.0.26300-SP0`, `Intel64 Family 6
 serial runs per target. The source was read just before each set, so these are
 warm-cache numbers. A cold read was not measured.
 
-**The machine was never idle, and the time moved by about a factor of two between sets,
-with the library unchanged.** Other work ran throughout, and load is the likely reason,
-though only one set sampled it. Three sets follow. The first two are this build. The
-third is build `541880b9…`, with the same `crates/proteowizard/src`, taken about 40 minutes
-earlier. Processor load was sampled only during the second set, by a separate 2-second
-loop over `Win32_Processor.LoadPercentage`: 23 samples, mean 86%, lowest 66%, highest
-100%. Memory load was 71–72% in the first set, 72–78% in the second and 64–67% in the third.
-No idle machine was available, so no number here is a best case.
+**The machine was never idle, and the time follows the processor's load.** Other work ran
+throughout. Each set below had a separate 2-second loop over
+`Win32_Processor.LoadPercentage` running beside it. The first two sets are this build. The
+third is build `73266bea…`, whose `crates/proteowizard/src` is the same and whose example
+differs only in how a read failure exits, taken about 40 minutes earlier.
+
+| Set | Build | Processor load, mean (lowest–highest), samples | Memory load |
+| --- | --- | --- | --- |
+| First | `a7c6705c…` | 26% (2–56), 26 | 66–67% |
+| Second | `a7c6705c…` | 40% (19–71), 26 | 64–66% |
+| Third | `73266bea…` | 86% (66–100), 23 | 72–78% |
 
 `read_xic` alone, on the source itself, with no snapshot, echo or positions (mode
 `observe`), in seconds. Each cell is three serial runs.
 
-| Source | Bytes | Query | Spectra read / decoded | Points in window | First set | Second set, processor at 86% | Third set, earlier build |
+| Source | Bytes | Query | Spectra read / decoded | Points in window | First set | Second set | Third set |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Profile representative (MS1) | 17,703,110 | MS1 `[105, 134]` | 931 / 931 | 1,679,804 | 0.249 / 0.233 / 0.232 | 0.284 / 0.378 / 0.306 | 0.156 / 0.162 / 0.144 |
-| Centroid representative (DDA) | 39,965,112 | MS1 `[100, 102]` | 7,602 / 4,627 | 11,090 | 0.751 / 0.885 / 0.726 | 0.867 / 0.956 / 0.861 | 0.419 / 0.402 / 0.415 |
-| R0 profile file, narrow window | 546,327,287 | MS1 `[524.259257355, 524.269742645]` | 43,878 / 2,748 | 1,988 | 7.755 / 7.744 / 8.362 | 8.394 / 8.568 / 8.219 | 4.426 / 5.047 / 6.166 |
-| R0 profile file, whole scan range | 546,327,287 | MS1 `[360, 1300]` | 43,878 / 2,748 | 24,744,260 | 8.908 / 7.931 / 8.057 | 8.127 / 11.850 / 11.014 | 4.587 / 4.287 / 4.652 |
+| Profile representative (MS1) | 17,703,110 | MS1 `[105, 134]` | 931 / 931 | 1,679,804 | 0.143 / 0.135 / 0.132 | 0.138 / 0.148 / 0.155 | 0.284 / 0.378 / 0.306 |
+| Centroid representative (DDA) | 39,965,112 | MS1 `[100, 102]` | 7,602 / 4,627 | 11,090 | 0.397 / 0.368 / 0.370 | 0.398 / 0.397 / 0.403 | 0.867 / 0.956 / 0.861 |
+| R0 profile file, narrow window | 546,327,287 | MS1 `[524.259257355, 524.269742645]` | 43,878 / 2,748 | 1,988 | 3.274 / 3.411 / 3.229 | 3.884 / 4.137 / 3.827 | 8.394 / 8.568 / 8.219 |
+| R0 profile file, whole scan range | 546,327,287 | MS1 `[360, 1300]` | 43,878 / 2,748 | 24,744,260 | 3.354 / 3.349 / 3.275 | 3.993 / 3.919 / 3.932 | 8.127 / 11.850 / 11.014 |
+
+The window's width barely matters: 24,744,260 points in the window cost no more than 1,988.
+Unsampled sets in the retained evidence, on builds with the same library, lie between these:
+R0 took 4.287–6.166 s on `541880b9…` and 7.744–8.908 s on `73266bea…`. No idle machine was
+available, so no number here is a best case.
 
 Memory did not move with the time: the process's final Windows `PeakWorkingSetSize`, as
-PX.3 read it, in the first set, in bytes. Across all three sets each target stays within
-2.5% of its lowest.
+PX.3 read it, in the first set, in bytes. Across the three sets each target stays within
+2.7% of its lowest.
 
 | Source | Peak (bytes) |
 | --- | --- |
-| Profile representative | 5,550,080 / 5,550,080 / 5,472,256 |
-| Centroid representative | 8,278,016 / 8,318,976 / 8,273,920 |
-| R0, narrow window | 20,881,408 / 20,766,720 / 20,774,912 |
-| R0, whole scan range | 20,996,096 / 20,680,704 / 20,754,432 |
+| Profile representative | 5,443,584 / 5,447,680 / 5,427,200 |
+| Centroid representative | 8,433,664 / 8,364,032 / 8,212,480 |
+| R0, narrow window | 20,807,680 / 20,750,336 / 20,844,544 |
+| R0, whole scan range | 20,828,160 / 20,824,064 / 20,869,120 |
 
 The whole evidence invocation of this build, from process launch to exit: the snapshot
 copy, both passes, the echo and the JSON.
 
 | Row | Wall (s) | Peak (bytes) | stdout (bytes) |
 | --- | --- | --- | --- |
-| `representative_profile` | 0.902 / 0.820 / 0.816 | 47,915,008 / 48,164,864 / 47,472,640 | 12,200,561 |
-| `representative_centroid` | 2.242 / 2.352 / 2.240 | 76,066,816 / 75,939,840 / 75,812,864 | 25,298,728 |
-| `inherited_BBM_506_…_calibrated`, first repeat | 15.589 | 370,909,184 | 127,912,821 |
+| `representative_profile` | 0.354 / 0.354 / 0.378 | 47,943,680 / 47,951,872 / 47,603,712 | 12,200,561 |
+| `representative_centroid` | 1.110 / 1.081 / 1.345 | 76,034,048 / 75,939,840 / 75,952,128 | 25,298,728 |
+| `inherited_BBM_506_…_calibrated`, first repeat | 5.572 | 370,917,376 | 127,912,821 |
 
 Context, not comparable: PX.3's B, a dev/debug build, took 2.06–2.14 s and 220 MB on the
 profile file and 8.01–8.56 s and 683 MB on the centroid file, with its own output
@@ -337,12 +348,13 @@ no acquisition bytes are in this repository.
 
 ## Retained evidence
 
-Local, as PX.3's is, and not published. `D:/MSCanvas-X2-20261104/`: `final-2/` holds the
+Local, as PX.3's is, and not published. `D:/MSCanvas-X2-20261104/`: `final-3/` holds the
 build, each invocation's stdout, stderr, snapshot, canonical science and diagnostics,
-the combined ledger, the scored integer rows and both sets of observations of this build;
-`integer/` and `integer-2/` hold the two freezes; `discrimination/` the four mutations;
-`superseded-0/`, `superseded-1/` and `superseded-2/` the earlier runs, the third set of
-observations among them; `superseded-discrimination/` an earlier run of the first three
-mutations; `xic-d5/` the throwaway rendering, with its patch. `MANIFEST.json` lists every
-file's length and SHA-256, and its own digest is
+the combined ledger, the scored integer rows and two sets of observations of this build;
+`integer/`, `integer-2/` and `integer-3/` hold the three freezes; `discrimination/` the four
+mutations; `superseded-0/` to `superseded-3/` the earlier runs, the third set of
+observations in `superseded-3/observations-2/`; `superseded-discrimination/` and
+`superseded-discrimination-2/` earlier runs of the mutations; `xic-d5/` the throwaway
+rendering, with its patch. `MANIFEST.json` lists every file's length and SHA-256, and its
+own digest is
 `bad7f4e592b93559ec03997446a357a2a517113fca0a47e8345b89cfa922f45f`.

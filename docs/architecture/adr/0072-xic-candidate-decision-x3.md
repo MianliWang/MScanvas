@@ -24,8 +24,8 @@ is not edited). A stays viable, not prototyped, not rejected and outside this se
 
 | Binding | Exact identity |
 | --- | --- |
-| Scored executable | `73266bea785a5d71d6498b6c72b905524c9a8491cd8348767e85b14b06bd62ee` |
-| Source manifest | `90549b3326a9c2ae82ab9b77c0be6f2da8e83f65ddbadb69937a394e895b5411` |
+| Scored executable | `a7c6705c95d1bd7165fa8a69342188ca735e85ebf38e4ceb578833571e201ad8` |
+| Source manifest | `6784450639e98e0d83f266d5bbbf7a134d8e282eced5bb92a4dbd3eb5794116e` |
 | Frozen protocol, unchanged | `e3a7340a937d2d48bf968270a538bdf18c36f3a2390e07177f762add503a4b6f` |
 | Frozen supplement, unchanged | `3de43a2b748ad9001f2ff9c628773f8669363b449bc4b8fa5956ea8fc0f3967a` |
 | Toolchain | rustc and cargo 1.97.1, `x86_64-pc-windows-msvc`, release |
@@ -42,7 +42,9 @@ ran: 71 synthetic, 4 inherited, 2 representative. All 153 planned invocations ra
 executable, and every frozen digest and input matched first. The inputs were approved
 (ADR 0071 decision 8), and nothing was downloaded.
 
-**2. C′ meets the frozen contract, so it is not `XIC_PROVIDER_REFUSED` on the science.**
+**2. C′ passes every frozen row, so it is not `XIC_PROVIDER_REFUSED` on the science.** This
+covers what the frozen rows reach and no more:
+[X2 lists what they do not](../../spikes/XIC_X2_CANDIDATE_EVIDENCE.md#what-this-evidence-does-not-establish).
 77 PASS, 0 FAIL, 0 MISSING. All 30 named cases pass, including every incomplete and mixed
 unit case. The legal namespace-prefixed row that decided PX.4 passes. The three fault
 controls behave as required, and all 74 repeat groups agree on exact bits. Mutations of
@@ -52,13 +54,14 @@ rows. No threshold, precedence or input was relaxed.
 
 **3. It is practical at the observed scale, as proposed here.** No number was set in
 advance, as decision 9 requires. On the largest file, 546,327,287 bytes and 43,878
-spectra, one window took 4.29 to 11.85 s across three sets on a machine that was never
-idle, and the process peaks at about 20 MB, whatever the window's width. The planning
-estimate was 5–11 s. Memory grows far more slowly than the file: about 5 MB at 17.7 million
-bytes, about 20 MB at 546 million. Every window is still a new full pass, so the judgment
-leans on two things X4 owes: progress, and a cancellation that takes effect between
-spectra. The limits below are the owner's to weigh, and a different reading of them lands
-on `XIC_PROVIDER_REFUSED`, where ADR 0046 puts a measured and impractical candidate.
+spectra, one window took 3.23 to 4.14 s on the scored build with the processor at a mean of
+26–40%, and 8.13 to 11.85 s on a build with the same library with the processor at a mean of
+86%. The process peaks at about 20 MB, whatever the window's width. The planning estimate
+was 5–11 s. Memory grows far more slowly than the file: about 5 MB at 17.7 million bytes,
+about 20 MB at 546 million. Every window is still a new full pass, so the judgment leans on
+two things X4 owes: progress, and a cancellation that takes effect between spectra. The
+limits below are the owner's to weigh, and a different reading of them lands on
+`XIC_PROVIDER_REFUSED`, where ADR 0046 puts a measured and impractical candidate.
 
 **4. Its runtime placement is settled, so it is not `ARCHITECTURE_DECISION_REQUIRED`.**
 In process, in Rust, behind the existing boundary, on the native-read lane one spectrum
@@ -106,25 +109,24 @@ frozen before the candidate's first run on them
 runs. Host: Windows 11, Intel family 6 model 154, 20 logical processors, 63.7 GiB, never
 idle. These are observations of one host, never thresholds.
 
-| Source | Bytes | Spectra read / decoded | Points in window | First set | Second set, processor at 86% | Third set, earlier build | Peak working set, all sets (MB) |
+| Source | Bytes | Spectra read / decoded | Points in window | Scored build, processor at 26% | Scored build, processor at 40% | Earlier build, processor at 86% | Peak working set, all sets (MB) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Profile representative | 17,703,110 | 931 / 931 | 1,679,804 | 0.249 / 0.233 / 0.232 | 0.284 / 0.378 / 0.306 | 0.156 / 0.162 / 0.144 | 5.2–5.3 |
-| Centroid representative | 39,965,112 | 7,602 / 4,627 | 11,090 | 0.751 / 0.885 / 0.726 | 0.867 / 0.956 / 0.861 | 0.419 / 0.402 / 0.415 | 7.9–8.0 |
-| R0 profile, narrow window | 546,327,287 | 43,878 / 2,748 | 1,988 | 7.755 / 7.744 / 8.362 | 8.394 / 8.568 / 8.219 | 4.426 / 5.047 / 6.166 | 19.7–19.9 |
-| R0 profile, whole scan range | 546,327,287 | 43,878 / 2,748 | 24,744,260 | 8.908 / 7.931 / 8.057 | 8.127 / 11.850 / 11.014 | 4.587 / 4.287 / 4.652 | 19.7–20.0 |
+| Profile representative | 17,703,110 | 931 / 931 | 1,679,804 | 0.143 / 0.135 / 0.132 | 0.138 / 0.148 / 0.155 | 0.284 / 0.378 / 0.306 | 5.2–5.3 |
+| Centroid representative | 39,965,112 | 7,602 / 4,627 | 11,090 | 0.397 / 0.368 / 0.370 | 0.398 / 0.397 / 0.403 | 0.867 / 0.956 / 0.861 | 7.8–8.0 |
+| R0 profile, narrow window | 546,327,287 | 43,878 / 2,748 | 1,988 | 3.274 / 3.411 / 3.229 | 3.884 / 4.137 / 3.827 | 8.394 / 8.568 / 8.219 | 19.8–19.9 |
+| R0 profile, whole scan range | 546,327,287 | 43,878 / 2,748 | 24,744,260 | 3.354 / 3.349 / 3.275 | 3.993 / 3.919 / 3.932 | 8.127 / 11.850 / 11.014 | 19.8–19.9 |
 
-The first two sets are the scored build. The third is an earlier build whose
-`crates/proteowizard/src` is the same, and whose source differs only in the example. The
-time moved by about a factor of two between sets with the library unchanged. Other work ran
-throughout, and load is the likely reason, though only the second set sampled it (mean 86%).
-Here a megabyte is 2^20 bytes. The bytes are in the
+The processor figures are each set's mean load, sampled beside it. The earlier build's
+`crates/proteowizard/src` is the same, and its source differs only in how the example exits
+on a read failure. The time follows the processor's load, and memory does not. Here a
+megabyte is 2^20 bytes. The bytes are in the
 [X2 record](../../spikes/XIC_X2_CANDIDATE_EVIDENCE.md#release-resource-observations).
 
 **What the practicality judgment does not have:**
 
 - a cold read, a second host, or an idle machine;
 - any file larger than R0. If time follows bytes, ADR 0056's 4 GiB document cap, 7.9
-  times R0, would take about 34–93 s over the same range. That is arithmetic, not a
+  times R0, would take about 25–93 s over the same range. That is arithmetic, not a
   measurement;
 - the digest the owner's answer to A0071-Q3 asks for. It adds a read of the whole file to
   every XIC, and its cost is unmeasured;
@@ -271,12 +273,14 @@ None is answered. X-1 and X-2 authorized this record, not its outcome.
    2–3 slices and X5 is 2, and neither has been started.
 3. **The panel's height in X4.** X-3.2 did not set one and its cost is now measured. (a) The
    chromatogram's own height: both traces equally readable, and the column scrolls 156 to 183
-   px at all three sizes, with the spectrum below the fold. (b) A shorter panel, with a floor:
-   it avoids the scroll only at the largest size, and its plot is smaller than the
-   chromatogram's. No such height was rendered, so this rests on the arithmetic above.
-   Recommended: (b), about 270 px at 1920×1080, which X4 must render to confirm that size does
-   not scroll, since the layout adds a pixel or two, and accept the scroll at the two smaller
-   sizes, where no useful panel fits.
+   px at all three sizes, with 7 to 34.5 px of the spectrum's plot on screen. (b) A shorter
+   panel with a floor: it avoids the scroll only at the largest size, and its plot is smaller
+   than the chromatogram's. Recommended: (b), a panel of about 270 px at 1920×1080, and below
+   that size a floor of 181 px, which is a 100 px plot and the panel's 81 px of head, axes and
+   border. By the arithmetic above, the column would not scroll at 1920×1080, would scroll
+   about 75 px at 1366×768 with about 115 px of the spectrum's plot on screen, and about 143 px
+   at 960×640 with about 47 px on screen. No such height was rendered, so X4 must render it to
+   confirm these, and the 100 px floor is this record's suggestion and no measured limit.
 4. **ADR 0070 decision 3, item 5, and the empty window.** The row for ADR 0070's question 1
    left open whether item 5's "an empty window … is not zero" binds every record. ADR 0046 and
    the frozen answers make an XIC's empty window `Measured` with sum `+0` and 0 points.
