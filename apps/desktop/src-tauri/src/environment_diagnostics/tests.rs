@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use mscanvas_proteowizard::{PreviewOperation, Sha256Digest};
+use mscanvas_proteowizard::{PreviewOperation, Sha256Digest, VERIFIED_MSCONVERT_SHA256};
 
 use super::{
     Backend, Facts, KnownRoots, RECENT_ERROR_CAPACITY, RecentError, RecentErrors, account_names,
@@ -108,7 +108,7 @@ fn ordinary() -> Facts {
 #[test]
 fn the_summary_has_stable_headings_english_keys_and_values_as_they_are() {
     let expected = r"MSCanvas diagnostics
-Format: 1
+Format: 2
 Created: 2026-10-30T08:00:00Z
 
 [Application]
@@ -134,6 +134,7 @@ Release: 3.0.26013
 Build date: Jan 13 2026
 Source revision: 47b13cf
 msconvert SHA-256: A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1
+Verified build: no
 Folder: <program-files>
 Failure: none
 Remembered folder: yes
@@ -211,11 +212,41 @@ fn an_unchecked_backend_says_so_rather_than_guessing() {
         "Quarantined: yes",
         "State: unknown",
         "Release: unknown",
+        "Verified build: unknown",
         "Folder: unknown",
         "Failure: unknown",
     ] {
         assert!(text.contains(&format!("{line}\n")), "{line} is missing");
     }
+}
+
+/// ADR 0063, question 3: the digest is compared with ADR 0055's own constant,
+/// whichever way it is cased.
+#[test]
+fn the_verified_build_line_reads_the_digest_it_stands_beside() {
+    let verified = |digest: Option<String>| {
+        let facts = Facts {
+            backend: Backend {
+                msconvert_sha256: digest,
+                ..ordinary().backend
+            },
+            ..ordinary()
+        };
+        let text = render(&facts, &roots(), &accounts());
+        text.lines()
+            .find_map(|line| line.strip_prefix("Verified build: "))
+            .expect("the line is always there")
+            .to_owned()
+    };
+    assert_eq!(verified(Some(VERIFIED_MSCONVERT_SHA256.to_owned())), "yes");
+    assert_eq!(
+        verified(Some(VERIFIED_MSCONVERT_SHA256.to_lowercase())),
+        "yes"
+    );
+    assert_eq!(verified(Some("A1".repeat(32))), "no");
+    assert_eq!(verified(None), "unknown");
+    // A value the digest's own line withholds is still not the verified build.
+    assert_eq!(verified(Some(DATA.to_owned())), "no");
 }
 
 #[test]
