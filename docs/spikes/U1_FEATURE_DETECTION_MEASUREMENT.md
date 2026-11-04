@@ -503,6 +503,8 @@ The ids below are that page's, and the labels are its labels in English. None of
 this is built yet. The rest of this section stays as written, as the evidence of
 what was recommended on 2026-10-30. Where the two differ, this note replaces the
 recommendation. Each "Cost" comes from the page's list for the option chosen.
+B-11.2's hold-release fallback, and U1-1's synthetic-file comparison and OpenBLAS
+per-thread memory, are not repeated here.
 
 - **B-11.4, U1-2.2: "4 GiB, two tiers".** The recommendation stands: a 4 GiB Job
   commit cap, and a typed refusal above 150 M MS1 peaks at noise 1e4 or more and
@@ -510,6 +512,9 @@ recommendation. Each "Cost" comes from the page's list for the option chosen.
   copy of the MS1 spectra. Cost: at 1e3 a 2 GiB file is refused, and v5.11's
   default noise of 1000 is in this tier; a new source check must be written, of
   which only one item, the finite test, was measured (section 5.4).
+  The 6 GiB alternative at the end of this section was on the page and was not
+  chosen. Whether a third tier or a 6 GiB cap is needed once thresholds below 1e3
+  are measured has not been asked.
 - **U1-2.1: "Keep 600 s".** The recommendation stands. Cost: a file near the
   limit may time out on a busy machine (section 6.2), and the user waits until
   then to know.
@@ -538,6 +543,14 @@ recommendation. Each "Cost" comes from the page's list for the option chosen.
   combination, so the rule must be written on CV terms, and an unclear
   declaration must be entered by hand; the QTOF basis is one file. Where the
   analyzer is read is still open.
+  **2026-11-04:** the owner answered that. R-1-ANALYZER, decision page version
+  2026-11-04.1, at its recommended option: "Read the file-level declaration, for
+  U1's default only". This changes nothing measured here. Cost: the rule on CV
+  terms and the hand entry above stand; where MS1 and MS2 analyzers differ, the
+  file level does not show which one MS1 uses; the product's use of this read
+  needs a note in the reader record (ADR 0056), and the work of connecting it is
+  not estimated. This record does not list the analyzer terms its two files
+  declare, and names no rule for a file that declares several.
 - **CK-7: "Accept the refusal; its message says the threshold can be changed to
   1e4".** The 80 M tier stands, so at file A's density (19.7 bytes per peak on
   disk) QTOF files over about 1.47 GiB are refused at the default 1e3. The
@@ -554,6 +567,8 @@ recommendation. Each "Cost" comes from the page's list for the option chosen.
   made no recommendation on data. The answer accepts the terms section 3 names.
   Cost: they are not an open-data licence, so the files are neither committed nor
   redistributed, and whether they may go on Actions is unconfirmed.
+  The 1-2 GiB Orbitrap files the page checked are all profile; which file can
+  meet B-11.3 is still open.
 - **B-11.3: "One 1-2 GiB Orbitrap run is still required".** This section made no
   recommendation on that run. Larger files stay an extrapolation through MS1
   peak counts (section 6) until it exists. Cost: first estimated at 2 slices, of
