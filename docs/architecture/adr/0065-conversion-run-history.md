@@ -411,7 +411,8 @@ store now does with such a sibling:
   run listed beside it waits for a later run's Clear, or for Off.
 - **One that cannot be removed** counts in `notRemoved`, as a file kept aside does.
   The sweep goes on, no run's outcome changes, and one already gone counts as
-  removed. As built on 2026-11-04, not an owner decision: answering Done while a
+  removed. The list read after it has no row for a sibling, so only the answer says
+  it remains. As built on 2026-11-04, not an owner decision: answering Done while a
   file with full paths stays would be untrue.
 - **A session suspended for over 24 hours** between creating its sibling and
   publishing it. On Windows its handle shares reading only, so the sibling cannot
