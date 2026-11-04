@@ -3,13 +3,14 @@
 **Outcome: the first half of the pass condition holds, and the second half is
 NOT SHOWN.** The pass condition is the roadmap's section 7: "Every planned class
 runs without the Thermo folder, and libiconv is shown not to be linked or its
-terms are accepted. The result decides B-2".
+terms are accepted. A pass takes B-2.1 (3.6.0); a failure takes CK-2 (3.5.0 first,
+with no release before a legal opinion on Qt)".
 
 | Part of the pass condition | Verdict | Evidence |
 | --- | --- | --- |
-| "Every planned class runs" | **PASS** | 26 of 26 ran: a real call on synthetic data, on the positive and on the relabelled negative files, each with a non-empty observable (82 calls, section 5). None was only imported, and none failed in the final run. |
-| "without the Thermo folder" | **PASS** | The copy holds 0 Thermo-named files, 0 of its 76 native files has a CLR header, and no group loaded a Thermo module, `hostfxr` or `coreclr`. `OPENMS_THERMO_MANAGED_DIR` stayed unset. No RAW file was read (section 7). |
-| "libiconv is shown not to be linked" | **NOT SHOWN** | 0 of 76 native files imports it, and `iconv`, `libiconv`, `libcharset`, `locale_charset` and 10 libiconv alias names each count 0, where a control libiconv DLL holds all 10 alias names. No SBOM or link map was found, and upstream's Windows build installed `libiconv` 1.18 for `libxml2[core,iconv,zlib]` and logged `Arrow is linked statically: added LibXml2 to its link interface` (section 8). |
+| "Every planned class runs" | **PASS** | 26 of 26 ran: a real call on synthetic data, on the positive and on the relabelled negative files, each with a non-empty observable (80 rows for the 26 classes, plus 2 `fitModel` checks; section 5.2 says what those rows are). None was only imported, and none failed in the final run. |
+| "without the Thermo folder" | **PASS** | The copy holds 0 Thermo-named files, 0 of its 76 native files has a CLR header, and neither any group nor the adapter's process loaded a Thermo module, `hostfxr` or `coreclr`. `OPENMS_THERMO_MANAGED_DIR` stayed unset. No RAW file was read (section 7). |
+| "libiconv is shown not to be linked" | **NOT SHOWN** | 0 of 76 native files imports it, and `iconv`, `libiconv`, `libcharset`, `locale_charset` and, in exact case, 10 libiconv alias names each count 0, where a control libiconv DLL holds all 10 alias names. No SBOM or link map was found, and upstream's Windows build installed `libiconv` 1.18 for `libxml2[core,iconv,zlib]` and logged `Arrow is linked statically: added LibXml2 to its link interface` (section 8). |
 | "or its terms are accepted" | **NOT SHOWN** | The owner's to answer, and not asked here. This record does not answer it. |
 
 **What the rule gives on this evidence.** The first half holds. The second half
@@ -19,14 +20,19 @@ for the owner's reading of the libiconv lines. Whether libiconv's terms are
 accepted, and whether NOT SHOWN counts as a pass, are the owner's. B-2 is not
 decided here.
 
-Four other results size later work:
+Five other results size later work:
 
 - **ANA-004 completes on 3.6.0 with no edit, and its numbers change.** The
-  reviewed adapter runs unedited, and both outcomes match the pinned runtime's. The
-  supervisor would still refuse the result until two adapter edits and its own pins
-  change. Nine numbers of the `DETECTED` row differ by more than 1e-6 relative: the
-  feature's bounds move in by 0.5 s on each side, and `rawArea` falls by 0.18 %
-  (section 6). This is A-07's to qualify; it is not part of the pass condition.
+  reviewed adapter runs unedited. On this one fixture and two targets, both outcomes
+  match the pinned runtime's. The supervisor would still refuse the result until two
+  adapter edits and its own pins change. Nine numbers of the `DETECTED` row differ by
+  more than 1e-6 relative: the feature's bounds move in by 0.5 s on each side, and
+  `rawArea` falls by 0.18 % (section 6).
+- **An outcome can change too.** On a variant of the protocol's `main` fixture, a target
+  with no `neutralMass` goes from `DETECTED_AMBIGUOUS` to `DETECTED`. With its declared
+  mass it stays `DETECTED`, and its model status and `rawArea` change (section 6.3).
+  This and the numbers above are A-07's to qualify; neither is part of the pass
+  condition.
 - **U1's chain gives the same features.** On three synthetic files, 3.6.0 and the
   pinned 3.5.0 give the same 51 features, with no difference in RT, m/z or intensity
   (section 5.3). The call forms differ.
@@ -64,12 +70,13 @@ first, with no release without it.
   `-I`, and no interpreter ran with its working directory inside a download or the
   copy.
 - **Memory gate.** Before each group: admission at 8 GiB free and at most 80 % used.
-  The launcher stops a child under 4 GiB free or over 90 % used. No run came near
-  either limit, and none was refused.
+  The launcher stops a child under 4 GiB free or over 90 % used. No launch was stopped.
+  The gate refused some groups while other lanes ran, and they waited.
 - **No outbound contact.** Upstream files and logs were read through public GET
   requests. Nothing was posted or sent.
 
-This record names no absolute path of this host:
+This record names no absolute path of this host, other than paths compiled into the
+files it reports:
 
 | Placeholder | Meaning |
 | --- | --- |
@@ -175,13 +182,13 @@ are the positive run's and are the same on the relabelled negative files unless 
 | Class | Result | Call | What it produced |
 | --- | --- | --- | --- |
 | `MassTraceDetection` | ran | `run(exp, 0)` | 44, 33, 45 traces on the three samples |
-| `ElutionPeakDetection` | ran | `detectPeaks(traces)` | 44, 33, 45 traces |
+| `ElutionPeakDetection` | ran | `detectPeaks(traces)` | 44, 33, 45 traces, the same counts as its input, so these files cannot show a split. A separate doublet at one m/z does (`epd_doublet.py`): 1 trace in, 2 out, centroid RT 330.0 and 344.0 |
 | `FeatureFindingMetabo` | ran | `run(traces, fmap)` | 18, 15, 18 features, all with isotope traces; 13 of 15, 10 of 14, 13 of 15 expected `[M+H]+` ions (section 5.3) |
 | `MapAlignmentAlgorithmPoseClustering` | ran | `setReference(fmap)`, `align(fmap)` | `linear` models on 15 and 18 points |
 | `MapAlignmentTransformer` | ran | `transformRetentionTimes(fmap, trafo, True)`, with the linear and then the LOWESS model | median distance to the reference, samples 2 and 3: 9.0 and 1.0 s, then 0.919 and 0.519 s, then 0.151 and 0.187 s |
 | `FeatureGroupingAlgorithmKD` | ran | `group(maps, consensus)` | 18 consensus features, 15 in all three maps, 3 in two |
 | `FeatureGroupingAlgorithmQT` | ran | `group(maps, consensus)` | 18 consensus features, 15 in all three maps, 3 in two |
-| `MetaboliteFeatureDeconvolution` | ran | `compute(fmap, out, groups, pairs)` | 5 pairs of the 6 expected (the sixth compound left no trace); labels `H1`, `Na1`. With `negative_mode` true: 5 pairs, labels `H-1`, `H-2Na1` |
+| `MetaboliteFeatureDeconvolution` | ran | `compute(fmap, out, groups, pairs)` | 5 pairs of the 6 expected (the sixth compound left no trace); labels `H1`, `Na1`, `Agreeing charges: 10/10`. With `negative_mode` true: 5 pairs, labels `H-1`, `H-2Na1`, `Agreeing charges: 0/10` and the warning quoted below |
 | `AccurateMassSearchEngine` | ran | `init()`, `run(fmap, MzTab)` on the scratch database | 21 `SML` rows hitting it; 19 on the negative files. Its defaults raise, as quoted below |
 | `MetaboliteSpectralMatching` | ran | `run(ms2, library, mzTab)` | 15 MS2 spectra, 15 rows, 15 of 15 formulas |
 | `IDMapper` | ran | `annotate(fmap, [], [], True, True, exp)` with `ignore_charge` true | 13, 10, 13 features with an MS2 mapped |
@@ -216,6 +223,12 @@ are the positive run's and are the same on the relabelled negative files unless 
 
 - **B-9.1 chose a project-owned GNPS writer,** so the three `GNPS*` classes ran because
   the list names them, not because a recipe now takes them.
+- **What the rows are.** The final run has 82 rows, all `ran`: 80 for the 26 classes and
+  2 for `TransformationDescription`, which is not one of them. Of the 80, 2 are
+  `AccurateMassSearchEngine.init()` with its defaults: the call raises as quoted above,
+  and the exception's text is the row's observable, while the class's real runs are its
+  scratch-database rows. Another 2 are `MzTabFile`'s first `store`: the store happens in
+  the scratch-database call, and the row reports the file's size.
 
 **Earlier attempts.** Every failure before the final run came from the probe's own
 call or data. Each is listed with its text; the final run has none (`<work>` stands for
@@ -232,10 +245,24 @@ the attempt's directory).
 | `FeatureFindingMetabo`, `ConsensusMapNormalizerAlgorithmMedian` | no exception: the probe's own first thresholds (every expected ion; within 2 % of 1) were not met | the observable became what section 5.2 shows |
 | `GaussFilter` | no exception: at the default `gaussian_width` 0.2 the chromatogram was unchanged at 1 s spacing | a width in the data's own unit |
 
-The engine also printed `Warning: SpectraDistance received the unknown parameter
-'mass_tolerance'!` from `MetaboliteSpectralMatching`, and `The tool: TOPP
-AccurateMassSearch is currently not registered in the PSI-OBO.` when writing mzTab-M.
-Neither stopped a run.
+The engine also printed these, and none stopped a run. Quality is not judged here (section
+10):
+
+- From `MetaboliteSpectralMatching`: `Warning: SpectraDistance received the unknown
+  parameter 'mass_tolerance'!`
+- When writing mzTab-M: `The tool: TOPP AccurateMassSearch is currently not registered in
+  the PSI-OBO.`
+- In the two groups that run `FeatureGroupingAlgorithmKD` (alignment and GNPS), on both
+  polarities: `Warning: Only 15 data points for LOWESS fit of map 1. Consider adjusting RT
+  or m/z tolerance or max_pairwise_log_fc, decreasing min_rel_cc_size, or increasing
+  max_nr_conflicts.`, and the same with 18 points for maps 0 and 2.
+- From `MetaboliteFeatureDeconvolution` on the relabelled negative file only: `Warning: a
+  significant portion of your decharged molecules have gapped, even-numbered charge ladders
+  (5 of 5)This might indicate a too low charge interval being tested.`, with `Agreeing
+  charges: 0/10`. It is the one class whose negative run reads differently from its positive
+  run, and B-5 would take that chain. These files are not negative chemistry. The review of
+  this record reports the same warning on a real `[M-H]-` file (`Agreeing charges: 0/8`,
+  `(4 of 4)`); that was not repeated here.
 
 ### 5.3 U1 on both engines
 
@@ -297,10 +324,26 @@ The scratch copy with these two has SHA-256
 `a142411a86b3150be9723d868980b3fad54c620da02116c8e9ca0f18793b7a56`.
 
 **Outside the adapter, listed and not touched:** `REQUIRED_MODULES`, `ENGINE_VERSION`,
-`ENGINE_REVISION` (`5d5cbff`, where the pin is `c1370fb`) and `RUNTIME_MANIFEST_SHA256`;
-then what follows from them (`schema_4_canonical.json`, the tests that name `c1370fb`
-and `python313.dll`, and the provisioning script's `python313._pth`). That list and the
-two edits are what this record offers for sizing A-07.
+`ENGINE_REVISION` (`5d5cbff`, where the pin is `c1370fb`) and `RUNTIME_MANIFEST_SHA256`,
+and then what names the pinned runtime. `git grep -c 'c1370fb\|python313\|3\.13\.15' --
+apps scripts` gives:
+
+| File | Lines |
+| --- | ---: |
+| `apps/desktop/src-tauri/src/project/recipe.rs` | 1 |
+| `apps/desktop/src-tauri/src/project/schema_4_canonical.json` | 6 |
+| `apps/desktop/src-tauri/src/project/schema_5_canonical.json` | 6 |
+| `apps/desktop/src-tauri/src/targeted_ms1.rs`; line 177 is the development runtime's path | 2 |
+| `apps/desktop/src-tauri/src/targeted_ms1/adapter_v1.py` | 1 |
+| `apps/desktop/src-tauri/src/targeted_ms1/tests.rs`; line 4505 is the same path | 2 |
+| `apps/desktop/src-tauri/src/targeted_ms1/tests/batch.rs` | 3 |
+| `apps/desktop/src/test/projectFixtures.ts` | 3 |
+| `scripts/provision_targeted_ms1_runtime.py`, with `python313._pth` | 7 |
+
+The same grep over the whole tree also hits `e2e/` specs and support files, `README.md`,
+`ROADMAP.md` and `docs/architecture/ANALYSIS_WORKERS.md` line 44, which describe the current
+runtime, and experiments and evidence records, which stay as what they measured. These lists
+and the two edits are what this record offers for sizing A-07.
 
 ### 6.2 The comparison
 
@@ -329,8 +372,13 @@ Both runs give `DETECTED` and `NOT_DETECTED`, as on the pinned runtime.
   detector dead time and may produce spurious peaks.`
 - **The parameters.** The same 22 keys on both. The default of `EMGScoring:init_mom`
   changed from `false` to true; the adapter sets it explicitly, so that is not the cause.
-- **Drift.** Two runs on the pinned runtime differ by at most 8.84e-8 relative. Two runs
-  on the shape differ by at most 1.46e-16.
+- **Drift.** Repeated runs differ in both runtimes, always below 1e-6. Over three runs on
+  the pinned runtime the largest is 8.84e-8. Over six on the shape it is 8.84e-8 between plain
+  runs and 1.59e-7 between the two run inside `loads_after.py` and `trace_nt.py`. All of these
+  are on `isotopeProbability`, a binary32 value, at one or two units in its last place. Some
+  pairs on each side are identical, and another pair on the shape differs by 1.46e-16, so a
+  single pair says nothing about the limit. Nothing here shows that 3.6.0 or 3.14 removed this
+  drift.
 
 **Beyond the ADR's request: the no-candidate route.** With only the absent target
 (`request_absent.json`, SHA-256
@@ -338,6 +386,57 @@ Both runs give `DETECTED` and `NOT_DETECTED`, as on the pinned runtime.
 measured exception still has its measured type and text on 3.6.0. The run completes with
 `noCandidateRecovery` true, and it matches the pinned runtime by the rule (largest
 8.84e-8).
+
+### 6.3 Beyond the ADR's request: the protocol's other fixtures
+
+Run in the review round, once each, on `<pinned>` and the shape, through the unedited
+adapter. Each file is written by `fixture_set()` (`review_fixtures.py`), with the ADR's two
+targets. The comparison and its rule are section 6.2's; the unedited adapter also shows
+the five `engineProfile` words of section 6.1 as differences, and they are left out below.
+
+| Fixture | Result on both runtimes | Numbers breaking the rule |
+| --- | --- | ---: |
+| `fmt_plain`, `fmt_32_none`, `fmt_indexed`, `fmt_minutes`, `dom_unsorted` | `DETECTED`, `NOT_DETECTED` | 9 on each, in the fields of section 6.2 |
+| `fmt_prefixed` | failed, `SOURCE_READ_INCOMPLETE` | no rows |
+| `dom_profile` | refused, `SOURCE_NOT_CENTROID` | no rows |
+| `dom_mixed_polarity` | refused, `SOURCE_MIXED_POLARITY` | no rows |
+| `dom_missing_rt` | refused, `SOURCE_RT_UNDECLARED_OR_NONMONOTONIC` | no rows |
+| `dom_no_ms1` | refused, `SOURCE_NO_MS1` | no rows |
+| `main`, the protocol's seven targets | refused, `SOURCE_RT_NOT_STRICTLY_INCREASING`: `MS1 spectra share the retention time 60.0` | no rows |
+
+`main` holds two MS1 spectra at RT 60.0, so it cannot go through the adapter as it is. The
+variant here is this run's and not a repository fixture: `main` without the second of them
+(index 128, 30 points, the protocol's `factor=0.9` scan), renumbered. It has 437 spectra,
+891,078 B, SHA-256 `a3f5875b225775a6253d7204aa9be0b1da7c2c5c7d2a6d0610a03f6aebb8e843`. Two
+requests ran on it, with the protocol's seven targets, and a one-target request of `boundary`
+gave the same outcome as the seven in each case.
+
+| Request | `boundary` on 3.5.0 | `boundary` on 3.6.0 |
+| --- | --- | --- |
+| The protocol's: `neutralMass` 242.1154 | `DETECTED`, 1 candidate; bounds 112.5 to 127.5 s; `rawArea` 2809931.0; `0 (valid)`; `modelArea` | `DETECTED`, 1 candidate; bounds 113.0 to 127.0 s; `rawArea` 3254714.5; `5 (width too large)`; `imputedFromRunRegression` |
+| `neutralMass` null, so the mass comes from `C12H18O5` | **`DETECTED_AMBIGUOUS`**, 4 candidates; bounds 112.0 to 128.0 s; `rawArea` 3325694.5; `5 (width too large)`; `imputedFromRunRegression` | **`DETECTED`**, 1 candidate; bounds 113.0 to 127.0 s; `rawArea` 3254830.5; `5 (width too large)`; `imputedFromRunRegression` |
+
+The other six targets keep their outcomes in both requests: `DETECTED`, `NOT_DETECTED`,
+`DETECTED_AMBIGUOUS`, `DETECTED`, `SUPPRESSED_BY_OVERLAP`, `NOT_DETECTED`.
+
+- **The first row has a measured mechanism.** Every ion's `mzTheoretical` is lower by
+  1.4775e-8 Da on 3.6.0, whatever its formula or mass (for example `243.122676466771` and
+  `243.12267645199572`). Alone that is within the rule. But the protocol places exact
+  boundary probes on 3.5.0's open-window edges, with intensity 7777 on each edge and 11 and
+  13 just inside. On 3.6.0 the window sits that much lower, so the lower edge's 7777 and its
+  11 fall inside and the upper edge's 7777 and its 13 fall outside. The extracted baseline
+  of that trace goes from `24.0` (11 + 13) to `7788.0` (7777 + 11). The probes no longer sit
+  on the edges. Whether M9.0's exact-boundary check still holds is A-07's, and why the value
+  moved was not investigated.
+- **The second row's cause is not shown.** The evidence points agree by the rule there, and
+  the engine returns fewer candidates: `candidates.featureXML` holds 27 features on 3.5.0 and
+  18 on 3.6.0. The rule's comparison does not read that file. It changes on `fmt_plain` too,
+  where the rule sees only section 6.2's nine numbers: `sn_ratio: 58.140442086098886 ->
+  39.351242010876334`, `xx_lda_prelim_score: 9.022829233389071 -> 8.737897162906719`, and an
+  `adduct` value only on 3.6.0. That is a lead and not a shown cause.
+- **For A-07:** outcomes and diagnostic fields can move as well as numbers. These are single
+  runs, the last two on this run's own variant of one fixture. How much of it matters is
+  A-07's.
 
 ## 7. What loads
 
@@ -357,42 +456,84 @@ modules.
   imports `WS2_32.dll`, `IPHLPAPI.DLL`, `Secur32.dll`, `CRYPT32.dll` and `ncrypt.dll`, and
   they load with it.
 - **Native modules:** 35 from the runtime and 32 from `System32`, none from elsewhere.
-- **Named explicitly, and not loaded:** any `Qt6*` module, any Thermo module, `nethost`,
-  `hostfxr`, `coreclr`, anything named `iconv` or `libxml`, `libssl-3.dll`,
+- **Named explicitly, and not loaded in these 17 launches:** any `Qt6*` module, any Thermo
+  module, `nethost`, `hostfxr`, `coreclr`, anything named `iconv` or `libxml`, `libssl-3.dll`,
   `libcrypto-3.dll` and `_arrow_zerocopy`.
+- **The adapter's own process differs, and it is the one that would ship.** None of those 17
+  launches ran the adapter, so this was measured after a full `adapter_v1.py` run in a new
+  process (`loads_after.py`): 37 from the runtime and 32 from `System32`. It adds
+  `_hashlib.pyd`, `libcrypto-3.dll` and `pyexpat.pyd`, because the adapter imports `hashlib`
+  and `xml.parsers.expat`, and it lacks `_decimal.pyd`, which this probe's own `statistics`
+  brings. `libssl-3.dll`, `ssl` and `socket` stay unloaded, and so does everything else named
+  in the line above.
+- **Apart from its script, request, fixture and run folder, the adapter's process opens one
+  file outside the copy and the Windows folder.** `libcrypto-3.dll` has `OPENSSLDIR: "C:\Program Files\Common Files\SSL"` compiled
+  in. A file trace of the run (`trace_nt.py`) shows `CREATE 0x0 \??\C:\Program Files\Common
+  Files\SSL\openssl.cnf`, the status meaning success: that file exists on this host (12,328
+  B), and nothing here put it there. Whether it can change a result was not measured. It
+  belongs with the confinement measurement.
 - **`OPENMS_THERMO_MANAGED_DIR` is unset in the process,** and `pyopenms/__init__.py`
   sets it only when the bridge's files exist.
 - **The MSVC runtime comes from the copy.** No `msvcp140`, `vcruntime140` or `vcomp140`
   loaded from `System32`. The Universal CRT does (`ucrtbase.dll`).
 
 `OpenMS.dll` keeps its code for the bridge: 102 `Thermo` strings, 13 `hostfxr` strings,
-the `openms_thermo_bridge` path. No file of the bridge is present, and none of that code
-was exercised.
+the `openms_thermo_bridge` path. The bindings keep their names too: `_pyopenms_format.pyd`
+has `ThermoRawFile`, `ThermoRawFileOptions` and `ThermoRawFileParser`, and
+`_pyopenms_metadata.pyd` and `_pyopenms_misc.pyd` have `Thermo`. No file of the bridge is
+present, and none of that code was exercised.
 
-**The Thermo check at the end,** after the last run: no path in the copy contains
-`thermo`, in any case; no native file has a CLR header; 0 `.cpp`, 0 `.pyi`, nothing under
-a `tests/` folder, no pandas and no matplotlib file; `CV/brenda.obo` is there.
+**The Thermo check at the end,** after the last run, review round included: no path in the
+copy contains `thermo`, in any case; no native file has a CLR header; 0 `.cpp`, 0 `.pyi`,
+nothing under a `tests/` folder, no pandas and no matplotlib file; `CV/brenda.obo` is there.
+
+### 7.1 Where the engine looks for its data
+
+The results in this record came from the copy's `share/OpenMS`, but it is not the first place
+the engine looks. A file trace of the adapter's run and of the `AccurateMassSearchEngine`
+group (`trace_nt.py`) shows it querying other locations first. Each was missing on this host
+(`0xc000003a`) in those runs, and a control run reads the copy's files and gives its usual 21
+`SML` rows. `<plant>` is a scratch copy of the shape, deleted afterwards. No `share` folder was
+ever created beside `<shape>`.
+
+| Location queried before the copy | What was put there | Result |
+| --- | --- | --- |
+| `<runtime>/../share/OpenMS` | a full data folder, `PositiveAdducts.tsv` cut to one line | it wins: `Read 1 entries from adduct file '<plant>/share/OpenMS/CHEMISTRY/PositiveAdducts.tsv'.`, and the scratch-database run returns 0 `SML` rows |
+| The same | only `CHEMISTRY/unimod.xml` | the whole data root moves, and the adapter fails: `the file '/CV/psi-ms.obo' could not be found. OpenMS searched its shared-data directory '<plant>/shape/../share/OpenMS' (via exe-relative (../share/OpenMS)).` |
+| `CHEMISTRY/...`, relative to the working directory | `CHEMISTRY/PositiveAdducts.tsv`, one line, in the run's directory, on the shape itself | it wins: `Read 1 entries from adduct file 'CHEMISTRY/PositiveAdducts.tsv'.`, and 0 `SML` rows |
+| `\CV\*.obo` and `\MAPPING\ms-mapping.xml`, at the root of the working directory's drive | nothing: this run writes to no drive root | the query follows the drive (`C:\CV\psi-ms.obo` with the working directory on `C:`, `D:\CV\psi-ms.obo` on `D:`). The review of this record put a file on a temporary drive mapping, and reports that it replaced the copy's; that was not repeated |
+| `D:/a/OpenMS/OpenMS/share/OpenMS/CHEMISTRY/unimod.xml`, a path on upstream's build machine, compiled into `OpenMS.dll` | nothing | queried on this host, which has a `D:` drive |
+
+`OPENMS_DATA_PATH` is set to the copy's folder, and this order agrees with what the engine and
+the wheel say of it: the engine's message calls it "a last-resort fallback", and
+`pyopenms/__init__.py` says that libOpenMS "resolves its data directory from compiled-in paths
+before it consults OPENMS_DATA_PATH". The supervisor starts the worker in its attempt's folder
+(`targeted_ms1.rs`, read and not run), so the relative row would read that folder and the
+drive-root row that folder's drive. This belongs with lane runtime-confinement's measurement.
 
 ## 8. libiconv
 
-**Report: not shown.** Every check that could have found a link found nothing, and none
-of them is an SBOM or a link map.
+**Report: not shown.** Every binary check found nothing, and none of them is a link map.
+The general statements point the other way: the notices say the installation "contains" what
+they list, `libiconv` among it, and upstream's comment below says an installation "carries the
+code of each port". Neither is evidence for this port alone, and neither is the binary
+silence proof of absence.
 
 | Check | Result |
 | --- | --- |
 | PE import and delay-import tables of the 76 native files (`pe_scan.py`, stdlib only) | no entry naming `iconv` or `charset`; `OpenMS.dll` has no delay imports at all |
 | `iconv`, `libiconv`, `libcharset`, `locale_charset`, ASCII and UTF-16, any case, in all 76 | 0 each |
-| 10 names of libiconv's alias table (`ARMSCII-8`, `MULELAO-1`, `GEORGIAN-PS`, `KOI8-T`, `TCVN-5712`, `BIG5-HKSCS`, `NEXTSTEP`, `MACTHAI`, `CSISO2022KR`, `UCS-2-INTERNAL`) in all 76 | 0 each |
+| 10 names of libiconv's alias table (`ARMSCII-8`, `MULELAO-1`, `GEORGIAN-PS`, `KOI8-T`, `TCVN-5712`, `BIG5-HKSCS`, `NEXTSTEP`, `MACTHAI`, `CSISO2022KR`, `UCS-2-INTERNAL`) in all 76 | 0 each in exact case. In any case, `OpenMS.dll` has UTF-16 `Big5-HKSCS` and `csISO2022KR`, once each, in a mixed-case list of IANA-style names (`CP01149`, `ebcdic-is-871+euro`, `Big5-HKSCS`, `UNICODE-1-1`), which is not libiconv's upper-case ASCII table |
 | The same names in a control, MSYS2's `libiconv-2.dll` | 10 of 10, and `iconv` 14, `libiconv` 11 (control only; it is a dynamic build) |
-| `libxml2`, `xmlParse`, `xmlCharEnc`, `xmlFindCharEncodingHandler`, `xmlIconv`, `xmlSAX`, `xmlBuffer`, `xmlReader`, `Azure` in `OpenMS.dll` | 0 each |
+| `libxml2`, `xmlParse`, `xmlCharEnc`, `xmlFindCharEncodingHandler`, `xmlIconv`, `xmlSAX`, `xmlBuffer`, `xmlReader`, `Azure` in `OpenMS.dll` | 0 each in exact case. In any case, `xmlBuffer` 3 and `xmlReader` 4, all Xerces' `XMLBuffer` and `XMLReader` (for example `src\xercesc\framework\XMLBuffer.cpp`) |
 | Source paths the static libraries left in `OpenMS.dll`, by vcpkg port (`buildtrees\<port>\`) | `arrow` 49, `openssl` 9, `xerces-c` 111; no `libiconv`, no `libxml2` |
 | The wheel's own notices | lists `libiconv [16]`; text `[16]` is `LICENSES/vcpkg/libiconv.txt`: "The libiconv and libcharset libraries and their header files are under LGPL", with LGPL-2.1 below it |
-| An SBOM or link map from upstream | none found: release `v3.6.0` has five assets (two `.deb`, `.pkg`, `.exe`, `.tar.gz`); the wheel has no `sboms` folder; the tree at `5d5cbff` holds no SBOM (`tools/SPDX.txt` is not one) |
+| An SBOM or link map from upstream | none found: release `v3.6.0` has five assets (two `.deb`, `.pkg`, `.exe`, `.tar.gz`); the wheel has no `sboms` folder; the tree at `5d5cbff` holds no SBOM (`tools/SPDX.txt` is not one); run `36703348530` has four artifacts, `wheels-windows-x64`, `wheels-macos-arm64`, `wheels-linux-x64` and `wheels-linux-arm64`, none an SBOM or a map |
 
 **What upstream's own files say, read at `5d5cbff`.**
 
 - `cmake/third_party_licenses.cmake`, on the notices: "the license text of every vcpkg
-  port of the target triplet". So a listing is no evidence for this port. The same comment
+  port of the target triplet". So a listing is not per-port evidence. The same comment
   goes on: "An installation carries the code of each port: as a library next to libOpenMS
   (install(RUNTIME_DEPENDENCY_SET) in package_general.cmake), linked into it (the Windows
   triplets and those of the Linux wheels are static), or compiled in (header-only ports)."
@@ -409,21 +550,28 @@ of them is an SBOM or a link map.
   references xmlBufferCreate/xmlBufferFree and friends." This build's Arrow features have
   no Azure: `acero, compute, core, dataset, filesystem, json, parquet, s3`.
 - `pyopenms-wheels-cibuildwheel`, run `36703348530`, job `109847769486`
-  (`build-wheels-windows`), triplet `x64-windows-static-md-release`:
+  (`build-wheels-windows`), triplet `x64-windows-static-md-release`. The log as read is
+  2,456,346 B, SHA-256 `7f6a687f91e4f8a155141fff889ddb19ed16c02ce8c0d2e279c8281d38432ef5`, and
+  its own wheel line ties it to the wheel probed here:
 
   ```text
   * libiconv:x64-windows-static-md-release@1.18#4 -- git+https://github.com/microsoft/vcpkg@dca28e93ad5a661156d8ea85aa4d26328dc309ed
     libxml2[core,iconv,zlib]:x64-windows-static-md-release@2.15.3 -- git+https://github.com/microsoft/vcpkg@0cca8e1dccfcd04a2d0d34f6fcf10a33190d558f
   -- Arrow is linked statically: added LibXml2 to its link interface
+    cp311-win_amd64: pyopenms-3.6.0-cp311-abi3-win_amd64.whl 30.6 MB in 7 minutes, SHA256=d89532af91deb616664c673876db4eeb4d0bc5ecc9fa97dc55d47e477596f359
   ```
 
   So `libxml2` was named to the linker, and with it probably `libiconv`. A static library
   on a link line contributes only the objects something references. The log's 10 lines
   naming `iconv` are the plan, the install and the licence copies; none is a link command.
 
-**What would settle it:** a link map or SBOM of `OpenMS.dll`'s link inputs. Only upstream
-can publish one. Asking is outbound contact and needs the owner's go-ahead for that
-message; nothing was sent or drafted.
+**What would settle it:** a link map or verbose linker output naming the objects taken from
+the `libiconv` and `libxml2` archives. A port-level SBOM would not settle it, because a static
+library named on a link line contributes only the objects something references. A rebuild from
+the public tag at the same vcpkg baseline needs no outbound contact, but it would show that
+rebuild and not the shipped DLL, unless its bytes match. Only upstream can publish the map of
+the shipped DLL. Asking is outbound contact and needs the owner's go-ahead for that message;
+nothing was sent or drafted, and no rebuild was tried.
 
 ## 9. Inventory for the records
 
@@ -452,10 +600,10 @@ It approximates an installer increment and is not a built installer.
 | `pyopenms` `.dist-info` | 5 | 5,646 |
 | `nanobind_backend` `.dist-info` | 3 | 1,902 |
 
-Three SHA-256 passes over every file, after all runs: 1.05, 2.28 and 3.81 s on a busy host,
-each against the manifest, with 0 changed, 0 missing and 0 extra (0.70 to 1.57 s on two
-earlier sets of three). The LZMA2 estimate gave the same count on both of its runs. The
-cost at the installed location is unmeasured.
+Three SHA-256 passes over every file, after all runs, review round included: 0.70, 0.72 and
+0.80 s, each against the manifest, with 0 changed, 0 missing and 0 extra. An earlier set took
+1.05, 2.28 and 3.81 s on a busier host, and another 0.70, 0.70 and 0.78 s. The LZMA2 estimate
+gave the same count on its two kept runs. The cost at the installed location is unmeasured.
 
 ### 9.2 The bundled native libraries
 
@@ -465,9 +613,9 @@ section 8.
 | Library | Where | What the file states | Upstream's build log |
 | --- | --- | --- | --- |
 | CPython | `python314.dll` | 3.14.10 | — |
-| OpenSSL | `libcrypto-3.dll`, `libssl-3.dll` (the embeddable's; neither is loaded) | `OpenSSL 3.5.9 29 Sep 2026`; file version 3.5.9.0; the SPDX file on python.org says 3.5.9 | — |
+| OpenSSL | `libcrypto-3.dll`, `libssl-3.dll` (the embeddable's). `libcrypto-3.dll` loads on the adapter's path through `hashlib`; `libssl-3.dll` does not (section 7) | `OpenSSL 3.5.9 29 Sep 2026`, in `libcrypto-3.dll` only; file version 3.5.9.0 on both; the SPDX file on python.org says 3.5.9 | — |
 | curl | in `OpenMS.dll` | `libcurl 8.20.0` | `curl[core,non-http,ssl,sspi]` 8.20.0#1 |
-| OpenSSL | in `OpenMS.dll` | no version string; 9 source paths under `buildtrees\openssl\` | 3.6.4#1; `Found OpenSSL ... (found version "3.6.4")` |
+| OpenSSL | in `OpenMS.dll` | no `OpenSSL 3.x` banner; a bare `3.6.4` after `openssl-version` and `crypto\provider_core.c` and before `crypto\core_algorithm.c`, read as OpenSSL's by those neighbours; 9 source paths under `buildtrees\openssl\` | 3.6.4#1; `Found OpenSSL ... (found version "3.6.4")` |
 | AWS SDK | not found in `OpenMS.dll` | **no marker:** 0 for `amazonaws`, `X-Amz`, `S3FileSystem`, `InitializeS3`, `Aws`, `aws-sdk`, `aws-crt`, `aws-c-`. `AWS_SIGV4` and `aws_sigv4` are curl's own | `aws-sdk-cpp[cognito-identity,config,core,dynamodb,identity-management,kinesis,s3,sts,transfer]` 1.11.800, `aws-crt-cpp` 0.39.1 |
 | Arrow, Parquet | in `OpenMS.dll` | `parquet-cpp-arrow version 24.0.0` | 24.0.0#1 |
 | Xerces-C | in `OpenMS.dll` | `xercesc_3_3` | 3.3.0#1 |
@@ -475,7 +623,9 @@ section 8.
 | SQLite | `sqlite3.dll` (the embeddable's) | file version 3.50.4.0 | — |
 | .NET host (`nethost`) | in `OpenMS.dll` | `get_hostfxr_path`, no version | 8.0.3 |
 | Thermo bridge | left out | code stays in `OpenMS.dll` (section 7) | `openms-thermo-bridge` 0.3.1 |
-| OpenBLAS | `numpy.libs/libscipy_openblas64_-ed4f….dll` | no version resource | — |
+| libffi | `libffi-8.dll` (the embeddable's; `_ctypes.pyd` imports it, and it loads) | no version resource; the SPDX file on python.org says 3.4.4 | — |
+| libtommath | `libtommath.dll` (the embeddable's, 95,456 B; no native file in the copy imports it, and it does not load) | no version resource; named in neither the SPDX file on python.org nor `LICENSE.txt` | — |
+| OpenBLAS | `numpy.libs/libscipy_openblas64_-ed4f….dll` | no version resource; `numpy/__config__.py` says `scipy-openblas` `0.3.34.106.0` | — |
 | libsvm | in `OpenMS.dll` | `nr_class`, `total_sv`; no version | 3.35 |
 | COIN-OR | in `OpenMS.dll` | `Cbc`; no version | `coin-or-cbc` 2024-06-04#1, `coin-or-clp` 2023-02-01#1 |
 | Qt | none | 0 `Qt6`, 0 `QString` in `OpenMS.dll`; no Qt import in any of the 76 files; no Qt DLL | — |
@@ -488,7 +638,10 @@ never loaded. Its status belongs to the licence slice.
 
 ### 9.3 Every MSVC runtime copy
 
-For the RT-3 reading. "Loaded" is ADR 0066's probe.
+For the RT-3 reading. "Loaded" is ADR 0066's probe, and the last two rows depend on import
+order, because the two files have one digest and one hashed name: with `pyopenms` imported
+first, and on the adapter's path, the `nanobind_backend.libs` copy loads; with `numpy` imported
+first, the `numpy.libs` copy does. RT-3 should treat both as possibly loaded.
 
 | Name | File version | Carrying package | Bytes | SHA-256 (first 16) | Loaded |
 | --- | --- | --- | ---: | --- | --- |
@@ -497,8 +650,8 @@ For the RT-3 reading. "Loaded" is ADR 0066's probe.
 | `msvcp140-7c26614e1d733892c2deac7e245ce115.dll` | 14.51.36247.0 | `pyopenms.libs` | 643,512 | `7c26614e1d733892` | yes |
 | `msvcp140_atomic_wait-78fdb07d9fe55b8436cce6b09498237e.dll` | 14.51.36247.0 | `pyopenms.libs` | 37,376 | `da88331c40d3aaa0` | yes |
 | `vcomp140-95d4ce4a6802d1e18b5e0e1722cc30ea.dll` | 14.51.36247.0 | `pyopenms.libs` | 212,920 | `95d4ce4a6802d1e1` | yes |
-| `msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll` | 14.40.33810.0 | `nanobind_backend.libs` | 575,056 | `a4c2229bdc2a2a63` | yes |
-| `msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll` | 14.40.33810.0 | `numpy.libs` | 575,056 | `a4c2229bdc2a2a63` | no: the module list shows this file name from `nanobind_backend.libs` only |
+| `msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll` | 14.40.33810.0 | `nanobind_backend.libs` | 575,056 | `a4c2229bdc2a2a63` | yes on the probe's and the adapter's order; no with `numpy` imported first |
+| `msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll` | 14.40.33810.0 | `numpy.libs` | 575,056 | `a4c2229bdc2a2a63` | no on the probe's and the adapter's order; yes with `numpy` imported first |
 
 Two `msvcp140` versions are loaded in one process, under different hashed names. Whether
 MSCanvas may redistribute these copies is the MSVC reading: RT-3, not answered here.
@@ -524,8 +677,8 @@ License`. Which text ships with it stays open. `share/OpenMS/LICENSES/` keeps 15
 - **The installed location, confinement, a Job object, the AppContainer measurement.**
   Every run was on an ASCII scratch path with no limit applied.
 - **The M9.0 qualification protocol** (A-07). ANA-004 ran on one fixture and two targets,
-  plus one no-candidate request, with one or two runs each. A match or a difference here is
-  evidence for that fixture only.
+  plus one no-candidate request, with one or two runs each, and on section 6.3's fixtures
+  once each. A match or a difference here is evidence for those runs only.
 - **The supervisor.** Its refusals in section 6.1 were read from the code. It did not run.
 - **Other Python lines,** and which of the interpreter or the engine moved ANA-004's bounds.
 - **A clean machine.** This host has a Visual C++ redistributable. The list in section 7
@@ -535,13 +688,10 @@ License`. Which text ships with it stays open. `share/OpenMS/LICENSES/` keeps 15
 - **Quality.** Features and matches were counted, not judged. The parameters are the
   probe's, not a recipe's, and thread counts above 1 and U1-2.3's ladder did not run. RAW
   input with the bridge missing was not tried.
-- **Where the engine looks for its data.** The engine's message above calls
-  `OPENMS_DATA_PATH` "a last-resort fallback", `pyopenms/__init__.py` says that libOpenMS
-  "resolves its data directory from compiled-in paths before it consults
-  OPENMS_DATA_PATH", and `OpenMS.dll` holds `D:/a/OpenMS/OpenMS/share/OpenMS`, a path on
-  upstream's build machine. `D:/a` does not exist on this host, which has a `D:` drive.
-  Whether a folder at such a path would be read in place of the copy's was not tested.
-  That belongs with the confinement measurement.
+- **Whether anything can reach the locations of section 7.1 on an installed machine.** The
+  access rights of a drive root were not tested, a file was never placed at `D:/a`, and this
+  record claims no attack. Whether `openssl.cnf` can change a result is for the confinement
+  measurement too.
 - **Any licence conclusion.** The inventories are facts for the licence slice, RT-3 and the
   owner.
 
@@ -580,10 +730,18 @@ enters the repository except this record.
 | `doc_350.py` | `<pinned>` | the 3.5.0 call forms | `3d538c43e5992df76917cc563aa2655739a3805c85810f96606e198e97e80d94` |
 | `debug_mtd.py` | the shape | the missed ions against `min_sample_rate` | `9d7c3d10481a31815bd78258ee7b91a5642e621447023d97947ee03bdc160442` |
 | `smoke_import.py` | the shape | the import facts of section 4 | `10cf38d8f53504168dc53e6ef285cf31f07c965f56f0930581aee1fc87a8a610` |
-| `dll_paths.py` | system Python `-I` | the compiled-in paths of section 10 | `7ff2e26644cae6480d67283e2346a91d0b76693183c56b86ec09fe1dc80fb98d` |
+| `dll_paths.py` | system Python `-I` | the compiled-in paths of section 7.1 | `7ff2e26644cae6480d67283e2346a91d0b76693183c56b86ec09fe1dc80fb98d` |
+| `review_fixtures.py` | system Python `-I` | review round: section 6.3's fixtures and requests | `20ed349e146164438a6a041c15f46cdf5b4359b7329f22a31724f5a84a177bb2` |
+| `candidates_diff.py` | system Python `-I` | review round: two `candidates.featureXML` files | `f049598210afa0e7308ce2474f5c18d250300e3787b5a13cc8fff1f722f3b0fb` |
+| `review_static.py` | system Python `-I` | review round: the byte checks added to sections 7, 8 and 9.2 | `8c67f99bf6bd77cafcfad9d4862734eee41c76e5a8a38e8bdb485d0781dd77d8` |
+| `loads_after.py` | the shape | review round: what is loaded after a script, or after imports in a given order | `faefb885e6ad03d900a6edad7da014f0f0a94023777285b0fe5bd3b2cb0a808e` |
+| `trace_nt.py` | the shape | review round: the file trace of sections 7 and 7.1, through kernelbase's import table, so it does not see the loader's own DLL search | `21ae6b339cdb4450ad72e505887b0ac670408c12862c4cf52a116d9d0dc257f6` |
+| `epd_doublet.py` | the shape | review round: `ElutionPeakDetection` on a doublet | `8e729fecbffd4ef38996c25dc8d78d3e5901305307a8158d4eea9ffefc909007` |
 
 `request_absent.json` is `request.json` without the target `C8H10N4O2`, written by a
-one-off command.
+one-off command. So is section 6.3's second request, which is that section's first with every
+`neutralMass` null (SHA-256 `9911b8ced6f6ac6409da4b4f5c2d8c209563baef68e901e6caa30b18e27042a9`
+and `60c176489bc0490fb6a1c3cf607139bc6d0f83bf7ed19b6066f9a81876d4886e`).
 
 Downloads, runs and outputs are not committed either. Sections 3 to 9 give what a re-run
 needs: the artefacts' digests, the exclusion list, the launch and the calls.
