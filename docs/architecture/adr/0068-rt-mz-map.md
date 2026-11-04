@@ -7,7 +7,7 @@ version 2026-11-03.2: see
 is implemented in `crates/proteowizard/src/rt_mz_map.rs`, with one map per
 polarity and per representation; no command, screen or export uses it. MAP-1.9
 is decided and not built yet (decision 1). ADR 0070's table of records lists
-this record as Accepted, by that row's own commit in this record's PR, #183. ADR
+this record as Accepted, on its own line, since `77467127` in this record's PR, #183. ADR
 0057's amendment (MAP-1.7) and ADR 0056's widening (MAP-1.9) come after it, in the
 second records PR.
 Related: [0005](0005-mzml-preview-boundary.md),
@@ -152,8 +152,9 @@ its table row reports each spectrum's polarity. It states no scan type yet.
   a request over it is refused (`map_bounds_invalid`). What the screen does then
   belongs to analysis-ms1-map (as built 2026-11-04, not an owner decision).
 - **A map whose stated m/z range is empty or inverted,** a lowest observed m/z at
-  or above the highest, has no first view either: `ms1_extent` reports the range as
-  stated, and a request over it is refused (`map_bounds_invalid`). MAP-1.5 speaks of
+  or above the highest, has no first view either: `ms1_extent` reports the lowest of
+  the stated lows and the highest of the stated highs, without ordering them, and a
+  request over it is refused (`map_bounds_invalid`). MAP-1.5 speaks of
   spectra that state no range, so it does not answer this case. What the screen
   does then belongs to analysis-ms1-map (as built 2026-11-04, not an owner
   decision).
@@ -510,12 +511,12 @@ MAP-1.1 is the form of the map:
 | --- | --- | --- |
 | MAP-1.1 | Both forms, each as soon as it is ready; neither waits for the XIC or Python. This record is the MS1 map; the MS2 precursor map needs none | 3 and 4 slices; both wait for the new plot kinds (6 slices); the two maps are easily confused and must be labelled clearly |
 | MAP-1.2 | The greatest intensity per cell, stated in the caption | Weak signals in the same cell are hidden; on an ion trap, profile and centroid still cannot be compared |
-| MAP-1.3 | log10 only, with one colour for values at or below 0 | Differences in strength look compressed; no linear scale for the base peak |
+| MAP-1.3 | log10 only, with one colour for values at or below 0 | Differences in strength look compressed; no linear scale for looking at the base peak |
 | MAP-1.4 | A vector cell grid with adjacent cells of one colour merged; no dependency change | With many cells the file can be large, so it needs a cap |
 | MAP-1.5 | When spectra do not state an m/z range, the user enters one and the reason is stated | One more step on opening; a user who does not know the range may enter too narrow a one |
-| MAP-1.6 | One map per polarity; a file where only some MS1 spectra declare one is refused | A partly declared file has no map |
+| MAP-1.6 | One map per polarity; a file where only some MS1 spectra declare one is refused | A partly declared file has no map; library and ADR 0068 must follow |
 | MAP-1.7 | The pass runs on its own worker, one at a time, beside selected-spectrum reads; this amends ADR 0057 | Two reads at once may slow each other on a slow disk (not measured) |
-| MAP-1.8 | One map per representation; a file where only some declare one is refused | A partly declared file has no map |
+| MAP-1.8 | One map per representation; a file where only some declare one is refused | A partly declared file has no map; the library must change |
 | MAP-1.9 | The reader reports the scan type; narrow-window scans stay out of the map and their count is stated | Not in R-1's scope, effort not estimated; signals in narrow windows do not show on the map |
 
 **Decision U7 (2026-10-30).** ADR 0070 is the umbrella. This record is ADR 0056
