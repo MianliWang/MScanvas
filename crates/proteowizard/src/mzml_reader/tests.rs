@@ -1137,6 +1137,79 @@ fn a_binary_element_elsewhere_in_the_array_is_not_its_payload() {
     );
 }
 
+/// ADR 0056's note for P216 gives the two ids to an array whose role was stated
+/// before its first `binary`. An array whose role comes later is refused too, and
+/// which id it gets is as built on 2026-11-04, not an owner decision.
+#[test]
+fn a_role_stated_after_the_first_binary_is_refused_outside_the_two_ids() {
+    let no_role = [term(F64), term(NONE)];
+    let (mz, intensity) = (mz_term(), intensity_term());
+    let whole = b64(&le_f64(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    // Three doubles each, so joined they hold exactly the six declared values.
+    let (first, second) = whole.split_at(32);
+    let (head, tail) = whole.split_at(8);
+    let mz_six = array(&[term(F64), term(NONE), mz.clone()], &whole);
+    let intensity_six = array(&[term(F64), term(NONE), intensity.clone()], &whole);
+    let then_role = |payload: &str, role: &str| {
+        array(&no_role, payload).replace(
+            "</binary></binaryDataArray>",
+            &format!("</binary>{role}</binaryDataArray>"),
+        )
+    };
+    let shapes = |role: &str| {
+        [
+            then_role(&whole, role),
+            then_role(&format!("{first}</binary><binary>{second}"), role),
+            then_role(&format!("{head}<x/>{tail}"), role),
+            array(&no_role, &format!("{first}</binary>{role}<binary>{second}")),
+        ]
+    };
+
+    // No payload was prepared before the role, so nothing names either id first,
+    // and the term after the payload decides when the array ends.
+    for shape in shapes(&mz) {
+        assert_eq!(
+            ms1_refusal(6, &[shape.clone(), intensity_six.clone()]),
+            MzmlSpectrumError::TermAfterPayload,
+            "{shape}"
+        );
+    }
+    for shape in shapes(&intensity) {
+        assert_eq!(
+            ms1_refusal(6, &[mz_six.clone(), shape.clone()]),
+            MzmlSpectrumError::TermAfterPayload,
+            "{shape}"
+        );
+    }
+
+    // So the term does not always decide: a payload that starts after the role is
+    // prepared, and a problem met after that is named first.
+    let third = format!("{first}</binary>{mz}<binary></binary><binary>{second}");
+    assert_eq!(
+        ms1_refusal(6, &[array(&no_role, &third), intensity_six.clone()]),
+        refused(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)
+    );
+    let child = format!("{first}</binary>{mz}<binary>{second}<x/>");
+    assert_eq!(
+        ms1_refusal(6, &[array(&no_role, &child), intensity_six]),
+        refused(ArrayRole::Mz, ArrayProblem::ElementInPayload)
+    );
+
+    // It is that one spectrum's refusal: the open and the others stand.
+    let bad = ms1(
+        0,
+        &[then_role(&whole, &mz), intensity_array(&[1.0, 2.0, 3.0])],
+    );
+    let document = document(&[bad, ms2(1)]);
+    let table = table(&document).expect("the open stands");
+    let read = |index| read_selected_spectrum_from(Cursor::new(document.as_bytes()), &table, index);
+    assert_eq!(
+        read(0).expect_err("refused").stable_id(),
+        "term_after_payload"
+    );
+    assert_eq!(read(1).expect("decodes").mz().values(), [150.0, 175.5]);
+}
+
 #[test]
 fn which_array_is_which_must_be_unambiguous() {
     let intensity = intensity_array(&[1.0, 2.0, 3.0]);
