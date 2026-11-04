@@ -1,6 +1,6 @@
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { ownedErrorDetail } from "./ownedErrorMessages";
-import { STATUS_BUSY_ID } from "../workbench/StatusBar";
+import { statusItemTextId } from "../workbench/StatusBar";
 import { adoptionInFlightKey, conversionCountParts, conversionErrorMessage, conversionJudgedOutputOnly, conversionNoticeMessage } from "./conversionMessages";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type Ref, type RefObject } from "react";
 import { useListWindow, type ListWindowRow } from "./conversionListWindow";
@@ -1653,8 +1653,9 @@ function QueueState({
                       refused: !conversion.canAdopt,
                       // Down a long list the summary column is out of sight, so
                       // an adoption under way is said in the status bar as well
-                      // and these point there. Its own Add has its own line.
-                      refusedBy: conversion.adopting ? STATUS_BUSY_ID : refusedBy.adopt,
+                      // and these point at that sentence: another reason, such as a
+                      // running view, can hold the bar's busy id. Its own Add has its own line.
+                      refusedBy: conversion.adopting ? statusItemTextId("conversionActivity") : refusedBy.adopt,
                       adding: conversion.adoptingOutput === output.outputId,
                       answer: left ? null : answer,
                       notVerified: itemNotVerified(item),

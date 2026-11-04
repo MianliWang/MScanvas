@@ -574,8 +574,16 @@ describe("A0055 and ADR 0052, rendered", () => {
       expect(await browser.$(`${group(locale, SET_NAMES[19]!)} ${OUTPUT_ADD}`).getAttribute("aria-disabled")).toBeNull();
     });
 
-    it(`says an Add under way on that member's line and in the status bar, ${size}`, async () => {
-      await open(conversionWorld(locale, [WIFF], setFinished()), locale, width, height, ["adopt_workspace_conversion_output"]);
+    // A running view takes the bar's busy reason, and it is not why the other Adds wait.
+    for (const viewing of [false, true]) it(`says an Add under way on that member's line and in the status bar${viewing ? ", with a view running" : ""}, ${size}`, async () => {
+      const table = conversionWorld(locale, viewing ? [RAW, WIFF] : [WIFF], setFinished());
+      if (viewing) {
+        table.get_raw_view_state = {
+          state: { state: "running", operation: 1, handle: RAW.handle, fileName: RAW.fileName, phase: "converting", elapsedMs: 12_000, bytesRead: null, bytesTotal: null, intentId: shippedIntent.id, unverifiedBuildRelease: null, cachedCopyDamaged: false },
+          availability: { available: false, code: "raw_view_busy" },
+        };
+      }
+      await open(table, locale, width, height, ["adopt_workspace_conversion_output"]);
       await showConversion();
       await pressMemberTwenty();
       const pressed = group(locale, SET_NAMES[19]!);
@@ -595,7 +603,7 @@ describe("A0055 and ADR 0052, rendered", () => {
         };
         return { pressed: reason(`${one} ${button}`), other: reason(`${other} ${button}`) };
       }, OUTPUT_ADD, pressed, group(locale, SET_NAMES[2]!));
-      await shot(`set-member-adding-${locale}-${String(width)}`);
+      await shot(`set-member-adding${viewing ? "-viewing" : ""}-${locale}-${String(width)}`);
       const line = BUNDLES[locale].outputAdding;
       const bar = BUNDLES[locale].shellContextActivity.replace("{{activity}}", BUNDLES[locale].m74CnvAdoptOneInFlight);
       expect(seen).toEqual({
