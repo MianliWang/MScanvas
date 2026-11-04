@@ -86,7 +86,8 @@ its table row reports each spectrum's polarity. It states no scan type yet.
     window.
   - A file where no MS1 spectrum declares one does not separate by polarity, even
     if it switches, and each of its maps states "polarity not reported"; it still
-    has one map per representation. That is a known risk, stated on the figure (as built
+    has one map per representation. A file that switches and declares nothing is a
+    known risk, stated on the figure (as built
     2026-11-04, not an owner decision: MAP-1.6 does not answer this case).
   - A polarity stated two ways or unreadably is not reported, which is the
     reader's rule (#182), so it counts as not declared here (as built 2026-11-04,
@@ -232,7 +233,9 @@ its table row reports each spectrum's polarity. It states no scan type yet.
 ### 5. Refusals
 
 Every refusal is typed, carries no path or document text, and leaves no
-partial raster. Nothing falls back to `msaccess` or another reader.
+partial raster.
+Nothing falls back to `msaccess` or another reader (2026-11-04, ADR 0070 decision
+3's item 5; not an owner decision).
 
 | Refusal | Stable identifier |
 | --- | --- |
@@ -260,6 +263,8 @@ partial raster. Nothing falls back to `msaccess` or another reader.
 - **Progress** is `(done, total)` after each spectrum, where `total` counts the
   map's spectra in the window. It is known before the first read, so the screen
   can show a determinate bar.
+  It never states an estimated time (2026-11-04, ADR 0070 decision 3's item 8; not
+  an owner decision).
 - **Cancel** is checked before each spectrum is read and once after the last,
   with the crate's `CancellationToken`, so a cancel heard during the last
   spectrum or before an empty window still counts. A cancelled pass returns
@@ -336,6 +341,11 @@ no sum, XIC, summed spectrum, peak picking or feature detection.
 2. **Desktop command.** A narrow command over the retained preview state,
    with progress events, cancel and supersession (decision 6), returning the
    bounded raster.
+   The result also names the source, its generation and this record (2026-11-04, ADR
+   0070 decision 3's item 9, which the owner's answer of that day, A0070-Q1, makes
+   part of each record's minimum; decision 7 already has the exports state the same,
+   so this chooses nothing new; how this line answers the item is not an owner
+   decision).
 3. **Screen and export.** The plot kind, the screen view, the figure and data
    exports (decision 7), and rendered QA.
 4. **Polarity and representation** (MAP-1.6, MAP-1.8). In the library since
@@ -522,14 +532,17 @@ reply and what it leaves open.* A0070-Q1, option `minimum`: decision 3's list th
 is the minimum each record states, so this record has to answer all eleven items
 ([its check](#adr-0070-decision-3s-list), which names the part it does not state
 yet). A0070-Q2, option `with-code`: the two reader lines of
-`crates/proteowizard/AGENTS.md` change together with a record's code. #207 changed
-them for the XIC pass, and this record's slice names the map pass beside it and
+`crates/proteowizard/AGENTS.md` change together with the first record's code, and the
+option's stated cost is that whichever of #207 and #183 lands later adjusts them. #207
+changed them for the XIC pass, and this record's slice names the map pass beside it and
 keeps the closing rule that anything else stays forbidden.
 
 **Written elsewhere, not here, and not yet on `main` on 2026-11-04:** ADR 0057's
 amendment for the map pass (MAP-1.7) and ADR 0056 decision 1's dated widening for the
-scan type (MAP-1.9). The answers' rows reached `main` with #212, in section 1d of
-[the owner-decisions list](../../development/OWNER_DECISIONS_V511.md).
+scan type (MAP-1.9). The rows of the 2026-11-03 answers (MAP-1.1 to MAP-1.9) reached
+`main` with #212, in section 1d of
+[the owner-decisions list](../../development/OWNER_DECISIONS_V511.md); the rows of
+A0070-Q1 and A0070-Q2 are not there yet.
 
 ## ADR 0070 decision 3's list
 
@@ -554,7 +567,7 @@ record does not state yet.
 | 6. Arithmetic | Decision 1: the maximum of stored values as `f64`. ADR 0056's selected read widens each exactly or refuses it, and refuses a non-finite value, so none reaches a cell | |
 | 7. Retention | Decision 2: at most 2^21 `f64` cells, returned to the caller, and the library keeps nothing; nothing is cached and no array outlives its spectrum's step. **Not stated yet:** where the desktop keeps the raster and when that ends, which slice 2 owes this record | The desktop's part, statement included (slice 2) |
 | 8. Running | Decision 6: cancellation between spectra, and progress as spectra read out of the table's count, with no estimate of time | Supersession and the generation check (slice 2) |
-| 9. Provenance | The result carries the map's polarity and representation, bounds, bins, units and counts of spectra and points. The pass resolves no operand, so the request is both as typed and as resolved. Spectra excluded: the other maps' counts, and the map's own beyond the window, from `ms1_extent`. Refused: none, because a refused spectrum refuses the map. Decision 7: both exports carry the same | The source, its generation and this record's name (slice 2); the count of narrow scans left out (`be/map-scan-type`); the exports (slice 3) |
+| 9. Provenance | The result carries the map's polarity and representation, bounds, bins, units and counts of spectra and points. The pass resolves no operand, so the request is both as typed and as resolved. Spectra excluded: the other maps' counts, and the map's own beyond the window, from `ms1_extent`. Refused: none, because a refused spectrum refuses the map. Decision 9, step 2: the command's result also names the source, its generation and this record. Decision 7: both exports carry the same | The source, its generation and this record's name (slice 2); the count of narrow scans left out (`be/map-scan-type`); the exports (slice 3) |
 | 10. Export | Decision 7, through the shared specification and the existing no-overwrite export path, with a data document that carries item 9. Decision 2: only the raster crosses to the webview, never the arrays | All of it (slice 3) |
 | 11. Evidence | Evidence: time and memory on real files, release build, judged with no threshold set in advance. The tests' fixtures are hand-computed; `ltq_check.py` is an independent reference for the LTQ Velos counts it made | |
 
