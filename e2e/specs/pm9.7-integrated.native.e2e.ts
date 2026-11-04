@@ -110,7 +110,13 @@ async function measuredSize(width: number, height: number): Promise<void> {
 }
 
 async function navigate(label: string): Promise<void> {
-  await browser.$(".workbench-navigation").$(`button=${label}`).click();
+  const tab = browser.$(".workbench-navigation").$(`button=${label}`);
+  if (await tab.isExisting()) {
+    await tab.click();
+  } else {
+    // Project is the header's third tab (direction A).
+    await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
+  }
   await frames();
 }
 
@@ -304,7 +310,7 @@ async function viewer(locale: Locale, width: number, height: number): Promise<vo
   const row = `.grouped-roster [role="row"][data-handle="${MZML_ROW.handle}"]`;
   await reveal(row);
   await browser.$(row).click();
-  await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+  await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
   const scan = '.spectrum-table-row[data-row-position="0"]';
   await browser.$(scan).waitForExist({ timeout: 60_000 });
   await reveal(scan);
@@ -360,7 +366,7 @@ describe("PM9.7 integrated native rendering, controlled IPC, 144 DPI (prepared U
         await browser.$(".roster-empty").waitForExist({ timeout: 30_000 });
         const workbench = await sample(`i1-workbench-${at}`);
         expect(workbench.surface).toBe("workbench");
-        expect(workbench.text).toContain(words.emptyEvidence);
+        expect(workbench.text).toContain(words.evidenceFirstRun);
         let add = await mark(".workbench-shell", words.addFiles, "data-pm97-native-add");
         if (add === null) { await unfoldRoster(at); add = await mark(".workbench-shell", words.addFiles, "data-pm97-native-add"); }
         expect(add).not.toBeNull();
@@ -391,21 +397,12 @@ describe("PM9.7 integrated native rendering, controlled IPC, 144 DPI (prepared U
         const reopen = await mark(".project-header", words.projectOpen, "data-pm97-native-open");
         expect([create, reopen].every(selector => selector !== null)).toBe(true);
         expect([await offered(create!), await offered(reopen!)]).toEqual([true, true]);
-        const refused = await browser.execute(labels => labels.map(label => {
-          const button = [...document.querySelectorAll<HTMLButtonElement>(".project-header button")].find(node => (node.textContent ?? "").trim() === label);
-          return button === undefined ? { label, found: false } : {
-            label, found: true, refused: button.getAttribute("aria-disabled"), disabled: button.disabled, opacity: getComputedStyle(button).opacity,
-            title: button.title, describedBy: document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent?.trim() ?? null,
-          };
-        }), [words.projectSave, words.projectSaveAs, words.projectClose]);
-        evidence.push({ kind: "F1 refused Project controls", label: at, refused });
-        for (const fact of refused) expect(fact).toMatchObject({ found: true, refused: "true", disabled: false, opacity: "0.48", title: words.projectNeedsProject, describedBy: words.projectNoneHint });
-        const save = await mark(".project-header", words.projectSave, "data-pm97-native-save");
-        expect(save).not.toBeNull();
-        await reach(save!, `${at} refused Save`);
-        expect(await browser.execute(() => getComputedStyle(document.activeElement!).opacity)).toBe("1");
-        await assertFocus(`${at} refused Save`);
-        await sample(`i1-save-refused-focused-${at}`);
+        // Save, Save As… and Close act on an open project, so with nothing open
+        // they are not offered at all: the head holds exactly the two ways in.
+        const offeredInHead = await browser.execute(() =>
+          [...document.querySelectorAll<HTMLButtonElement>(".project-header button")].map(node => (node.textContent ?? "").trim()));
+        evidence.push({ kind: "Project head actions with nothing open", label: at, offered: offeredInHead });
+        expect(offeredInHead).toEqual([words.projectNew, words.projectOpen]);
         await reach(create!, `${at} New project`);
         await assertFocus(`${at} New project`);
         await sample(`i1-new-focused-${at}`);

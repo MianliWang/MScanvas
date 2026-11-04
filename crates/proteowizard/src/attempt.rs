@@ -181,6 +181,10 @@ pub enum StagedObservationPhase {
     /// back a field away. What it says is when the reading was taken, which is
     /// the earliest point at which "did the provider write anything" is
     /// answerable at all.
+    ///
+    /// ADR 0055 decision 6 also reads run 1's directory here when it settles
+    /// between its two runs, after the intermediate was judged: a judgement
+    /// reads and removes nothing, so the reading still sees what run 1 left.
     ProviderReturned,
     /// Taken after the staged output was judged and refused. Validation reads
     /// and removes nothing, so this sees what the backend left.

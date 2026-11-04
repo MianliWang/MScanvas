@@ -73,7 +73,7 @@ function mount(options: FakePreviewApiOptions = {}): FakePreviewApi {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
   return api;
 }
 
@@ -149,7 +149,7 @@ describe("a failed catalog beside a backend check", () => {
     await waitFor(() => {
       expect(convert).toHaveAttribute("aria-disabled", "true");
     });
-    expect(retry).toBeDisabled();
+    expect(retry).toHaveAttribute("aria-disabled", "true");
 
     const id = "conversion-availability-backend-changing";
     // One element in the whole document owns the fact.
@@ -211,12 +211,12 @@ describe("a failed catalog beside a backend check", () => {
     const retry = await screen.findByRole("button", { name: "Read the settings again" });
     await pressCheckAgain();
     await waitFor(() => {
-      expect(retry).toBeDisabled();
+      expect(retry).toHaveAttribute("aria-disabled", "true");
     });
 
     recheck.held.resolve(availableBackend);
     await waitFor(() => {
-      expect(retry).toBeEnabled();
+      expect(retry).not.toHaveAttribute("aria-disabled");
     });
     // The control is a real button, so the platform's own activation reaches it
     // and nothing here has taken it out of the tab order while it was refused.

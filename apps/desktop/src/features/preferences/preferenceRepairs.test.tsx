@@ -31,7 +31,6 @@ import {
 } from "../../test/preferenceFixtures";
 import { PreferencesApiProvider } from "./preferencesApi";
 import type { PreferenceWriteRequest } from "./storedPreferences";
-import { blurAsABrowserWould } from "../../test/browserFocus";
 import { UI_RESOURCES } from "./i18n";
 
 const en = UI_RESOURCES.en;
@@ -76,12 +75,10 @@ describe("a dialog that contradicted itself", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     await within(dialog).findByRole("alert");
     // The footer used to read "saved on this computer and restored next time"
     // directly under an alert saying the write had failed.
-    expect(footer()).toHaveTextContent(zh.storageNotSaving);
-    expect(footer()).not.toHaveTextContent(zh.storageSaved);
+    expect(footer().textContent).toBe(zh.storageNotSaving);
   });
 
   it("stops claiming it when the stored record cannot be read at all", async () => {
@@ -89,8 +86,7 @@ describe("a dialog that contradicted itself", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(en.storedUnusableTitle);
-    expect(footer()).toHaveTextContent(en.storageNotSaving);
-    expect(footer()).not.toHaveTextContent(en.storageSaved);
+    expect(footer().textContent).toBe(en.storageNotSaving);
   });
 
   it("does not claim the old record survived a publish it could not read back", async () => {
@@ -98,7 +94,6 @@ describe("a dialog that contradicted itself", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     const uncertain = await within(dialog).findByRole("alert");
     // The rename succeeded and only the read-back failed, so "restarting uses
     // the last saved preferences" is the one thing MSCanvas cannot say.
@@ -115,7 +110,6 @@ describe("a dialog that contradicted itself", () => {
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     await waitFor(() => expect(within(dialog).getAllByRole("alert")).toHaveLength(2));
     const refused = within(dialog).getAllByRole("alert")[1]!;
     expect(refused.dataset.save).toBe("refused");
@@ -123,24 +117,17 @@ describe("a dialog that contradicted itself", () => {
     expect(refused).toHaveTextContent(zh.storedUnsupportedVersion);
   });
 
-  it("gives the keyboard to the explanation the recovery actions are in", async () => {
+  it("keeps the keyboard on the choice and puts the recovery beside the failure", async () => {
     mount({ failWith: { problem: "notWritten", retryable: true } });
     await screen.findByText(en.backendMissing);
     const dialog = openSettings();
-    choose(dialog, en.simplifiedChinese);
-    // Pressing Apply disables it, which is what blurs it. Modelled, because
-    // jsdom keeps a disabled control focused.
-    const apply = within(dialog).getByRole("button", { name: zh.apply });
-    apply.focus();
-    fireEvent.click(apply);
-    // jsdom keeps a disabled control focused and then refuses to blur it, so
-    // the browser's own blur-on-disable is modelled the way the rest of this
-    // suite models it.
-    blurAsABrowserWould(apply);
+    // Nothing is disabled by a save (D4, B4), so the keyboard stays where the
+    // reader put it; the alert announces itself and holds the retry.
+    const chinese = within(dialog).getByRole("radio", { name: en.simplifiedChinese });
+    chinese.focus();
+    fireEvent.click(chinese);
     const failure = await within(dialog).findByRole("alert");
-    // The alert, rather than one of its buttons: the explanation comes before
-    // the decision, and which action to take stays the reader's.
-    await waitFor(() => expect(failure).toHaveFocus());
+    expect(chinese).toHaveFocus();
     expect(within(failure).getByRole("button", { name: zh.saveRetry })).toBeEnabled();
   });
 });
@@ -173,10 +160,10 @@ describe("an apply that had nowhere to write", () => {
 
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
+    await waitFor(() => expect(preferenceRegion()).toHaveTextContent(zh.sessionOnlyApplied));
+    press(dialog, zh.close);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.documentElement.lang).toBe("zh-CN");
-    expect(preferenceRegion()).toHaveTextContent(zh.sessionOnlyApplied);
     expect(sent).toHaveLength(1);
     // Reopening shows the applied value, not a draft that was never applied.
     expect(within(openSettings()).getByRole("radio", { name: zh.simplifiedChinese })).toBeChecked();
@@ -187,19 +174,19 @@ describe("a session fact a Cancel used to erase", () => {
   beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it("keeps saying what a restart will use after the dialog is cancelled", async () => {
+  it("keeps saying what a restart will use after the dialog is closed", async () => {
     mount({ failWith: { problem: "notWritten", retryable: true } });
     await screen.findByText(en.backendMissing);
     let dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
     await within(dialog).findByRole("alert");
     press(dialog, zh.saveSessionOnly);
+    press(dialog, zh.close);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     dialog = openSettings();
     expect(footer()).toHaveTextContent(zh.sessionOnlyNote);
-    press(dialog, zh.cancel);
+    press(dialog, zh.close);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // The session is still running on preferences that were never written, and
     // the only surface that said so used to be cleared by this Cancel.
@@ -226,7 +213,7 @@ describe("a retry that could not have worked", () => {
 
     preferences.recover();
     press(dialog, en.saveRetry);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(preferences.stored()).not.toBeNull());
     // The confirmation travelled with the retry, so the record this build
     // refused was actually replaced. Without it Rust refuses the retry and the
     // button can never work.
@@ -251,10 +238,8 @@ describe("a read that never arrived", () => {
     // The store may be perfectly healthy: a dropped call is not a missing root,
     // and a save is still attempted rather than suppressed for the session.
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(preferences.stored()?.appearance.locale).toBe("zh-CN"));
     expect(preferences.requests).toHaveLength(1);
-    expect(preferences.stored()?.appearance.locale).toBe("zh-CN");
   });
 
   it("stops gating the controls once the wait has gone on too long", async () => {
@@ -265,7 +250,7 @@ describe("a read that never arrived", () => {
     // editor acts before the read resolves. The control is refused rather than
     // taken out of the tab order, so the reason is reachable without a pointer.
     expect(rosterToggle()).toHaveAttribute("aria-disabled", "true");
-    expect(rosterToggle()).toHaveAttribute("title", en.panelsLoading);
+    expect(rosterToggle()).toHaveAccessibleDescription(en.panelsLoading);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(10_500); });
     // Bounded. Settings and the toggles are usable again, on the defaults, with
@@ -274,8 +259,8 @@ describe("a read that never arrived", () => {
     expect(rosterToggle()).not.toHaveAttribute("aria-disabled");
     const dialog = openSettings();
     expect(within(dialog).getByText(en.storageReadTimedOut)).toBeVisible();
-    expect(within(dialog).getByRole("radio", { name: en.english })).toBeEnabled();
-    press(dialog, en.cancel);
+    expect(within(dialog).getByRole("radio", { name: en.english })).not.toHaveAttribute("aria-disabled");
+    press(dialog, en.close);
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     // And the read is still allowed to answer: a slow answer is still the truth
@@ -349,7 +334,8 @@ describe("a stale answer from the other lane", () => {
 
     const dialog = openSettings();
     choose(dialog, en.simplifiedChinese);
-    press(dialog, zh.apply);
+    await waitFor(() => expect(preferenceRegion()).toHaveTextContent(zh.applied));
+    press(dialog, zh.close);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.documentElement.lang).toBe("zh-CN");
 
@@ -358,7 +344,8 @@ describe("a stale answer from the other lane", () => {
     // It describes revision 0 and the session has adopted revision 1, so it
     // does not get to report the store as unreadable again.
     expect(within(openSettings()).queryByText(zh.storedUnusableTitle)).toBeNull();
-    expect(footer()).toHaveTextContent(zh.storageSaved);
+    // The normal saved state says nothing.
+    expect(footer()).toBeEmptyDOMElement();
   });
 });
 
@@ -369,8 +356,9 @@ describe("the panel reset and its own control", () => {
   it("keeps the keyboard and announces what it did", async () => {
     mount({ stored: storedRecord({ layout: { roster: "hidden", details: "automatic" } }) });
     await screen.findByText(en.backendMissing);
-    const reset = await screen.findByRole("button", { name: en.layoutReset });
-    await waitFor(() => expect(reset).toBeEnabled());
+    const dialog = openSettings();
+    const reset = within(dialog).getByRole("button", { name: en.layoutReset });
+    await waitFor(() => expect(reset).not.toHaveAttribute("aria-disabled"));
     reset.focus();
     fireEvent.click(reset);
     // Refused rather than removed, and refused in a way that keeps the reader
@@ -381,8 +369,8 @@ describe("the panel reset and its own control", () => {
     await waitFor(() => expect(reset).toHaveAttribute("aria-disabled", "true"));
     expect(reset.isConnected).toBe(true);
     expect(reset).toHaveFocus();
-    // The one panel action with nothing left on screen to read.
-    expect(layoutRegion()).toHaveTextContent(en.layoutResetDone);
+    // Said inside the dialog: the shell's region is aria-hidden behind it.
+    expect(dialog).toHaveTextContent(en.layoutResetDone);
   });
 });
 
@@ -478,12 +466,14 @@ describe("the banner across its own request", () => {
     fireEvent.click(document.querySelector('[data-backend-action="recheck"]')!);
     await waitFor(() => expect(screen.getByText(en.backendChecking)).toBeVisible());
     // All three ways out are in the document, refused for the length of the
-    // request. A check that ends without producing a verdict used to leave this
-    // banner reading "checking" with no control of any kind.
+    // request and still reachable with their reason. A check that ends without
+    // producing a verdict used to leave this banner reading "checking" with no
+    // control of any kind.
     for (const action of ["recheck", "choose", "automatic"]) {
       const control = document.querySelector(`[data-backend-action="${action}"]`);
       expect(control, action).not.toBeNull();
-      expect(control, action).toBeDisabled();
+      expect(control, action).toHaveAttribute("aria-disabled", "true");
+      expect(control, action).toHaveAccessibleDescription(en.backendChecking);
     }
     await act(async () => { check.resolve(unavailableBackend); await Promise.resolve(); });
   });
@@ -500,44 +490,45 @@ describe("the banner across its own request", () => {
     </WorkspaceDropTransportProvider>);
   }
 
-  it("does not fold away under a reader in the help when a usable verdict arrives (PM9 L10)", async () => {
-    // The banner folds when a usable installation leaves it nothing to act on.
-    // A reader who tabbed into the help while the check ran is not nothing:
-    // folding would take the focused summary out of rendering and drop them
-    // on the body, the regression the identity of the help exists to prevent.
+  it("keeps open details under a reader in the help when a usable verdict arrives (PM9 L10)", async () => {
+    // A usable verdict is silent, but details the reader opened are theirs to
+    // close: closing them under a focused help button would drop the reader on
+    // the body, the regression the identity of the help exists to prevent.
     const check = deferred<typeof availableBackend>();
     renderAvailableAfter(check.promise);
-    await waitFor(() => expect(screen.getByText(en.backendChecking)).toBeVisible());
-    const summary = document.querySelector<HTMLElement>("[data-backend-help] summary")!;
+    await waitFor(() => expect(screen.getByText(en.backendChecking)).toBeInTheDocument());
+    fireEvent.click(document.querySelector<HTMLElement>("[data-backend-item]")!);
+    const summary = document.querySelector<HTMLElement>("[data-backend-help]")!;
     act(() => { summary.focus(); });
     await act(async () => { check.resolve(availableBackend); await Promise.resolve(); });
     await screen.findByText(en.backendAvailable);
-    expect(document.querySelector("#backend-status")).not.toHaveAttribute("data-backend-collapsed");
+    expect(document.querySelector("#backend-status")).toHaveAttribute("data-backend-mode", "popover");
     expect(summary).toBeVisible();
     expect(summary).toHaveFocus();
   });
 
-  it("hands the header toggle's place to the banner when it has something to say again (PM9 L10)", async () => {
-    // The phrase in the header exists only while the banner is quiet. A check
-    // the reader did not start from it removes it, and a reader who was on it
-    // continues from the banner that replaced it rather than from the body.
+  it("hands the keyboard to the status bar's item when a usable verdict removes the notice (S5)", async () => {
+    // Success leaves nothing behind in the main area. A reader who pressed the
+    // notice's fix continues from the item that now says "ready", not from the
+    // body.
     const check = deferred<typeof availableBackend>();
-    renderAvailableAfter(check.promise, 1);
-    const toggle = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-backend-toggle]");
-      if (found === null) throw new Error("not folded yet");
-      return found;
+    const api = createFakePreviewApi({
+      availability: unavailableBackend,
+      chosenInstallation: () => check.promise,
     });
-    fireEvent.click(toggle);
-    act(() => { toggle.focus(); });
-    // Pressed without taking the keyboard, as a check started elsewhere would be.
-    fireEvent.click(document.querySelector('[data-backend-action="recheck"]')!);
-    await waitFor(() => expect(document.querySelector("[data-backend-toggle]")).toBeNull());
-    expect(document.querySelector("#backend-status")).toHaveFocus();
+    render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreferencesApiProvider value={createFakePreferencesApi()}>
+        <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+      </PreferencesApiProvider>
+    </WorkspaceDropTransportProvider>);
+    await screen.findByText(en.backendMissing);
+    const choose = screen.getByRole("button", { name: en.backendChoose });
+    act(() => { choose.focus(); });
+    fireEvent.click(choose);
     await act(async () => { check.resolve(availableBackend); await Promise.resolve(); });
-    await screen.findByText(en.backendAvailable);
-    // Still engaged: the reader is in it, so the quiet verdict leaves it open.
-    expect(document.querySelector("#backend-status")).toHaveFocus();
-    expect(document.querySelector("[data-backend-toggle]")).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(document.querySelector("#backend-status")).toHaveAttribute("data-backend-mode", "hidden"));
+    const item = document.querySelector<HTMLElement>("[data-backend-item]")!;
+    expect(item).toHaveAccessibleName(en.backendReadyShort);
+    expect(item).toHaveFocus();
   });
 });

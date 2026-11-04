@@ -183,6 +183,15 @@ closed on `b81fc78` by the owner's copy decision (§9, Closure). The production 
 PM9.3's. PM9.3 fixed it on 2026-09-28 and settled L3, L5 and L21's open
 parts for the viewer (§11).
 
+*Changed by the self-explaining copy pass (2026-10-28, L9, L14–L16; owner
+direction in [AFTER_BETA1_PLAN §2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+The organizing count is neither shown nor announced while nothing is
+highlighted or checked. The context line has no project item while no project
+is open and no scope item while nothing is eligible, and the header's drop
+hint is shown only when file drop is unavailable. The empty roster's "Add
+files… or drop them here." and the empty Workbench's drop route are shown only
+while file drop is available. See [slice-02](slice-02.md#self-explaining-copy-pass-2026-10-28).
+
 Not captured in this comparison: empty and entry states, a pending range band
 (PM9.3's G frames later hold one, on screen only at 1920×1080; slice-03 §3),
 the Conversion surface, the roster-open and Details-open states at 960×640, a scrolled or
@@ -928,6 +937,18 @@ The result column is filled at closure.
 | UI-35 | PM9.3 §1 | Chromatogram Full/Current scope kept across previews | semantics | The labels are truthful; changing persistence changes export semantics, which §5 of the dispatch preserves | BOUNDARY: owner decision | NOT APPLICABLE: export semantics, the owner's; the Full/Current labels stay truthful |
 | UI-13, UI-22, UI-37–UI-41, UI-43; m6.x | legacy specs | m7.5, m7.2, m4.1, m4.2, m5.3, the m4.3/m4.4/viewer-r1 setup and (d) cases, m7.1; m6.1–m6.9 | test debt | Stale harness setup, not a UI defect. Owners unchanged: PM9.7; m6.x PM9.4 (held). More than one reviewable repair | BOUNDARY | NOT APPLICABLE: stale harness setups, not UI defects; owners unchanged (PM9.7; m6.x with PM9.4). On `ea85a88`, m4.3, m4.4, m5.2, m5.3, viewer-r1 and viewer-r1-scale fail only as at PM9.3's closure, message for message; m4.1, m4.2, m7.1, m7.2 and m7.5 only as in the PM9.1 campaign's classification (by outcome, m7.2's messages checked), one m7.5 case now passing; m6.x NOT RERUN, every case having failed in that classification (57 of 57) |
 | UI-23 | PM9.3 §0.5 | m7.4's active-Clear pair (focus back to Add files at 960) | test debt, one line | Exercised because UI-19 changes Add files: the reveal goes through `revealRosterRow` | RENDER (test-only repair) | FIXED AND RENDER-VERIFIED (test-only): the pair opens the roster through `revealRosterRow`; m7.4 16 of 16 |
+
+*Changed by the self-explaining copy pass (2026-10-28, UI-15, UI-34; owner
+direction in [AFTER_BETA1_PLAN §2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+The rows above stay the record of their builds. UI-15: the count is neither
+shown nor announced while nothing is highlighted or checked; with a selection
+it reads as recorded. UI-34: the wording ("part of the full range" / "完整范围的一部分")
+and the announcement timing are unchanged. The committed line is visually
+hidden, and only announced, only while nothing is pending and the committed
+range is the full range; the caption's "Showing … (full range)" line says it
+on screen. It is printed while a band is pending and while a part of the range
+is committed, because a current-range export takes that part; the part's
+bounds are announced rather than printed. No rendered rerun is claimed here.
 
 **State at the end of the batch (2026-09-28).** Every row above has its
 result. Two are UNRESOLVED, UI-25 and UI-34, and the rework is **not

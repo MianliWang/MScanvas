@@ -1,6 +1,6 @@
 # Analysis capability map
 
-Analysis is deferred, not prohibited. This document prevents both premature platform work and architecture that blocks sensible growth.
+Analysis is planned and built from 2026-10-30, as milestone M11 of [`PROJECT_PROPOSAL.md`](../../PROJECT_PROPOSAL.md) section 18 (owner decision G1 in [OWNER_DECISIONS_V511.md](../development/OWNER_DECISIONS_V511.md)), on two tracks: Track A needs no Python runtime, and Track B (pyOpenMS) reaches users only through a released, verified runtime. Each module still passes the promotion gate below before it becomes a supported capability. This document prevents both premature platform work and architecture that blocks sensible growth.
 
 ## Integration policy
 

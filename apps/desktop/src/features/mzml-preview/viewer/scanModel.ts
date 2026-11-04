@@ -13,6 +13,7 @@
  * intersections, reduced vertices, hover geometry. See `renderGeometry.ts`.
  */
 
+import type { RetentionTimeUnit } from "../contracts";
 import type { RetentionTimeAxis } from "./rangeSelection";
 
 /** One scan, as everything downstream needs it. */
@@ -55,27 +56,18 @@ export type ScanModelRefusal =
   /** A row carried an intensity that cannot be drawn. */
   | "unusable-intensity"
   /**
-   * A row said its retention time carries a unit, and this build cannot say
-   * which.
-   *
-   * The wire carries a value and a boolean. When the boolean is true there is
-   * nowhere in it for the unit's identity, so an axis could neither be labelled
-   * with the unit nor honestly say none was reported. The frontend type is
-   * wider than anything the boundary can currently produce, and the extra state
-   * has no honest rendering -- so it produces no model rather than a
-   * half-described one.
-   *
-   * Carried forward from PR #72, where it was established and accepted. A
-   * future provider that genuinely reports a unit needs the typed boundary
-   * widened to carry the unit itself; this refusal is what forces that to be an
-   * explicit change.
+   * The rows state different retention-time units, or only some of them state
+   * one (ADR 0056). There is no one axis to place them on, and nothing
+   * converts seconds to minutes -- Rust refuses the chromatogram the same way.
    */
-  | "unsupported-retention-time-unit";
+  | "mixed-retention-time-units";
 
 export type ScanModel =
   | { readonly status: "unavailable"; readonly reason: ScanModelRefusal }
   | {
       readonly status: "ready";
+      /** The one unit every row states, or `notReported` where none states one. */
+      readonly retentionTimeUnit: RetentionTimeUnit;
       /**
        * Every scan, ordered by retention time and then by table position.
        *
@@ -94,8 +86,8 @@ export interface ScanSource {
   readonly scanNumber: number | null;
   readonly msLevel: number;
   readonly retentionTime: number;
-  /** Whether the source reported what the retention time is measured in. */
-  readonly retentionTimeUnitKnown: boolean;
+  /** The unit the row's retention time is stated in, as the file declares it. */
+  readonly retentionTimeUnit: RetentionTimeUnit;
   readonly totalIonCurrent: number;
   readonly basePeakIntensity: number;
 }
@@ -106,8 +98,8 @@ export interface ScanSource {
  * Fails closed throughout. A truncated table is a prefix of the run, and a
  * prefix drawn as a chromatogram is a picture of a shorter experiment than the
  * one that happened; a coordinate that is not a finite number cannot be placed
- * on an axis; and a unit this build cannot name cannot be honestly labelled.
- * Each of those produces no model rather than a partial one.
+ * on an axis; and rows in mixed units have no one axis. Each of those
+ * produces no model rather than a partial one.
  */
 export function buildScanModel(source: {
   readonly rows: readonly ScanSource[];
@@ -121,6 +113,7 @@ export function buildScanModel(source: {
   }
 
   const points: ScanPoint[] = [];
+  const retentionTimeUnit = source.rows[0]?.retentionTimeUnit ?? "notReported";
   for (const row of source.rows) {
     if (!Number.isFinite(row.retentionTime)) {
       return { status: "unavailable", reason: "unusable-retention-time" };
@@ -128,10 +121,10 @@ export function buildScanModel(source: {
     if (!Number.isFinite(row.totalIonCurrent) || !Number.isFinite(row.basePeakIntensity)) {
       return { status: "unavailable", reason: "unusable-intensity" };
     }
-    // One row is enough. "Every row agreed" is not a special path, because
-    // agreement does not supply the missing identity.
-    if (row.retentionTimeUnitKnown) {
-      return { status: "unavailable", reason: "unsupported-retention-time-unit" };
+    // Every row states the first row's unit, or every row states none: Rust's
+    // own rule for the chromatogram, so the screen and the export agree.
+    if (row.retentionTimeUnit !== retentionTimeUnit) {
+      return { status: "unavailable", reason: "mixed-retention-time-units" };
     }
     points.push({
       spectrumIndex: row.index,
@@ -156,6 +149,7 @@ export function buildScanModel(source: {
 
   return {
     status: "ready",
+    retentionTimeUnit,
     points,
     fullDomain: {
       low: points[0]?.retentionTime ?? 0,

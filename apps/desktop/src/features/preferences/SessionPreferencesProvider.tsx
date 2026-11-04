@@ -155,6 +155,11 @@ interface SessionContextValue {
   readonly panels: PanelsValue;
   readonly open: () => void;
   readonly preview: (preferences: SessionPreferences) => void;
+  /**
+   * Settings apply immediately (GOALS D4): shows `preferences` and publishes
+   * them in one step. A later change supersedes an earlier write's reply.
+   */
+  readonly change: (preferences: SessionPreferences) => void;
   readonly apply: () => void;
   readonly discard: () => void;
   readonly reset: () => void;
@@ -599,10 +604,10 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
       usable(state.applied.locale);
       dispatch({ type: "open" });
       setAnnouncement(null);
-      // A previous failure's actions are cleared, because they belong to a
-      // press that is over. `sessionOnly` is not: it is a fact about this
-      // session, and the footer keeps saying what a restart will use.
-      setSave(current => ({ ...IDLE_APPEARANCE, sessionOnly: current.sessionOnly }));
+      // The save state is kept. Settings close while a write is in flight, so
+      // a write still pending, or one that failed or was refused after the
+      // close, is about a choice still on screen: clearing it here let the
+      // next Close discard that choice. A settled press already left it idle.
     },
     preview: (preferences) => {
       // Editing is a claim on the record: a hydration answer still in flight
@@ -610,6 +615,22 @@ export function SessionPreferencesProvider({ children, runtime: suppliedRuntime 
       userOwnsTheRecord.current = true;
       if (usable(preferences.locale)) dispatch({ type: "preview", preferences });
       setAnnouncement(null);
+    },
+    change: (preferences) => {
+      userOwnsTheRecord.current = true;
+      if (problem !== null || storage.status === "loading" || !usable(preferences.locale)) return;
+      // A committed change ends the draft; the next one opens it again.
+      dispatch({ type: "open" });
+      dispatch({ type: "preview", preferences });
+      setAnnouncement(null);
+      if (storage.status === "unavailable") {
+        // Nowhere to write, and Settings says so: the change is this session's.
+        dispatch({ type: "apply" });
+        setSave({ ...IDLE_APPEARANCE, sessionOnly: true });
+        setAnnouncement("sessionOnlyApplied");
+        return;
+      }
+      commitAppearance(preferences, false);
     },
     apply: () => {
       if (problem !== null || save.status === "saving" || !usable(effective.locale)) return;

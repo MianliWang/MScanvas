@@ -30,7 +30,9 @@
 mod tests;
 
 use mscanvas_core::ArtifactId;
-use mscanvas_proteowizard::{MsLevelBucket, RetentionTime, RunSummaryResult, UnitState};
+use mscanvas_proteowizard::{
+    MsLevelBucket, RetentionTime, RetentionTimeUnitState, RunSummaryResult,
+};
 use serde::Serialize;
 
 use crate::preview::service::RetainedSummaryRefusal;
@@ -161,7 +163,16 @@ fn snapshot_of(
 /// arrive here as a compile error and be mapped from that evidence.
 fn recorded(value: RetentionTime) -> Result<RecordedRetentionTime, ProjectError> {
     let unit = match value.unit() {
-        UnitState::NotEmitted => RecordedUnit::NotEmitted,
+        RetentionTimeUnitState::NotEmitted => RecordedUnit::NotEmitted,
+        // A declared unit, or a declared absence of one, is a native mzML
+        // reading (ADR 0056). The run summary stays `msaccess` output, so these
+        // never reach a snapshot, and schema 4 has no way to state them: one is
+        // refused rather than recorded as a formatter that emitted no unit.
+        RetentionTimeUnitState::NotDeclared
+        | RetentionTimeUnitState::Second
+        | RetentionTimeUnitState::Minute => {
+            return Err(ProjectError::Document(DocumentProblem::Malformed));
+        }
     };
     // The parser admits finite values only, so this refuses nothing it
     // produced; it is here so a non-finite value cannot become text.

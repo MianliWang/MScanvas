@@ -2,6 +2,14 @@
 
 **Route outcome: `XIC_SOURCE_REFUSED`.**
 
+*2026-10-30:* this outcome still stands for the build measured below, and so
+does the re-entry gate for a different `msaccess` identity. XIC re-enters
+through a different candidate, a project-owned pass over ADR 0056's mzML
+reader, under [ADR 0071](../architecture/adr/0071-xic-re-entry-and-its-first-version.md)
+(accepted). That candidate inherits nothing from this build in either
+direction. It is unimplemented, and only its own 77-row rerun and decision can
+admit it.
+
 No query the installed ProteoWizard build offers can serve as a general XIC
 scientific source. Four of its eight analysis queries cannot express an m/z
 window at all. The four that can — `tic`, `sic`, `slice` and `image` — were each

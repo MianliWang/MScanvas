@@ -208,6 +208,12 @@ The gate is checked before a staging area exists. On any other release,
 revision, or executable digest, the family is refused and no process is
 launched.
 
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** Shimadzu
+LCD now converts on any build that reports its release, labelled "unverified
+build" with that release wherever the row does not match; it is refused only on
+a build that cannot report one. The row itself, and the measured build, are
+unchanged.
+
 **Vendor-library identity is not claimed.** This repository does not open or
 hash the vendor DLLs, so it does not name them.
 

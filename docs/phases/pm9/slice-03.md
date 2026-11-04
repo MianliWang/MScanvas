@@ -598,6 +598,11 @@ Observations for implementation, not defects:
 | SVG / PNG / Quick PNG (spectrum, chromatogram, linked) | D | `begin_*_export` → `save_*_export` |
 | CSV / TSV (spectrum, chromatogram) | D | `begin_*_export` → `save_*_export` |
 
+*Changed by the self-explaining copy pass (2026-10-28; owner direction in
+[AFTER_BETA1_PLAN §2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+The two retry controls now read "Redraw" (重新绘制) and "Reload spectrum"
+(重新载入质谱); their class and request are unchanged.
+
 Only D writes a file or the clipboard, and only C reads a source or the
 retained data.
 
@@ -867,3 +872,11 @@ pending band's actions stay on one row with a real run's values and at a
 Wording continuation (2026-10-03, `b7b8eeb`): the committed range line says
 "part of the full range" rather than "the range shown", so it stays true while a
 wheel or pan is in flight; its announcement timing is batch 2's (UI-34).
+
+*Changed by the self-explaining copy pass (2026-10-28, UI-34; owner direction
+in [AFTER_BETA1_PLAN §2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+The committed line keeps this wording and timing. It is visually hidden, and
+only announced, only while nothing is pending and the committed range is the
+full range; it is printed while a band is pending and while a part of the range
+is committed, because a current-range export takes that part
+([baseline §12](baseline.md#12-known-uiux-rework-2026-09-28)).

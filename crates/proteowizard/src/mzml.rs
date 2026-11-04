@@ -60,6 +60,10 @@ const PEAK_PICKING: &[u8] = b"MS:1000035";
 /// request names something else, which is why the table below is not decoration.
 const DEFAULT_PICKER_NAME: &str = "local maximum peak picker";
 
+/// The `userParam` a scoped picker records its MS levels in (M6.2 `K4`, `K10`;
+/// Thermo vendor centroiding `TV2`, `TE2`).
+const PICKER_SCOPE_PARAMETER: &str = "ms levels";
+
 /// Implementation names this repository recognizes and has not admitted, each
 /// kept as its own identity.
 ///
@@ -93,6 +97,12 @@ const KNOWN_OTHER_PICKER_NAMES: [(&str, ProcessingAlgorithm); 2] = [
 ];
 const ZLIB_COMPRESSION: &[u8] = b"MS:1000574";
 const NO_COMPRESSION: &[u8] = b"MS:1000576";
+const NUMPRESS_LINEAR: &[u8] = b"MS:1002312";
+const NUMPRESS_PIC: &[u8] = b"MS:1002313";
+const NUMPRESS_SLOF: &[u8] = b"MS:1002314";
+const NUMPRESS_LINEAR_ZLIB: &[u8] = b"MS:1002746";
+const NUMPRESS_PIC_ZLIB: &[u8] = b"MS:1002747";
+const NUMPRESS_SLOF_ZLIB: &[u8] = b"MS:1002748";
 const SCAN_START_TIME: &[u8] = b"MS:1000016";
 const UNIT_SECOND: &[u8] = b"UO:0000010";
 const UNIT_MINUTE: &[u8] = b"UO:0000031";
@@ -136,11 +146,28 @@ pub enum NumericPrecisionMarker {
 }
 
 /// A recognized compression marker.
+///
+/// The numpress terms are the ones the evidenced build's writer emits, read from
+/// its source (ADR 0055 decision 5), not measured. They are recorded beside the
+/// plain terms and never counted as them: an array carrying `MS:1002746` is not
+/// a zlib array to the per-array zlib count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum CompressionMarker {
     Zlib = 0,
     NoCompression = 1,
+    /// `MS:1002312`, MS-Numpress linear prediction.
+    NumpressLinear = 2,
+    /// `MS:1002313`, MS-Numpress positive integer.
+    NumpressPic = 3,
+    /// `MS:1002314`, MS-Numpress short logged float.
+    NumpressSlof = 4,
+    /// `MS:1002746`, linear prediction followed by zlib.
+    NumpressLinearZlib = 5,
+    /// `MS:1002747`, positive integer followed by zlib.
+    NumpressPicZlib = 6,
+    /// `MS:1002748`, short logged float followed by zlib.
+    NumpressSlofZlib = 7,
 }
 
 /// Whether a unit accession was emitted for `scan start time`.
@@ -221,6 +248,56 @@ impl ProcessingAlgorithm {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProcessingHistory {
     counts: [u16; 4],
+    /// What the vendor-picker method in this history recorded about its scope.
+    vendor_scope: PickerScopeRecord,
+}
+
+/// The MS levels a vendor-picker method says it was scoped to, read from its
+/// `ms levels` `userParam`.
+///
+/// Measured on the verified build (Thermo vendor centroiding evidence): the
+/// picker writes no such parameter for the default scope, `msLevel=1-`, and
+/// writes `2-` for `msLevel=2-`. It is the only witness of a scope the build
+/// discarded, because out-of-scope spectra may be profile or centroid. Bounded
+/// like the algorithm identity: one interval is retained, never the text.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PickerScopeRecord {
+    /// No `ms levels` parameter, or no vendor-picker method at all.
+    #[default]
+    NotRecorded,
+    /// One interval of levels; `last` is `None` for an open one (`2-`).
+    Interval { first: u32, last: Option<u32> },
+    /// A parameter that is not one interval, a repeated parameter, or two
+    /// vendor-picker methods in one history.
+    Unreadable,
+}
+
+impl PickerScopeRecord {
+    /// Reads `1`, `1-2` or `2-`, in ASCII digits, and nothing else.
+    fn parse(value: Option<&str>) -> Self {
+        let Some(text) = value else {
+            return Self::Unreadable;
+        };
+        let (first, last) = match text.split_once('-') {
+            Some((first, "")) => (first, None),
+            Some((first, last)) => (first, Some(last)),
+            None => (text, Some(text)),
+        };
+        let digits =
+            |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+        if !digits(first) || last.is_some_and(|last| !digits(last)) {
+            return Self::Unreadable;
+        }
+        match (
+            first.parse::<u32>(),
+            last.map(str::parse::<u32>).transpose(),
+        ) {
+            (Ok(first), Ok(last)) if last.is_none_or(|last| last >= first) => {
+                Self::Interval { first, last }
+            }
+            _ => Self::Unreadable,
+        }
+    }
 }
 
 impl ProcessingHistory {
@@ -251,13 +328,26 @@ impl ProcessingHistory {
     /// the source already carried is visible.
     #[must_use]
     pub const fn added_over(&self, inherited: Self) -> Self {
-        let mut added = Self { counts: [0; 4] };
+        let mut added = Self {
+            counts: [0; 4],
+            vendor_scope: PickerScopeRecord::NotRecorded,
+        };
         let mut index = 0;
         while index < self.counts.len() {
             added.counts[index] = self.counts[index].saturating_sub(inherited.counts[index]);
             index += 1;
         }
+        // The scope travels with an added vendor method, and only with one.
+        if added.count(ProcessingAlgorithm::VendorPeakPicking) > 0 {
+            added.vendor_scope = self.vendor_scope;
+        }
         added
+    }
+
+    /// The scope the vendor-picker method in this history recorded.
+    #[must_use]
+    pub const fn vendor_scope(&self) -> PickerScopeRecord {
+        self.vendor_scope
     }
 
     /// Whether a delta over [`ProcessingAlgorithm::Unrecognized`] can be trusted.
@@ -278,6 +368,16 @@ impl ProcessingHistory {
     }
 
     fn merge(&mut self, other: Self) {
+        let vendor = ProcessingAlgorithm::VendorPeakPicking;
+        if other.count(vendor) > 0 {
+            // A second vendor method is a second scope, and which one applies
+            // is not something this reading will choose.
+            self.vendor_scope = if self.count(vendor) == 0 {
+                other.vendor_scope
+            } else {
+                PickerScopeRecord::Unreadable
+            };
+        }
         for (slot, count) in self.counts.iter_mut().zip(other.counts) {
             *slot = slot.saturating_add(count);
         }
@@ -406,6 +506,43 @@ marker_set!(
     CompressionMarker,
     "The set of compression markers observed. An empty set means none was emitted."
 );
+
+/// The terms one binary array declared: its roles, and its precision and
+/// compression terms.
+///
+/// Per array, because ADR 0055 decision 5 asks per array: one precision term and
+/// one compression term each, which a record's union cannot answer, and a count
+/// of numpress fallbacks per role, which a union cannot count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ArrayEncoding {
+    pub kinds: ArrayKindSet,
+    pub precision: NumericPrecisionSet,
+    pub compression: CompressionSet,
+}
+
+/// How many arrays of one list declared one [`ArrayEncoding`], and the position
+/// of the first record that held one.
+///
+/// Bounded by the vocabulary rather than by the document: a key is three small
+/// bit sets, so a list has at most a few thousand distinct keys however many
+/// arrays it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArrayEncodingTally {
+    pub arrays: u64,
+    pub first_record: u64,
+}
+
+fn tally_array_encoding(
+    tallies: &mut BTreeMap<ArrayEncoding, ArrayEncodingTally>,
+    encoding: ArrayEncoding,
+    record: usize,
+) {
+    let tally = tallies.entry(encoding).or_insert(ArrayEncodingTally {
+        arrays: 0,
+        first_record: record as u64,
+    });
+    tally.arrays = tally.arrays.saturating_add(1);
+}
 
 /// Compact per-spectrum facts. No raw scientific value is retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -644,7 +781,7 @@ pub struct MzmlScanLimits {
     pub(crate) max_name_bytes: usize,
     pub(crate) max_attribute_value_bytes: usize,
     pub(crate) max_spectra: u64,
-    max_chromatograms: u64,
+    pub(crate) max_chromatograms: u64,
     max_data_processing_definitions: usize,
     identity_sample_limit: usize,
 }
@@ -822,6 +959,8 @@ pub struct MzmlFacts {
     first_identities: Vec<SpectrumIdentity>,
     last_identity: Option<SpectrumIdentity>,
     scanned_bytes: u64,
+    spectrum_array_encodings: BTreeMap<ArrayEncoding, ArrayEncodingTally>,
+    chromatogram_array_encodings: BTreeMap<ArrayEncoding, ArrayEncodingTally>,
 }
 
 impl fmt::Debug for MzmlFacts {
@@ -937,6 +1076,20 @@ impl MzmlFacts {
     #[must_use]
     pub const fn scanned_bytes(&self) -> u64 {
         self.scanned_bytes
+    }
+
+    /// The terms each spectrum array declared, tallied per distinct set of terms.
+    #[must_use]
+    pub const fn spectrum_array_encodings(&self) -> &BTreeMap<ArrayEncoding, ArrayEncodingTally> {
+        &self.spectrum_array_encodings
+    }
+
+    /// The same, for chromatogram arrays.
+    #[must_use]
+    pub const fn chromatogram_array_encodings(
+        &self,
+    ) -> &BTreeMap<ArrayEncoding, ArrayEncodingTally> {
+        &self.chromatogram_array_encodings
     }
 }
 
@@ -1182,6 +1335,8 @@ struct ScanState {
     data_processing_identity_unusable: bool,
     /// `spectrumList/@defaultDataProcessingRef`.
     default_data_processing_ref: Option<String>,
+    spectrum_array_encodings: BTreeMap<ArrayEncoding, ArrayEncodingTally>,
+    chromatogram_array_encodings: BTreeMap<ArrayEncoding, ArrayEncodingTally>,
 }
 
 /// One `dataProcessing` element, while it is open.
@@ -1193,13 +1348,15 @@ struct DataProcessingBuilder {
 
 /// One `processingMethod` element, while it is open.
 ///
-/// Two facts and no text. Whether the method is a peak-picking one is a CV
-/// accession; which algorithm it names is a free-text `userParam` that is
-/// classified on sight and then discarded.
+/// Three facts and no text. Whether the method is a peak-picking one is a CV
+/// accession; which algorithm it names, and the levels it says it was scoped
+/// to, are free-text `userParam`s classified on sight and then discarded.
 #[derive(Debug, Default)]
 struct ProcessingMethodBuilder {
     peak_picking: bool,
     named: ProcessingHistory,
+    /// `None` until an `ms levels` parameter is seen.
+    ms_levels: Option<PickerScopeRecord>,
 }
 
 impl ScanState {
@@ -1226,6 +1383,8 @@ impl ScanState {
             data_processing_definitions: BTreeMap::new(),
             data_processing_identity_unusable: false,
             default_data_processing_ref: None,
+            spectrum_array_encodings: BTreeMap::new(),
+            chromatogram_array_encodings: BTreeMap::new(),
         }
     }
 
@@ -1393,7 +1552,10 @@ impl ScanState {
                 Ok(Scope::Other)
             }
             b"userParam" if parent == Some(Scope::ProcessingMethod) => {
-                self.apply_processing_user_param(attributes.name.as_deref());
+                self.apply_processing_user_param(
+                    attributes.name.as_deref(),
+                    attributes.value.as_deref(),
+                );
                 Ok(Scope::Other)
             }
             _ => Ok(Scope::Other),
@@ -1473,6 +1635,18 @@ impl ScanState {
                     INTEGER_64 => array.precision.insert(NumericPrecisionMarker::Integer64),
                     ZLIB_COMPRESSION => array.compression.insert(CompressionMarker::Zlib),
                     NO_COMPRESSION => array.compression.insert(CompressionMarker::NoCompression),
+                    NUMPRESS_LINEAR => array.compression.insert(CompressionMarker::NumpressLinear),
+                    NUMPRESS_PIC => array.compression.insert(CompressionMarker::NumpressPic),
+                    NUMPRESS_SLOF => array.compression.insert(CompressionMarker::NumpressSlof),
+                    NUMPRESS_LINEAR_ZLIB => array
+                        .compression
+                        .insert(CompressionMarker::NumpressLinearZlib),
+                    NUMPRESS_PIC_ZLIB => {
+                        array.compression.insert(CompressionMarker::NumpressPicZlib)
+                    }
+                    NUMPRESS_SLOF_ZLIB => array
+                        .compression
+                        .insert(CompressionMarker::NumpressSlofZlib),
                     _ => {}
                 }
                 Ok(())
@@ -1531,13 +1705,23 @@ impl ScanState {
     /// matches no known picker is ignored rather than treated as an unknown
     /// algorithm. What decides `Unrecognized` is a peak-picking method that
     /// named *no* picker this evidence qualified, and that is decided at close.
-    fn apply_processing_user_param(&mut self, name: Option<&str>) {
+    ///
+    /// The `ms levels` parameter is read too, into a bounded interval: a second
+    /// one makes the method's scope unreadable rather than overwriting it.
+    fn apply_processing_user_param(&mut self, name: Option<&str>, value: Option<&str>) {
         let Some(name) = name else {
             return;
         };
         let Some(method) = self.processing_method.as_mut() else {
             return;
         };
+        if name == PICKER_SCOPE_PARAMETER {
+            method.ms_levels = Some(match method.ms_levels {
+                None => PickerScopeRecord::parse(value),
+                Some(_) => PickerScopeRecord::Unreadable,
+            });
+            return;
+        }
         let observed = if name == DEFAULT_PICKER_NAME {
             ProcessingAlgorithm::DefaultLocalMaximum
         } else if let Some((_, known)) = KNOWN_OTHER_PICKER_NAMES
@@ -1613,6 +1797,9 @@ impl ScanState {
         if observed.is_empty() {
             observed.record(ProcessingAlgorithm::Unrecognized);
         }
+        if observed.count(ProcessingAlgorithm::VendorPeakPicking) > 0 {
+            observed.vendor_scope = method.ms_levels.unwrap_or_default();
+        }
         // Attributed to the definition that holds it, never to the document. A
         // method inside a `dataProcessing` nothing references applies to no
         // spectrum.
@@ -1636,7 +1823,17 @@ impl ScanState {
         let zlib = u32::from(array.compression.contains(CompressionMarker::Zlib));
         let uncompressed = u32::from(array.compression.contains(CompressionMarker::NoCompression));
         let empty_payload = u32::from(!array.has_payload);
+        let encoding = ArrayEncoding {
+            kinds,
+            precision: array.precision,
+            compression: array.compression,
+        };
         if let Some(spectrum) = self.spectrum.as_mut() {
+            tally_array_encoding(
+                &mut self.spectrum_array_encodings,
+                encoding,
+                self.spectra.len(),
+            );
             spectrum.binary_array_count = spectrum.binary_array_count.saturating_add(1);
             spectrum.zlib_compressed_array_count =
                 spectrum.zlib_compressed_array_count.saturating_add(zlib);
@@ -1655,6 +1852,11 @@ impl ScanState {
             }
             spectrum.compression.merge(array.compression);
         } else if let Some(chromatogram) = self.chromatogram.as_mut() {
+            tally_array_encoding(
+                &mut self.chromatogram_array_encodings,
+                encoding,
+                self.chromatograms.len(),
+            );
             chromatogram.binary_array_count = chromatogram.binary_array_count.saturating_add(1);
             chromatogram.zlib_compressed_array_count = chromatogram
                 .zlib_compressed_array_count
@@ -1741,6 +1943,8 @@ impl ScanState {
             first_identities: self.first_identities,
             last_identity: self.last_identity,
             scanned_bytes,
+            spectrum_array_encodings: self.spectrum_array_encodings,
+            chromatogram_array_encodings: self.chromatogram_array_encodings,
         })
     }
 }
@@ -2465,5 +2669,66 @@ mod tests {
             inspect_file(&directory, MzmlScanLimits::default()),
             Err(MzmlScanError::Source(RegularFileError::NotRegularFile))
         );
+    }
+
+    #[test]
+    fn numpress_terms_are_recorded_per_array_and_never_counted_as_plain_terms() {
+        let array = |role: &str, terms: &str| {
+            format!(
+                r#"<binaryDataArray encodedLength="8"><cvParam accession="{role}"/>{terms}<binary>AA==</binary></binaryDataArray>"#
+            )
+        };
+        let facts = scan_ok(&minimal(&format!(
+            r#"<spectrum index="0" id="scan=1" defaultArrayLength="1"><binaryDataArrayList count="3">{}{}{}</binaryDataArrayList></spectrum>"#,
+            array(
+                "MS:1000514",
+                r#"<cvParam accession="MS:1000521"/><cvParam accession="MS:1002746"/>"#
+            ),
+            array(
+                "MS:1000515",
+                r#"<cvParam accession="MS:1000521"/><cvParam accession="MS:1002313"/>"#
+            ),
+            array(
+                "MS:1000515",
+                r#"<cvParam accession="MS:1000523"/><cvParam accession="MS:1000574"/>"#
+            ),
+        )));
+
+        let spectrum = facts.spectra()[0];
+        // A numpress+zlib array is not a zlib array to the verified rows' count.
+        assert_eq!(spectrum.zlib_compressed_array_count(), 1);
+        assert!(
+            spectrum
+                .compression()
+                .contains(CompressionMarker::NumpressLinearZlib)
+        );
+        assert!(
+            spectrum
+                .compression()
+                .contains(CompressionMarker::NumpressPic)
+        );
+
+        let tallies = facts.spectrum_array_encodings();
+        assert_eq!(tallies.len(), 3);
+        let intensity_numpress = tallies
+            .iter()
+            .find(|(terms, _)| terms.compression.contains(CompressionMarker::NumpressPic))
+            .expect("the positive-integer array is tallied");
+        assert_eq!(
+            intensity_numpress.0.kinds.bits(),
+            1 << ArrayKind::Intensity as u8
+        );
+        assert_eq!(
+            intensity_numpress.0.precision.bits(),
+            1 << NumericPrecisionMarker::Float32 as u8
+        );
+        assert_eq!(
+            *intensity_numpress.1,
+            ArrayEncodingTally {
+                arrays: 1,
+                first_record: 0
+            }
+        );
+        assert!(facts.chromatogram_array_encodings().is_empty());
     }
 }

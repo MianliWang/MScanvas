@@ -24,6 +24,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { consoleEntries, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
+import { showProjectSurface } from "../support/shell";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { FAKE_WORKSPACE_CAPACITY } from "../../apps/desktop/src/test/previewFixtures";
 
@@ -222,7 +223,7 @@ async function openProjectSurface() {
   await installIpcBoundary(table);
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed();
-  await browser.$("button=Project").click();
+  await showProjectSurface();
   await browser.$("[data-project-surface]").waitForDisplayed();
 }
 
@@ -299,7 +300,7 @@ describe("M8.3 project-to-Workbench reattachment, rendered", () => {
     // Back to the project. The reference is still a reference, the run it was
     // used by is still recorded, and the record that run produced is still
     // there -- a session row is not a provenance edge.
-    await browser.$("button=Project").click();
+    await showProjectSurface();
     await browser.$("[data-project-surface]").waitForDisplayed();
     await browser.$(`[data-project-show-in-workbench="${INPUT}"]`).waitForDisplayed();
 

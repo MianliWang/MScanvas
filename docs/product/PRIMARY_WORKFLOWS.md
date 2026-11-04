@@ -507,13 +507,22 @@ availability, queue, adoption and export contracts.
     items it describes; nothing is uploaded, nothing is opened, and an existing
     file of that name is never replaced. A queue that simply worked offers
     nothing here at all.
+13. **Later, read what ran.** **Conversion history**, at the foot of the
+    surface's rail, lists every recorded run newest first, with when it started
+    and ended or was found cut short, and how many files it converted and
+    failed. Choosing one reads its settings, its build, its labels and each file's
+    state, codes, outputs and checks. It reads only, shows no path, and resumes
+    nothing. **Clear history…** asks, then forgets ended runs and keeps runs in
+    progress; **Turn off…** in Settings asks, then forgets every run and records
+    none until it is turned on (ADR 0065).
 
 **Success:** a set of acquisitions becomes a set of mzML files the user can
 find, add to the session on purpose, and read -- one file's failure costs only
 that file, and the interface never claims more about any of them than
 output-only validation established.
 
-**Not included:** more than 16 items in one queue, any other vendor family,
+**Not included:** more than 16 items in one queue (1,024 under ADR 0057,
+decision 3, on `be/integrate` (draft PR #161)), any other vendor family,
 taking a row out of a running queue, pausing or resuming one, retrying a stopped
 queue, a progress percentage, parallel conversion, a queue that survives closing
 the application, overwrite, adopting a subset of a queue's outputs, adopting
@@ -637,7 +646,7 @@ the two parameters → **Review plan** (Rust resolves a digest-named plan per
 acquisition and says, per line or per acquisition, what stops it) → **Run** or
 **Run N analyses**, one worker at a time, with **Cancel** or **Stop batch** →
 the result report (outcome counts, rows in plan order, one target's stored
-evidence as the canonical figure) → **Export** SVG, PNG, CSV or TSV, with
+evidence as the canonical figure) → **Export** SVG, PNG, CSV, TSV or spreadsheet CSV, with
 **Details** for the plan, the source as read and the attempt. Recovery: a
 problem in the request is named by line and nothing runs; a refusal before a
 run (unsaved project, no runtime, no room for a copy, a quarantined session)

@@ -30,7 +30,7 @@ const admitted = (low: number, high: number): SpectrumViewportDomain => ({
 const refused: SpectrumViewportDomain = { state: "refused", reason: "sourceNotOrdered" };
 
 function drawing(low: number, high: number): SpectrumProjection {
-  return { low, high, mz: [low, high], intensity: [1, 2], sourcePoints: 2, reduced: false };
+  return { low, high, mz: [low, high], intensity: [1, 2], sourcePoints: 2, reduced: false, outsideLow: null, outsideHigh: null };
 }
 
 /** Applies events in order, so a test reads as the sequence it is about. */
@@ -381,6 +381,8 @@ describe("the projection lifecycle", () => {
       intensity: [],
       sourcePoints: 0,
       reduced: false,
+      outsideLow: null,
+      outsideHigh: null,
     };
 
     const state = ready(

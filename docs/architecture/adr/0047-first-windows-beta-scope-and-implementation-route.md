@@ -60,6 +60,30 @@ the subsequently authorized implementation state.
 | Settings and layout | Session backend choice and existing figure settings | M7.1 real localized settings; M7.5 allowlisted UI preferences/restoration, delivered as one versioned record of locale, roster density and the two panel presentation requests | Durable project/artifact/run/classification/provenance store; scientific-run resume |
 | Analysis, nodes, code, AI | No production consumer | Omit future navigation or state honest unavailability where context requires it | Smoothing, peak detection/alignment/gap filling, matching, statistics, arbitrary execution, Python/R and AI automation |
 
+> **Amended 2026-10-30 (owner decisions G1, G3 and G4).** The last row
+> described beta 1. Shown the decisions that block work now in
+> [OWNER_DECISIONS_V511.md](../../development/OWNER_DECISIONS_V511.md), the
+> owner replied, verbatim: "全部按推荐，继续" ("all as recommended,
+> continue"). As recommended there:
+>
+> - **G1:** analysis is planned and built as milestone M11 of
+>   [`PROJECT_PROPOSAL.md`](../../../PROJECT_PROPOSAL.md) section 18, in
+>   parallel with M10, on two tracks: Track A needs no Python runtime, and
+>   Track B (pyOpenMS) reaches users only through a released, verified
+>   runtime. The three core jobs keep priority.
+> - **G3:** smoothing, peak detection, alignment, gap filling, matching and
+>   statistics in the last cell are planned under M11, each behind the
+>   promotion gate in the
+>   [analysis capability map](../../product/ANALYSIS_CAPABILITY_MAP.md). The
+>   node view (C59) and a method text in Python or R (EXP-20) stay outside this
+>   roadmap: EXP-20 stays refused under this row until ADR 0064 is accepted and
+>   a separate decision allows emitting code. Parsing pasted Python or R code
+>   (EXP-21) stays refused. Arbitrary execution and AI automation are
+>   unchanged.
+> - **G4:** the middle cell's first choice stands: each analysis page enters
+>   the navigation when its first working function ships, with no placeholder
+>   page.
+
 Supported conversion remains the three evidenced vendor families to mzML under
 their installed-build gates; imported mzML is viewed, not offered as a vendor
 conversion item. A SCIEX `.wiff` and its required `.wiff.scan` remain one
@@ -68,11 +92,21 @@ measured intent rows cover the visible vendor workflow, conditional on grammar;
 the two reader-sensitive centroiding rows do not. Whole-combination refusals
 retain their separate evidence, installation and source-family reasons.
 
+> **Amended 2026-10-29 (ADR 0055, msconvert parity).** The paragraph above
+> described beta 1. An imported mzML is now also a conversion source: it is
+> queued like a vendor row, judged by source comparison rather than output
+> only, and its output takes the name `<stem>-converted.mzML`, so an output
+> written beside its source never names it. Fail and Skip stay the only
+> conflict policies. The two centroiding rows are therefore offered, for mzML
+> sources only; a vendor row asked for one is still refused for source
+> evidence. The record of this change is the amendment at the end of
+> [ADR 0045](0045-conversion-completion-closure-and-handoff.md#amendment-2026-10-29-mzml-as-a-conversion-source).
+
 Rust owns filesystem identity, discovery, backend receipts, queue/capacity,
 processes and scientific data. React consumes typed operations and projections,
 never shell strings, unrestricted paths or a second capability registry. Keep
 source-qualified intents, bound order, authoritative capacity (currently sixteen
-serial items), destination revalidation/cleanup, Fail/Skip and
+serial items; 1,024 under ADR 0057, decision 3, 2026-10-29), destination revalidation/cleanup, Fail/Skip and
 `OVERWRITE_REFUSED`, confirmed cancellation versus quarantine, and independent
 process/staged/finalized/integrity/adoption facts. Output-only validation does
 not establish vendor fidelity. Adoption stays explicit and identity-checked;
@@ -605,3 +639,11 @@ The owner also set direction for the work after beta 1, recorded in the
 conversion is to be no less capable than msconvert, through verified defaults
 plus an advanced set of msconvert options labelled unverified; and the
 frontend falls short in both execution and scope.
+
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** Vendor
+conversion is no longer bound to 3.0.26013 after beta 1. Thermo RAW and
+Shimadzu LCD convert on any build that reports its release, labelled
+"unverified build" with that release when the build has no measured row;
+`SciexWiffBundle` stays bound to the measured build; a build that cannot report
+its release converts no vendor family. Beta 1 itself shipped with the binding
+recorded above.

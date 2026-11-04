@@ -34,8 +34,8 @@ import {
   shippedIntent,
   unavailableBackend,
 } from "../../apps/desktop/src/test/previewFixtures";
-import { showBackendBanner } from "../support/backendBanner";
-import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion } from "../support/conversion";
+import { hideBackendBanner, showBackendBanner } from "../support/backendBanner";
+import { CONVERSION_SURFACE, CONVERT, checkMembers, isRefused, showConversion, startAnother } from "../support/conversion";
 
 /** The binding every answer in this run describes, as a plan carries it. */
 const SETTLED_RECEIPT = firstBindingReceipt;
@@ -52,9 +52,10 @@ const VENDOR = `.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`;
 // The two controls by their place rather than their weight: the start control
 // is the next conversion's, the rerun the finished queue's (PM9.4).
 const START = CONVERT;
-const RETRY = `${PANEL} .conversion-running .conversion-actions button.secondary-button`;
+const RETRY = `${PANEL} .conversion-running .conversion-actions button.ui-button--secondary`;
 const SEARCH = "#dataset-roster-search";
-const SORT = "#dataset-roster-sort";
+// The execution order moved from the roster to the Conversion summary (rebuild spec 3.3, 5).
+const SORT = "#conversion-order";
 
 /**
  * The sentence the shared notice carries.
@@ -140,6 +141,7 @@ async function openTheWorkspace(
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 30_000 });
   await checkMembers([VENDOR_ROW.handle]);
   await showConversion();
+  await startAnother();
   await browser.$(START).waitForDisplayed({ timeout: 15_000 });
 }
 
@@ -188,6 +190,8 @@ async function recheckTheBackend(verdict: unknown): Promise<void> {
     throw new Error("the backend banner offers no recheck action");
   }
   await recheck.click();
+  // The details float over the surface this spec goes on to press.
+  await hideBackendBanner();
 }
 
 async function blockTheLane(): Promise<void> {
@@ -213,7 +217,7 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     expect(await browser.$(REGION).isExisting()).toBe(true);
     expect(await reasons()).toEqual([]);
     expect(await describedBy(START)).toBe(
-      "conversion-plan-summary conversion-validation-disclosure",
+      "conversion-plan-summary",
     );
     expect(await describedBy(RETRY)).toBe("conversion-retry-scope");
   });
@@ -233,7 +237,7 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     expect(occurrences).toBe(1);
 
     expect(await describedBy(START)).toBe(
-      "conversion-plan-summary conversion-validation-disclosure conversion-availability-backend-unavailable",
+      "conversion-plan-summary conversion-availability-backend-unavailable",
     );
     expect(await describedBy(RETRY)).toBe(
       "conversion-retry-scope conversion-availability-backend-unavailable",
@@ -317,7 +321,7 @@ describe("M6.1 — conversion-lane availability, rendered", () => {
     });
 
     expect(await describedBy(START)).toBe(
-      "conversion-plan-summary conversion-validation-disclosure",
+      "conversion-plan-summary",
     );
     const before = conversionStarts(await ipcCalls());
     await browser.$(START).click();

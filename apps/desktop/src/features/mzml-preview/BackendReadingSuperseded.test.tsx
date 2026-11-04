@@ -63,7 +63,7 @@ function renderWorkspace(api: PreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 const RUNNING: WorkspaceConversionState = {
@@ -164,7 +164,8 @@ describe("a reading that has stopped describing the session", () => {
     // failed branch offers both for the same reason.
     await supersedeTheReading();
     const banner = document.querySelector(SUPERSEDED) as HTMLElement;
-    const offered = [...banner.querySelectorAll("button")].map((control) => ({
+    // The actions, not the setup-help disclosure that opens beside them.
+    const offered = [...banner.querySelectorAll("button:not([data-backend-help])")].map((control) => ({
       label: control.textContent?.trim() ?? "",
       enabled: !(control as HTMLButtonElement).disabled,
     }));

@@ -20,4 +20,20 @@ describe("group name composition ownership", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save group" }));
     expect(save).toHaveBeenCalledExactlyOnceWith("原始 label {{name}} / QC");
   });
+
+  it("refuses an empty name with a visible reason and keeps Save focusable", () => {
+    const save = vi.fn();
+    render(<SessionPreferencesProvider><GroupNameDialog name="" rename={false} returnTo={null} onSave={save} onClose={vi.fn()} /></SessionPreferencesProvider>);
+    const button = screen.getByRole("button", { name: "Save group" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveAccessibleDescription("Enter a group name of 1–120 characters.");
+    button.focus();
+    expect(button).toHaveFocus();
+    fireEvent.click(button);
+    fireEvent.submit(screen.getByRole("textbox", { name: "Group name" }).closest("form")!);
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Group name" }), { target: { value: "QC" } });
+    expect(button).not.toHaveAttribute("aria-disabled");
+    expect(screen.queryByText("Enter a group name of 1–120 characters.")).toBeNull();
+  });
 });

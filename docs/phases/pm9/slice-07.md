@@ -578,6 +578,12 @@ added three fixes, F1, F6 and F15.
   - Other refused actions keep the reason they already gave. Capture QC
     summary, Add to Workbench and Create layer give their own; during an
     operation, the busy line gives it.
+  - *Changed by the self-explaining copy pass (2026-10-28; owner direction
+    in [AFTER_BETA1_PLAN §2](../../development/AFTER_BETA1_PLAN.md#2-owner-decisions-2026-10-28)).*
+    The `projectNeedsProject` tooltip and key are gone: Save, Save As… and
+    Close keep only their description by the visible no-project text. Add to
+    Workbench keeps a tooltip only for "check it first" and a busy Workbench;
+    otherwise the row's own state text is its reason.
 - **One zh-CN term each (F6).**
 
 Before commit:

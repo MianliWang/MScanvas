@@ -92,7 +92,7 @@ describe("accounting for one folder import", () => {
     // A full workspace is a different thing from a file that could not be read,
     // and the recovery is different too.
     expect(notice.message).toContain(
-      "1 file did not fit: the workspace already holds as many as MSCanvas keeps.",
+      "1 file did not fit: the workspace is full.",
     );
     expect(notice.tone).toBe("warning");
   });
@@ -123,7 +123,7 @@ describe("accounting for one folder import", () => {
 
     expect(notice.message).toContain("Added 2 files.");
     expect(notice.message).toContain(
-      "MSCanvas added what it found, but the scan did not describe the whole folder.",
+      "The scan did not cover the whole folder.",
     );
     // An incomplete scan is a warning even when everything it found arrived.
     expect(notice.tone).toBe("warning");
@@ -137,14 +137,14 @@ describe("accounting for one folder import", () => {
       result([added("a.mzML")], { complete: false, skippedReparseCount: 3 }),
     );
     expect(many.message).toContain(
-      "MSCanvas skipped 3 linked or special filesystem entries and did not follow them.",
+      "Skipped 3 linked or special entries without following them.",
     );
 
     const one = describeFolderResult(
       result([added("a.mzML")], { complete: false, skippedReparseCount: 1 }),
     );
     expect(one.message).toContain(
-      "MSCanvas skipped 1 linked or special filesystem entry and did not follow it.",
+      "Skipped 1 linked or special entry without following it.",
     );
   });
 

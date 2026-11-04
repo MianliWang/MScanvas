@@ -22,6 +22,8 @@ import {
   chooseFigure,
   clipboardIsUsable,
   loadWith,
+  openSpectrumFigureDialog,
+  pressDialogAction,
   selectFirstSpectrum,
   tauriTable,
   waitForOutcome,
@@ -78,6 +80,7 @@ describe("M4.2 Copy plot, read back from outside the application", () => {
     clearClipboard();
     await loadWith(tauriTable({ real: ["copy_selected_spectrum_plot"] }));
     await selectFirstSpectrum();
+    await openSpectrumFigureDialog();
   });
 
   after(() => {
@@ -89,7 +92,7 @@ describe("M4.2 Copy plot, read back from outside the application", () => {
   it("puts an image of exactly the chosen size on the clipboard", async () => {
     await chooseFigure({ width: "420", height: "300", theme: "light" });
 
-    await browser.$(".spectrum-panel").$("button=Copy plot").click();
+    await pressDialogAction("Copy plot");
     const status = await waitForOutcome();
     expect(status).toContain("Copied the plot");
 
@@ -104,7 +107,7 @@ describe("M4.2 Copy plot, read back from outside the application", () => {
 
   it("copies the theme the user chose", async () => {
     await chooseFigure({ width: "420", height: "300", theme: "light" });
-    await browser.$(".spectrum-panel").$("button=Copy plot").click();
+    await pressDialogAction("Copy plot");
     expect(await waitForOutcome()).toContain("Copied the plot");
     const light = readClipboard();
     expect(light?.present).toBe(true);
@@ -112,8 +115,9 @@ describe("M4.2 Copy plot, read back from outside the application", () => {
     clearClipboard();
     await loadWith(tauriTable({ real: ["copy_selected_spectrum_plot"] }));
     await selectFirstSpectrum();
+    await openSpectrumFigureDialog();
     await chooseFigure({ width: "420", height: "300", theme: "dark" });
-    await browser.$(".spectrum-panel").$("button=Copy plot").click();
+    await pressDialogAction("Copy plot");
     expect(await waitForOutcome()).toContain("Copied the plot");
     const dark = readClipboard();
 

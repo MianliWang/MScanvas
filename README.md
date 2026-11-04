@@ -53,13 +53,15 @@ None of them is in an installer or a release.
   Opening a project restores no Workbench session; a checked reference is put in
   the Workbench only when you ask. See the
   [M8 record](docs/product/M8_1_FIRST_CLOSED_LOOP.md) and PRJ-001 to PRJ-006 in
-  the [feature catalog](docs/product/FEATURE_CATALOG.md).
+  the [feature catalog](docs/product/FEATURE_CATALOG.md). The next version opens
+  beta-1 projects; once a project is saved in it, beta 1 can no longer open
+  that project, so keep a copy of the file to go back.
 - **Targeted MS1 lookup (M9) — bounded and experimental.** In a saved project, a
   typed list of up to 200 small-molecule targets is reviewed as a digest-named
   plan over one positive-mode, centroided mzML acquisition, or one plan each over
   2–16 of them, and run in a supervised pyOpenMS 3.5.0 worker. Each result is
-  stored beside the project and is read, drawn and exported as SVG, PNG and
-  CSV/TSV from the stored result alone. `[M+H]+` only. It is not identification,
+  stored beside the project and is read, drawn and exported as SVG, PNG,
+  CSV/TSV and spreadsheet CSV from the stored result alone. `[M+H]+` only. It is not identification,
   not a validated assay and not a general XIC, it compares nothing across
   acquisitions, and `NOT_DETECTED` is not proof of absence.
   **Its runtime is development-only:** CPython 3.13.15 with pyOpenMS under
@@ -179,9 +181,9 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 
 - Set the interface language, the roster's row spacing and which of the two
   workspace panels you want, and find them the way you left them the next time
-  MSCanvas starts. That record holds those five things and nothing else: no
-  path, no file list, no selection, no range, no conversion and no backend
-  choice. A window that gets too narrow folds a panel away for space without
+  MSCanvas starts. That record holds those five things and, once you choose one,
+  the folder for ProteoWizard, and nothing else: no file list, no selection, no
+  range and no conversion. A window that gets too narrow folds a panel away for space without
   changing what you asked for, so widening it again brings the panel back.
 - Be told the truth when those preferences cannot be read or cannot be written.
   A stored record MSCanvas does not understand is left exactly as it found it,
@@ -201,11 +203,11 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 Not implemented yet: vendor RAW preview; XIC — refused on measured evidence for
 the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
-anything other than filename, and grouping it; a workspace that outlives the
-session -- a saved project records references and history, but reopening one
-restores no Workbench session -- which includes remembering a search, a sort, a selection, a range or
-the folder you chose for ProteoWizard -- the preferences that do survive a
-restart are the five listed above and nothing else; a dark theme, or any
+anything other than filename, and grouping it; reopening a saved project as a
+Workbench session -- a saved project records references and history, but
+reopening one restores none; remembering a search, a sort, a selection or a
+range -- what does survive a restart is the five preferences listed above, the
+folder you chose for ProteoWizard, the rows of workspace restore and the conversion history, and the off switch of each; a dark theme, or any
 appearance setting beyond language and row spacing; a remembered panel *size*,
 which the workspace has no way to set; conversion progress as a
 percentage; resuming a stopped queue; removing a row from a queue that is
@@ -215,7 +217,8 @@ history, complete raw converter logs, and sending a diagnostics file anywhere;
 and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV,
 the chromatogram's, the linked two-panel figure of the two, and a stored
 targeted-MS1 result's figure of one target (SVG, PNG) and its whole-result
-CSV/TSV table -- there is no
+CSV/TSV table and spreadsheet CSV
+([ADR 0054](docs/architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)) -- there is no
 saved figure specification, no figure composer, and figure settings are not
 remembered across a restart. mzXML output is refused at present
 ([ADR 0043, CNV-D1](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d1--output-formats)
@@ -375,6 +378,14 @@ acquisition, so it may still carry acquisition metadata, and MSCanvas says so
 beside the action and again inside the file. Nothing is uploaded, nothing is sent
 anywhere, and a file of that name that already exists is never replaced. The file
 is yours to read before you decide who sees it.
+
+`Conversion history`, at the foot of the conversion rail, lists every recorded run
+after a restart: when it started and ended, or that it was cut short, and each
+file's state, codes, outputs and checks. It reads only and shows no path. The
+record stays in your per-user folder and holds each source's path, on this
+computer only. `Clear history…` forgets ended runs and `Turn off…` in Settings
+forgets every run and records none; neither touches an acquisition or a converted
+file.
 
 ## Product scope
 

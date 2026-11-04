@@ -23,8 +23,8 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { WorkspaceConversionState, WorkspaceConversionUpdate } from "../../apps/desktop/src/features/mzml-preview/contracts";
-import { waitUntilOffered } from "../support/conversion";
-import { revealTauriRoster } from "../support/tauriPanel";
+import { openNextConversion, waitUntilOffered } from "../support/conversion";
+import { clearRosterList, revealTauriRoster } from "../support/tauriPanel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = resolve(HERE, "..", "..");
@@ -33,7 +33,7 @@ const OUTPUT_ROOT = process.env["MSCANVAS_M68_NATIVE_OUTPUT_ROOT"];
 const FIXTURE_SHA256 = "b3d97b3856dd1e8dd6846d21c58b1b1824c309480908fe4c2dfabe152bd6dd7b";
 const PANEL = "section.conversion-panel";
 const RUNNING = `${PANEL} .conversion-running`;
-const CONVERT = `${PANEL} .conversion-plan .conversion-start`;
+const CONVERT = `${PANEL} .conversion-start`;
 const ROWS = '.grouped-roster [role="row"][data-handle]';
 /** Enough real items that a stop has a running one to land on. */
 const QUEUE_SIZE = 8;
@@ -132,13 +132,8 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
       timeout: 180_000, timeoutMsg: "A previous scenario's queue never settled.",
     });
     await showRoster();
-    const clear = browser.$("button=Clear list");
-    if (await clear.isExisting()) {
-      await reveal("#workbench-roster .dataset-roster-actions");
-      await clear.waitForClickable({ timeout: 30_000 });
-      await clear.click();
-      await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
-    }
+    // Clear list is the roster footer's list-menu item (direction A 2.1).
+    await clearRosterList();
   });
 
   afterEach(async () => {
@@ -194,7 +189,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
   }
 
   async function showConversion(): Promise<void> {
-    await browser.$("button=Conversion & results").click();
+    await browser.$("button=Conversion").click();
     await browser.$("#workbench-conversion").waitForDisplayed();
   }
 
@@ -220,10 +215,11 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     await showRoster();
     const before = await browser.$$(ROWS).length;
     const addButton = browser.$("button=Add files…");
-    await addButton.waitForEnabled({ timeout: 60_000 });
+    // Refused rather than disabled while the roster is busy (spec 1.4).
+    await browser.waitUntil(async () => (await addButton.getAttribute("aria-disabled")) !== "true", { timeout: 60_000, timeoutMsg: "Add files… was never offered" });
     // The roster owns its scroll; reach its acquisition control after opening it.
     await browser.waitUntil(async () => {
-      await reveal("#workbench-roster .dataset-roster-actions");
+      await reveal("#workbench-roster .roster-head");
       return addButton.isClickable();
     }, { timeout: 60_000, timeoutMsg: "Add files… never became reachable." });
     const handler = handleDialog(applicationProcessId, "workspace-files", "choose", path);
@@ -239,6 +235,8 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     const destination = join(runRoot, `scenario-${String(scenario)}`, `converted-${String(sourceIndex)}`);
     mkdirSync(destination, { recursive: true });
     await checkAllMembers();
+    // After an earlier queue the next conversion opens on request (rebuild review 6).
+    await openNextConversion(PANEL);
     await waitUntilOffered(CONVERT, 60_000);
     await reveal(CONVERT);
     const handler = handleDialog(applicationProcessId, "conversion-folder", "choose", destination);
@@ -288,11 +286,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
       if (round > 0) {
         await browser.waitUntil(async () => (await conversionState()).status !== "running", { timeout: 180_000 });
         await showRoster();
-        const clearAgain = browser.$("button=Clear list");
-        await reveal("#workbench-roster .dataset-roster-actions");
-        await clearAgain.waitForClickable({ timeout: 30_000 });
-        await clearAgain.click();
-        await browser.waitUntil(async () => (await browser.$$(ROWS).length) === 0);
+        await clearRosterList();
         sourceIndex += QUEUE_SIZE;
         destination = await beginRealQueue();
       }
@@ -305,7 +299,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
         // Between two items. The queue is still going, so this waits rather
         // than concluding there was nothing to stop.
         if (current === undefined) continue;
-        const button = browser.$(RUNNING).$("button=Stop this file");
+        const button = browser.$(PANEL).$("button=Stop this file");
         if (!(await button.isExisting()) || !(await button.isEnabled()) || await button.getAttribute("aria-disabled") === "true") continue;
         await button.click();
         await browser.waitUntil(async () => {
@@ -416,7 +410,7 @@ runNative("M6.8 real native cancellation scopes (requires authorized fixture env
     await browser.waitUntil(async () => (await runningItem()) !== null, {
       timeout: 60_000, timeoutMsg: "No item was ever observed running.",
     });
-    const stop = browser.$(RUNNING).$("button=Stop queue");
+    const stop = browser.$(PANEL).$("button=Stop queue");
     await stop.waitForExist({ timeout: 30_000 });
     await browser.waitUntil(async () => await stop.isEnabled() && await stop.getAttribute("aria-disabled") !== "true", {
       timeout: 30_000, timeoutMsg: "Stop queue was never offered.",

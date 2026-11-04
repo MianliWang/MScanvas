@@ -44,6 +44,7 @@ import {
   installIpcBoundary,
   ipcCalls,
   releaseInvokeHold,
+  revealInDetails,
   setInvokeRejection,
   setInvokeResult,
   type IpcCall,
@@ -69,6 +70,7 @@ import {
   type Scenario,
 } from "../support/pm9Scenarios";
 import { MZML_ROW, VENDOR_ROW } from "../support/fixtures";
+import { INPUTS, LAYERS, TYPED, manyRows, targetedTable, wideLayers, wideProject } from "../support/targeted";
 import {
   SPECTRUM_PLOT,
   readBackSavedPreferences,
@@ -84,7 +86,6 @@ import {
   quarantinedBackend,
   queueItem,
   queueOf,
-  secondFile,
   settledAt,
   shippedIntent,
   unavailableBackend,
@@ -147,6 +148,15 @@ async function waitForContext(id: string, expected: (text: string | null) => boo
   });
 }
 
+/** What the Conversion tab's description says about its work; its name stays the tab's own. */
+function conversionTabDescription() {
+  return browser.execute(() => {
+    const tab = document.querySelector('.workbench-navigation [data-surface-tab="conversion"]');
+    const id = tab?.getAttribute("aria-describedby") ?? null;
+    return id === null ? null : (document.getElementById(id)?.textContent ?? null);
+  }) as Promise<string | null>;
+}
+
 /** Activates one context item with a real pointer click. */
 async function activate(id: string) {
   await browser.$(`[data-shell-context="${id}"]`).click();
@@ -154,11 +164,14 @@ async function activate(id: string) {
 
 /** A header destination, found by its visible name as M9.1 finds it. */
 async function navigate(names: readonly string[]) {
-  await browser.execute((labels: readonly string[]) => {
-    [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
-      .find((button) => labels.includes(button.textContent ?? ""))
-      ?.click();
+  const found = await browser.execute((labels: readonly string[]) => {
+    const target = [...document.querySelectorAll<HTMLButtonElement>(".workbench-navigation > button")]
+      .find((button) => labels.includes(button.textContent ?? ""));
+    target?.click();
+    return target !== undefined;
   }, names);
+  // Workbench, Conversion and Project are all header tabs (direction A).
+  if (!found) throw new Error(`no header tab named ${names.join(" / ")}`);
 }
 
 /** Home, found by its place rather than its label, so it serves either locale. */
@@ -166,23 +179,25 @@ async function home() {
   await browser.$(".workbench-home").click();
 }
 
-/**
- * The scope as the Conversion surface resolves it, in the context line's words:
- * the checked scope and the eligible count from its own summary. `null` where
- * the surface states no scope.
- */
-function ownedScope(): Promise<string | null> {
+/** The viewed acquisition, as the Workbench identity row names it (rebuild spec 3.2). */
+function viewedName(): Promise<string | null> {
   return browser.execute(
-    (selected: string, all: string, template: string) => {
-      const checked = document.querySelector<HTMLInputElement>('input[name="conversion-scope"]:checked');
-      const eligible = /(\d+) eligible/u.exec(document.querySelector("#conversion-scope-summary")?.textContent ?? "")?.[1];
-      if (checked === null || eligible === undefined) return null;
-      return template.replace("{{scope}}", checked.value === "all" ? all : selected).replace("{{eligible}}", eligible);
-    },
-    en.m74CnvSelected,
-    en.m74CnvAll,
-    en.shellContextScope,
+    () => document.querySelector("#workbench-evidence .viewer-file-name")?.textContent ?? null,
   ) as Promise<string | null>;
+}
+
+/** The inspected project record, as Details names it (rebuild spec 4). */
+function inspectedName(): Promise<string | null> {
+  return browser.execute(
+    () => document.querySelector("#workbench-inspector .provenance-name")?.textContent ?? null,
+  ) as Promise<string | null>;
+}
+
+async function waitForInspected(name: string | null, what: string) {
+  await browser.waitUntil(async () => (await inspectedName()) === name, {
+    timeout: 15_000,
+    timeoutMsg: `Details: ${what}`,
+  });
 }
 
 /**
@@ -201,13 +216,6 @@ function membership(): Promise<unknown> {
     counts: document.querySelector("#conversion-scope-summary")?.textContent ?? null,
     selection: document.querySelector(".roster-selection-context")?.textContent ?? null,
   }));
-}
-
-/** Which destination the navigation marks as the current page. */
-function currentDestination(): Promise<string | null> {
-  return browser.execute(
-    () => document.querySelector(".workbench-navigation > button[aria-current='page']")?.textContent ?? null,
-  ) as Promise<string | null>;
 }
 
 /**
@@ -252,7 +260,7 @@ async function viewTheRow() {
     await browser.$('[aria-controls="workbench-roster"]').click();
   }
   await browser.$(row).click();
-  await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+  await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
 }
 
 /** Each roster row as the reader's state leaves it: order, highlight, viewed, membership. */
@@ -337,6 +345,7 @@ async function observe(label: string) {
     };
     const shell = document.querySelector(".workbench-shell");
     const header = document.querySelector(".workbench-header");
+    const statusBar = document.querySelector<HTMLElement>(".workbench-status");
     const main = ["#workbench-evidence", "#workbench-conversion", "#workbench-project"]
       .map((selector) => document.querySelector<HTMLElement>(selector))
       .find((element) => element !== null && !element.hidden) ?? null;
@@ -421,18 +430,26 @@ async function observe(label: string) {
       reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
       contextLine: items.length > 0,
       header: rect(header),
-      contextBar: rect(document.querySelector(".workbench-context-bar")),
-      shellContext: rect(document.querySelector(".shell-context")),
+      // The context line left the header for the status bar (rebuild spec 2.3).
+      statusBar: rect(statusBar),
       contextItems: items.map((item, index) => ({
         id: item.getAttribute("data-shell-context"),
-        priority: item.getAttribute("data-priority"),
         text: item.textContent,
         truncated: item.scrollWidth > item.clientWidth,
         ...shapes[index]!,
         ...rect(item),
       })),
       contextRows: new Set(items.map((item) => Math.round(item.getBoundingClientRect().top))).size,
-      dropHint: rect(document.querySelector(".workbench-header .workspace-drop-hint")),
+      // What the status bar shows that is not inside its one row.
+      statusOverflow: statusBar === null ? [] : [...statusBar.querySelectorAll<HTMLElement>("button, p, [data-status-busy]")]
+        .filter((node) => node.getClientRects().length > 0)
+        .filter((node) => {
+          const bar = statusBar.getBoundingClientRect();
+          const box = node.getBoundingClientRect();
+          return box.top < bar.top - 1 || box.bottom > bar.bottom + 1;
+        })
+        .map((node) => (node.textContent ?? "").trim()),
+      dropHint: rect(document.querySelector(".workbench-status .workspace-drop-hint")),
       backendToggle: rect(document.querySelector("[data-backend-toggle]")),
       regions: {
         roster: rect(document.querySelector("#workbench-roster")),
@@ -499,44 +516,34 @@ async function observe(label: string) {
     expect(control.x).toBeGreaterThanOrEqual(0);
     expect(control.x + control.width).toBeLessThanOrEqual(measured.css.width + 1);
   }
-  const line = measured.shellContext;
+  // The context line is the status bar since the rebuild (spec 2.3). Retired
+  // with the 32 px pill line it replaced: the compact-control height of each
+  // item (they are small buttons in the 30 px bar), and the rank order in
+  // which items gave way, with the viewing, inspecting and scope items that
+  // took part in it (the identity row, Details and the Conversion page say
+  // those now). What stays (L14–L16): only the project name gives way.
+  // Collected, so a failure names the item and the frame.
+  const bar = measured.statusBar;
+  expect(bar).not.toBe(null);
+  const statusProblems: string[] = [];
   for (const item of measured.contextItems) {
-    // The design system's compact control minimum, which the draft claims.
-    expect(item.height ?? 0).toBeGreaterThanOrEqual(31.5);
-    // An operation's status is never cut behind a long name (PM9.2 L14–L16):
-    // not ellipsized itself, and not pushed past the line, which clips.
-    if (item.priority === "1" && line !== null) {
-      expect(item.truncated).toBe(false);
-      expect(item.ellipsized).toBe(false);
-      expect(item.x ?? 0).toBeGreaterThanOrEqual(line.x - 1);
-      expect((item.x ?? 0) + (item.width ?? 0)).toBeLessThanOrEqual(line.x + line.width + 1);
+    if (item.id === "project" || bar === null) continue;
+    // An operation's status is never cut behind a long name: not ellipsized
+    // itself, and not pushed past the bar, which clips.
+    if (item.truncated || item.ellipsized) statusProblems.push(`${label}: ${String(item.id)} cut to "${item.visible}"`);
+    if ((item.x ?? 0) < bar.x - 1 || (item.x ?? 0) + (item.width ?? 0) > bar.x + bar.width + 1) {
+      statusProblems.push(`${label}: ${String(item.id)} outside the bar`);
     }
   }
-  // Rank decides who gives way first (L14–L16): an item shows an ellipsis
-  // only once every lower-ranked item is down to its floor. Reported as the
-  // pairs that break it, so a failure names them.
-  const outOfOrder = measured.contextItems.flatMap((higher) =>
-    higher.priority === "1" || !higher.ellipsized
-      ? []
-      : measured.contextItems
-          .filter((lower) => Number(lower.priority) > Number(higher.priority) && (lower.width ?? 0) > lower.floor + 1)
-          .map((lower) => `${label}: ${higher.id} ellipsized while ${lower.id} is ${String(lower.width)} px over a ${String(lower.floor)} px floor`),
-  );
-  expect(outOfOrder).toEqual([]);
-  // The drop hint gives way before the context does (L14–L16): no item shows
-  // an ellipsis while the hint still has width to give.
-  if (measured.contextItems.some((item) => item.priority !== "1" && item.ellipsized)) {
-    expect(measured.dropHint?.width ?? 0).toBeLessThanOrEqual(1);
+  // The drop hint gives way before the project name does: it is the first
+  // thing to drop on overflow (spec 2.3).
+  const cut = measured.contextItems.filter((item) => item.ellipsized).map((item) => item.id);
+  if (cut.length > 0 && (measured.dropHint?.width ?? 0) > 1) {
+    statusProblems.push(`${label}: drop hint ${String(measured.dropHint?.width)} px wide while ${cut.join(", ")} is ellipsized`);
   }
-  // The header's second line stays one row (L14–L16): the context, the folded
-  // backend reading and the drop hint all fit the bar's height, so nothing
-  // has wrapped below them.
-  if (measured.contextBar !== null) {
-    const tallest = Math.max(
-      ...[measured.dropHint, measured.backendToggle, ...measured.contextItems].map((box) => box?.height ?? 0),
-    );
-    expect(measured.contextBar.height).toBeLessThanOrEqual(tallest + 1);
-  }
+  // The bar stays one row: nothing it shows has wrapped above or below it.
+  statusProblems.push(...measured.statusOverflow.map((text) => `${label}: "${text}" off the bar's row`));
+  expect(statusProblems).toEqual([]);
   // The document keeps no height of its own that the body cannot scroll: every
   // region owns its content's overflow (L22).
   expect(measured.outerScroll.vertical).toBeLessThanOrEqual(1);
@@ -571,9 +578,10 @@ async function surfaceFrame(label: string) {
       regionName:
         main === null ? null : (document.getElementById(main.getAttribute("aria-labelledby") ?? "")?.textContent ?? null),
       title: title === null ? null : { text: title.textContent, ...box(title) },
-      primaries: [...(main?.querySelectorAll<HTMLButtonElement>(".primary-button") ?? [])]
+      primaries: [...(main?.querySelectorAll<HTMLButtonElement>(".primary-button, .ui-button--primary") ?? [])]
         .filter((button) => button.getClientRects().length > 0)
-        .map((button) => ({ text: button.textContent, disabled: button.disabled, ...box(button) })),
+        // Refused is aria-disabled since the rebuild, never native disabled.
+        .map((button) => ({ text: button.textContent, disabled: button.disabled || button.getAttribute("aria-disabled") === "true", ...box(button) })),
       // The surface owns its own vertical overflow (L22).
       regionScroll:
         main === null
@@ -600,35 +608,50 @@ async function surfaceFrame(label: string) {
 }
 
 /**
- * Tabs through the header once, from Home, and records what each stop looked
- * like. Home itself was focused by script, so its treatment is not sampled.
+ * Tabs through one region from a control focused by script, and records what
+ * each stop inside it looked like. The starting control was focused by script,
+ * so its treatment is not sampled.
  */
-async function keyboardSample(label: string, limit = 40) {
-  await startAtHome();
+async function walkRegion(region: string, start: string, limit: number) {
+  await browser.execute((css: string) => document.querySelector<HTMLElement>(css)?.focus(), start);
   const stops: unknown[] = [];
   let entered = false;
   for (let step = 0; step < limit; step += 1) {
     await browser.keys("Tab");
-    const at = await browser.execute(() => {
+    const at = await browser.execute((css: string) => {
       const active = document.activeElement as HTMLElement | null;
       if (active === null || active === document.body) return null;
       const box = active.getBoundingClientRect();
       return {
-        inHeader: active.closest(".workbench-header") !== null,
+        inRegion: active.closest(css) !== null,
         context: active.getAttribute("data-shell-context"),
         name: active.getAttribute("aria-label") ?? (active.textContent ?? "").trim(),
         refused: active.getAttribute("aria-disabled") === "true",
         inViewport: box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight,
       };
-    });
+    }, region);
     if (at === null) continue;
-    if (!at.inHeader) {
+    if (!at.inRegion) {
       if (entered) break;
       continue;
     }
     entered = true;
     stops.push({ ...at, treatment: await focusedTreatment() });
   }
+  return stops;
+}
+
+/**
+ * Tabs through the header from Home, then through the status bar from its
+ * backend item, and records what each stop looked like. The status bar comes
+ * after the whole surface in Tab order (rebuild spec 2.1), so its walk starts
+ * at its first control, which is always rendered.
+ */
+async function keyboardSample(label: string, limit = 40) {
+  const stops = [
+    ...(await walkRegion(".workbench-header", ".workbench-home", limit)),
+    ...(await walkRegion(".workbench-status", "[data-backend-item]", limit)),
+  ];
   evidence.push({ label: `${label}-keyboard`, kind: "Observation only.", stops });
   return stops as { context: string | null; name: string; refused: boolean; treatment: { visible: boolean } }[];
 }
@@ -672,45 +695,35 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await open("populated");
       await viewTheRow();
       await selectTheSpectrum(0);
+      // One checked vendor row, so the scope the routes below must not touch
+      // holds an eligible row.
+      await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
       await navigate([en.projectSurface]);
-      await browser.$(`button[aria-label="${fill(en.provenanceInspectInput, { name: "QC_pool_01.mzML" })}"]`).click();
-      await waitForContext("inspecting", (text) => text === fill(en.shellContextInspecting, { name: "QC_pool_01.mzML" }), "names the inspected reference");
+      await browser.$(`button[aria-label="${fill(en.projectDetailsFor, { name: "QC_pool_01.mzML" })}"]`).click();
+      await waitForInspected("QC_pool_01.mzML", "names the inspected reference");
 
-      // Each item reads its owner: the project session, the viewer, the scope
-      // the Conversion surface resolves, and what Details describes.
+      // Each fact reads its owner: the status bar the project session, the
+      // identity row the viewer, and Details what is inspected. The scope is
+      // the Conversion summary's alone; the shell no longer repeats it.
       expect(await contextText("project")).toBe(fill(en.shellContextProject, { name: "Test project" }));
-      expect(await contextText("viewing")).toMatch(new RegExp(`^${prefix(en.shellContextViewing)}QC_pool_01\\.mzML`, "u"));
-      // The scope bears on a conversion being set up, so the Project surface
-      // leaves it out (PM9.2 L14–L16); the route below reaches it from the
-      // Workbench, where it is shown.
-      expect(await contextText("conversionScope")).toBe(null);
+      expect(await viewedName()).toBe("QC_pool_01.mzML");
       expect(await contextText("conversionActivity")).toBe(null);
       expect(await contextText("projectActivity")).toBe(null);
 
       const before = await ipcCalls();
       const scopeBefore = await membership();
+      // The status bar's project item, then the header tabs: each changes the
+      // surface and nothing the scope is made of.
       const routes = [
-        ["viewing", "workbench", en.workbench],
-        ["conversionScope", "conversion", en.conversionTask],
-        ["project", "project", en.projectSurface],
-        ["viewing", "workbench", en.workbench],
-        ["inspecting", "project", en.projectSurface],
+        [() => home(), "workbench"],
+        [() => activate("project"), "project"],
+        [() => navigate([en.conversionTask]), "conversion"],
+        [() => navigate([en.workbench]), "workbench"],
+        [() => activate("project"), "project"],
       ] as const;
-      for (const [id, target, destination] of routes) {
-        await activate(id);
+      for (const [go, target] of routes) {
+        await go();
         expect(await surface()).toBe(target);
-        expect(await currentDestination()).toBe(destination);
-        // Page-sensitive, not owner-sensitive: where the scope bears on the
-        // task, the line states the one the Conversion surface resolves; on
-        // the Project surface it is absent. Either way, hiding it changes
-        // nothing it is made of.
-        if (target === "project") {
-          expect(await contextText("conversionScope")).toBe(null);
-        } else {
-          const owned = await ownedScope();
-          expect(owned).not.toBe(null);
-          expect(await contextText("conversionScope")).toBe(owned);
-        }
         expect(await membership()).toEqual(scopeBefore);
       }
       // Still the same inspected record, where Details describes it.
@@ -737,11 +750,13 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await metrics(1920, 1080);
       await open("populated");
       await viewTheRow();
-      // A session-only change of the reader's own: one more row for conversion.
-      await browser.$(`.grouped-roster [data-handle="${secondFile.handle}"] input[type="checkbox"]`).click();
+      // A session-only change of the reader's own: one more row for conversion,
+      // an eligible one.
+      await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"] input[type="checkbox"]`).click();
       await selectTheSpectrum(0);
       await browser.$(SPECTRUM_PLOT).scrollIntoView({ block: "nearest" });
-      await browser.$(`button=${en.viewerMzZoomIn}`).click();
+      // An icon button since the rebuild: found by its accessible name (spec 3.4).
+      await browser.$(`button[aria-label="${en.viewerMzZoomIn}"]`).click();
       await browser.waitUntil(async () => !(await spectrumRangeCaption()).includes(en.viewerFullRange.trim()), {
         timeout: 15_000,
         timeoutMsg: "Zoom in m/z did not commit a narrower view",
@@ -752,17 +767,17 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         roster: await rosterState(),
         scan: await selectedRowPosition(),
         view: await spectrumRangeCaption(),
-        viewing: await contextText("viewing"),
-        scope: await contextText("conversionScope"),
+        viewing: await viewedName(),
+        scope: await membership(),
       });
       const before = await held();
       const calls = await ipcCalls();
 
-      await activate("conversionScope");
+      await navigate([en.conversionTask]);
       expect(await surface()).toBe("conversion");
       await navigate([en.projectSurface]);
       expect(await surface()).toBe("project");
-      await activate("viewing");
+      await navigate([en.workbench]);
       expect(await surface()).toBe("workbench");
 
       // Navigation changed what is shown, not what is held.
@@ -848,13 +863,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           expect((await ipcCalls()).some((call) => call.command === "read_targeted_ms1_rows")).toBe(false);
         }
 
-        // The line names the record; how available its payload is stays the
-        // report's to say, so the sentence is the same in every state.
-        await waitForContext(
-          "inspecting",
-          (text) => text === fill(en.shellContextInspecting, { name: en.projectArtifactTargetedMs1 }),
-          "names the stored result",
-        );
+        // Details names the record; how available its payload is stays the
+        // report's to say, so the name is the same in every state.
+        await waitForInspected(en.projectArtifactTargetedMs1, "names the stored result");
         // Lineage stays the record's own: its producing run and its plan.
         expect(await browser.$(`#workbench-inspector [data-provenance-link="${TARGETED_RUN}"]`).isExisting()).toBe(true);
         expect(await browser.$("#workbench-inspector").getText()).toContain(PLAN_SHA);
@@ -862,7 +873,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         const calls = await ipcCalls();
         await home();
         expect(await surface()).toBe("workbench");
-        await activate("inspecting");
+        await navigate([en.projectSurface]);
         expect(await surface()).toBe("project");
         expect(await browser.$(`[data-targeted-report="${RESULT}"]`).getAttribute("data-availability")).toBe(availability);
 
@@ -902,14 +913,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await browser.$("[data-project-work-dot]").isExisting()).toBe(false);
       // The capture moved what is inspected to the record it made, as
       // `useProject` `captureQc` does when nothing else was chosen meanwhile.
-      await waitForContext(
-        "inspecting",
-        (text) => text === fill(en.shellContextInspecting, { name: en.projectArtifactQcSummary }),
-        "names the new QC record",
-      );
+      await waitForInspected(en.projectArtifactQcSummary, "names the new QC record");
 
       await home();
-      await activate("inspecting");
+      await navigate([en.projectSurface]);
       expect(await surface()).toBe("project");
       await browser.$(`[data-qc-report="${QC_ARTIFACT}"]`).waitForDisplayed();
       expect(await browser.$('#workbench-inspector [data-provenance="artifact"]').isDisplayed()).toBe(true);
@@ -925,9 +932,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await open("converting");
       const running = fill(en.shellContextActivity, { activity: en.shellConversionRunning });
       await waitForContext("conversionActivity", (text) => text === running, "says the conversion runs");
-      expect(
-        await browser.$(".workbench-navigation .work-status-dot").getAttribute("aria-label"),
-      ).toBe(en.workActive);
+      expect(await browser.$(".workbench-navigation .work-status-dot").isExisting()).toBe(true);
+      expect(await conversionTabDescription()).toBe(en.workActive);
 
       // Away and back while it runs: the lane keeps polling its slot, and that
       // read is the only request.
@@ -954,7 +960,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await contextText("conversionActivity")).toBe(running);
       await releaseInvokeHold(poll);
       await waitForContext("conversionActivity", (text) => text === en.shellConversionRetained, "reports the settled queue");
-      expect(await browser.$(".workbench-navigation .work-status-dot").getAttribute("aria-label")).toBe(en.workRetained);
+      expect(await conversionTabDescription()).toBe(en.workRetained);
       expect(
         await browser.execute(
           (busy: string) =>
@@ -973,11 +979,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await metrics(1920, 1080);
       await open("populated");
       await viewTheRow();
-      const viewing = await contextText("viewing");
+      const viewing = await viewedName();
       await navigate([en.projectSurface]);
-      await browser.$(`button[aria-label="${fill(en.provenanceInspectInput, { name: "QC_pool_01.mzML" })}"]`).click();
-      const inspected = fill(en.shellContextInspecting, { name: "QC_pool_01.mzML" });
-      await waitForContext("inspecting", (text) => text === inspected, "names the inspected reference");
+      await browser.$(`button[aria-label="${fill(en.projectDetailsFor, { name: "QC_pool_01.mzML" })}"]`).click();
+      const inspected = "QC_pool_01.mzML";
+      await waitForInspected(inspected, "names the inspected reference");
 
       // A check, held, so its running state can be looked at from elsewhere.
       await holdInvoke("check_project_links");
@@ -1004,7 +1010,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await releaseInvokeHold("check_project_links");
       await waitForContext("projectActivity", (text) => text === null, "leaves no busy label once settled");
       expect(await browser.$("[data-project-work-dot]").isExisting()).toBe(false);
-      expect(await contextText("inspecting")).toBe(inspected);
+      expect(await inspectedName()).toBe(inspected);
 
       // Replaced through the real buttons: Close, then Open.
       await setInvokeResult("close_project", NO_PROJECT);
@@ -1014,8 +1020,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       );
       const beforeReplace = await ipcCalls();
       await browser.$(`button=${en.projectClose}`).click();
-      await waitForContext("project", (text) => text === en.shellContextProjectNone, "says no project is open");
-      expect(await contextText("inspecting")).toBe(null);
+      await waitForContext("project", (text) => text === null, "names no project once none is open");
+      expect(await inspectedName()).toBe(null);
       await browser.$(`button=${en.projectOpen}`).click();
       await waitForContext(
         "project",
@@ -1024,9 +1030,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       );
       // What was inspected belonged to the project before; the new one starts
       // with nothing inspected, even with the same identifiers inside it.
-      expect(await contextText("inspecting")).toBe(null);
+      expect(await inspectedName()).toBe(null);
       // The viewer is its own owner: a project change leaves the viewed row alone.
-      expect(await contextText("viewing")).toBe(viewing);
+      expect(await viewedName()).toBe(viewing);
       // The two explicit replacements, and nothing else that starts or re-reads.
       expect(await unexpectedSince("pm9-b7-replace", beforeReplace)).toEqual(["close_project", "open_project"]);
       expect(await unexpectedConsole()).toEqual([]);
@@ -1100,19 +1106,20 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
 
     it("PM9.2 L20: the Details entry at 1366x768 while there is nothing to show", async () => {
       // Both G states have something to show. This is the state L20 is about:
-      // closed by default at this width, refused, and still a stop that shows
-      // where focus is.
+      // closed by default at this width and still a stop that shows where
+      // focus is. Since the v5.11 rebuild it is never refused (GOALS S3, B4):
+      // with nothing to describe, Details opens and says so in one line.
       await metrics(1366, 768);
       await open("populated", "en");
-      // The usable reading folds the banner; observe() expects it folded.
-      await browser.$("[data-backend-toggle]").waitForExist();
+      // A usable reading leaves nothing in the track; observe() expects that.
+      await browser.$('#backend-status[data-backend-status="available"]').waitForExist();
       await frames();
       const label = "pm9-2-details-refused-en-1366x768";
       await observe(label);
       const stops = await keyboardSample(label);
       const details = stops.find((candidate) => candidate.name === en.inspectorToggle);
       expect(details).toBeDefined();
-      expect(details?.refused).toBe(true);
+      expect(details?.refused).toBe(false);
       expect(details?.treatment.visible).toBe(true);
       expect(await unexpectedConsole()).toEqual([]);
     });
@@ -1120,10 +1127,15 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     for (const locale of ["en", "zh-CN"] as const) {
       it(`PM9.2 L14–L16: the Workbench line with long names while a conversion runs, in ${locale}`, async () => {
         // PM9-G's busy state is observed on the Project surface. Here the same
-        // long names are on the Workbench, where the inspected result ranks
-        // last and gives way first.
+        // long names are on the Workbench. Since the rebuild the line is the
+        // status bar (spec 2.3): the running conversion and the long project
+        // name share it, and only the project name gives way. Retired with the
+        // items the bar dropped: the inspected result (Details says it) and
+        // the conversion scope (the Conversion page says it), with the check
+        // that the scope's leading word survived its ellipsis.
         await metrics(1920, 1080);
         await open("busyInspected", locale);
+        await waitForContext("conversionActivity", (text) => text !== null, "names the running conversion");
         await navigate([en.projectSurface, zh.projectSurface]);
         await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
         await browser.$("[data-targeted-row]").waitForDisplayed();
@@ -1136,13 +1148,14 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         ] as const) {
           await metrics(width, height);
           await frames();
+          // observe() holds the conversion whole and inside the bar.
           const measured = await observe(`pm9-2-workbench-long-${locale}-${String(width)}x${String(height)}`);
           expect(measured.surface).toBe("workbench");
-          expect(measured.contextItems.map((item) => item.id)).toContain("inspecting");
-          // Given way, the scope still says what it is (PM9.2 L14–L16 (e)):
-          // its distinctive word leads, so what survives the ellipsis is it.
-          const scope = measured.contextItems.find((item) => item.id === "conversionScope");
-          expect(scope?.visible.startsWith(locale === "en" ? "Conv" : "待转")).toBe(true);
+          expect(measured.contextItems.map((item) => item.id)).toEqual(["conversionActivity", "project"]);
+          // Given way, the project still says what it is: its own word leads,
+          // so what survives the ellipsis is it.
+          const project = measured.contextItems.find((item) => item.id === "project");
+          expect(project?.visible.startsWith(prefix((locale === "en" ? en : zh).shellContextProject))).toBe(true);
         }
         expect(await unexpectedConsole()).toEqual([]);
       });
@@ -1153,7 +1166,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         const words = locale === "en" ? en : zh;
         await metrics(1366, 768);
         await open("populated", locale);
-        await browser.$("[data-backend-toggle]").waitForExist();
+        await browser.$('#backend-status[data-backend-status="available"]').waitForExist();
         for (const [target, name] of [
           ["workbench", words.workbench],
           ["conversion", words.conversionTask],
@@ -1186,7 +1199,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await setInvokeResult("choose_backend_installation", chosenBackend);
         await showBackendBanner();
         await browser.$('[data-backend-action="choose"]').click();
-        const reopen = browser.$("#workbench-evidence .primary-button");
+        const reopen = browser.$("#workbench-evidence .ui-button--primary");
         await reopen.waitForDisplayed({ timeoutMsg: "no reopen action after the installation changed" });
         await frames();
         const seen = await surfaceFrame(`pm9-2-l1-retained-${locale}-1366x768`);
@@ -1198,27 +1211,33 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       });
     }
 
-    it("PM9.2 L10: the folded reading's toggle hands the keyboard to the banner when it has something to say", async () => {
+    it("PM9.2 L10: ProteoWizard's details stay open under the reader through a check, and Esc gives the keyboard back", async () => {
       await metrics(1366, 768);
       await open("populated", "en");
-      // Queried afresh each time: the toggle leaves, and a new one returns.
-      const toggle = () => browser.$("[data-backend-toggle]");
-      await toggle().waitForExist();
-      // Opened by a real press, which leaves the keyboard on the toggle.
-      await toggle().click();
-      expect(await browser.execute(() => document.activeElement?.hasAttribute("data-backend-toggle") ?? false)).toBe(true);
-      // A check the reader did not start from the toggle: pressed by script,
-      // so the keyboard stays where it was, and held so the state can be read.
+      const item = browser.$("[data-backend-item]");
+      await browser.$('#backend-status[data-backend-status="available"]').waitForExist();
+      expect(await item.getText()).toBe(en.backendReadyShort);
+      // Opened by a real press: the keyboard comes along into the details.
+      await item.click();
+      await browser.$('#backend-status[data-backend-mode="popover"]').waitForDisplayed();
+      expect(await browser.execute(() => document.activeElement?.id ?? null)).toBe("backend-status");
+      // A check the reader did not start from here: pressed by script, so the
+      // keyboard stays where it was, and held so the state can be read.
       await holdInvoke("inspect_backend");
       await browser.execute(() => document.querySelector<HTMLButtonElement>('[data-backend-action="recheck"]')?.click());
-      await browser.waitUntil(async () => !(await toggle().isExisting()), { timeoutMsg: "the toggle stayed while checking" });
+      await browser.waitUntil(async () => (await item.getText()) === en.backendStatusChecking, { timeoutMsg: "the item never said it was checking" });
       expect(await browser.execute(() => document.activeElement?.id ?? null)).toBe("backend-status");
       await releaseInvokeHold("inspect_backend");
-      await browser.waitUntil(async () => await toggle().isExisting(), { timeoutMsg: "no quiet verdict" });
-      // Engaged: the banner stays open under the reader, and so does the keyboard.
+      await browser.waitUntil(async () => (await item.getText()) === en.backendReadyShort, { timeoutMsg: "no usable verdict" });
+      // A verdict never closes details the reader opened, nor moves the keyboard.
       expect(await browser.execute(() => document.activeElement?.id ?? null)).toBe("backend-status");
-      expect(await toggle().getAttribute("aria-expanded")).toBe("true");
-      expect(await browser.$("#backend-status").getAttribute("data-backend-collapsed")).toBe(null);
+      expect(await item.getAttribute("aria-expanded")).toBe("true");
+      expect(await browser.$("#backend-status").getAttribute("data-backend-mode")).toBe("popover");
+      // Esc closes them and hands the keyboard back to the item.
+      await browser.keys("Escape");
+      await browser.waitUntil(async () => (await item.getAttribute("aria-expanded")) === "false");
+      expect(await browser.execute(() => document.activeElement?.hasAttribute("data-backend-item") ?? false)).toBe(true);
+      expect(await browser.$("#backend-status").getAttribute("data-backend-mode")).toBe("hidden");
       expect(await unexpectedConsole()).toEqual([]);
     });
   });
@@ -1245,8 +1264,10 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
      */
     function restatesBanner(text: string) {
       return browser.execute((evidence: string) => {
+        // Sentence by sentence: the body is one span of joined sentences.
         const said = [...document.querySelectorAll<HTMLElement>("#backend-status .backend-status-reading > *")]
-          .map((node) => (node.textContent ?? "").trim())
+          .flatMap((node) => (node.textContent ?? "").split(/(?<=[.。])\s*/u))
+          .map((sentence) => sentence.trim())
           .filter((sentence) => sentence.length > 0 && evidence.includes(sentence));
         return /ProteoWizard/u.test(evidence) ? [...said, "ProteoWizard"] : said;
       }, text);
@@ -1255,22 +1276,41 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     /**
      * Real Tab presses from wherever focus is: each stop's name and whether it
      * is visible, on screen and not covered, and the document's own overflow
-     * after the walk. With `scope`, the walk ends once focus leaves it.
+     * after the walk. With `scope`, the walk ends once focus leaves it. `back`
+     * walks with Shift+Tab; `wholeRing` also holds that no box scrolling inside
+     * the Project surface cuts the ring.
      */
-    async function focusWalk(label: string, limit: number, scope?: string) {
+    async function focusWalk(label: string, limit: number, scope?: string, { back = false, wholeRing = false } = {}) {
       const stops = [];
       for (let step = 0; step < limit; step += 1) {
-        await browser.keys("Tab");
+        await browser.keys(back ? ["Shift", "Tab"] : "Tab");
         const at = await browser.execute((region: string | null) => {
           const active = document.activeElement as HTMLElement | null;
           if (active === null || active === document.body) return null;
           if (region !== null && active.closest(region) === null) return "left" as const;
           const box = active.getBoundingClientRect();
           const hit = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(box.height / 2, 8));
+          const style = getComputedStyle(active);
+          const reach = Number.parseFloat(style.outlineWidth) + Number.parseFloat(style.outlineOffset);
+          const cut: string[] = [];
+          for (let scroller = active.parentElement; scroller !== null && scroller.id !== "workbench-project"; scroller = scroller.parentElement) {
+            if (getComputedStyle(scroller).overflowY === "visible") continue;
+            const clip = scroller.getBoundingClientRect();
+            const left = clip.left + scroller.clientLeft;
+            const top = clip.top + scroller.clientTop;
+            const past = {
+              left: left - (box.left - reach),
+              right: box.right + reach - (left + scroller.clientWidth),
+              top: top - (box.top - reach),
+              bottom: box.bottom + reach - (top + scroller.clientHeight),
+            };
+            for (const [side, by] of Object.entries(past)) if (by > 0.5) cut.push(`${scroller.className} ${side} ${by.toFixed(1)}`);
+          }
           return {
             name: (active.getAttribute("aria-label") ?? active.textContent ?? active.tagName).trim().slice(0, 40),
             onScreen: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
             uncovered: hit === null || active === hit || active.contains(hit) || hit.contains(active),
+            cut,
           };
         }, scope ?? null);
         if (at === "left") break;
@@ -1283,28 +1323,68 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       evidence.push({ label, stops, overflow });
       expect(stops.length).toBeGreaterThan(0);
       expect(stops.filter((stop) => !stop.treatment.visible || !stop.onScreen || !stop.uncovered)).toEqual([]);
+      if (wholeRing) expect(stops.filter((stop) => stop.cut.length > 0)).toEqual([]);
       expect(overflow.x).toBeLessThanOrEqual(1);
       expect(overflow.y).toBeLessThanOrEqual(1);
     }
 
-    /** Puts focus on the first focusable control inside `css`. */
+    /**
+     * Puts focus on the first focusable control inside `css` that is rendered:
+     * one inside a closed disclosure region cannot take focus.
+     */
     function enter(css: string) {
       return browser.execute((selector: string) => {
-        const first = document
-          .querySelector(selector)
-          ?.querySelector<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select, summary, [tabindex]:not([tabindex="-1"])');
+        const first = [
+          ...(document
+            .querySelector(selector)
+            ?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select, [tabindex]:not([tabindex="-1"])') ?? []),
+        ].find((node) => node.getClientRects().length > 0);
         first?.focus();
-        return first !== null && first !== undefined;
+        return first !== undefined && document.activeElement === first;
       }, css);
     }
 
-    /** The drop hint as the line leaves it: shown whole, shown cut, or gone. */
+    /** What the evidence card's state says, without its buttons (rebuild spec 3.6). */
+    function emptyStateText() {
+      return browser.execute(
+        () => document.querySelector("#workbench-evidence .evidence-state .ui-empty-state__message")?.textContent ?? "",
+      ) as Promise<string>;
+    }
+
+    /** The drop hint as the status bar leaves it: shown whole, shown cut, or gone. */
     function dropHintState() {
       return browser.execute(() => {
-        const hint = document.querySelector<HTMLElement>(".workbench-header .workspace-drop-hint");
+        const hint = document.querySelector<HTMLElement>(".workbench-status .workspace-drop-hint");
         if (hint === null || hint.getClientRects().length === 0 || hint.getBoundingClientRect().width < 1) return "gone";
         return hint.scrollWidth > hint.clientWidth + 1 ? "cut" : "whole";
       }) as Promise<"gone" | "cut" | "whole">;
+    }
+
+    /** The project item's Unsaved tag: its words, and whether it is whole inside the item and the bar. */
+    function unsavedTag() {
+      return browser.execute(() => {
+        const tag = document.querySelector<HTMLElement>('.workbench-status [data-shell-context="project"] .status-tag');
+        if (tag === null || tag.getClientRects().length === 0) return null;
+        const box = tag.getBoundingClientRect();
+        const inside = (outer: Element | null) => {
+          const edge = outer?.getBoundingClientRect();
+          return edge !== undefined && box.left >= edge.left - 0.5 && box.right <= edge.right + 0.5;
+        };
+        return {
+          text: tag.textContent,
+          whole: box.width > 0 && tag.scrollWidth <= tag.clientWidth + 1 && inside(tag.closest("button")) && inside(tag.closest(".workbench-status")),
+        };
+      });
+    }
+
+    /** The identity row's file name: its text, its tooltip, and whether any of it is on screen. */
+    function identityName() {
+      return browser.execute(() => {
+        const name = document.querySelector<HTMLElement>("#workbench-evidence .viewer-file-name");
+        return name === null
+          ? null
+          : { text: name.textContent, title: name.getAttribute("title"), shown: name.getBoundingClientRect().width > 0 };
+      });
     }
 
     /** Lines a text box takes, and any number-and-word pair split across two. */
@@ -1352,17 +1432,22 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await metrics(width, height);
           await frames();
           const label = `ui-rework-line-${locale}-${String(width)}x${String(height)}`;
+          // observe() holds the give-way order the status bar keeps (UI-48):
+          // only the project name shows an ellipsis, and the hint goes first.
           const measured = await observe(label);
           const hint = await dropHintState();
-          shapes.push({ label, hint, items: measured.contextItems.map((item) => ({ id: item.id, ellipsized: item.ellipsized, visible: item.visible })) });
+          const unsaved = await unsavedTag();
+          const viewed = await identityName();
+          shapes.push({ label, hint, unsaved, viewed, items: measured.contextItems.map((item) => ({ id: item.id, ellipsized: item.ellipsized, visible: item.visible })) });
           // UI-02: the hint is whole or gone, never a sliver.
           expect(hint).not.toBe("cut");
-          // UI-03: at any width the project item says it is unsaved.
-          const project = measured.contextItems.find((item) => item.id === "project");
-          expect(project?.visible ?? "").toMatch(locale === "en" ? /unsaved/iu : /未保存/u);
-          // UI-05: the viewed file, given way, still says what it is.
-          const viewing = measured.contextItems.find((item) => item.id === "viewing");
-          expect(viewing?.visible.startsWith(locale === "en" ? "View" : "正在查")).toBe(true);
+          // UI-03: at any width the project item says it is unsaved -- its tag,
+          // which the ellipsis on the name never reaches (spec 2.3).
+          expect(unsaved).toEqual({ text: words(locale).statusUnsaved, whole: true });
+          // UI-05: the viewed file, given way, still says what it is. It is
+          // the identity row's title since the rebuild (spec 3.2): the name in
+          // full, ellipsized on screen, with the whole name as its tooltip.
+          expect(viewed).toEqual({ text: LONG_FILE, title: LONG_FILE, shown: true });
         }
         evidence.push({ label: `ui-rework-line-${locale}`, shapes });
         expect(await unexpectedConsole()).toEqual([]);
@@ -1385,8 +1470,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await metrics(width, height);
           await frames();
           const measured = await observe(`ui-rework-two-statuses-${locale}-${String(width)}x${String(height)}`);
-          // observe() holds both statuses whole and inside the line; here both are there.
-          expect(measured.contextItems.filter((item) => item.priority === "1").map((item) => item.id)).toEqual([
+          // observe() holds both statuses whole and inside the status bar; here both are there.
+          expect(measured.contextItems.filter((item) => item.id !== "project").map((item) => item.id)).toEqual([
             "conversionActivity",
             "projectActivity",
           ]);
@@ -1401,41 +1486,65 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       it(`UI-15/16/17: the organizing row keeps the count whole, with and without Undo, in ${locale}`, async () => {
         await metrics(1366, 768);
         await open("populated", locale);
+        // The count says nothing until something is highlighted or checked.
+        await viewTheRow();
         await browser.$(".roster-selection-context").waitForDisplayed();
         const shapes: unknown[] = [];
-        const record = async (label: string) => {
+        // The organizing row is the roster's footer since the rebuild: the
+        // checked count, Undo, the list menu (New group is its item) and
+        // Convert… (direction A 2.1).
+        // Collected and asserted once, so every frame is reached and named.
+        const problems: string[] = [];
+        // One 48 px row at every width and in both languages: the count and
+        // every control share one centre line, nothing wraps, and at real
+        // counts the count is whole -- never clipped, never split inside a
+        // pair. Its line count and the band's height are recorded.
+        const record = async (label: string, countWhole = true) => {
           await frames();
           const count = await textShape(".roster-selection-context");
-          const newGroup = await browser.$(".organization-toolbar button").getLocation("y");
-          const band = await browser.$(".organization-toolbar").getSize("height");
-          shapes.push({ label, count, newGroupTop: newGroup, band });
-          expect(count?.lines).toBe(1);
-          expect(count?.split).toEqual([]);
+          const foot = await browser.execute(() => {
+            const node = document.querySelector<HTMLElement>(".roster-selection-context");
+            const middle = (element: Element) => {
+              const box = element.getBoundingClientRect();
+              return box.top + box.height / 2;
+            };
+            const middles = [...document.querySelectorAll<HTMLElement>(".roster-foot .ui-button")].map(middle);
+            if (node !== null) middles.push(middle(node));
+            return { clipped: node === null || node.scrollWidth > node.clientWidth + 1, spread: Math.max(...middles) - Math.min(...middles), title: node?.title ?? null };
+          });
+          const band = await browser.$(".roster-foot").getSize("height");
+          shapes.push({ label, count, foot, band });
+          if (countWhole && (count === null || foot.clipped)) problems.push(`${label}: "${String(count?.text)}" clipped`);
+          if (foot.title !== count?.text) problems.push(`${label}: the count's title is not its whole text`);
+          if (!(foot.spread <= 2)) problems.push(`${label}: the footer off one row by ${String(foot.spread)} px`);
+          if (band > 48.5) problems.push(`${label}: the footer is ${String(band)} px tall`);
+          if ((count?.lines ?? 0) > 1) problems.push(`${label}: the count wrapped`);
+          if ((count?.split ?? []).length > 0) problems.push(`${label}: split inside ${JSON.stringify(count?.split)}`);
         };
         await record(`ui-rework-organizing-${locale}-1366x768`);
-        // UI-16: made narrower than the count, as long counts make it, the
-        // count breaks only between its parts, never inside one.
+        // UI-16 under direction A: made narrower than the count, as four-digit
+        // counts beside Undo make it, the row still does not wrap -- the count
+        // gives way by an ellipsis and keeps its whole text as its title.
         const narrowCount = (width: string) =>
           browser.execute((value: string) => {
             document.querySelector<HTMLElement>(".roster-selection-context")!.style.maxWidth = value;
           }, width);
-        await narrowCount("7em");
-        await frames();
-        const narrow = await textShape(".roster-selection-context");
+        await narrowCount("2em");
+        await record(`ui-rework-organizing-${locale}-forced-narrow`, false);
         await narrowCount("");
-        shapes.push({ label: `ui-rework-organizing-${locale}-forced-narrow`, narrow });
-        expect(narrow?.lines).toBeGreaterThan(1);
-        expect(narrow?.split).toEqual([]);
-        await browser.$(".organization-toolbar button").click();
+        await browser.$("[data-roster-list-menu]").click();
+        await browser.$("[data-roster-new-group]").waitForDisplayed();
+        await browser.$("[data-roster-new-group]").click();
         await browser.$("#organization-group-name").setValue("QC");
         await browser.$(".group-name-dialog button[type='submit']").click();
         await browser.$(".group-name-dialog").waitForExist({ reverse: true });
-        await browser.$(".organization-toolbar .link-button").waitForDisplayed();
+        await browser.$(`.roster-foot button[aria-label="${words(locale).undoOrganization}"]`).waitForDisplayed();
         await record(`ui-rework-organizing-undo-${locale}-1366x768`);
         await metrics(960, 640);
         await revealRosterRow(MZML_ROW.handle);
         await record(`ui-rework-organizing-undo-${locale}-960x640`);
-        evidence.push({ label: `ui-rework-organizing-${locale}`, shapes });
+        evidence.push({ label: `ui-rework-organizing-${locale}`, shapes, problems });
+        expect(problems).toEqual([]);
         expect(await unexpectedConsole()).toEqual([]);
       });
 
@@ -1446,28 +1555,35 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await setInvokeResult("choose_backend_installation", chosenBackend);
         await showBackendBanner();
         await browser.$('[data-backend-action="choose"]').click();
-        await browser.$("#workbench-evidence .primary-button").waitForDisplayed();
+        await browser.$("#workbench-evidence .ui-button--primary").waitForDisplayed();
         await frames();
-        const primaries = await browser.execute(() =>
-          [...document.querySelectorAll<HTMLElement>(".workbench-shell .primary-button")]
-            .filter((button) => button.getClientRects().length > 0)
-            .map((button) => (button.textContent ?? "").trim()),
-        );
-        evidence.push({ label: `ui-rework-retained-${locale}`, primaries });
-        expect(primaries).toEqual([expect.stringMatching(new RegExp(`^${prefix(words(locale).previewRetained)}`, "u"))]);
-        // Add files stays offered, only quieter.
-        expect(await browser.$(".dataset-roster-actions [data-add-files]").isEnabled()).toBe(true);
-        // At 960x640 the roster takes the evidence pane's place, the reopen is
-        // off screen, and Add files is the one filled action again.
+        // Each region's filled actions. The roster's footer has its own
+        // primary since the rebuild, Convert N… (spec 3.3), so the one-primary
+        // rule is the evidence surface's.
+        const primaries = (css: string) =>
+          browser.execute(
+            (region: string) =>
+              [...document.querySelectorAll<HTMLElement>(`${region} .primary-button, ${region} .ui-button--primary`)]
+                .filter((button) => button.getClientRects().length > 0)
+                .map((button) => (button.textContent ?? "").trim()),
+            css,
+          );
+        const evidencePrimaries = await primaries("#workbench-evidence");
+        evidence.push({ label: `ui-rework-retained-${locale}`, evidence: evidencePrimaries, shell: await primaries(".workbench-shell") });
+        expect(evidencePrimaries).toEqual([expect.stringMatching(new RegExp(`^${prefix(words(locale).previewRetained)}`, "u"))]);
+        // Add files stays offered, only quieter: always secondary since the rebuild (spec 3.3).
+        const addFiles = browser.$(".roster-head [data-add-files]");
+        expect(await addFiles.getAttribute("aria-disabled")).toBe(null);
+        expect(await addFiles.getAttribute("class")).not.toContain("ui-button--primary");
+        // Retired: "at 960x640 the roster takes the evidence pane's place and
+        // Add files is the one filled action again". The roster is a drawer
+        // over the evidence there (spec 3.1) and Add files never fills (spec
+        // 3.3). What stays: in the drawer it is offered, and still quiet.
         await metrics(960, 640);
         await revealRosterRow(MZML_ROW.handle);
-        const narrow = await browser.execute(() =>
-          [...document.querySelectorAll<HTMLElement>(".workbench-shell .primary-button")]
-            .filter((button) => button.getClientRects().length > 0)
-            .map((button) => (button.hasAttribute("data-add-files") ? "add-files" : (button.textContent ?? "").trim())),
-        );
-        evidence.push({ label: `ui-rework-retained-${locale}-960x640`, primaries: narrow });
-        expect(narrow).toEqual(["add-files"]);
+        evidence.push({ label: `ui-rework-retained-${locale}-960x640`, shell: await primaries(".workbench-shell") });
+        expect(await addFiles.getAttribute("aria-disabled")).toBe(null);
+        expect(await addFiles.getAttribute("class")).not.toContain("ui-button--primary");
         expect(await unexpectedConsole()).toEqual([]);
       });
 
@@ -1480,7 +1596,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         expect(await capture.getAttribute("aria-disabled")).toBe("true");
         const seen = await browser.execute(() => {
           const button = document.querySelector<HTMLElement>("[data-project-capture]")!;
-          const enabled = document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]");
+          const enabled = document.querySelector<HTMLElement>(".roster-head [data-add-files]");
           const reason = (button.getAttribute("aria-describedby") ?? "")
             .split(/\s+/u)
             .map((id) => document.getElementById(id))
@@ -1522,12 +1638,15 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await metrics(width, height);
           await frames();
           const seen = await surfaceFrame(`ui-rework-empty-${locale}-${String(width)}x${String(height)}`);
-          const text = await browser.execute(
-            () => document.querySelector("#workbench-evidence .workspace-placeholder .empty-state")?.textContent ?? "",
-          );
+          const text = await emptyStateText();
           evidence.push({ label: `ui-rework-empty-copy-${locale}-${String(width)}`, text, primaries: seen.primaries });
+          expect(text).not.toBe("");
           expect(await restatesBanner(text)).toEqual([]);
-          expect(seen.primaries).toEqual([]);
+          // UI-10 said no primary here. The rebuild's first run offers one,
+          // Add files…, where the roster does not already (spec 3.6): at most
+          // that one, and nothing else is filled.
+          expect(seen.primaries.length).toBeLessThanOrEqual(1);
+          expect(seen.primaries.filter((primary) => (primary.text ?? "").trim() !== words(locale).addFiles)).toEqual([]);
         }
         expect(await unexpectedConsole()).toEqual([]);
       });
@@ -1544,15 +1663,18 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await browser.$(`[data-backend-status="${kind}"]`).waitForExist();
           await frames();
           await surfaceFrame(`ui-rework-${kind}-${locale}-1366x768`);
-          const text = await browser.execute(
-            () => document.querySelector("#workbench-evidence .workspace-placeholder .empty-state")?.textContent ?? "",
-          );
-          expect(await restatesBanner(text)).toEqual([]);
+          const text = await emptyStateText();
+          expect(text).not.toBe("");
+          // The evidence may say what waits on ProteoWizard ("Set up
+          // ProteoWizard to read plots and scans.", rendered review issue 12),
+          // but repeats no sentence of the notice and offers no second fix.
+          expect((await restatesBanner(text)).filter((said) => said !== "ProteoWizard")).toEqual([]);
+          expect(await browser.execute(() => document.querySelectorAll("#workbench-evidence .evidence-state button").length)).toBe(0);
           expect(await unexpectedConsole()).toEqual([]);
         });
       }
 
-      it(`UI-06: a superseded reading stays on screen with its actions, in ${locale}`, async () => {
+      it(`UI-06: a superseded reading is never shown as ready, and its actions are one press away, in ${locale}`, async () => {
         await metrics(1366, 768);
         await open("converting", locale);
         await setInvokeResult("inspect_backend", { ...availableBackend, authority: settledAt(2, 2) });
@@ -1565,18 +1687,27 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await metrics(width, height);
           await frames();
           await surfaceFrame(`ui-rework-superseded-${locale}-${String(width)}x${String(height)}`);
-          const seen = await browser.execute(() => ({
-            collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,
-            toggle: document.querySelector("[data-backend-toggle]") !== null,
+          // Not a verdict: the item stops saying ready, and the track keeps
+          // what the last verdict (usable) left there, which is nothing.
+          const seen = () => browser.execute(() => ({
+            mode: document.querySelector("#backend-status")?.getAttribute("data-backend-mode") ?? null,
+            tone: document.querySelector("[data-backend-item] [data-tone]")?.getAttribute("data-tone") ?? null,
             actions: [...document.querySelectorAll<HTMLElement>("[data-backend-action]")].filter((a) => a.getClientRects().length > 0).length,
           }));
-          expect(seen).toEqual({ collapsed: false, toggle: false, actions: 3 });
+          expect(await seen()).toEqual({ mode: "hidden", tone: "pending", actions: 0 });
+          // Every way out is in the details, one press away.
+          await browser.$("[data-backend-item]").click();
+          await browser.$('#backend-status[data-backend-mode="popover"]').waitForDisplayed();
+          await frames();
+          expect(await seen()).toEqual({ mode: "popover", tone: "pending", actions: 3 });
+          await browser.keys("Escape");
+          await browser.$('#backend-status[data-backend-mode="hidden"]').waitForExist();
         }
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
 
-    it("UI-07: a verdict that arrives while the reader is in the banner's help does not fold it", async () => {
+    it("UI-07: a verdict that arrives while the reader is in the details' help does not close them", async () => {
       await metrics(1366, 768);
       await openTable(scenario("populated"), { hold: ["inspect_backend"] });
       await browser.$('[data-backend-status="checking"]').waitForExist();
@@ -1585,22 +1716,26 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       // this headless page without system focus, and then `focus()` moves
       // `activeElement` but fires no focus event -- a state no reader is in.
       await cdp("Emulation.setFocusEmulationEnabled", { enabled: true });
-      await browser.execute(() => document.querySelector<HTMLElement>("[data-backend-help] summary")?.focus());
+      // The first check leaves nothing in the track; the details open from
+      // the status bar's item.
+      await browser.$("[data-backend-item]").click();
+      await browser.$('#backend-status[data-backend-mode="popover"]').waitForDisplayed();
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-backend-help]")?.focus());
       const held = await browser.execute(() => ({
         hasFocus: document.hasFocus(),
-        collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,
+        mode: document.querySelector("#backend-status")?.getAttribute("data-backend-mode") ?? null,
         focus: document.activeElement?.closest("[data-backend-help]") !== null,
       }));
-      expect(held).toEqual({ hasFocus: true, collapsed: false, focus: true });
+      expect(held).toEqual({ hasFocus: true, mode: "popover", focus: true });
       await releaseInvokeHold("inspect_backend");
       await browser.$('[data-backend-status="available"]').waitForExist();
       await frames();
       const seen = await browser.execute(() => ({
-        collapsed: document.querySelector("#backend-status")?.hasAttribute("data-backend-collapsed") ?? null,
-        expanded: document.querySelector("[data-backend-toggle]")?.getAttribute("aria-expanded") ?? null,
+        mode: document.querySelector("#backend-status")?.getAttribute("data-backend-mode") ?? null,
+        expanded: document.querySelector("[data-backend-item]")?.getAttribute("aria-expanded") ?? null,
         focus: document.activeElement?.closest("[data-backend-help]") !== null,
       }));
-      expect(seen).toEqual({ collapsed: false, expanded: "true", focus: true });
+      expect(seen).toEqual({ mode: "popover", expanded: "true", focus: true });
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -1647,7 +1782,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       await open("populated");
       await revealRosterRow(MZML_ROW.handle);
       await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
-      await browser.$(".viewer-column").waitForDisplayed({ timeout: 60_000 });
+      await browser.$(".viewer-file").waitForDisplayed({ timeout: 60_000 });
       await selectTheSpectrum(0);
       await browser.execute(() => {
         const rows = document.querySelectorAll(".spectrum-table-row[data-source-index]");
@@ -1664,14 +1799,17 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
+    // Clear list is an item of the roster footer's list menu since the rebuild
+    // (spec 3.3, owner review), so the control that shows the ring and answers
+    // hover is the menu's trigger; Clear list is then reached from it by keyboard.
     it("UI-20: Clear list shows its focus ring unclipped and answers hover", async () => {
       await metrics(1366, 768);
       await open("populated");
-      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]")?.focus());
+      await browser.execute(() => document.querySelector<HTMLElement>(".roster-head [data-add-files]")?.focus());
       let found = false;
-      for (let step = 0; step < 8 && !found; step += 1) {
+      for (let step = 0; step < 40 && !found; step += 1) {
         await browser.keys("Tab");
-        found = await browser.execute(() => document.activeElement?.hasAttribute("data-list-wide") ?? false);
+        found = await browser.execute(() => document.activeElement?.hasAttribute("data-roster-list-menu") ?? false);
       }
       expect(found).toBe(true);
       const ring = await browser.execute(() => {
@@ -1684,10 +1822,17 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       });
       expect((await focusedTreatment()).visible).toBe(true);
       expect(ring.inside).toBe(true);
+      // Enter opens the menu, and Clear list is in it, offered.
+      await browser.keys("Enter");
+      const clear = browser.$('[role="menuitem"][data-roster-clear]');
+      await clear.waitForDisplayed();
+      expect(await clear.getAttribute("aria-disabled")).toBe(null);
+      await browser.keys("Escape");
+      await clear.waitForExist({ reverse: true });
       await browser.execute(() => (document.activeElement as HTMLElement | null)?.blur());
-      const rest = await browser.execute(() => getComputedStyle(document.querySelector("[data-list-wide]")!).backgroundColor);
-      await browser.$("[data-list-wide]").moveTo();
-      const hover = await browser.execute(() => getComputedStyle(document.querySelector("[data-list-wide]")!).backgroundColor);
+      const rest = await browser.execute(() => getComputedStyle(document.querySelector("[data-roster-list-menu]")!).backgroundColor);
+      await browser.$("[data-roster-list-menu]").moveTo();
+      const hover = await browser.execute(() => getComputedStyle(document.querySelector("[data-roster-list-menu]")!).backgroundColor);
       evidence.push({ label: "ui-rework-clear-list", ring, rest, hover });
       expect(hover).not.toBe(rest);
       expect(await unexpectedConsole()).toEqual([]);
@@ -1745,8 +1890,9 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         await navigate([en.projectSurface, zh.projectSurface]);
         await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
         await browser.$("#workbench-inspector .provenance-digest").waitForDisplayed();
-        // The engine's modules, real paths, open so the frame shows them.
-        await browser.$("#workbench-inspector .targeted-modules > summary").click();
+        // The engine's modules, real paths, open so the frame shows them. A
+        // disclosure button since the rebuild (spec 1.5).
+        await browser.$("#workbench-inspector .targeted-disclosure > button[aria-expanded]").click();
         await frames();
         const seen = await browser.execute(() => {
           // Lines on screen: a line a clamp hides is laid out below the box.
@@ -1828,10 +1974,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
 
       it(`UI-01: the header, notices and content share one left edge, in ${locale}`, async () => {
         await metrics(1920, 1080);
-        await open("populated", locale);
-        // The folded backend reading, opened from the header, is a notice.
-        await browser.$("[data-backend-toggle]").click();
-        await browser.$(".shell-notices > .notice").waitForDisplayed();
+        const table = scenario("populated", locale);
+        table["inspect_backend"] = unavailableBackend;
+        await openTable(table);
+        // No usable backend is a one-line notice in the track.
+        await browser.$('.shell-notices > #backend-status[data-backend-mode="notice"]').waitForDisplayed();
         for (const [width, height] of [
           [1920, 1080],
           [1366, 768],
@@ -1851,7 +1998,457 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           evidence.push({ label: `ui-rework-edges-${locale}-${String(width)}`, ...edges });
           expect(edges.notice).not.toBe(null);
           expect(Math.abs((edges.notice ?? 0) - edges.header)).toBeLessThanOrEqual(1);
-          expect(Math.abs((edges.content ?? 0) - edges.header)).toBeLessThanOrEqual(1);
+          // v5.11's frame since FE-2: the workspace card is inset by the
+          // header's own edge, 24 px and 16 px at 1050 px and below, and its
+          // first column starts inside the card's 1 px border.
+          expect(edges.header).toBe(width > 1050 ? 24 : 16);
+          expect(Math.abs((edges.content ?? -99) - edges.header)).toBeLessThanOrEqual(1);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: v5.11's frame, a refusal with its reason and room for five page tabs, in ${locale}`, async () => {
+        await metrics(1366, 768);
+        await openTable(scenario("populated", locale));
+        await readBackSavedPreferences();
+        const setPanel = async (panel: "roster" | "inspector", open: boolean) => {
+          const toggle = browser.$(`.workbench-header [aria-controls="workbench-${panel}"]`);
+          if (((await toggle.getAttribute("aria-expanded")) === "true") !== open) await toggle.click();
+          await frames();
+        };
+        // The frame as v5.11 measures it: a 56 px header, a 30 px status bar
+        // and one card inset like the header's edge, holding a 240 px roster,
+        // the main column and a 245 px Details column. G4 asks for room for
+        // two more page tabs at 960 px: what is free between the last tab and
+        // the global actions, less the header's gap, two tabs' padding and the
+        // tab row's gaps, holds two labels of DESIGN_SYSTEM's 80 px budget.
+        const frame = () =>
+          browser.execute(() => {
+            const width = (css: string) => {
+              const node = document.querySelector(css);
+              return node === null || node.getClientRects().length === 0 ? null : Math.round(node.getBoundingClientRect().width);
+            };
+            const header = document.querySelector<HTMLElement>(".workbench-header")!;
+            const card = document.querySelector(".workspace-layout")!.getBoundingClientRect();
+            const tabs = [...document.querySelectorAll<HTMLElement>(".workbench-navigation > button")];
+            const tab = getComputedStyle(tabs[0]!);
+            const free = document.querySelector(".workbench-global-actions")!.getBoundingClientRect().left - tabs.at(-1)!.getBoundingClientRect().right;
+            return {
+              header: Math.round(header.getBoundingClientRect().height),
+              status: Math.round(document.querySelector(".workbench-status")!.getBoundingClientRect().height),
+              insets: [Math.round(card.left), Math.round(innerWidth - card.right)],
+              roster: width("#workbench-roster"),
+              main: width("#workbench-evidence"),
+              inspector: width("#workbench-inspector"),
+              documentOverflowX: document.documentElement.scrollWidth - innerWidth,
+              tabRoom: Math.floor(
+                free -
+                  parseFloat(getComputedStyle(header).columnGap) -
+                  2 * (parseFloat(tab.paddingLeft) + parseFloat(tab.paddingRight)) -
+                  2 * parseFloat(getComputedStyle(tabs[0]!.parentElement!).columnGap),
+              ),
+            };
+          });
+        // A refused action keeps its reason on screen and as its description:
+        // Remove highlighted, with nothing highlighted, at both sizes.
+        for (const [width, height] of [
+          [1366, 768],
+          [960, 640],
+        ] as const) {
+          await metrics(width, height);
+          await frames();
+          await setPanel("roster", true);
+          await browser.$("[data-roster-list-menu]").click();
+          await browser.$("[data-roster-remove]").waitForDisplayed();
+          const refusal = await browser.execute(() => {
+            const item = document.querySelector("[data-roster-remove]")!;
+            const reason = document.getElementById(item.getAttribute("aria-describedby") ?? "");
+            const box = reason?.getBoundingClientRect();
+            return {
+              refused: item.getAttribute("aria-disabled"),
+              reason: reason === null ? null : (reason.textContent ?? "").trim(),
+              shown: box !== undefined && box.width > 0 && box.height > 0,
+            };
+          });
+          evidence.push({ label: `fe2-refusal-${locale}-${String(width)}`, ...refusal });
+          expect(refusal).toEqual({ refused: "true", reason: words(locale).rosterNothingHighlighted, shown: true });
+          await browser.keys("Escape");
+          await browser.$("[data-roster-remove]").waitForDisplayed({ reverse: true });
+          await setPanel("roster", width > 1050);
+        }
+        // 960x640, both drawers closed.
+        const { tabRoom: narrowRoom, ...narrow } = await frame();
+        evidence.push({ label: `fe2-frame-${locale}-960`, tabRoom: narrowRoom, ...narrow });
+        expect(narrow).toEqual({ header: 56, status: 30, insets: [16, 16], roster: null, main: 926, inspector: null, documentOverflowX: 0 });
+        expect(narrowRoom).toBeGreaterThanOrEqual(2 * 80);
+        // 1366x768 with a file viewed and both columns open.
+        await metrics(1366, 768);
+        await frames();
+        await viewTheRow();
+        await setPanel("inspector", true);
+        await browser.$("#workbench-inspector .inspector-panel").waitForDisplayed();
+        await frames();
+        const { tabRoom: wideRoom, ...wide } = await frame();
+        evidence.push({ label: `fe2-frame-${locale}-1366`, tabRoom: wideRoom, ...wide });
+        expect(wide).toEqual({ header: 56, status: 30, insets: [24, 24], roster: 240, main: 831, inspector: 245, documentOverflowX: 0 });
+        expect(wideRoom).toBeGreaterThanOrEqual(2 * 80);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: Project in the v5.11 look, each refusal with its reason on screen, in ${locale}`, async () => {
+        const SIZES = [
+          [1366, 768],
+          [960, 640],
+        ] as const;
+        // Nothing runs sideways and nothing is cut, on the page, on the surface
+        // or in Details, and the surface is the only thing that scrolls.
+        const whole = () =>
+          browser.execute(() => {
+            const regions = [...document.querySelectorAll<HTMLElement>("#workbench-project, #workbench-inspector")];
+            const inside = regions.flatMap((region) => [...region.querySelectorAll<HTMLElement>("*")]);
+            const name = (node: HTMLElement) => `${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0] ?? ""}`;
+            return {
+              documentOverflowX: document.documentElement.scrollWidth - innerWidth,
+              sideways: [...regions, ...inside].filter((node) => node.getClientRects().length > 0 && !node.closest(".visually-hidden") && ["auto", "scroll"].includes(getComputedStyle(node).overflowX) && node.scrollWidth > node.clientWidth + 1).map(name),
+              nested: inside.filter((node) => ["auto", "scroll"].includes(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight + 1).map(name),
+              cut: inside.filter((node) => node.tagName === "BUTTON" && node.getClientRects().length > 0 && node.scrollWidth > node.clientWidth + 1).map(name),
+            };
+          });
+        const inOrder = { documentOverflowX: 0, sideways: [], nested: [], cut: [] };
+
+        await metrics(1366, 768);
+        const project = capturedProject();
+        const table = scenario("populated", locale);
+        table.get_project_state = {
+          ...project,
+          inputs: [project.inputs[0], { ...project.inputs[0], id: "22222222-2222-4111-8111-111111111111", label: "QC_pool_02.mzML" }],
+        };
+        table.open_project = { __reject: { kind: "unreadable" } };
+        await openTable(table);
+        await readBackSavedPreferences();
+        await navigate([en.projectSurface, zh.projectSurface]);
+        await browser.$("[data-project-surface]").waitForDisplayed();
+
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await frames();
+          const look = await browser.execute(() => {
+            const type = (css: string) => {
+              const style = getComputedStyle(document.querySelector(css)!);
+              return `${style.fontSize}/${style.fontWeight}`;
+            };
+            // A refused control's description is its reason, and the reason is on screen.
+            const refusal = (css: string) => {
+              const control = document.querySelector(css)!;
+              // The row's state comes first where a control names two (ProjectPanel).
+              const reason = document.getElementById((control.getAttribute("aria-describedby") ?? "").split(" ").at(-1) ?? "");
+              const box = reason?.getBoundingClientRect();
+              return {
+                refused: control.getAttribute("aria-disabled"),
+                reason: reason === null ? null : (reason.textContent ?? "").trim(),
+                shown: box !== undefined && box.width > 0 && box.height > 0 && box.bottom <= innerHeight,
+              };
+            };
+            const row = document.querySelector<HTMLElement>("[data-project-input]")!;
+            const tag = getComputedStyle(row.querySelector(".project-tag")!);
+            return {
+              title: type(".project-header h2"),
+              section: type(".project-section h3"),
+              sectionRule: getComputedStyle(document.querySelector(".project-section-head")!).borderBottomColor,
+              rowRule: getComputedStyle(row).borderBottomColor,
+              rowAtLeast44: row.getBoundingClientRect().height >= 44,
+              tag: [tag.fontSize, tag.fontWeight, tag.paddingTop, tag.paddingLeft, tag.borderTopLeftRadius],
+              tagHeight: Math.round(row.querySelector(".project-tag")!.getBoundingClientRect().height),
+              save: refusal(".project-actions > button:nth-child(3)"),
+              rowAction: refusal('[data-project-input] .project-row-actions button[aria-disabled="true"]'),
+            };
+          });
+          evidence.push({ label: `fe2-project-${locale}-${String(width)}`, ...look });
+          expect(look).toEqual({
+            title: "17px/650",
+            section: "14px/650",
+            sectionRule: "rgb(220, 227, 235)",
+            rowRule: "rgb(237, 241, 245)",
+            rowAtLeast44: true,
+            tag: ["12px", "550", "2px", "6px", "4px"],
+            tagHeight: 24,
+            save: { refused: "true", reason: words(locale).projectSaveNeedsLocation, shown: true },
+            rowAction: { refused: "true", reason: words(locale).projectAddNeedsCheck, shown: true },
+          });
+          expect(await whole()).toEqual(inOrder);
+
+          // The one ring on the refused Save, which stays a Tab stop and stays dashed.
+          await browser.execute(() => document.querySelector<HTMLElement>(".project-actions > button:nth-child(2)")?.focus());
+          await browser.keys("Tab");
+          const ring = await browser.execute(() => {
+            const active = document.activeElement as HTMLElement;
+            const style = getComputedStyle(active);
+            return {
+              onSave: active.matches('.project-actions > button:nth-child(3)[aria-disabled="true"]'),
+              outline: `${style.outlineWidth} ${style.outlineStyle} ${style.outlineColor}`,
+              edge: style.borderTopStyle,
+            };
+          });
+          expect(ring).toEqual({ onSave: true, outline: "2px solid rgb(23, 105, 209)", edge: "dashed" });
+          // Every stop on the surface in document order: visible, on screen, uncovered.
+          expect(await enter("#workbench-project")).toBe(true);
+          await focusWalk(`fe2-project-focus-${locale}-${String(width)}`, 30, "#workbench-project");
+
+          // A failed read: the refusal in the notice's words and edge, on screen.
+          await browser.$(".project-actions > button:nth-child(2)").click();
+          await browser.$("[data-project-problem]").waitForDisplayed();
+          const problem = await browser.execute(() => {
+            const node = document.querySelector<HTMLElement>("[data-project-problem]")!;
+            const style = getComputedStyle(node);
+            return { said: (node.textContent ?? "").trim().length > 0, size: style.fontSize, edge: style.borderTopColor, shown: node.getBoundingClientRect().bottom <= innerHeight };
+          });
+          expect(problem).toEqual({ said: true, size: "12px", edge: "rgb(232, 187, 181)", shown: true });
+          await browser.$("[data-project-problem] button").click();
+          await browser.$("[data-project-problem]").waitForDisplayed({ reverse: true });
+        }
+
+        // Details on a reference: the column at 1366, the drawer at 960.
+        await metrics(1366, 768);
+        await frames();
+        await browser.$("[data-project-inspect]").click();
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await revealInDetails('#workbench-inspector [data-provenance="input"]');
+          await frames();
+          const details = await browser.execute(() => {
+            const type = (css: string) => {
+              const style = getComputedStyle(document.querySelector(css)!);
+              return `${style.fontSize}/${style.fontWeight}`;
+            };
+            const panel = getComputedStyle(document.querySelector("#workbench-inspector .panel.provenance")!);
+            return {
+              width: Math.round(document.querySelector("#workbench-inspector")!.getBoundingClientRect().width),
+              inset: [panel.paddingTop, panel.paddingLeft, panel.paddingRight],
+              name: type("#workbench-inspector .provenance-name"),
+              sectionLabel: type("#workbench-inspector .provenance-section-label"),
+              close: getComputedStyle(document.querySelector("[data-provenance-close]")!).display,
+            };
+          });
+          evidence.push({ label: `fe2-project-details-${locale}-${String(width)}`, ...details });
+          expect(details).toEqual({
+            width: width > 1050 ? 245 : 300,
+            inset: ["16px", "16px", "16px"],
+            name: "16px/650",
+            sectionLabel: "12px/600",
+            close: width > 1050 ? "none" : "flex",
+          });
+          expect(await whole()).toEqual(inOrder);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+
+        // A stored result: its table as the Workbench's scan table draws one,
+        // its facts as Details draws them.
+        await metrics(1366, 768);
+        await openTable(scenario("projectWithResult", locale));
+        await readBackSavedPreferences();
+        await navigate([en.projectSurface, zh.projectSurface]);
+        await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+        await browser.$("[data-targeted-choose]").click();
+        await browser.$("[data-targeted-rows] tr.is-chosen").waitForDisplayed();
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await revealInDetails('#workbench-inspector [data-provenance="artifact"]');
+          await frames();
+          const result = await browser.execute(() => {
+            const head = document.querySelector<HTMLElement>("[data-targeted-rows] thead th")!;
+            const headStyle = getComputedStyle(head);
+            const chosen = document.querySelector<HTMLElement>("[data-targeted-rows] tr.is-chosen")!;
+            const fact = (tag: string) => getComputedStyle(document.querySelector(`#workbench-inspector .provenance-facts ${tag}`)!);
+            return {
+              head: [Math.round(head.getBoundingClientRect().height), headStyle.fontSize, headStyle.fontWeight, headStyle.backgroundColor],
+              row: Math.round(chosen.getBoundingClientRect().height),
+              chosen: [getComputedStyle(chosen.children[0]!).backgroundColor, getComputedStyle(chosen.children[0]!).boxShadow],
+              numbers: getComputedStyle(chosen.children[2]!).textAlign,
+              fact: [fact("dt").paddingTop, fact("dd").paddingBottom, fact("dd").borderBottomColor],
+            };
+          });
+          evidence.push({ label: `fe2-project-result-${locale}-${String(width)}`, ...result });
+          expect(result).toEqual({
+            head: [30, "11px", "650", "rgb(247, 248, 250)"],
+            row: 28,
+            chosen: ["rgb(237, 244, 255)", "rgb(23, 105, 209) 3px 0px 0px 0px inset"],
+            numbers: "right",
+            fact: ["7px", "7px", "rgb(237, 241, 245)"],
+          });
+          expect(await whole()).toEqual(inOrder);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      async function openProjectTable(table: Record<string, unknown>, width: number, height: number) {
+        await metrics(width, height);
+        await openTable(table);
+        await readBackSavedPreferences();
+        await navigate([en.projectSurface, zh.projectSurface]);
+        await browser.$("[data-project-surface]").waitForDisplayed();
+        await frames();
+      }
+
+      /** Puts keyboard focus on one control, the way Tab would have left it. */
+      async function focusOn(css: string) {
+        const focused = await browser.execute((selector: string) => {
+          const node = document.querySelector<HTMLElement>(selector);
+          node?.focus();
+          return node !== null && document.activeElement === node;
+        }, css);
+        expect(focused).toBe(true);
+        await frames();
+      }
+
+      const FE2_SIZES = [
+        [1366, 768],
+        [960, 640],
+      ] as const;
+
+      it(`FE-2: a refusal from far down Project stays in view and covers no stop, in ${locale}`, async () => {
+        const layers = wideLayers(8);
+        for (const [width, height] of FE2_SIZES) {
+          const table = targetedTable(locale, wideProject(8));
+          table.remove_project_layer = { __reject: { kind: "unreadable" } };
+          await openProjectTable(table, width, height);
+          await focusOn(`[data-project-remove-layer="${layers[7]!}"]`);
+          await browser.keys("Enter");
+          await browser.$("[data-project-problem]").waitForExist();
+          await frames();
+          const seen = await browser.execute(() => {
+            const surface = document.querySelector<HTMLElement>("#workbench-project")!;
+            const notice = document.querySelector<HTMLElement>("[data-project-problem]")!;
+            const edge = surface.getBoundingClientRect();
+            const box = notice.getBoundingClientRect();
+            const hit = document.elementFromPoint(box.left + 20, box.top + box.height / 2);
+            return {
+              scrolled: surface.scrollTop > 0,
+              inView: box.top >= edge.top && box.bottom <= edge.bottom,
+              onTop: hit !== null && notice.contains(hit),
+              opaque: !getComputedStyle(notice).backgroundColor.startsWith("rgba"),
+              focusKept: (document.activeElement as HTMLElement).hasAttribute("data-project-remove-layer"),
+            };
+          });
+          evidence.push({ label: `fe2-refusal-far-${locale}-${String(width)}`, ...seen });
+          expect(seen).toEqual({ scrolled: true, inView: true, onTop: true, opaque: true, focusKept: true });
+          // Back up the page with the notice standing: no stop goes under it.
+          await focusWalk(`fe2-refusal-far-back-${locale}-${String(width)}`, 45, "#workbench-project", { back: true });
+          // An open drawer's scrim still dims it, as it does the rest of the card.
+          // By the pixel: the surface is inert then, so hit testing cannot tell.
+          if (width <= 1050) {
+            await browser.$('.workbench-header [aria-controls="workbench-inspector"]').click();
+            await browser.$("[data-drawer-scrim]").waitForExist();
+            await frames();
+            const shot = await cdp("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
+            const red = await browser.execute(async (data: unknown) => {
+              const image = new Image();
+              image.src = `data:image/png;base64,${String(data)}`;
+              await image.decode();
+              const canvas = document.createElement("canvas");
+              canvas.width = image.width;
+              canvas.height = image.height;
+              const context = canvas.getContext("2d")!;
+              context.drawImage(image, 0, 0);
+              const box = document.querySelector("[data-project-problem]")!.getBoundingClientRect();
+              return context.getImageData(box.left + 4, box.top + box.height / 2, 1, 1).data[0];
+            }, shot.data);
+            evidence.push({ label: `fe2-refusal-far-scrim-${locale}`, red });
+            // The notice's fill is rgb(254, 228, 226); the scrim takes a fifth of it.
+            expect(red).toBeLessThan(230);
+          }
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: a batch's members with Details open at 1366x768 keep their states and actions in view, in ${locale}`, async () => {
+        const members = (css: string) =>
+          browser.execute((table: string) => {
+            const node = document.querySelector<HTMLElement>(table)!;
+            const scroller = node.parentElement!;
+            const edge = scroller.getBoundingClientRect();
+            const names = [...node.querySelectorAll<HTMLElement>('tbody th[scope="row"]')];
+            return {
+              sideways: scroller.scrollWidth - scroller.clientWidth > 1,
+              name: names.every((name) => name.getBoundingClientRect().width >= 160),
+              actions: [...node.querySelectorAll("button")].every((button) => button.getBoundingClientRect().right <= edge.right),
+            };
+          }, css);
+        const whole = { sideways: false, name: true, actions: true };
+        // A long name that cannot break, then short ones beside the same long state.
+        const wide = wideProject(3);
+        const shortNames = { ...wide, inputs: wide.inputs.map((input, index) => ({ ...input, label: `QC_${String(index + 1)}.mzML` })) };
+        for (const state of [undefined, shortNames]) {
+          await openProjectTable(targetedTable(locale, state), 1366, 768);
+          await focusOn(`[data-project-inspect="${INPUTS[0]!}"]`);
+          await browser.keys("Enter");
+          await frames();
+          await focusOn(`[data-project-targeted="${LAYERS[0]}"]`);
+          await browser.keys("Enter");
+          await browser.$("[data-targeted-setup]").waitForDisplayed();
+          await browser.$(`[data-targeted-member="${LAYERS[1]}"]`).click();
+          await browser.$(`[data-targeted-member="${LAYERS[2]}"]`).click();
+          await browser.$("[data-targeted-text]").setValue(TYPED);
+          await focusOn("[data-targeted-review]");
+          await browser.keys("Enter");
+          await browser.$("[data-targeted-batch-members]").waitForDisplayed();
+          expect(await members("[data-targeted-batch-members]")).toEqual(whole);
+          await focusOn("[data-targeted-run]");
+          await browser.keys("Enter");
+          await browser.$('[data-targeted-batch="ended"]').waitForDisplayed();
+          await frames();
+          const ended = await members("[data-targeted-batch-progress]");
+          evidence.push({ label: `fe2-batch-details-${locale}`, ...ended });
+          expect(ended).toEqual(whole);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: 200 result rows keep focus clear of their head, its rule in place and the ring whole, in ${locale}`, async () => {
+        const table = scenario("projectWithResult", locale);
+        table.read_targeted_ms1_rows = manyRows(200);
+        for (const [width, height] of FE2_SIZES) {
+          await openProjectTable(table, width, height);
+          await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+          await browser.$("[data-targeted-choose]").waitForDisplayed();
+          await focusOn(".targeted-rows tbody tr:last-child [data-targeted-choose]");
+          const rule = await browser.execute(() => {
+            const scroller = document.querySelector<HTMLElement>(".targeted-rows")!;
+            const head = document.querySelector<HTMLElement>(".targeted-rows thead th")!;
+            const style = getComputedStyle(head);
+            return { scrolled: scroller.scrollTop > 0, shadow: style.boxShadow, border: style.borderBottomWidth, row: Math.round(head.getBoundingClientRect().height) };
+          });
+          evidence.push({ label: `fe2-rows-head-${locale}-${String(width)}`, ...rule });
+          expect(rule).toEqual({ scrolled: true, shadow: "rgb(220, 227, 235) 0px -1px 0px 0px inset", border: "0px", row: 30 });
+          await focusWalk(`fe2-rows-back-${locale}-${String(width)}`, 30, ".targeted-rows", { back: true, wholeRing: true });
+          await focusOn(".targeted-rows tbody tr:last-child [data-targeted-choose]");
+          await browser.keys(["Shift", "Tab"]);
+          await focusWalk(`fe2-rows-last-${locale}-${String(width)}`, 1, ".targeted-rows", { wholeRing: true });
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: the rings in Project's scrolling lists are whole, in ${locale}`, async () => {
+        const windowed = scenario("populated", locale);
+        const project = capturedProject({ name: "Plasma QC batch 08", published: true });
+        windowed.get_project_state = {
+          ...project,
+          inputs: Array.from({ length: 60 }, (_, index) => ({
+            ...project.inputs[0],
+            id: `11111111-2222-4111-8111-${String(index + 1).padStart(12, "0")}`,
+            label: `QC_pool_${String(index + 1).padStart(2, "0")}.mzML`,
+          })),
+        };
+        for (const [width, height] of FE2_SIZES) {
+          await openProjectTable(windowed, width, height);
+          expect(await enter('.project-list[data-windowed="true"]')).toBe(true);
+          await focusWalk(`fe2-ring-windowed-${locale}-${String(width)}`, 12, '.project-list[data-windowed="true"]', { wholeRing: true });
+
+          await openProjectTable(targetedTable(locale), width, height);
+          await focusOn(`[data-project-targeted="${LAYERS[0]}"]`);
+          await browser.keys("Enter");
+          await browser.$("[data-targeted-setup]").waitForDisplayed();
+          await focusOn(`[data-targeted-member="${LAYERS[0]}"]`);
+          await focusWalk(`fe2-ring-members-${locale}-${String(width)}`, 4, "[data-targeted-members]", { wholeRing: true });
         }
         expect(await unexpectedConsole()).toEqual([]);
       });
@@ -1927,7 +2524,14 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await check(`ui-rework-conversion-ended-${locale}-${String(width)}x${String(height)}`);
         }
         // A reviewed plan: every eligible row, answered by the plan's describe.
-        await browser.$('input[name="conversion-scope"][value="all"]').click();
+        // A finished queue offers the next conversion's plan behind Start
+        // another conversion, and the scope radio is drawn as a segment whose
+        // label is what a reader presses (rebuild spec 5).
+        // Chosen at the widest size, where the label is clear of the column's
+        // Convert button; the walks below judge each size's controls.
+        await metrics(1920, 1080);
+        await browser.$("[data-conversion-start-another]").click();
+        await browser.$('label.conversion-segment:has(input[name="conversion-scope"][value="all"])').click();
         await browser.$("#conversion-plan-summary").waitForExist();
         for (const [width, height] of sizes) {
           await metrics(width, height);
@@ -1940,7 +2544,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     it("UI-11: keyboard walks through the roster, Conversion, Project, Settings and Details, and the 960x640 swap, stay visible and on screen", async () => {
       await metrics(1366, 768);
       await open("populated");
-      await browser.execute(() => document.querySelector<HTMLElement>(".dataset-roster-actions [data-add-files]")?.focus());
+      await browser.execute(() => document.querySelector<HTMLElement>(".roster-head [data-add-files]")?.focus());
       await focusWalk("ui-rework-walk-roster", 20);
       for (const [name, label] of [
         [en.conversionTask, "conversion"],
@@ -1969,9 +2573,11 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       expect(await enter("#workbench-inspector")).toBe(true);
       await focusWalk("ui-rework-walk-details-1366x768", 20, "#workbench-inspector");
 
-      // At 960x640 each panel takes the surface's place (the swap), on
-      // Conversion and on Project. Details is offered where it has something
-      // to show and says why where it has not; either way it is recorded.
+      // At 960x640 each panel is a drawer over the surface, on Conversion and
+      // on Project; the surface behind it is inert, so the keyboard stays in
+      // the drawer (rebuild spec 3.1). Details is offered where it has
+      // something to show and says why where it has not; either way it is
+      // recorded.
       await metrics(960, 640);
       await frames();
       const swaps = [];
@@ -1983,19 +2589,28 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         for (const panel of ["workbench-roster", "workbench-inspector"] as const) {
           const toggle = browser.$(`[aria-controls="${panel}"]`);
           if ((await toggle.getAttribute("aria-disabled")) === "true") {
-            swaps.push({ label, panel, offered: false, reason: await toggle.getAttribute("title") });
+            const reason = await browser.execute(
+              (ids: string) => ids.split(/\s+/u).map((id) => document.getElementById(id)?.textContent ?? "").join(" "),
+              (await toggle.getAttribute("aria-describedby")) ?? "",
+            );
+            swaps.push({ label, panel, offered: false, reason });
             continue;
           }
           await toggle.click();
           await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === "true");
-          const surfaceHidden = await browser.execute((region: string) => {
+          const surfaceInert = await browser.execute((region: string) => {
             const node = document.querySelector<HTMLElement>(`#workbench-${region}`);
-            return node === null || node.getClientRects().length === 0;
+            return node !== null && node.closest("[inert]") !== null;
           }, label);
-          swaps.push({ label, panel, offered: true, surfaceHidden });
-          expect(surfaceHidden).toBe(true);
+          swaps.push({ label, panel, offered: true, surfaceInert });
+          expect(surfaceInert).toBe(true);
           expect(await enter(`#${panel}`)).toBe(true);
-          await focusWalk(`ui-rework-walk-${label}-${panel}-960x640`, 20, `#${panel}`);
+          // Details with nothing to describe holds one line and its × alone
+          // (GOALS S3): entering lands on the ×, and there is nothing to walk.
+          const controls = await browser.execute((css: string) =>
+            [...document.querySelectorAll<HTMLElement>(`${css} button, ${css} input, ${css} [href]`)]
+              .filter((node) => node.getClientRects().length > 0).length, `#${panel}`);
+          if (controls > 1) await focusWalk(`ui-rework-walk-${label}-${panel}-960x640`, 20, `#${panel}`);
           await toggle.click();
           await browser.waitUntil(async () => (await toggle.getAttribute("aria-expanded")) === "false");
         }
@@ -2017,7 +2632,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           detail: null,
           retryable: true,
         });
-        await browser.$(".dataset-roster-actions [data-add-files]").click();
+        await browser.$(".roster-head [data-add-files]").click();
         const owned = words(locale).errFilePickerSelectionTooLarge;
         await browser.waitUntil(async () => (await browser.execute(() => document.body.innerText)).includes(owned), {
           timeoutMsg: "the owned sentence never showed",
@@ -2071,14 +2686,22 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             small[name] = (small[name] ?? 0) + 1;
           }
         }
-        // Control minimums, radii and row density, for the record (UI-45):
-        // the reference's 32 px compact control, 6/8 px radii, 44/32 px rows.
+        // Control minimums, radii and row density, for the record (UI-45).
+        // The reference is v5.11 since the rebuild: a 30 px small button
+        // (spec 1.4), 6 px radii, 44/32 px rows. Every control under 30 px
+        // is recorded; a small button under it outside the 30 px status bar
+        // (spec 2.1) is a failure. The TIC/BPC toggles are drawn as one
+        // segmented pair (spec 3.4), so the pair's track is the control measured.
         const shown = (node: Element) => node.getClientRects().length > 0;
         const name = (node: Element) => `${node.tagName.toLowerCase()}.${[...node.classList].join(".")}`;
         const shortControls: Record<string, number> = {};
-        for (const node of [...document.querySelectorAll<HTMLElement>('button, select, summary, input:not([type="checkbox"]):not([type="radio"])')].filter(shown)) {
-          const height = Math.round(node.getBoundingClientRect().height);
-          if (height < 32) shortControls[`${name(node)} ${String(height)}px`] = (shortControls[`${name(node)} ${String(height)}px`] ?? 0) + 1;
+        const shortButtons: Record<string, number> = {};
+        for (const node of [...document.querySelectorAll<HTMLElement>('button, select, input:not([type="checkbox"]):not([type="radio"])')].filter(shown)) {
+          const height = Math.round((node.closest(".plot-traces") ?? node).getBoundingClientRect().height);
+          if (height >= 30) continue;
+          const key = `${name(node)} ${String(height)}px`;
+          shortControls[key] = (shortControls[key] ?? 0) + 1;
+          if (node.matches(".ui-button") && node.closest(".workbench-status") === null) shortButtons[key] = (shortButtons[key] ?? 0) + 1;
         }
         const radii: Record<string, number> = {};
         for (const node of [...document.querySelectorAll<HTMLElement>(".panel, button, select, input, .notice")].filter(shown)) {
@@ -2086,12 +2709,13 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           radii[radius] = (radii[radius] ?? 0) + 1;
         }
         const rows = [...new Set([...document.querySelectorAll<HTMLElement>(".grouped-roster [data-handle]")].filter(shown).map((row) => Math.round(row.getBoundingClientRect().height)))];
-        return { undeclared: [...undeclared], fontSizes: sizes, small, shortControls, radii, rosterRowHeights: rows, focus: root.getPropertyValue("--color-focus").trim() };
+        return { undeclared: [...undeclared], fontSizes: sizes, small, shortControls, shortButtons, radii, rosterRowHeights: rows, focus: root.getPropertyValue("--color-focus").trim() };
       });
       evidence.push({ label: "ui-rework-measure", ...seen });
       expect(seen.undeclared).toEqual([]);
-      // No visible control below the reference's 32 px compact minimum.
-      expect(seen.shortControls).toEqual({});
+      // No small button below v5.11's 30 px (spec 1.4).
+      expect(seen.shortButtons).toEqual({});
+      // v5.11's final blue, the one focus colour (FE-2).
       expect(seen.focus).toBe("#1769d1");
       // One focus colour: Settings no longer declares its own (UI-46).
       await browser.$(".settings-entry").click();

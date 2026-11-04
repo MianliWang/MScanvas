@@ -168,24 +168,21 @@ explanation — never an indefinite spinner and never an automatic retry loop.
 
 The M7.1 contract is preserved and extended:
 
-- Opening Settings snapshots the applied preferences; edits preview without
-  touching disk.
-- Cancel, Close and Escape before a save discard the draft, restore the applied
-  session state and the opener's focus, and leave disk unchanged.
-- Reset changes the draft to the defaults only. Reset then Cancel persists
-  nothing. Reset then Apply is saved.
-- Apply captures one draft, validates and publishes it, and closes only after
-  that exact snapshot is confirmed. While it is in flight the fields, Reset,
-  Cancel, Close and Escape are frozen and Apply itself is inert, so a second
-  activation cannot dispatch a second write and nothing implies that cancelling
-  after dispatch could recall the bytes.
-- A failed write keeps the draft and the preview, keeps the last confirmed disk
-  state, and offers Retry, Cancel and an explicit **Use for this session**. That
-  action claims no write and says that a restart still uses the last saved
-  record. It is never a silent fallback.
-- Where the store is known unavailable before Apply is pressed, the dialog has
-  said so since it opened and Apply applies to the session without dispatching a
-  write that is already known to be impossible.
+- Settings apply immediately (the v5.11 rebuild, direction A 2.6 and GOALS
+  D4): each choice is shown and published as it is made, and the dialog has one
+  Close and no Apply or Cancel. A later choice supersedes an earlier write's
+  reply, and nothing is native-disabled while a write is in flight; the footer
+  says it is saving.
+- **Reset defaults** publishes the defaults as one more choice, and is refused
+  with "Already the default." when nothing differs.
+- A failed write keeps the choice on screen, keeps the last confirmed disk
+  state, and offers Retry and an explicit **Use for this session** in place.
+  That action claims no write and says that a restart still uses the last
+  saved record. Closing after a failure is the same session-only choice, said
+  in the footer the next time Settings opens. It is never a silent fallback.
+- Where the store is known unavailable, the dialog has said so since it opened
+  and each choice applies to the session without dispatching a write that is
+  already known to be impossible.
 
 An unusable stored record is reported, left exactly as found, and replaced only
 by the confirmed **Reset and replace the saved file** action in Settings.

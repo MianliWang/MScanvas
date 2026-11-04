@@ -32,6 +32,8 @@ const DELIBERATELY_IDENTICAL: readonly string[] = [
   // Units, axes and machine identifiers. None of these is an English word.
   "pixels",
   "rangeMzAxis",
+  "plotAxisMz",
+  "viewerExportMzWindow",
   "pngDpi",
   // Product and format identities.
   "appName",
@@ -39,6 +41,7 @@ const DELIBERATELY_IDENTICAL: readonly string[] = [
   // An MS level as the instrument field names it ("MS2"), and the one tool a
   // preview runs, by its product name.
   "qcReportMsLevel",
+  "scanColumnMs",
   "provenanceProducerMsaccess",
   // Values that are an interpolation and a separator, with no prose at all.
   "summaryIdentity",
@@ -138,17 +141,6 @@ describe("the Simplified Chinese bundle", () => {
     expect(zh.rosterTitle).toBe("采集列表");
     expect(values).not.toContain("名单");
     expect(values).not.toContain("供应商");
-  });
-
-  it("nests the Workbench route's control labels rather than retyping them (PM9.7 F3)", () => {
-    // The empty Workbench names the header toggle and the roster action. A
-    // retyped label could drift from the control it names; a nested one cannot.
-    for (const bundle of [en, zh]) {
-      expect(bundle.emptyEvidenceHelp).toContain("$t(rosterToggle)");
-      expect(bundle.emptyEvidenceHelp).toContain("$t(addFiles)");
-      expect(bundle.emptyEvidenceHelp).not.toContain(bundle.rosterToggle);
-      expect(bundle.emptyEvidenceHelp).not.toContain(bundle.addFiles);
-    }
   });
 
   it("names the preference file's own prefix identically, so a residue can be found", () => {

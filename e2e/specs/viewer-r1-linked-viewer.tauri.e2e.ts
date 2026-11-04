@@ -72,7 +72,7 @@ async function backToFullRange(): Promise<void> {
   if ((await rangeCaption()).includes("full range")) {
     return;
   }
-  await browser.$("button=Reset range").click();
+  await browser.$('button[aria-label="Fit all, retention time"]').click();
   await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
     timeout: 30_000,
     timeoutMsg: "the run never came back to full range",
@@ -204,7 +204,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
         // glyph per trace on purpose (PM9.7 retirement, slice-03 §5; same
         // selector as Chromatogram.test.tsx). Still "no point drawn".
         circles: svg?.querySelectorAll('circle:not([visibility="hidden"])').length ?? 0,
-        toggles: document.querySelectorAll("label.chromatogram-trace-toggle input").length,
+        toggles: document.querySelectorAll(".plot-traces button[aria-pressed]").length,
       };
     }, PLOT);
 
@@ -212,14 +212,16 @@ describe("the linked viewer on the real Tauri WebView", () => {
     expect(facts.circles).toBe(0);
     expect(facts.toggles).toBe(2);
     expect(await rangeCaption()).toContain("full range");
-    const caption = await browser.$(".chromatogram-axis-caption").getText();
+    // Each axis title says its unit is not reported.
+    const caption = `${await browser.$("#chromatogram-axis-x").getText()} ${await browser.$("#chromatogram-axis-y").getText()}`;
     expect(caption).toContain("unit not reported");
-    // The source sentence moved from the caption into the caption's own
-    // "Source and drawing details" disclosure (c12f45d; PM9.7 retirement,
-    // slice-03 §5). Read there, closed or open, with the same meaning.
-    const source = await browser.execute(() =>
-      document.querySelector(".chromatogram-axis-caption + details.plot-source-details")?.textContent ?? "");
-    expect(source).toContain("Per-scan values from the complete loaded table");
+    // The source sentence lives in Details -> Chromatogram source (rebuild
+    // spec 4), so Details is shown before it is read.
+    const details = browser.$('[aria-controls="workbench-inspector"]');
+    if ((await details.getAttribute("aria-expanded")) !== "true") await details.click();
+    await browser.$("#workbench-inspector .inspector-panel").waitForDisplayed({ timeout: 30_000 });
+    const source = await browser.$("#workbench-inspector").getText();
+    expect(source).toContain("Per-scan TIC/BPC from the complete scan table");
     expect(source).toContain("Not a stored chromatogram record");
     // Nothing was asked of the backend to draw it.
     expect(await spectrumReads()).toEqual([]);
@@ -237,14 +239,14 @@ describe("the linked viewer on the real Tauri WebView", () => {
 
     expect((await drawn()).join(" ")).toContain("chromatogram-trace-tic");
 
-    await browser.$("//span[normalize-space()='BPC']/preceding-sibling::input").click();
+    await browser.$("//button[normalize-space()='BPC']").click();
     await browser.waitUntil(async () => (await drawn()).length === 2, {
       timeout: 20_000,
       timeoutMsg: "BPC never appeared",
     });
     expect((await drawn()).join(" ")).toContain("chromatogram-trace-bpc");
 
-    await browser.$("//span[normalize-space()='TIC']/preceding-sibling::input").click();
+    await browser.$("//button[normalize-space()='TIC']").click();
     await browser.waitUntil(async () => (await drawn()).length === 1, {
       timeout: 20_000,
       timeoutMsg: "TIC never went away",
@@ -266,7 +268,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
     // Exactly one read, for the scan the click resolved to.
     const reads = await spectrumReads();
     expect(reads).toEqual([selected]);
-    await browser.$("//h2[normalize-space()='Selected spectrum']").waitForDisplayed({
+    await browser.$("//h2[normalize-space()='Spectrum']").waitForDisplayed({
       timeout: 30_000,
     });
 
@@ -310,13 +312,13 @@ describe("the linked viewer on the real Tauri WebView", () => {
     await browser.$('div.spectrum-table-row[data-row-position="1"]').click();
     await browser.waitUntil(async () => (await selectedRowPosition()) === 1, { timeout: 30_000 });
 
-    await browser.$("button=Next scan").click();
+    await browser.$('button[aria-label="Next scan"]').click();
     await browser.waitUntil(async () => (await selectedRowPosition()) === 2, {
       timeout: 30_000,
       timeoutMsg: "Next scan did not move the selection",
     });
 
-    await browser.$("button=Previous scan").click();
+    await browser.$('button[aria-label="Previous scan"]').click();
     await browser.waitUntil(async () => (await selectedRowPosition()) === 1, {
       timeout: 30_000,
       timeoutMsg: "Previous scan did not move the selection",
@@ -336,10 +338,10 @@ describe("the linked viewer on the real Tauri WebView", () => {
       timeout: 30_000,
       timeoutMsg: "the wheel never changed the visible range",
     });
-    await browser.$("button=Reset range").click();
+    await browser.$('button[aria-label="Fit all, retention time"]').click();
     await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
       timeout: 30_000,
-      timeoutMsg: "Reset range did not return the whole run",
+      timeoutMsg: "Fit all did not return the whole run",
     });
 
     expect((await ipcCalls()).length).toBe(before);
@@ -359,7 +361,7 @@ describe("the linked viewer on the real Tauri WebView", () => {
      * contract does.
      */
     if (!(await rangeCaption()).includes("full range")) {
-      await browser.$("button=Reset range").click();
+      await browser.$('button[aria-label="Fit all, retention time"]').click();
       await browser.waitUntil(async () => (await rangeCaption()).includes("full range"), {
         timeout: 30_000,
         timeoutMsg: "the run never came back to full range",

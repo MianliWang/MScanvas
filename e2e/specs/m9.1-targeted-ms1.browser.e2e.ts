@@ -34,6 +34,7 @@ import {
   ALLOWED_CONSOLE_SUBSTRINGS,
   consoleEntries,
   focusedTreatment,
+  heldCallers,
   holdInvoke,
   installIpcBoundary,
   ipcCalls,
@@ -364,13 +365,8 @@ async function metrics(width: number, height: number) {
 /** Goes to the Project surface, by the header's third destination. */
 async function toProject() {
   await browser.$(".workbench-header").waitForDisplayed();
-  await browser.execute(
-    (names: readonly string[]) => {
-      const buttons = [...document.querySelectorAll<HTMLButtonElement>(".workbench-header button")];
-      buttons.find((button) => names.includes(button.textContent ?? ""))?.click();
-    },
-    [en.projectSurface, zh.projectSurface],
-  );
+  // Project is the header's third tab (direction A).
+  await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
   await browser.$(`[data-project-targeted="${LAYER}"]`).waitForDisplayed();
 }
 
@@ -818,10 +814,6 @@ describe("M9.3 a source from another drive, prepared and read through a verified
     await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
     await toProject();
     await review();
-    // The read path is folded since PM9.5 O1, and innerText skips a closed
-    // disclosure: open it so the capture still reads the verified-copy sentence.
-    // Opened before Run, so Run stays the last press the run's ending answers.
-    await browser.$("[data-targeted-read-path] summary").click();
     await holdInvoke("run_targeted_ms1");
     await browser.$("[data-targeted-run]").click();
     await browser.$("[data-project-busy-phase]").waitForDisplayed();
@@ -830,8 +822,7 @@ describe("M9.3 a source from another drive, prepared and read through a verified
     expect(preparing.busy).toContain(zh.targetedPhasePreparingInput);
     expect(preparing.busy).not.toContain(en.targetedPhasePreparingInput);
     expect(preparing.setup?.text).toContain(zh.targetedDomain);
-    expect(preparing.setup?.text).toContain(zh.targetedReadPath);
-    expect(preparing.setup?.text).not.toContain(en.targetedReadPath);
+    expect(preparing.setup?.text).not.toContain(en.targetedDomain);
     await setInvokeResult("run_targeted_ms1", {
       project: project({ run: "completed", view: "verifiedSnapshotInWorkArea" }),
       runId: RUN,
@@ -877,14 +868,22 @@ async function openStoredResult() {
   );
 }
 
-/** Opens one export disclosure by keyboard, as a reader without a pointer would. */
+/**
+ * Opens one export disclosure by keyboard, as a reader without a pointer would:
+ * its toggle button, then Enter. A region that is always shown (the table's
+ * output) is left as it is.
+ */
 async function openDisclosure(selector: string) {
-  await browser.execute((target: string) => {
-    document.querySelector<HTMLElement>(`${target} > summary`)?.focus();
+  const focused = await browser.execute((target: string) => {
+    const region = document.querySelector<HTMLElement>(target);
+    if (region === null || !region.hidden) return false;
+    const toggle = document.querySelector<HTMLElement>(`[aria-controls="${region.id}"]`);
+    toggle?.focus();
+    return toggle !== null && document.activeElement === toggle;
   }, selector);
-  await browser.keys("Enter");
+  if (focused) await browser.keys("Enter");
   await browser.waitUntil(() =>
-    browser.execute((target: string) => document.querySelector<HTMLDetailsElement>(target)?.open === true, selector),
+    browser.execute((target: string) => document.querySelector<HTMLElement>(target)?.hidden === false, selector),
   );
 }
 
@@ -937,8 +936,9 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
         .replace("{{outcome}}", en.targetedOutcomeDetected)
         .replace("{{drawn}}", en.targetedFigureDrawnFeature),
     );
-    // No SVG markup is placed in the page: the drawing is an image.
-    expect(await browser.execute(() => document.querySelector("[data-targeted-plot] svg") === null)).toBe(true);
+    // No SVG markup is placed in the page: the drawing is an image. The only
+    // inline SVG is the points disclosure's own chevron icon.
+    expect(await browser.execute(() => document.querySelector("[data-targeted-plot] svg:not(.ui-icon)") === null)).toBe(true);
     const preview = (await ipcCalls()).find((call) => call.command === "preview_targeted_ms1_figure");
     expect(preview?.args).toEqual({
       artifactId: ARTIFACT,
@@ -946,8 +946,11 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
       settings: { widthPx: 1200, heightPx: 640, pngDpi: 300, theme: "light" },
     });
 
-    // The table, by keyboard: open the disclosure, move to CSV, press it.
-    await openDisclosure("[data-targeted-table-export]");
+    // The table, by keyboard: its output is always offered, the first stop
+    // after the report's heading. Move to CSV and press it.
+    await browser.execute(() => {
+      document.querySelector<HTMLElement>("[data-targeted-report] h3")?.focus();
+    });
     await browser.keys("Tab");
     expect(
       await browser.execute(() => document.activeElement?.getAttribute("data-targeted-export") ?? null),
@@ -1055,6 +1058,239 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
     expect(await unexpectedConsole()).toEqual([]);
   });
 
+  // ADR 0054: the table's third export, in every state it can be in. The file
+  // name, the row count and the refusals are this table's answers: no file was
+  // written and no spreadsheet opened anything.
+  for (const [width, height] of [[1366, 768], [960, 640]] as const) {
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`saves the spreadsheet CSV by keyboard at ${String(width)}x${String(height)} in ${locale}`, async () => {
+        const copy = locale === "en" ? en : zh;
+        const choose = copy.targetedTableSpreadsheetChoose;
+        const fileName = "mscanvas-targeted-ms1-eeeeeeee-results-spreadsheet.csv";
+        const chooser = '[data-targeted-table-export] [data-targeted-export="spreadsheetCsv"]';
+        /** The row's three buttons: what each says and refuses with, and where it sits. */
+        const row = () =>
+          browser.execute(() => {
+            const panel = document.querySelector("#workbench-project")!.getBoundingClientRect();
+            return [...document.querySelectorAll<HTMLElement>("[data-targeted-table-export] [data-targeted-export]")].map((control) => {
+              const box = control.getBoundingClientRect();
+              return {
+                word: control.getAttribute("data-targeted-export"),
+                text: control.textContent,
+                refused: control.getAttribute("aria-disabled"),
+                reason: document.getElementById(control.getAttribute("aria-describedby") ?? "")?.textContent ?? null,
+                top: Math.round(box.top),
+                inside: box.left >= panel.left - 1 && box.right <= panel.right + 1,
+                clipped: control.scrollWidth > control.clientWidth + 1,
+              };
+            });
+          });
+        const shot = async (state: string) => {
+          await browser.execute(() => {
+            document.querySelector("[data-targeted-table-export]")?.scrollIntoView({ block: "center" });
+          });
+          const label = `spreadsheet-csv-${state}-${String(width)}-${locale}`;
+          const shown = await capture(label);
+          const buttons = await row();
+          evidence.push({ label, buttons });
+          expect(buttons.map((button) => button.word)).toEqual(["csv", "tsv", "spreadsheetCsv"]);
+          expect(buttons.filter((button) => !button.inside || button.clipped)).toEqual([]);
+          return { shown, buttons };
+        };
+        const says = (status: string, sentence: string) =>
+          browser.waitUntil(
+            () =>
+              browser.execute(
+                (want: string, text: string) => {
+                  const line = document.querySelector<HTMLElement>("[data-targeted-table-export] [data-targeted-output]");
+                  return line?.getAttribute("data-targeted-output") === want && line.innerText === text;
+                },
+                status,
+                sentence,
+              ),
+            { timeoutMsg: `the output line never said ${status}: ${sentence}` },
+          );
+
+        await metrics(width, height);
+        const answers = table(project({ run: "completed" }), locale);
+        answers.export_targeted_ms1_table = { status: "saved", format: "spreadsheetCsv", fileName, rowCount: 2 };
+        await installIpcBoundary(answers);
+        await browser.url("/");
+        await browser.waitUntil(() => browser.execute((lang: string) => document.documentElement.lang === lang, locale));
+        await toProject();
+
+        // Loading: nothing is offered before the rows are read.
+        await holdInvoke("read_targeted_ms1_rows");
+        await browser.$(`[data-project-inspect-artifact="${ARTIFACT}"]`).click();
+        await browser.waitUntil(async () => (await heldCallers("read_targeted_ms1_rows")) >= 1);
+        await browser.$("[data-targeted-rows-loading]").waitForDisplayed();
+        expect(await row()).toEqual([]);
+        await capture(`spreadsheet-csv-0-loading-${String(width)}-${locale}`);
+        await releaseInvokeHold("read_targeted_ms1_rows");
+        await browser.$("[data-targeted-row]").waitForDisplayed();
+
+        // Idle: three bordered buttons, nothing said yet.
+        const idle = await shot("1-idle");
+        expect(idle.buttons.map((button) => button.text)).toEqual([
+          copy.viewerExportFormat.replace("{{name}}", "CSV"),
+          copy.viewerExportFormat.replace("{{name}}", "TSV"),
+          copy.targetedTableSpreadsheetExport,
+        ]);
+        expect(idle.buttons.map((button) => button.refused)).toEqual([null, null, null]);
+
+        // Keyboard: the row in reading order from the report's heading.
+        await browser.execute(() => {
+          document.querySelector<HTMLElement>("[data-targeted-report] h3")?.focus();
+        });
+        const order: (string | null)[] = [];
+        for (const _ of ["csv", "tsv", "spreadsheetCsv"]) {
+          await browser.keys("Tab");
+          order.push(await browser.execute(() => document.activeElement?.getAttribute("data-targeted-export") ?? null));
+        }
+        expect(order).toEqual(["csv", "tsv", "spreadsheetCsv"]);
+        evidence.push({ label: `spreadsheet-csv-focus-${String(width)}-${locale}`, ...(await focusedTreatment()) });
+
+        // Exporting: the picker is out, the pressed button keeps focus, and the
+        // other two are refused with the output line as their reason.
+        await holdInvoke("export_targeted_ms1_table");
+        await browser.keys("Enter");
+        await browser.waitUntil(async () => (await heldCallers("export_targeted_ms1_table")) >= 1);
+        await says("running", choose);
+        expect(await browser.execute(() => document.activeElement?.getAttribute("data-targeted-export") ?? null)).toBe(
+          "spreadsheetCsv",
+        );
+        const exporting = await shot("2-exporting");
+        expect(exporting.buttons.map(({ text, refused, reason }) => [text, refused, reason])).toEqual([
+          [copy.viewerExportFormat.replace("{{name}}", "CSV"), "true", choose],
+          [copy.viewerExportFormat.replace("{{name}}", "TSV"), "true", choose],
+          [copy.targetedTableSpreadsheetExporting, "true", choose],
+        ]);
+        await browser.$('[data-targeted-table-export] [data-targeted-export="csv"]').click();
+        expect(await heldCallers("export_targeted_ms1_table")).toBe(1);
+
+        // Saved: the name and the row count, and the format, which a typed name need not say.
+        await releaseInvokeHold("export_targeted_ms1_table");
+        await says(
+          "savedTable",
+          copy.targetedTableSavedSpreadsheet_other.replace("{{name}}", fileName).replace("{{count, number}}", "2"),
+        );
+        await shot("3-saved");
+
+        // The picker takes any name: a long one stays inside the surface. One row reads as one.
+        const typedName = `${"plasma_qc_batch_08_replicate_04_".repeat(6)}.csv`;
+        await setInvokeResult("export_targeted_ms1_table", {
+          status: "saved",
+          format: "spreadsheetCsv",
+          fileName: typedName,
+          rowCount: 1,
+        });
+        await browser.$(chooser).click();
+        await says(
+          "savedTable",
+          (locale === "en" ? en.targetedTableSavedSpreadsheet_one : zh.targetedTableSavedSpreadsheet_other)
+            .replace("{{name}}", typedName)
+            .replace("{{count, number}}", "1"),
+        );
+        await shot("3-saved-long-name");
+
+        await setInvokeResult("export_targeted_ms1_table", { status: "cancelled" });
+        await browser.$(chooser).click();
+        await says("cancelled", copy.viewerExportCancelled);
+        await shot("4-cancelled");
+
+        // A write Rust refused, and one that failed: each stays through a
+        // later keystroke, with its reason, and the choices stay offered.
+        for (const [state, kind, summary, sentence] of [
+          [
+            "5-refused-exists",
+            "spectrum_destination_exists",
+            "A file of that name is already in that folder. MSCanvas did not replace it. Export under another name.",
+            copy.m74ErrorExists,
+          ],
+          [
+            "6-failed-not-written",
+            "spectrum_not_written",
+            "MSCanvas could not write the export. Nothing was saved under the name you chose.",
+            copy.m74ErrorNotWritten,
+          ],
+        ] as const) {
+          await setInvokeRejection("export_targeted_ms1_table", { kind, summary, detail: null, retryable: true });
+          await browser.$(chooser).click();
+          await says("failed", sentence);
+          await browser.keys("Tab");
+          await says("failed", sentence);
+          const ended = await shot(state);
+          expect(ended.buttons.map((button) => button.refused)).toEqual([null, null, null]);
+        }
+
+        // A figure's picker out and that figure's export collapsed: its line is
+        // out of sight, so the table's says it until the export is opened again.
+        const pickerOut = copy.viewerExportChoose.replace("{{name}}", "SVG");
+        const toggleFigureExport = () =>
+          browser.execute(() => {
+            const region = document.querySelector<HTMLElement>("[data-targeted-figure-export]");
+            document.querySelector<HTMLElement>(`[aria-controls="${region?.id ?? ""}"]`)?.click();
+          });
+        await browser.$(`[data-targeted-choose="${CAFFEINE}"]`).click();
+        await browser.$("[data-targeted-figure-export]").waitForExist();
+        await openDisclosure("[data-targeted-figure-export]");
+        await holdInvoke("export_targeted_ms1_figure");
+        await browser.$('[data-targeted-figure-export] [data-targeted-export="svg"]').click();
+        await browser.waitUntil(async () => (await heldCallers("export_targeted_ms1_figure")) >= 1);
+        await says("idle", "");
+        await toggleFigureExport();
+        await says("running", pickerOut);
+        await shot("6-figure-out-collapsed");
+        await toggleFigureExport();
+        await says("idle", "");
+
+        // And another row chosen: that row's figure says nothing, and the
+        // table's line is the reason for every refused button.
+        await browser.$(`[data-targeted-choose="${ABSENT}"]`).click();
+        await says("running", pickerOut);
+        await browser.$('[data-targeted-figure-export] [data-targeted-output="idle"]').waitForExist();
+        const otherRow = await shot("6-figure-out-other-row");
+        expect(otherRow.buttons.map(({ refused, reason }) => [refused, reason])).toEqual(
+          Array.from({ length: 3 }, () => ["true", pickerOut]),
+        );
+        expect(
+          await browser.execute(() =>
+            [...document.querySelectorAll("[data-targeted-figure-export] [data-targeted-export]")].map(
+              (control) => document.getElementById(control.getAttribute("aria-describedby") ?? "")?.textContent ?? null,
+            ),
+          ),
+        ).toEqual([pickerOut, pickerOut]);
+        await releaseInvokeHold("export_targeted_ms1_figure");
+        await says("idle", "");
+
+        // The narrowest the row gets: both panels open beside the report. It
+        // stays whole, inside the surface, however it wraps.
+        for (const panel of ["workbench-roster", "workbench-inspector"]) {
+          const toggle = browser.$(`[aria-controls="${panel}"]`);
+          if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+        }
+        await shot("7-panels-open");
+        if (width === 1366) {
+          // A window just wide enough to dock them, where the row's head wraps.
+          await metrics(1060, height);
+          await shot("8-panels-docked-1060");
+        }
+
+        // Only the spreadsheet word went to Rust, once per press that was not refused.
+        const exports = (await ipcCalls()).filter((call) => call.command === "export_targeted_ms1_table");
+        expect(exports).toEqual(
+          Array.from({ length: 5 }, () => ({
+            command: "export_targeted_ms1_table",
+            args: { artifactId: ARTIFACT, format: "spreadsheetCsv" },
+          })),
+        );
+        const commands = await reuseCommands();
+        for (const command of NEVER_ON_REUSE) expect(commands).not.toContain(command);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+  }
+
   it("keeps the state, the figure and both exports inside a narrow window, in Simplified Chinese", async () => {
     await metrics(960, 640);
     const answers = table(project({ run: "completed", source: "missing" }), "zh-CN");
@@ -1084,9 +1320,7 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
     for (const key of [
       "targetedReuseNote",
       "targetedTableExports",
-      "targetedTableExportHelp",
       "targetedFigureExports",
-      "targetedFigureExportHelp",
       "targetedStateSource",
     ] as const) {
       expect(narrow.report?.text).toContain(zh[key]);

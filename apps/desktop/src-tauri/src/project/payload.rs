@@ -73,6 +73,18 @@ pub fn store_of(document: &Path) -> Option<PathBuf> {
     Some(document.with_file_name(format!("{name}{STORE_SUFFIX}")))
 }
 
+/// A fresh name in `directory` to assemble a store under before it is renamed
+/// into place.
+///
+/// Its length does not depend on the document's name: a store's own name is
+/// nine characters longer than its document's, and a pending name built from it
+/// would refuse, as too long a path component, a document name the store's
+/// name still fits.
+#[must_use]
+pub fn pending_store(directory: &Path) -> PathBuf {
+    directory.join(format!(".{}{STORE_SUFFIX}.pending", uuid::Uuid::new_v4()))
+}
+
 /// The directory one published result lives in.
 #[must_use]
 pub fn result_directory(store: &Path, artifact: ArtifactId) -> PathBuf {
@@ -140,14 +152,10 @@ pub fn ensure_store(store: &Path, project: ProjectId) -> Result<(), StoreRefusal
             // without replacing, so the store is there whole or not at all: a
             // failed write, or a process that dies here, leaves nothing at the
             // store's name to refuse every later run.
-            let (Some(parent), Some(name)) = (store.parent(), store.file_name()) else {
+            let Some(parent) = store.parent() else {
                 return Err(StoreRefusal::Unwritable);
             };
-            let pending = parent.join(format!(
-                ".{}.{}.pending",
-                name.to_string_lossy(),
-                uuid::Uuid::new_v4()
-            ));
+            let pending = pending_store(parent);
             fs::create_dir(&pending).map_err(|_| StoreRefusal::Unwritable)?;
             match write_owner(&pending, project)
                 .and_then(|()| rename_without_replacing(&pending, store))

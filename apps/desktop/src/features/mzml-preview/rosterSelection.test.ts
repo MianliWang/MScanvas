@@ -658,7 +658,11 @@ describe("what a failed read says about a row", () => {
     // Everything else is about this attempt rather than about the row.
     expect(rowStateForError("not_a_regular_file")).toBe("failed");
     expect(rowStateForError("backend_launch_failed")).toBe("failed");
-    expect(rowStateForError("selection_superseded")).toBe("failed");
+  });
+
+  it("says nothing against a row whose open was superseded (ADR 0056)", () => {
+    // A newer open took the read's place; the file was not refused.
+    expect(rowStateForError("selection_superseded")).toBe("ready");
   });
 });
 
@@ -960,7 +964,7 @@ describe("looking at the roster through a search and a sort", () => {
     // A search that matches nothing leaves nothing to focus. Clearing it brings
     // the rows back, and the list draws the first of them with the tab stop --
     // but until the state says so too, everything the focused row is for is
-    // dead: `Preview focused` stays disabled, Enter reads nothing and Space
+    // dead: Enter reads nothing and Space
     // toggles nothing, until the user presses an arrow or clicks a row.
     const nothing = search(view(...ROWS), "zzz");
     expect(nothing.focused).toBeNull();

@@ -10,6 +10,8 @@ export interface ScanTableView {
   readonly setQuery: (query: string) => void;
   readonly setMsLevel: (level: number | null) => void;
   readonly sortBy: (key: ScanSortKey) => void;
+  /** Sets the order outright; `null` is the file's own order. */
+  readonly setSort: (sort: ScanTableOptions["sort"]) => void;
   readonly clearFilters: () => void;
 }
 
@@ -25,7 +27,8 @@ export function useScanTableView(rows: readonly SpectrumRow[]): ScanTableView {
   const setQuery = useCallback((query: string) => update(current => ({ ...current, query })), [update]);
   const setMsLevel = useCallback((msLevel: number | null) => update(current => ({ ...current, msLevel })), [update]);
   const sortBy = useCallback((key: ScanSortKey) => update(current => toggleScanSort(current, key)), [update]);
+  const setSort = useCallback((sort: ScanTableOptions["sort"]) => update(current => ({ ...current, sort })), [update]);
   const clearFilters = useCallback(() => update(current => ({ ...current, query: "", msLevel: null })), [update]);
-  return useMemo(() => ({ projection, options, msLevels: index.msLevels, setQuery, setMsLevel, sortBy, clearFilters }),
-    [projection, options, index.msLevels, setQuery, setMsLevel, sortBy, clearFilters]);
+  return useMemo(() => ({ projection, options, msLevels: index.msLevels, setQuery, setMsLevel, sortBy, setSort, clearFilters }),
+    [projection, options, index.msLevels, setQuery, setMsLevel, sortBy, setSort, clearFilters]);
 }
