@@ -369,6 +369,7 @@ export type ConversionEnvironment = Pick<
   ConversionLane,
   | "backendUsable"
   | "backendChanging"
+  | "rawViewRunning"
   | "previewReading"
   | "configurationProbing"
   | "workspaceSettling"

@@ -455,6 +455,10 @@ pub(super) struct SpectrumSnapshot {
     /// is cached here -- a viewport still draws from the complete source every
     /// time, so zooming in still reveals observations an overview had to drop.
     viewport_domain: ViewportDomain,
+    /// Read from a viewed RAW row's cached copy (ADR 0060): drawable, and refused
+    /// by every export until decision 11's provenance is built (slice 4). A fact
+    /// about this reading, so no later open can take it away.
+    viewed: bool,
 }
 
 impl SpectrumSnapshot {
@@ -569,6 +573,8 @@ pub(super) struct ChromatogramSnapshot {
     token: ChromatogramExportToken,
     owner: DatasetId,
     source: ChromatogramSource,
+    /// Read from a viewed RAW row's cached copy, as on [`SpectrumSnapshot`].
+    viewed: bool,
 }
 
 impl ChromatogramSnapshot {
@@ -1045,9 +1051,24 @@ impl ScientificExportSlots {
             owner,
             spectrum: Arc::new(spectrum),
             viewport_domain,
+            viewed: false,
         };
         self.spectrum = Some(snapshot.clone());
         snapshot
+    }
+
+    /// [`Self::install`], for a spectrum read from a viewed RAW row's cached copy.
+    pub(super) fn install_viewed(
+        &mut self,
+        owner: DatasetId,
+        spectrum: SelectedSpectrumResult,
+    ) -> SpectrumSnapshot {
+        let viewed = SpectrumSnapshot {
+            viewed: true,
+            ..self.install(owner, spectrum)
+        };
+        self.spectrum = Some(viewed.clone());
+        viewed
     }
 
     /// Starts one preview open and hands back the ticket that names it.
@@ -1171,8 +1192,36 @@ impl ScientificExportSlots {
         owner: DatasetId,
         source: Option<ChromatogramSource>,
     ) -> Option<Option<ChromatogramSnapshot>> {
-        (ticket == self.latest_preview_open)
-            .then(|| self.reconcile_preview_chromatogram(ticket, owner, source))
+        (ticket == self.latest_preview_open).then(|| {
+            let viewed = ChromatogramSnapshot {
+                viewed: true,
+                ..self.reconcile_preview_chromatogram(ticket, owner, source)?
+            };
+            self.chromatogram = Some(viewed.clone());
+            Some(viewed)
+        })
+    }
+
+    /// The spectrum an export names: the one gate a viewed spectrum meets (slice
+    /// 2 note 6). The viewport's projection is not an export and does not ask.
+    fn exportable_spectrum(&self, token: &str) -> Result<SpectrumSnapshot, BeginExportRefusal> {
+        let snapshot = self.spectrum_for(token)?;
+        if snapshot.viewed {
+            return Err(BeginExportRefusal::ViewedThroughCache);
+        }
+        Ok(snapshot)
+    }
+
+    /// The chromatogram an export names, through the same gate.
+    fn exportable_chromatogram(
+        &self,
+        token: &str,
+    ) -> Result<ChromatogramSnapshot, BeginExportRefusal> {
+        let snapshot = self.chromatogram_for(token)?;
+        if snapshot.viewed {
+            return Err(BeginExportRefusal::ViewedThroughCache);
+        }
+        Ok(snapshot)
     }
 
     /// Retains one chromatogram as the one a new export may name.
@@ -1196,6 +1245,7 @@ impl ScientificExportSlots {
             token,
             owner,
             source,
+            viewed: false,
         };
         self.chromatogram = Some(snapshot.clone());
         snapshot
@@ -1425,7 +1475,7 @@ impl ScientificExportSlots {
         settings: FigureRenderSettings,
         dpi: Option<PngDpi>,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
-        let snapshot = self.spectrum_for(token)?;
+        let snapshot = self.exportable_spectrum(token)?;
         let range = snapshot
             .resolve(request)
             .map_err(BeginExportRefusal::from)?;
@@ -1453,7 +1503,7 @@ impl ScientificExportSlots {
         settings: Option<FigureRenderSettings>,
         dpi: Option<PngDpi>,
     ) -> Result<SpectrumReservationId, BeginExportRefusal> {
-        let snapshot = self.chromatogram_for(token)?;
+        let snapshot = self.exportable_chromatogram(token)?;
         let range = snapshot
             .source()
             .resolve(request)
@@ -1568,8 +1618,8 @@ impl ScientificExportSlots {
         traces: TraceSet,
         settings: FigureRenderSettings,
     ) -> Result<LinkedPair, BeginExportRefusal> {
-        let chromatogram = self.chromatogram_for(tokens.chromatogram)?;
-        let spectrum = self.spectrum_for(tokens.spectrum)?;
+        let chromatogram = self.exportable_chromatogram(tokens.chromatogram)?;
+        let spectrum = self.exportable_spectrum(tokens.spectrum)?;
 
         // Same dataset first, because two snapshots of different files cannot be
         // one scan however well their indices line up.
@@ -1732,7 +1782,7 @@ impl ScientificExportSlots {
         token: &str,
         request: SpectrumRangeRequest,
     ) -> Result<(SpectrumSnapshot, ResolvedSpectrumRange), BeginExportRefusal> {
-        let snapshot = self.spectrum_for(token)?;
+        let snapshot = self.exportable_spectrum(token)?;
         // Resolved before the lane is taken, for the reason every refusal
         // ordering here follows: a copy that could not have been drawn should
         // not first make every other scientific action unavailable.
@@ -1753,7 +1803,7 @@ impl ScientificExportSlots {
         request: RangeRequest,
         traces: TraceSet,
     ) -> Result<(ChromatogramSnapshot, ResolvedRange), BeginExportRefusal> {
-        let snapshot = self.chromatogram_for(token)?;
+        let snapshot = self.exportable_chromatogram(token)?;
         let range = snapshot
             .source()
             .resolve(request)
@@ -1788,6 +1838,9 @@ impl ScientificExportSlots {
 /// Why one export could not be started.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BeginExportRefusal {
+    /// The source is a viewed RAW row's cached copy, and an export cannot yet
+    /// name the RAW and the conversion (ADR 0060 decision 11, slice 4).
+    ViewedThroughCache,
     /// Another export of this session has not finished.
     AlreadyExporting,
     /// The named science is not what this session holds.
@@ -3392,6 +3445,57 @@ mod tests {
         let reader = decoded.read_info().expect("the PNG parses");
         assert_eq!(reader.info().width, defaults().width());
         assert_eq!(reader.info().height, defaults().height());
+    }
+
+    #[test]
+    fn a_viewed_source_refuses_every_copy_whatever_opens_later_and_stays_drawable() {
+        let mut slot = ScientificExportSlots::default();
+        let viewed = slot.begin_preview_open();
+        let chromatogram = slot
+            .reconcile_viewed_preview(viewed, owner(1), Some(seeded_chromatogram()))
+            .expect("the latest open commits")
+            .expect("its run has a chromatogram")
+            .token()
+            .as_wire();
+        let token = slot
+            .install_viewed(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        let full = || SpectrumRangeRequest::from_wire("full", None, None).expect("a full request");
+        let refused = Err(BeginExportRefusal::ViewedThroughCache);
+        assert_eq!(slot.begin_copy(&token, full()).map(|_| ()), refused);
+        assert_eq!(
+            slot.begin_chromatogram_copy(&chromatogram, full_range(), tic_only())
+                .map(|_| ()),
+            refused
+        );
+        assert!(
+            slot.retained_spectrum_for(&token).is_ok(),
+            "the viewport is not an export"
+        );
+        // A stale open commits nothing, and a later open clears nothing: a read of
+        // the cached copy that lands after it began is still that copy's.
+        let next = slot.begin_preview_open();
+        assert_eq!(
+            slot.reconcile_viewed_preview(viewed, owner(1), None)
+                .map(|_| ()),
+            None
+        );
+        let late = slot
+            .install_viewed(owner(1), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        assert_eq!(slot.begin_copy(&late, full()).map(|_| ()), refused);
+        // What a file's own read retains after a view stays exportable.
+        assert!(
+            slot.reconcile_preview_chromatogram(next, owner(2), None)
+                .is_none()
+        );
+        let plain = slot
+            .install(owner(2), spectrum(1, vec![100.0], vec![1.0]))
+            .token()
+            .as_wire();
+        assert_eq!(slot.begin_copy(&plain, full()).map(|_| ()), Ok(()));
     }
 
     #[test]

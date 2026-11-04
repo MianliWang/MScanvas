@@ -19,7 +19,7 @@ import type { FigureSettingsValidation } from "./figureSettingsValidation";
 
 import type { ChromatogramExportFormat, RetentionTimeUnit } from "./contracts";
 import { formatCount, retentionTimeUnitSymbol } from "./format";
-import { figureRefusal, QuickFigureActions, type PlotMenuItem } from "./QuickFigureActions";
+import { figureRefusal, QuickFigureActions, type ExportWithheld, type PlotMenuItem } from "./QuickFigureActions";
 import type {
   ChromatogramExportState,
   LinkedFigureExportState,
@@ -49,10 +49,12 @@ export interface ChromatogramExportToolsProps {
   readonly figureSettingsValidation: FigureSettingsValidation;
   /** Why a linked figure cannot be previewed now, or `null` when it can. */
   readonly linkedUnavailable: LinkedFigureUnavailable | null;
+  /** Every export refused, with the sentence that says why (a viewed RAW file). */
+  readonly withheld?: ExportWithheld | null;
 }
 
 export function ChromatogramExportTools({ leadingItems, onOpenFigure, onOpenLinkedFigure, scientificExportBusy, traces, onExport, onCopyPlot,
-  figureSettingsValidation, linkedUnavailable }: ChromatogramExportToolsProps) {
+  figureSettingsValidation, linkedUnavailable, withheld = null }: ChromatogramExportToolsProps) {
   const t = useUiMessages();
   // A panel of no series is refused by the contract, so a figure with neither
   // trace visible is not offered. The data exports are untouched.
@@ -64,7 +66,7 @@ export function ChromatogramExportTools({ leadingItems, onOpenFigure, onOpenLink
     linkedUnavailable.code === "noChromatogram" || linkedUnavailable.code === "loading" ||
     linkedUnavailable.code === "noSpectrum" || linkedUnavailable.code === "noTrace"
   );
-  return <QuickFigureActions busy={scientificExportBusy}
+  return <QuickFigureActions busy={scientificExportBusy} withheld={withheld}
     figureUnavailable={figureSettingsValidation.render !== null || nothingDrawn}
     pngUnavailable={figureSettingsValidation.dpi !== null} reason={reason} leadingItems={leadingItems}
     onPreview={onOpenFigure} onPng={() => onExport("png")} onCopy={onCopyPlot}
