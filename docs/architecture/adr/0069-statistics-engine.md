@@ -7,8 +7,8 @@ dependencies on 2026-10-30 (S-1, which the research synthesis calls D7; decision
 answered the definitions that change numbers on 2026-11-03 (S-2, S-4 and S-5,
 which it calls D9, with S-3, CK-3 and CK-5; decision table version 2026-11-03.2;
 [the answers](#the-owners-answers)). The answers of 2026-11-03 are cited here by
-id and date; the first records PR, #212, writes them into section 1d of that
-file. The
+id and date; the first records PR, #212, wrote them into section 1d of that
+file (merged as `a13d367b`). The
 library is `crates/stats` (`mscanvas-stats`). Nothing calls
 it: no Tauri command and no interface. The governance amendment that
 un-defers analysis in `AGENTS.md` was decided by the owner on 2026-10-30 (G1);
@@ -343,7 +343,7 @@ decides what to pass. It cannot yet keep that count apart
 
 What was admitted arrives with its first caller. None of it is in the crate
 today. Each cost is the decision table's, in the words of #212's section 1d at
-`459b79b0`.
+`a13d367b`.
 
 - **D, value-changing: admitted (S-3.1), built in N-A10.** Sum over the features
   present in all samples, median, PQN and internal standard. The default is none
@@ -411,7 +411,7 @@ are those of the open questions this section replaces; the crate's comments cite
 them. Its "open question 7", on how the import reads "not detected", is now
 B-6.12; the row numbered 7 answers only the refusal. Each answer is what the
 library does today, except where the last column says otherwise. Each cost is the
-decision table's, in the words of #212's section 1d at `459b79b0`. S-3, S-4 and
+decision table's, in the words of #212's section 1d at `a13d367b`. S-3, S-4 and
 CK-5 are under classes D, E and F above, and S-5 under ANA-002.
 
 | Question | Id | Answer | Cost | In the crate |
@@ -434,10 +434,17 @@ CK-5 are under classes D, E and F above, and S-5 under ANA-002.
 | Not numbered | CK-3 `no` | Backfilled cells do not enter tests for now. A-22 measures, then the owner decides. They are still shown and exported, with their state | A feature with many missing values still cannot be tested, and what backfilling does for a test waits for the measurement | Not in the crate: `Matrix` has no cell states. The caller leaves such cells out (decision 8) |
 
 *2026-11-04, a measurement, not an owner decision:* S-2.10's second cost holds
-only while the log2 values still differ. The bound looks at raw values and Welch
-at their log2, where so narrow a spread can round away. Of 66 features PCA called
-zero (six samples, three per group, spreads of 1 to 6 ε at centres from 1.5 to
-1e15), Welch tested 46 and returned `ZeroVariance` for 20.
+only while the log2 values still differ within at least one group. The bound looks
+at raw values and Welch at their log2, where so narrow a spread can round away.
+Take six samples, three per group, with ε = 2^−52, and each group
+c(1 − kε), c, c(1 + kε) in doubles, for k from 1 to 6 at the centres 1.5, 3, 10,
+100, 1e3, 1e4, 1e5, 1e6, 1e9, 1e12 and 1e15, beside one varying feature so that
+`pca` returns. PCA called all 66 features zero; Welch tested 46 and returned
+`ZeroVariance` for 20. The count depends on where the spread sits, so it is not a
+general rate. PCA still called all 66 zero in the two other placements measured.
+With one value of group A at c(1 + kε) and the rest at c, Welch tested 38 and
+returned `ZeroVariance` for 28. With group A at c and group B at c(1 + kε), it
+tested none, since neither group varies within itself.
 
 ### As built, not an owner decision
 
@@ -455,11 +462,20 @@ Dated 2026-10-30. No row above answers these, and they stand until one does:
 Not answered here:
 
 - CK-3's decision after A-22's measurement.
+- CK-5 and S-4.2: the scheduling of random forest and QRILC, after A-22's
+  backfill results.
 - A0067-D6, where an imported table is stored. It has no effect here, since
-  nothing calls the crate.
+  nothing calls the crate. *2026-11-04, the owner's answer, so this one is no
+  longer open:* round two of the decision page (version 2026-11-04.1), option
+  `matrix`: a chunked matrix, with the CSV at most 64 MiB. It still has no effect
+  here. ADR 0067 decision 6 (#184, a draft PR, not on `main`) is the record that
+  takes it.
 - Raising the PCA bound (decision 5), for N-A7.
 - S-2.8's 1/5-minimum: the scale it is taken on (raw or log2) and the samples
   the minimum is taken over, for N-A7.
+- S-3.3's "all non-blank samples": whether it counts a standard, for N-A10.
+  S-6-TYPES (2026-11-04, `four`) keeps standard as a sample type, and its page
+  note says no record states which steps use or leave out a standard.
 - S-3.4's source check: the row notes the source's step is not yet checked.
 - S-4.1's note on the page: Dunn 2011 was not opened, QC-RLSC's order and span
   were not checked, and the record does not compare splines and SERRF.
