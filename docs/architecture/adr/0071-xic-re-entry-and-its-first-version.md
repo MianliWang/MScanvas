@@ -31,6 +31,14 @@ stays unavailable. X1's gate, the integer-array question, is answered, and the
 owner's answer is noted at [open question 2](#open-questions). ADR 0070's own
 open questions are unanswered, so `crates/proteowizard/AGENTS.md` is not changed.
 
+*Note, 2026-11-04, a status and not an owner decision:* the note above speaks of
+2026-11-03. The owner has since answered ADR 0070's two open questions, noted
+there, and the ISO-8859-1 question, noted at decision 1. So
+`crates/proteowizard/AGENTS.md` has changed: under "mzML viewing reader (ADR
+0056)", the line on what is decoded and the line on "compute from the arrays" each
+name ADR 0070 and this record as the single exception, `mzml_xic.rs`. Nothing
+calls the library, and VIEW-007 stays unavailable.
+
 ## Context
 
 **XIC was refused twice, each time for a reason about one candidate.**
@@ -93,6 +101,21 @@ The evaluation's option 2: a full XIC with stated profile semantics.
     View would be refused;
   - option 3, a precomputed index: about 400 MB for the R0 file (estimate) and
     a persistence model ADR 0046 §4 refuses. It waits for a measured need.
+
+*Owner decision, 2026-11-04:* ISO-8859-1, option `narrow`. The XIC pass reads a
+file declaring ISO-8859-1 only when everything after the declaration is ASCII,
+which reads the same under either encoding, and refuses any other byte there. No
+passage of this record names the encoding. The question came from the candidate
+above, whose reuse list leaves out the viewer's refusal of a document that is not
+UTF-8, and from ADR 0070 decision 2, which cites ADR 0056 decision 1's refusals,
+among them that one. The viewer's refusal and the frozen answers do not change:
+in the product the viewer's open refuses such a file first (decision 7), and the
+frozen row `inherited_tiny.pwiz.1.1.mzML` (decision 8) keeps its answer, `Refused`,
+`MixedUnit:RT`. X2 has not run, so whether that row passes is not yet known
+(decision 9). Whether the viewer should read such a file too is not in this answer
+and needs its own decision under ADR 0056. The owner was given the decision page's
+rows, each counted as its recommended option unless changed, and replied verbatim
+"全部按推荐。" ("all as recommended"), and no row was changed.
 
 ### 2. The written decision for this one computation
 

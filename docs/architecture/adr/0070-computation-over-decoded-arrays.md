@@ -25,6 +25,16 @@ under this ADR, ADR 0071's XIC pass, has its library in PR #207
 unavailable. [Open question 2](#open-questions) is unanswered, so
 `crates/proteowizard/AGENTS.md` is not changed.
 
+*Note, 2026-11-04, a status and not an owner decision:* the note above speaks of
+2026-11-03. The owner has since answered both [open questions](#open-questions),
+and each answer is noted there. In `crates/proteowizard/AGENTS.md`, under "mzML
+viewing reader (ADR 0056)", PR #207 changes two lines: the one that says only the
+m/z and intensity arrays of one selected spectrum are decoded, and the one that
+says never "compute from the arrays". Each keeps its rule for everything else and
+names this ADR and ADR 0071 as the single exception, `mzml_xic.rs`. PR #183
+adjusts those lines if it lands after PR #207. Nothing calls the library, and
+VIEW-007 stays unavailable.
+
 ## Context
 
 **ADR 0056 keeps computation out of the reader.** Its decision 7: "Any
@@ -102,6 +112,10 @@ amendment for the XIC (XIC evaluation, section 11, item 1).
 Each record answers these in its own words. The list is drawn from the XIC
 evaluation (sections 5–8) and ADR 0068, and chooses no answer for any record.
 
+*Owner decision, 2026-11-04:* this list is the minimum each record states
+([open question 1](#open-questions), option `minimum`). The note there holds the
+owner's reply and what it leaves open.
+
 1. **Input.** Which spectra (MS level; polarity once the reader reports it).
    Which traversal: the table's offsets through the selected read, as ADR 0068
    does, or a sibling pass with its own required values, as the XIC evaluation
@@ -169,6 +183,12 @@ stand under it.
   arrays") and the `mzml_reader.rs` module comment. They stay true until a
   record's code lands (open question 2).
 
+  *Owner decision, 2026-11-04:* a record's code lands in PR #207, so the two
+  lines of `crates/proteowizard/AGENTS.md` change in that PR
+  ([open question 2](#open-questions), option `with-code`), and PR #183 adjusts
+  them if it lands after it. The `mzml_reader.rs` module comment already carries
+  the amendment that ADR 0071 decision 2 asks of X1.
+
 ## Consequences
 
 - No code changes here, and no dependency is needed.
@@ -218,9 +238,28 @@ Added by this ADR; U7 does not answer them.
 1. **Decision 3's list.** Is it the minimum that each record states?
    Recommended: yes. It chooses no answer for any record, and ADR 0068 and the
    XIC evaluation already answer most of it.
+
+   *Owner decision, 2026-11-04:* yes, option `minimum`. Decision 3's list is the
+   minimum each record states, so a record answers all eleven items and gives an
+   item it has no use for a sentence. The list still chooses no answer for any
+   record. The owner was given the decision page's rows, each counted as its
+   recommended option unless changed, and replied verbatim "全部按推荐。" ("all as
+   recommended"), and no row was changed. The row left two things open, and the
+   answer does not close them: whether the fixed rules in items 2, 3 and 5
+   (reversed bounds refused, no unit conversion, an empty window not zero) bind
+   every record as rules, and whether ADR 0068 and ADR 0071 state all eleven
+   items, which nobody has checked item by item.
 2. **The crate's guidance.** `crates/proteowizard/AGENTS.md` says the reader
    decodes "only the m/z and intensity arrays of one selected spectrum" and
    must never "compute from the arrays". Recommended: keep both lines until
    the first record's code lands, and change them in that slice to name this
    ADR and that record, so the guidance never admits a computation that no
    record names.
+
+   *Owner decision, 2026-11-04:* option `with-code`, by the same reply as
+   question 1: the two lines change together with the first record's code. That
+   code is PR #207, and it makes the change. The line on what is decoded and the
+   line on "compute from the arrays" each keep their rule for everything else and
+   name this ADR and ADR 0071 as the single exception, `mzml_xic.rs`. A
+   computation no record names stays forbidden. PR #183 adjusts the lines if it
+   lands after PR #207.

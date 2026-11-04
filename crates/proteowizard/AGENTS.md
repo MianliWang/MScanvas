@@ -24,8 +24,8 @@ This crate translates typed MSCanvas intent into validated ProteoWizard executab
 
 ## mzML viewing reader (ADR 0056)
 
-- `mzml_reader.rs` is the only module that base64-decodes or inflates an array, and only the m/z and intensity arrays of one selected spectrum. The inspector above stays decode-free.
+- `mzml_reader.rs` is the only module that base64-decodes or inflates an array, and only the m/z and intensity arrays of one selected spectrum. The single exception to "one selected spectrum" is the XIC pass in `mzml_xic.rs`, the computation ADR 0071 records under ADR 0070: through this module's primitives it decodes those arrays of every spectrum it evaluates, one spectrum's arrays at a time, and keeps only its per-scan result. A decode no record names stays forbidden. The inspector above stays decode-free.
 - It reuses the inspector's byte-counting reader, limits and `DOCTYPE`/entity refusal. Resolve element names by namespace, never by literal qualified name.
 - Check the decode caps before reserving anything, with checked arithmetic, and reserve with `try_reserve_exact`. Inflate into the declared length + 1 and refuse overrun and underrun.
-- Every refusal is typed and scoped: the open, or one selected spectrum. Never skip, guess, fall back to `msaccess`, or compute from the arrays.
+- Every refusal is typed and scoped: the open, or one selected spectrum. Never skip, guess, fall back to `msaccess`, or compute from the arrays. The single exception to "compute from the arrays" is the XIC pass in `mzml_xic.rs`, which computes the one quantity ADR 0071 records under ADR 0070: the per-scan sum of stored intensities whose m/z lies in a closed window. A computation no record names stays forbidden.
 - Polarity, charge and the run-level metadata are read without refusing (the 2026-10-30 note in ADR 0056). Keep them out of `Term`, whose restatement refuses the open, and out of the shared attribute capture. A polarity or charge stated two ways or unreadably is not reported; metadata parameters are carried as stated and never judged, an accession that is not `PREFIX:ID` is not reported, and metadata over its bound is not reported at all.

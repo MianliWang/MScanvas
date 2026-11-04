@@ -27,14 +27,17 @@
 //! negative side is refused the same way, is as built 2026-11-03 and not an owner
 //! decision.
 //!
-//! **Its own encoding rule, as built 2026-11-03 and not an owner decision.** ADR
-//! 0071 decision 1 does not carry the viewer's refusal of a document that is not
-//! UTF-8 over to this pass, and the frozen row `inherited_tiny.pwiz.1.1.mzML`
-//! declares ISO-8859-1 on bytes that are all ASCII, which read the same under
-//! either encoding. So that one label is read when every byte after the
-//! declaration is ASCII, and any other byte there is the reader's `NotUtf8`. A byte
-//! order mark comes before the declaration and is not read as text. In the product
-//! the viewer's open refuses such a file first (decision 7).
+//! **Its own encoding rule, the owner's decision of 2026-11-04 (ISO-8859-1, option
+//! `narrow`).** ADR 0071 decision 1 does not carry the viewer's refusal of a
+//! document that is not UTF-8 over to this pass, and the frozen row
+//! `inherited_tiny.pwiz.1.1.mzML` declares ISO-8859-1 on bytes that are all ASCII,
+//! which read the same under either encoding. So that one label is read only when
+//! every byte after the declaration is ASCII, and any other byte there is the
+//! reader's `NotUtf8`. The viewer's refusal and the frozen answers do not change,
+//! and in the product the viewer's open refuses such a file first (decision 7).
+//! The label's edges are as built 2026-11-03 and not an owner decision: it matches
+//! in any case, no alias of it does, and a byte order mark comes before the
+//! declaration and is not read as text.
 //!
 //! This is a library only. Nothing calls it, and VIEW-007 stays unavailable
 //! until the X3 decision admits the candidate.
