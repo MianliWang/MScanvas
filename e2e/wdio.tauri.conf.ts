@@ -172,7 +172,10 @@ export const config: WebdriverIO.Config = {
   },
 
   beforeSession(_configuration, _capabilities, specs): void {
-    if (specs.some(spec => spec.replaceAll("\\", "/").endsWith("/m7.5-preferences.native.e2e.ts"))) {
+    // wsp-010 writes `workspace-restore.json`: a reused driver's application can
+    // hold another run's QA root, or none and answer `unavailable`, so it refuses
+    // as M7.5 does. The e2e build never binds the real profile.
+    if (specs.some(spec => /\/(m7\.5-preferences|wsp-010-restore-workspace)\.native\.e2e\.ts$/.test(spec.replaceAll("\\", "/")))) {
       if (!M75_CAMPAIGN) {
         throw new Error("Fresh user M7.5 native readiness is required before application session creation.");
       }

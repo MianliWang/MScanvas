@@ -156,8 +156,8 @@ pub(crate) fn add_project_input_to_workspace_between(
             projects.record_admission(&proof, handle, &admitted)?;
             // Claimed, so the row is the object the record's label is about,
             // and the label is the object's whichever route brought it in.
-            if let Some(label) = proof.not_verified() {
-                service.label_admitted_row(&mut result, handle, label.clone());
+            if let (Some(label), Some(&primary)) = (proof.not_verified(), admitted.first()) {
+                service.label_admitted_row(&mut result, handle, primary, label.clone());
             }
         }
     }

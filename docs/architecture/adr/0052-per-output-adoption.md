@@ -5,6 +5,7 @@ Status: **Accepted**, by the owner's answer of 2026-10-28
 section 6.2, PM9.4 F2). The answer is "one Add per output, as recommended; a
 large SCIEX set is checked in rendered QA at 960x640 before that is final", so
 the interface half stays open until that check is made.
+*2026-11-03: made, in PR #201, and final; see the note under Consequences.*
 Related: [0016](0016-explicit-converted-output-adoption.md) (explicit
 adoption), [0027](0027-first-visible-sciex-wiff-workflow.md) (the visible
 SCIEX workflow and partial sets),
@@ -170,6 +171,22 @@ large SCIEX set judges whether the item's record reads well enough.
   "Locate {{name}}" group label and its one status line, no second live region
   per group, the existing "not added" sentence and the named Show in Workbench
   label), and rendered QA of a large SCIEX set at 960x640.
+
+  > **Delivered, PR #201, 2026-11-03.** A 24-member set at 960x640, en and
+  > zh-CN: one line per member, no clipped control and no sideways scroll, once
+  > the visible label is the short **Add** and the accessible name is "Add
+  > {{name}} to workspace". Decision 5 stands: after one member's Add the item's
+  > Details read "When outputs were last added: 1 added, 0 already in the
+  > workspace, 0 not added", which says the latest answer and not the set. Rust
+  > keeps no per-member answer. The webview keeps each output's latest answer
+  > for its status line until the queue-wide Add or a new settling of the queue.
+  > An answer about a row is said only while that row is in the workspace.
+  > Every refusal of one output's Add is said on that output's own line, because
+  > the queue-level notice sits above a list the output may be far down:
+  > `outputs_not_adoptable` as "not added: this queue no longer offers it", and
+  > any other in its own words. While one is out its line says so, the summary
+  > column says one output, and the other Adds point at the status bar, which
+  > says the same and stays in view.
 
 ## What this supersedes and amends
 

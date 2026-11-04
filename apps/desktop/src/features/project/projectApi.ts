@@ -70,7 +70,7 @@ export interface ProjectInput {
   readonly workbenchDatasetHandle: string | null;
   /**
    * The "not verified by MSCanvas" label recorded with this reference
-   * (project schema 5): the session had adopted the registered object from a
+   * (project schema 5): the session had finalized the registered object from a
    * labelled conversion. `null` means none is recorded, never verified.
    * Optional only until fixtures carry it; Rust always sends it.
    */

@@ -137,6 +137,20 @@ impl FinalizedOutput {
         &self.valid
     }
 
+    /// The object's volume serial and file ID, read through the retained
+    /// handle, where this platform holds one.
+    #[must_use]
+    pub const fn object_identity(&self) -> Option<(u64, [u8; 16])> {
+        #[cfg(windows)]
+        {
+            Some(self.identity)
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
+
     /// The length the output was validated at.
     #[must_use]
     pub const fn byte_length(&self) -> u64 {
