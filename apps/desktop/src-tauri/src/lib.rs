@@ -2804,6 +2804,9 @@ async fn choose_backend_installation(
                     UiPreferenceSaveDto::StoredRecordUnusable { problem, .. }
                     | UiPreferenceSaveDto::Unavailable { problem, .. }
                     | UiPreferenceSaveDto::Failed { problem, .. } => Err(problem),
+                    // A folder's commit does not answer this today. If it did,
+                    // the folder would not be stored, and that is what to say.
+                    UiPreferenceSaveDto::NotRemembered { .. } => Err("notRemembered"),
                 }
             })
         }))

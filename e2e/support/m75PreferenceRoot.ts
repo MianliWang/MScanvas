@@ -56,9 +56,10 @@ export const TEMPORARY_PREFIX = ".mscanvas-ui-preferences-";
  * something a reader has to notice.
  */
 export const ALLOWED_KEYS = {
-  root: ["schemaVersion", "appearance", "layout"],
+  root: ["schemaVersion", "appearance", "layout", "display"],
   appearance: ["locale", "density"],
   layout: ["roster", "details"],
+  display: ["textSize", "contrast", "motion", "wheelHabit", "crosshair", "grid", "remember"],
 } as const;
 
 /**
@@ -69,11 +70,18 @@ export const ALLOWED_KEYS = {
  * `layout.roster` would satisfy a name-only check.
  */
 const ALLOWED_VALUES = {
-  schemaVersion: [1],
+  schemaVersion: [2],
   locale: ["en", "zh-CN"],
   density: ["comfortable", "compact"],
   roster: ["automatic", "shown", "hidden"],
   details: ["automatic", "shown", "hidden"],
+  textSize: ["standard", "large"],
+  contrast: ["normal", "high"],
+  motion: ["system", "reduce"],
+  wheelHabit: ["draw", "figma"],
+  crosshair: [true, false],
+  grid: [true, false],
+  remember: [true, false],
 } as const;
 
 /** Where a campaign's own roots live: the repository's ignored evidence area. */
@@ -202,7 +210,7 @@ export type RecordViolation =
  *
  * Every violation is reported rather than the first, so a campaign's evidence
  * names each one. An empty list is the assertion the milestone rests on: the
- * bytes in the operator's profile hold five values, from five fixed sets, and
+ * bytes in the operator's profile hold twelve values, from twelve fixed sets, and
  * nothing else.
  */
 export function recordViolations(json: unknown): readonly RecordViolation[] {
@@ -238,6 +246,12 @@ export function recordViolations(json: unknown): readonly RecordViolation[] {
   if (layout !== null) {
     if (Object.hasOwn(layout, "roster")) leaf("layout", "roster", layout.roster);
     if (Object.hasOwn(layout, "details")) leaf("layout", "details", layout.details);
+  }
+  const display = object(root.display, "display", ALLOWED_KEYS.display);
+  if (display !== null) {
+    for (const key of ALLOWED_KEYS.display) {
+      if (Object.hasOwn(display, key)) leaf("display", key, display[key]);
+    }
   }
   return found;
 }
