@@ -288,8 +288,8 @@ default.
 >   *2026-11-04: asked (P201-RESTORE), not yet answered; still not an owner
 >   decision.*
 >   *Owner decision, 2026-11-04 (P201-RESTORE, option `keep`), not built:* a row put
->   back keeps the label. Until that lane merges the note above describes `main`. It
->   amends ADR 0061 decision 1 itself
+>   back keeps the label. Until lane `p201-restore-label` merges, the note above
+>   describes `main`. That lane amends ADR 0061 decision 1 itself
 >   ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 >   *As built in PR #201, 2026-11-03, not an owner decision: a label a reference
 >   carried back goes into the same table, so it outlives that row in this process.

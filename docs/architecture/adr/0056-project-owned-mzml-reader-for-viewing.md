@@ -747,7 +747,8 @@ read values, not a computation.
 > intensity (V-3), because ADR 0070 decision 1 lists selection and extremes as
 > computation. ADR 0075 is reserved for it and is not written. The parts of N-V3 and
 > N-V4 it covers merge only after the owner accepts that record; their other parts do
-> not wait. The answer does not ask about the preview's range above
+> not wait. The question did not ask about the preview's range above, so that sentence
+> stands as written
 > ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 
 ### 8. Re-measure before implementing
