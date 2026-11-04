@@ -4041,6 +4041,23 @@ def validate_current_status_documents_describe_the_shipped_product(
         )
 
 
+def validate_the_targeted_task_path_lists_the_spreadsheet_csv(errors: list[str]) -> None:
+    """The targeted MS1 task path names the spreadsheet CSV among its exports.
+
+    ADR 0054's third table document reached the results table while this current
+    task path still listed CSV or TSV only. A rewrite may move the sentence; it
+    may not drop the document.
+    """
+    source = ROOT / "docs/product/PRIMARY_WORKFLOWS.md"
+    lines = source.read_text(encoding="utf-8").splitlines()
+    if not any("→ **Export**" in line and "spreadsheet CSV" in line for line in lines):
+        fail(
+            "docs/product/PRIMARY_WORKFLOWS.md: the targeted MS1 task path's **Export** "
+            "line does not name the spreadsheet CSV the results table offers (ADR 0054)",
+            errors,
+        )
+
+
 
 # The one place a confirmed process tree may be decided, and the one place the
 # vocabulary that expresses it may be defined. Both are checked to exist rather
@@ -5779,6 +5796,7 @@ def main() -> int:
         validate_the_admitted_intent_table_cites_measurements_that_support_it(errors)
         validate_the_cancellation_claim_has_one_origin(errors)
         validate_current_status_documents_describe_the_shipped_product(errors)
+        validate_the_targeted_task_path_lists_the_spreadsheet_csv(errors)
 
     if errors:
         print("Repository validation failed:")
