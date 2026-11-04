@@ -267,11 +267,12 @@ fn only_ms1_spectra_inside_the_window_are_read() {
     let document = document(&[
         ms1(0, "1", &[100.0], &[4.0]),
         spectrum(1, 1, PROFILE, ("5", MINUTE), 1, &numpress),
-        spectrum(2, 2, CENTROID, ("1", MINUTE), 1, &numpress),
+        spectrum(2, 2, PROFILE, ("1", MINUTE), 1, &numpress),
     ]);
 
-    // The refused MS1 spectrum is outside the window and the MS2 spectrum is
-    // never binned, so neither is decoded.
+    // The refused MS1 spectrum is outside the window. The MS2 spectrum is inside
+    // it, with the map's polarity and representation, so only its level keeps it
+    // from being read. Neither is decoded.
     let narrow = map(&document, request((0.0, 2.0), 1, (99.0, 101.0), 1)).expect("maps");
     assert_eq!(narrow.cell(0, 0), Some(4.0));
     assert_eq!(narrow.points_binned(), 1);
@@ -380,6 +381,17 @@ fn a_partly_declared_polarity_is_refused_whichever_map_is_asked_for() {
         "partly_declared_polarity"
     );
 
+    // Across representations too: a centroid spectrum stating none refuses the
+    // file, though no profile spectrum lacks one.
+    let across_representations = document(&[
+        stating(0, "1", PROFILE, &[POSITIVE], &body),
+        stating(1, "2", CENTROID, &[], &body),
+    ]);
+    assert_eq!(
+        ms1_extent(&table(&across_representations)),
+        Err(MapError::PartlyDeclaredPolarity)
+    );
+
     // Only MS1 spectra count: an MS2 spectrum stating none leaves the map alone.
     let with_ms2 = document(&[
         stating(0, "1", PROFILE, &[POSITIVE], &body),
@@ -480,6 +492,45 @@ fn a_partly_declared_representation_is_refused_whichever_map_is_asked_for() {
         MapError::PartlyDeclaredRepresentation.stable_id(),
         "partly_declared_representation"
     );
+
+    // Across polarities too: a negative spectrum stating none refuses the file,
+    // though no positive spectrum lacks one.
+    let body = arrays(&[100.0], &[1.0]);
+    let across_polarities = document(&[
+        stating(0, "1", PROFILE, &[POSITIVE], &body),
+        stating(1, "2", "", &[NEGATIVE], &body),
+    ]);
+    assert_eq!(
+        ms1_extent(&table(&across_polarities)),
+        Err(MapError::PartlyDeclaredRepresentation)
+    );
+}
+
+#[test]
+fn the_file_wide_checks_cover_spectra_outside_the_window() {
+    let body = arrays(&[100.0], &[1.0]);
+    let view = MapRequest {
+        kind: POSITIVE_PROFILE,
+        ..request((0.0, 2.0), 1, (99.0, 101.0), 1)
+    };
+    let positive_body = format!("{}{body}", cv(POSITIVE, "", ""));
+    for (outside, refusal) in [
+        (
+            stating(1, "9", PROFILE, &[], &body),
+            MapError::PartlyDeclaredPolarity,
+        ),
+        (
+            stating(1, "9", "", &[POSITIVE], &body),
+            MapError::PartlyDeclaredRepresentation,
+        ),
+        (
+            spectrum(1, 1, PROFILE, ("540", SECOND), 1, &positive_body),
+            MapError::MixedRetentionTimeUnits,
+        ),
+    ] {
+        let spectra = [stating(0, "1", PROFILE, &[POSITIVE], &body), outside];
+        assert_eq!(map(&document(&spectra), view), Err(refusal), "{refusal:?}");
+    }
 }
 
 #[test]
@@ -581,6 +632,16 @@ fn units_must_agree_and_nothing_converts() {
     ]);
     assert_eq!(
         map(&mixed_time, request((0.0, 100.0), 1, (99.0, 101.0), 1)),
+        Err(MapError::MixedRetentionTimeUnits)
+    );
+
+    // Across maps too: neither the profile nor the centroid map stands.
+    let mixed_across_maps = document(&[
+        ms1(0, "1", &[100.0], &[1.0]),
+        spectrum(1, 1, CENTROID, ("60", SECOND), 1, &arrays(&[100.0], &[1.0])),
+    ]);
+    assert_eq!(
+        ms1_extent(&table(&mixed_across_maps)),
         Err(MapError::MixedRetentionTimeUnits)
     );
 
@@ -755,6 +816,28 @@ fn progress_counts_the_window_and_cancellation_leaves_no_raster() {
 }
 
 #[test]
+fn a_window_holding_no_spectrum_of_its_map_is_not_refused() {
+    let document = document(&[ms1(0, "1", &[100.0], &[1.0])]);
+    let map = map(&document, request((5.0, 8.0), 2, (99.0, 101.0), 1)).expect("not refused");
+    assert_eq!(map.spectra(), 0);
+    assert_eq!(map.points_binned(), 0);
+    assert_eq!(row(&map, 0), [None]);
+    assert_eq!(row(&map, 1), [None]);
+    assert_eq!(map.mz_unit(), &ArrayUnit::NotDeclared);
+}
+
+#[test]
+fn a_bin_narrower_than_four_epsilon_of_its_bound_is_refused() {
+    let low = 1000.0_f64;
+    let axis = |epsilons: f64| {
+        let step = low * f64::EPSILON * epsilons;
+        Axis::new((low, low + 16.0 * step), 16)
+    };
+    assert_eq!(axis(3.9), Err(MapError::InvalidBounds));
+    assert!(axis(4.1).is_ok());
+}
+
+#[test]
 fn the_extent_comes_from_the_ms1_rows_alone() {
     let observed = |low: &str, high: &str| {
         format!(
@@ -782,8 +865,44 @@ fn the_extent_comes_from_the_ms1_rows_alone() {
     ]);
     assert_eq!(ms1_extent(&table(&partly)).expect("has MS1")[0].mz(), None);
 
-    // Each map's range is its own: a map whose spectra state theirs keeps it
-    // beside one whose spectra do not.
+    // A later spectrum that states its range does not restore one already lost:
+    // it would be some spectra's range presented as the whole map's.
+    let later_stated = document(&[
+        ms1(0, "2", &[100.0], &[1.0]),
+        spectrum(1, 1, PROFILE, ("7", MINUTE), 1, &observed("150", "900")),
+    ]);
+    assert_eq!(
+        ms1_extent(&table(&later_stated)).expect("has MS1")[0].mz(),
+        None
+    );
+
+    // One bound is no range, whichever it is.
+    for accession in ["MS:1000528", "MS:1000527"] {
+        let one_bound = format!(
+            "{}{}",
+            cv(accession, "150", "MS:1000040"),
+            arrays(&[100.0], &[1.0])
+        );
+        let document = document(&[spectrum(0, 1, PROFILE, ("2", MINUTE), 1, &one_bound)]);
+        assert_eq!(
+            ms1_extent(&table(&document)).expect("has MS1")[0].mz(),
+            None,
+            "{accession}"
+        );
+    }
+
+    // Each map's range is its own: two stated ranges are not merged, as the LTQ
+    // Velos conversion's profile and centroid maps state different ones.
+    let two_stated = document(&[
+        spectrum(0, 1, PROFILE, ("2", MINUTE), 1, &observed("300", "2000")),
+        spectrum(1, 1, CENTROID, ("3", MINUTE), 1, &observed("400", "1400")),
+    ]);
+    let extents = ms1_extent(&table(&two_stated)).expect("has MS1");
+    assert_eq!(extents[0].mz(), Some((300.0, 2000.0)));
+    assert_eq!(extents[1].mz(), Some((400.0, 1400.0)));
+
+    // And a map whose spectra state theirs keeps it beside one whose spectra do
+    // not.
     let one_map_stated = document(&[
         spectrum(0, 1, PROFILE, ("2", MINUTE), 1, &observed("150", "900")),
         spectrum(1, 1, CENTROID, ("3", MINUTE), 1, &arrays(&[100.0], &[1.0])),
