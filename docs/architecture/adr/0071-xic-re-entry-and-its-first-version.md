@@ -39,6 +39,12 @@ there, and the ISO-8859-1 question, noted at decision 1. So
 name ADR 0070 and this record as the single exception, `mzml_xic.rs`. Nothing
 calls the library, and VIEW-007 stays unavailable.
 
+*Note, 2026-11-04, a status and not an owner decision:* with PR #183, each of those
+two lines says there are two exceptions, so "the single exception" above speaks of
+PR #207 alone. `mzml_xic.rs` stays one of them, in the same words; the other is the
+map pass in `rt_mz_map.rs`, whose record is ADR 0068. This record's scope does not
+change.
+
 ## Context
 
 **XIC was refused twice, each time for a reason about one candidate.**
