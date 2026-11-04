@@ -13,7 +13,8 @@ build` is the stub's, and it writes a fixed frontend, executable and installer
 
 What is proved is the script's own control flow: that a build records the
 frontend the build produced rather than whatever was on disk before it, that a
-failed or frontend-less build publishes no manifest, that `-ManifestOnly`
+failed or frontend-less build, or one whose generated installer script does not
+take the uninstall hook, publishes no manifest, that `-ManifestOnly`
 refuses without a retained manifest whose source identity and artifacts match,
 and that it carries the build's toolchain, environment and bundler tooling
 forward rather than probing the ones present at re-derivation.
@@ -62,7 +63,7 @@ if tool == "pnpm" and args == ["tauri", "build"]:
     dist = root / "apps" / "desktop" / "dist"
     if dist.exists():
         shutil.rmtree(dist)
-    if mode in ("frontend", "fail"):
+    if mode in ("frontend", "fail", "no-script", "no-include", "no-insert"):
         (dist / "assets").mkdir(parents=True)
         (dist / "index.html").write_text(f"<html>{tag}</html>", encoding="utf-8")
         (dist / "assets" / f"app-{tag}.js").write_text(f"console.log('{tag}')", encoding="utf-8")
@@ -75,6 +76,15 @@ if tool == "pnpm" and args == ["tauri", "build"]:
     (release / "bundle" / "nsis").mkdir(parents=True, exist_ok=True)
     (release / "mscanvas-desktop.exe").write_bytes(f"exe-{tag}".encode())
     (release / "bundle" / "nsis" / "MSCanvas_0.1.0_x64-setup.exe").write_bytes(f"installer-{tag}".encode())
+    if mode != "no-script":
+        lines = [
+            "" if mode == "no-include" else '!include "D:\\fixture\\apps\\desktop\\src-tauri\\installer-hooks.nsh"',
+            "  !ifmacrodef NSIS_HOOK_POSTUNINSTALL",
+            "" if mode == "no-insert" else "    !insertmacro NSIS_HOOK_POSTUNINSTALL",
+            "  !endif",
+        ]
+        (release / "nsis" / "x64").mkdir(parents=True, exist_ok=True)
+        (release / "nsis" / "x64" / "installer.nsi").write_text("\n".join(lines), encoding="utf-8-sig")
     sys.exit(0)
 print(f"unexpected stub call: {tool} {args}", file=sys.stderr)
 sys.exit(97)
@@ -92,6 +102,7 @@ FIXTURE_FILES = {
     ),
     "apps/desktop/src-tauri/Cargo.toml": "[package]\nname = \"fixture\"\n",
     "apps/desktop/src-tauri/capabilities/default.json": "{}\n",
+    "apps/desktop/src-tauri/installer-hooks.nsh": "; fixture\n",
     "apps/desktop/src-tauri/icons/icon.png": "icon\n",
     "apps/desktop/package.json": "{}\n",
     "package.json": "{}\n",
@@ -263,6 +274,23 @@ class BuildCandidate(unittest.TestCase):
             self.assertNotEqual(code, 0, output)
             self.assertIn("No compiled frontend under apps/desktop/dist", output)
             self.assertEqual(retained.read_bytes(), b"RETAINED-SENTINEL")
+
+    def test_d2_a_build_whose_script_does_not_take_the_uninstall_hook_is_refused(self) -> None:
+        for build in ("no-script", "no-include", "no-insert"):
+            with self.subTest(build):
+                root = self.fixture(f"d2-{build}")
+                code, output = self.run_script(root, build=build)
+                self.assertNotEqual(code, 0, output)
+                self.assertIn("installer.nsi", output)
+                self.assertFalse((root / MANIFEST).exists())
+
+    def test_d3_a_build_records_the_uninstall_hook_among_its_inputs(self) -> None:
+        root = self.fixture("d3-hook-input")
+        code, output = self.run_script(root)
+        self.assertEqual(code, 0, output)
+        recorded = {entry["path"]: entry["sha256"] for entry in self.manifest(root)["buildInputs"]}
+        hook = "apps/desktop/src-tauri/installer-hooks.nsh"
+        self.assertEqual(recorded[hook], sha256(root / hook))
 
     # -- a re-derivation needs the provenance it re-derives -------------------
 
