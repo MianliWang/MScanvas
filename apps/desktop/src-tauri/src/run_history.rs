@@ -51,6 +51,9 @@ const OWNER_SUFFIX: &str = ".lock";
 /// name, so no scan can ever find an owner lock that is not yet held.
 const PENDING_OWNER_PREFIX: &str = ".owner-pending-";
 const TEMPORARY_PREFIX: &str = ".mscanvas-run-history-";
+/// How long a private sibling stays untouched before Clear and Off take it for
+/// one a crashed write left (ADR 0065 section 7, answered 2026-11-03).
+const SIBLING_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const SET_ASIDE_PREFIX: &str = "set-aside-";
 /// Present means recording is off. Shared by every instance.
 const OFF_MARKER: &str = "recording-off";
@@ -897,7 +900,8 @@ impl ConversionHistory {
     /// Forgets every run that has ended and every run kept aside. A run still
     /// being written, here or in another instance, is kept, and so is one this
     /// build cannot judge -- a later build's, or one it cannot read now --
-    /// which may be one too.
+    /// which may be one too. A crashed write's old private sibling goes as well
+    /// ([`is_abandoned_sibling`]).
     #[must_use]
     pub fn clear(&self) -> RunHistoryWriteDto {
         self.sweep(false)
@@ -942,7 +946,9 @@ impl ConversionHistory {
                 } else if remove(&path).is_err() {
                     not_removed += 1;
                 }
-            } else if is_set_aside(&name) && remove(&path).is_err() {
+            } else if (is_set_aside(&name) || is_abandoned_sibling(&name, &path))
+                && remove(&path).is_err()
+            {
                 not_removed += 1;
             }
         }
@@ -1426,6 +1432,22 @@ fn kept_aside(directory: &Path, name: &str) -> bool {
             && other.ends_with(name)
             && local_document::object_identity(&directory.join(other)) == Some(identity)
     })
+}
+
+/// A private sibling a crashed write left: exactly the name a write gives one, an
+/// ordinary file, last written more than [`SIBLING_MAX_AGE`] ago. Nothing is read
+/// from it. A younger one may be another instance's write in progress, and a time
+/// that cannot be read or lies in the future says nothing, so those stay.
+fn is_abandoned_sibling(name: &str, path: &Path) -> bool {
+    local_document::is_temporary_name(name, TEMPORARY_PREFIX)
+        && fs::symlink_metadata(path).is_ok_and(|metadata| {
+            local_document::is_ordinary_file(&metadata)
+                && metadata.modified().is_ok_and(|written| {
+                    SystemTime::now()
+                        .duration_since(written)
+                        .is_ok_and(|age| age > SIBLING_MAX_AGE)
+                })
+        })
 }
 
 /// Exactly a name [`set_aside`] gives: the prefix, milliseconds, a dash and a

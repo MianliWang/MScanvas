@@ -490,8 +490,19 @@ fn publish(
 }
 
 /// The private sibling's name for one attempt.
-fn temporary_name(prefix: &str, attempt: u32) -> String {
+pub(crate) fn temporary_name(prefix: &str, attempt: u32) -> String {
     format!("{prefix}{}-{attempt}.tmp", std::process::id())
+}
+
+/// Whether `name` is exactly what [`temporary_name`] gives for `prefix`, in any
+/// process and at any attempt.
+#[must_use]
+pub fn is_temporary_name(name: &str, prefix: &str) -> bool {
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    name.strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+        .and_then(|rest| rest.split_once('-'))
+        .is_some_and(|(process, attempt)| digits(process) && digits(attempt))
 }
 
 /// Opens one `CREATE_NEW` sibling under a name only this writer would choose.
