@@ -819,6 +819,8 @@ Each later in its own slice:
   >   open in this build.~~ Replaced the same day by the read-and-upgrade
   >   disposition in the note above. Either one is a release decision for the
   >   owner before merge. *The owner chose read and upgrade on 2026-10-30.*
+
+  > **2026-11-04 (N-11).** The rest of schema 5's content is recorded in [ADR 0067](0067-study-model-for-cross-sample-analysis.md#12-schema-one-bump-for-the-study-model-shared-with-schema-5), decision 12 with its decision 1; none of it is built, and what has not merged when a release ships schema 5 takes schema 6 instead.
 - **A larger settings surface.** It cuts against the owner's direction to
   remove secondary explanations. It is collapsed by default, with one label
   and no prose.
