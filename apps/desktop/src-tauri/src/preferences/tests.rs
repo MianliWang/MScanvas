@@ -1145,10 +1145,7 @@ fn replacing_an_unusable_record_stores_what_was_confirmed_with_remembering_off()
 fn the_replace_flag_on_a_usable_record_leaves_the_write_rule_alone() {
     let root = Root::new("remember-replace-usable");
     let store = root.store();
-    let chosen = saved(&store.save(&layout(
-        PanelPresentation::Shown,
-        PanelPresentation::Hidden,
-    )));
+    let chosen = saved(&store.save(&layout(PanelPresentation::Shown, PanelPresentation::Hidden)));
 
     let committed = saved(&store.save(&every_group_with_remembering_off(true)));
     assert_eq!(
