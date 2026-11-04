@@ -1560,6 +1560,7 @@ export const zhCN = {
   targetedViewReset: "重置",
   targetedViewSave_other: "保存 {{count, number}} 行中的 {{visible, number}} 行…",
   targetedViewNoRows: "没有可保存的行。",
+  targetedViewFormatSpreadsheet: "电子表格 CSV…",
   targetedViewChoose: "选择当前显示行的保存位置。",
   targetedViewSaved_other: "已保存 {{name}}，含 {{count, number}} 个目标行中的 {{visible, number}} 行。",
   targetedViewSavedSpreadsheet_other: "已保存 {{name}}（电子表格 CSV），含 {{count, number}} 个目标行中的 {{visible, number}} 行。",

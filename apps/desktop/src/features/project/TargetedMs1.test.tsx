@@ -1270,9 +1270,15 @@ describe("a stored result reused (M9.2)", () => {
       expect(save().textContent).toBe("Save 2 of 2 rows…");
       await press(save());
       expect(save()).toHaveAttribute("aria-expanded", "true");
+      // Bare format names in a group named by the count: never the whole table's
+      // words, on the buttons beside them, for fewer rows.
       expect(
-        [...document.querySelectorAll("[data-targeted-view-formats] button")].map((control) => control.textContent),
-      ).toEqual(["Export CSV…", "Export TSV…", "Export spreadsheet CSV…"]);
+        [...screen.getByRole("group", { name: "Save 2 of 2 rows…" }).querySelectorAll("button")].map(
+          (control) => control.textContent,
+        ),
+      ).toEqual(["CSV…", "TSV…", "Spreadsheet CSV…"]);
+      expect(button("csv").textContent).toBe("Export CSV…");
+      expect(button("spreadsheetCsv").textContent).toBe("Export spreadsheet CSV…");
 
       const view = {
         targetIds: [ABSENT, DETECTED],
@@ -1299,6 +1305,27 @@ describe("a stored result reused (M9.2)", () => {
       expect(status("table").textContent).toBe(
         "Saved mscanvas-targeted-ms1-eeeeeeee-results.csv with 2 target rows.",
       );
+    });
+
+    it("closes the formats with the view, by Reset or by clearing it by hand", async () => {
+      await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      const openSave = async () => {
+        await press(outcome("DETECTED"));
+        expect(save()).toHaveAttribute("aria-expanded", "false");
+        await press(save());
+        expect(save()).toHaveAttribute("aria-expanded", "true");
+      };
+
+      await openSave();
+      await press(reset());
+      expect(document.querySelector("[data-targeted-view-save]")).toBeNull();
+
+      await openSave();
+      await press(outcome("DETECTED"));
+      expect(document.querySelector("[data-targeted-view-save]")).toBeNull();
+
+      await openSave();
     });
 
     it("sends only the rows a filter keeps, and the filter", async () => {

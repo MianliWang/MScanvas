@@ -889,9 +889,21 @@
   pointer-events: none;
 }
 
+/* The scan table's search box: a bordered box at rest, as tall as its buttons. */
 .targeted-view-text > input {
   width: 100%;
-  padding-left: 28px;
+  min-height: 30px;
+  padding: 4px 8px 4px 28px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-input);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.targeted-view-text > input::placeholder {
+  color: var(--color-text-secondary);
 }
 
 .targeted-view-outcomes {
@@ -904,8 +916,17 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Wraps as one, so Reset stays beside the count on a line of its own. */
+.targeted-view-tail {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .targeted-view-count {
-  margin: 0 0 0 auto;
+  margin: 0;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-secondary);
@@ -941,9 +962,10 @@
 .targeted-rows {
   max-height: 320px;
   overflow: auto;
-  /* Shift+Tab stops clear of the sticky head, with the focus ring's reach, and
-     the last row keeps room for the ring under it. */
-  scroll-padding-top: 34px;
+  /* Shift+Tab stops clear of the sticky head, at the two lines it wraps to beside
+     both docked panels, with the focus ring's reach, and the last row keeps room
+     for the ring under it. */
+  scroll-padding-top: 54px;
   padding-bottom: 3px;
 }
 

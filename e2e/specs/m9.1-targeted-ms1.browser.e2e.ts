@@ -338,6 +338,34 @@ const LARGE_PROJECT = (() => {
   };
 })();
 
+/** Every outcome at once: the outcome buttons as wide as they get. */
+const SIX_OUTCOMES = ["DETECTED", "DETECTED_AMBIGUOUS", "SHARED", "SUPPRESSED_BY_OVERLAP", "NOT_DETECTED", "FAILED"];
+const SIX_OUTCOME_ROWS = {
+  ...LARGE_ROWS,
+  rows: LARGE_ROWS.rows.map((row, index) => ({ ...row, outcome: SIX_OUTCOMES[index % 6]! })),
+};
+const SIX_OUTCOME_PROJECT = {
+  ...LARGE_PROJECT,
+  artifacts: LARGE_PROJECT.artifacts.map((artifact) => ({
+    ...artifact,
+    targetedMs1: {
+      ...artifact.targetedMs1,
+      result: {
+        ...artifact.targetedMs1.result,
+        summary: {
+          targets: 200,
+          detected: 34,
+          detectedAmbiguous: 34,
+          shared: 33,
+          suppressedByOverlap: 33,
+          notDetected: 33,
+          failed: 33,
+        },
+      },
+    },
+  })),
+};
+
 /**
  * A stand-in for the renderer's SVG, and labelled one. The page shows whatever
  * SVG Rust answers as an inert image; this only has to be a well-formed one of
@@ -1377,7 +1405,11 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
               const box = control.getBoundingClientRect();
               return box.left < panel.left - 1 || box.right > panel.right + 1 || control.scrollWidth > control.clientWidth + 1;
             });
+            const textBox = document.querySelector<HTMLElement>("[data-targeted-view-text]");
             return {
+              textBox: textBox === null
+                ? null
+                : { border: getComputedStyle(textBox).borderTopWidth, height: textBox.getBoundingClientRect().height },
               rows: rows.length,
               first: rows[0]?.querySelector("th")?.innerText ?? null,
               lastOutcome: rows.at(-1)?.getAttribute("data-outcome") ?? null,
@@ -1402,6 +1434,8 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
           const seen = await view();
           evidence.push({ label, view: seen });
           expect(seen.clipped).toEqual([]);
+          // Reads as a box at rest, the height of the buttons beside it.
+          expect(seen.textBox).toEqual({ border: "1px", height: 30 });
           return seen;
         };
         const says = (status: string, sentence: string) =>
@@ -1598,6 +1632,24 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
           // A window just wide enough to dock them: the heads wrap, nothing scrolls sideways.
           await metrics(1060, height);
           await shot("a-panels-docked-1060");
+          // Shift+Tab up the rows stops clear of the head, at the height it wrapped to.
+          await browser.execute(() => {
+            const rows = document.querySelector<HTMLElement>(".targeted-rows")!;
+            rows.scrollTop = rows.scrollHeight / 2;
+            const top = rows.getBoundingClientRect().top;
+            [...rows.querySelectorAll<HTMLElement>("tbody button")]
+              .find((control) => control.getBoundingClientRect().top > top + 120)
+              ?.focus();
+          });
+          for (let step = 0; step < 8; step += 1) {
+            await browser.keys(["Shift", "Tab"]);
+            const covered = await browser.execute(
+              () =>
+                document.querySelector(".targeted-rows thead th")!.getBoundingClientRect().bottom -
+                document.activeElement!.getBoundingClientRect().top,
+            );
+            expect(covered).toBeLessThanOrEqual(0);
+          }
         }
         // In a narrow window Details lies over the report until it is dismissed.
         await browser.keys("Escape");
@@ -1626,6 +1678,45 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
 
         const commands = await reuseCommands();
         for (const command of NEVER_ON_REUSE) expect(commands).not.toContain(command);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+  }
+
+  // An empty result under a filter is a value with Reset beside it, however wide
+  // the outcome buttons before them run.
+  for (const [width, height] of [[1366, 768], [960, 640]] as const) {
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`keeps Reset beside the count with every outcome at ${String(width)}x${String(height)} in ${locale}`, async () => {
+        await metrics(width, height);
+        const answers = table(SIX_OUTCOME_PROJECT, locale);
+        answers.read_targeted_ms1_rows = SIX_OUTCOME_ROWS;
+        await installIpcBoundary(answers);
+        await browser.url("/");
+        await browser.waitUntil(() => browser.execute((lang: string) => document.documentElement.lang === lang, locale));
+        await toProject();
+        await browser.$(`[data-project-inspect-artifact="${ARTIFACT}"]`).click();
+        await browser.$("[data-targeted-row]").waitForDisplayed();
+        await browser.$("[data-targeted-view-text]").setValue("no such target");
+        await browser.$("[data-targeted-view-reset]").waitForDisplayed();
+        await browser.execute(() => {
+          document.querySelector("[data-targeted-table-export]")?.scrollIntoView({ block: "start" });
+        });
+        await capture(`table-view-six-outcomes-no-rows-${String(width)}-${locale}`);
+        const seen = await browser.execute(() => {
+          const count = document.querySelector("[data-targeted-view-count]")!.getBoundingClientRect();
+          const reset = document.querySelector("[data-targeted-view-reset]")!.getBoundingClientRect();
+          return {
+            outcomes: document.querySelectorAll("[data-targeted-view-outcome]").length,
+            gap: reset.left - count.right,
+            offCentre: Math.abs(reset.top + reset.height / 2 - (count.top + count.height / 2)),
+          };
+        });
+        evidence.push({ label: `six-outcomes-${String(width)}-${locale}`, seen });
+        expect(seen.outcomes).toBe(6);
+        expect(seen.gap).toBeGreaterThanOrEqual(0);
+        expect(seen.gap).toBeLessThanOrEqual(12);
+        expect(seen.offCentre).toBeLessThanOrEqual(1);
         expect(await unexpectedConsole()).toEqual([]);
       });
     }

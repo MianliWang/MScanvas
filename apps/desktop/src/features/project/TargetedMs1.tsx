@@ -1758,7 +1758,6 @@ export function TargetedMs1Report({
   // The view belongs to the result it was chosen on: ProjectPanel keys this
   // report by result, so another result starts again from the table.
   const [viewOptions, setViewOptions] = useState(INITIAL_TARGETED_VIEW);
-  const [viewExportOpen, setViewExportOpen] = useState(false);
   const viewText = useRef<HTMLInputElement | null>(null);
   const [output, setOutput] = useState<{
     readonly region: "figure" | "table";
@@ -1993,13 +1992,23 @@ export function TargetedMs1Report({
 
   function resetView() {
     setViewOptions(INITIAL_TARGETED_VIEW);
-    setViewExportOpen(false);
     // Reset goes with the view it reset, so the keyboard stays near the table.
     viewText.current?.focus();
   }
 
-  /** One table export button: of every row, or of the rows shown. */
+  /** One table export button: of every row, or just the format under a Save that counts the rows shown. */
   function tableExportButton(format: TargetedTableFormat, onPress: () => void, operation: Operation) {
+    const name = format.toUpperCase();
+    const spreadsheet = format === "spreadsheetCsv";
+    const idle =
+      operation === format
+        ? spreadsheet
+          ? t("targetedTableSpreadsheetExport")
+          : t("viewerExportFormat", { name })
+        : spreadsheet
+          ? t("targetedViewFormatSpreadsheet")
+          : `${name}…`;
+    const exporting = spreadsheet ? t("targetedTableSpreadsheetExporting") : t("viewerExporting", { name });
     return (
       <Button
         key={format}
@@ -2014,11 +2023,7 @@ export function TargetedMs1Report({
         {...(operation === format ? { "data-targeted-export": format } : { "data-targeted-view-export": format })}
         onClick={onPress}
       >
-        {format === "spreadsheetCsv"
-          ? t(initiated(operation, null) ? "targetedTableSpreadsheetExporting" : "targetedTableSpreadsheetExport")
-          : t(initiated(operation, null) ? "viewerExporting" : "viewerExportFormat", {
-              name: format.toUpperCase(),
-            })}
+        {initiated(operation, null) ? exporting : idle}
       </Button>
     );
   }
@@ -2179,13 +2184,19 @@ export function TargetedMs1Report({
                     </span>
                   </>
                 ) : (
+                  // Its own open state, so the formats close with the view whatever
+                  // ended it. Named by this button: the buttons say only the format.
                   <Disclosure
+                    id={`${ids}-view-save`}
                     variant="secondary"
                     label={t("targetedViewSave", { visible: shownRows.length, count: page.value.total })}
-                    open={viewExportOpen}
-                    onOpenChange={setViewExportOpen}
                     data-targeted-view-save-button=""
-                    regionProps={{ className: "targeted-output-actions", "data-targeted-view-formats": "" }}
+                    regionProps={{
+                      className: "targeted-output-actions",
+                      role: "group",
+                      "aria-labelledby": `${ids}-view-save`,
+                      "data-targeted-view-formats": "",
+                    }}
                   >
                     {TABLE_FORMATS.map((format) =>
                       tableExportButton(format, () => exportView(format, page.value.total), `view-${format}`),
@@ -2234,17 +2245,19 @@ export function TargetedMs1Report({
               {/* The live region stands before its first sentence, like the
                   output line; the sort's own sentence is heard, and the caption
                   says the same to the eye. */}
-              <p className="targeted-view-count" role="status" data-targeted-view-count="">
-                {viewActive ? t("targetedViewCount", { visible: shownRows.length, count: page.value.total }) : ""}
-                {sortWords === null ? null : (
-                  <span className="visually-hidden"> {t("targetedViewSortAnnouncement", sortWords)}</span>
-                )}
-              </p>
-              {viewActive ? (
-                <Button variant="secondary" size="sm" data-targeted-view-reset="" onClick={resetView}>
-                  {t("targetedViewReset")}
-                </Button>
-              ) : null}
+              <div className="targeted-view-tail">
+                <p className="targeted-view-count" role="status" data-targeted-view-count="">
+                  {viewActive ? t("targetedViewCount", { visible: shownRows.length, count: page.value.total }) : ""}
+                  {sortWords === null ? null : (
+                    <span className="visually-hidden"> {t("targetedViewSortAnnouncement", sortWords)}</span>
+                  )}
+                </p>
+                {viewActive ? (
+                  <Button variant="secondary" size="sm" data-targeted-view-reset="" onClick={resetView}>
+                    {t("targetedViewReset")}
+                  </Button>
+                ) : null}
+              </div>
             </div>
           ) : null}
 

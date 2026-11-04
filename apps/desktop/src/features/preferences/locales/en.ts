@@ -1607,6 +1607,7 @@ export const en = {
   targetedViewSave_one: "Save {{visible, number}} of {{count, number}} row…",
   targetedViewSave_other: "Save {{visible, number}} of {{count, number}} rows…",
   targetedViewNoRows: "No rows to save.",
+  targetedViewFormatSpreadsheet: "Spreadsheet CSV…",
   targetedViewChoose: "Choose where to save the rows shown.",
   targetedViewSaved_one: "Saved {{name}} with {{visible, number}} of {{count, number}} target row.",
   targetedViewSaved_other: "Saved {{name}} with {{visible, number}} of {{count, number}} target rows.",
