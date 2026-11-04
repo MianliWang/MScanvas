@@ -490,8 +490,23 @@ fn publish(
 }
 
 /// The private sibling's name for one attempt.
-fn temporary_name(prefix: &str, attempt: u32) -> String {
+pub(crate) fn temporary_name(prefix: &str, attempt: u32) -> String {
     format!("{prefix}{}-{attempt}.tmp", std::process::id())
+}
+
+/// Whether `name` is exactly what [`temporary_name`] gives for `prefix`, in any
+/// process and at any attempt.
+#[must_use]
+pub fn is_temporary_name(name: &str, prefix: &str) -> bool {
+    // As a `u32` prints: no sign, no leading zero, nothing past its range.
+    let number = |part: &str| part.parse::<u32>().ok().filter(|n| n.to_string() == part);
+    name.strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+        .and_then(|rest| rest.split_once('-'))
+        .is_some_and(|(process, attempt)| {
+            number(process).is_some()
+                && number(attempt).is_some_and(|attempt| attempt < TEMPORARY_ATTEMPTS)
+        })
 }
 
 /// Opens one `CREATE_NEW` sibling under a name only this writer would choose.
@@ -501,7 +516,7 @@ fn temporary_name(prefix: &str, attempt: u32) -> String {
 /// also remove it. Sharing is read-only for the object's whole lifetime, so
 /// nothing can write into or delete the bytes between filling and publishing.
 #[cfg(windows)]
-fn create_private_sibling(
+pub(crate) fn create_private_sibling(
     directory: &Path,
     prefix: &str,
 ) -> Result<(std::fs::File, PathBuf), PublishFailure> {
@@ -532,7 +547,7 @@ fn create_private_sibling(
 }
 
 #[cfg(not(windows))]
-fn create_private_sibling(
+pub(crate) fn create_private_sibling(
     directory: &Path,
     prefix: &str,
 ) -> Result<(std::fs::File, PathBuf), PublishFailure> {
