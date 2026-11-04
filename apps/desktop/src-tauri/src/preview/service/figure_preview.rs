@@ -89,9 +89,8 @@ impl PreviewService {
                 let id = self.begin_spectrum_export(token, "svg", range, &request.settings)?;
                 let reservation = PreviewReservation { service: self, id };
                 let claimed = self.claim_spectrum_export(&reservation.id)?;
-                let svg =
-                    svg_document(claimed.snapshot.spectrum(), claimed.settings, claimed.range)
-                        .map_err(|_| spectrum_export_refused())?;
+                let figure = claimed.figure().map_err(|_| spectrum_export_refused())?;
+                let svg = mscanvas_plot_spec::svg::render(&figure);
                 let empty = exported_point_count(claimed.snapshot.spectrum(), claimed.range) == 0;
                 (svg, empty)
             }
@@ -109,16 +108,10 @@ impl PreviewService {
                 )?;
                 let reservation = PreviewReservation { service: self, id };
                 let claimed = self.claim_chromatogram_export(&reservation.id)?;
-                (
-                    chromatogram_svg(
-                        claimed.snapshot.source(),
-                        claimed.range,
-                        claimed.traces,
-                        claimed.figure_settings(),
-                    )
-                    .map_err(|_| chromatogram_export_refused())?,
-                    false,
-                )
+                let figure = claimed
+                    .figure()
+                    .map_err(|_| chromatogram_export_refused())?;
+                (mscanvas_plot_spec::svg::render(&figure), false)
             }
             FigurePreviewSourceDto::Linked {
                 chromatogram_token,

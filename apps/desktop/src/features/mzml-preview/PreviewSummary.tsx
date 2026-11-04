@@ -157,7 +157,7 @@ export const PreviewMetadata = memo(function PreviewMetadata({ file, runSummary,
         <dl className="metadata-list">
           <div>
             <dt>{t("summaryFile")}</dt>
-            <dd>{formatDatasetLabel(file)}</dd>
+            <dd>{formatDatasetLabel(file)}<NotVerifiedTag label={file.notVerifiedByMscanvas} /></dd>
           </div>
           <div>
             <dt>{t("summarySize")}</dt>

@@ -160,6 +160,7 @@ export interface MessageParameters {
   readonly cnvAdvisoryMany: { readonly codes: string; readonly n: string };
   readonly cnvManifestTitle: { readonly name: string };
   readonly outputOpenGroup: { readonly name: string };
+  readonly outputAddNamed: { readonly name: string };
   readonly stagingRecoveryOwned: { readonly count: number };
   readonly clearCounts: { readonly count: number; readonly total: number; readonly protected: string };
   readonly clearCountsView: { readonly count: number; readonly total: number; readonly protected: string };

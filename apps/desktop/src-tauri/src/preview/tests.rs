@@ -4103,17 +4103,11 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
     // the same way. `get_bootstrap_status` is legacy bootstrap plumbing with no
     // caller here and is deliberately not in this list.
     //
-    // The registered commands no caller names yet: ADR 0052's per-output
-    // adoption, which lands in Rust before its contract and hook slice (the
-    // webview is rebuilt on its own branch), and the view cache's Settings row,
-    // which ADR 0060 slice 3 left for the next change. Declared rather than
+    // The registered commands no caller names yet: the view cache's Settings
+    // row, which ADR 0060 slice 3 left for the next change. Declared rather than
     // skipped, so the list cannot grow silently, and the declaration retires
     // itself: once the frontend calls one, this list must lose it.
-    let awaiting_a_caller = [
-        "adopt_workspace_conversion_output",
-        "describe_view_cache",
-        "clear_view_cache",
-    ];
+    let awaiting_a_caller = ["describe_view_cache", "clear_view_cache"];
     for name in &registered[1..] {
         let called = api.contains(&format!("\"{name}\""))
             || drop_transport.contains(&format!("\"{name}\""))

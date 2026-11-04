@@ -56,6 +56,20 @@ All notable changes will be documented here once versioned releases begin.
   reads with nothing lost and is written as schema 2 at its next change. After
   that, an earlier build says the saved file was written by a newer version, runs
   on its defaults and leaves the file alone.
+- **"Not verified by MSCanvas" follows a labelled output further.** The viewer's
+  file title, the Metadata tab's File row, the figure dialog and the figure
+  itself say it: a labelled source's SVG, PNG, copied image and preview draw the
+  label on a line under the panels, and an unlabelled figure is unchanged. Add
+  files…, Add mzML folder… and a drop recognise this session's finalized outputs
+  by the file object, so a moved output keeps its label, a renamed copy has none,
+  and a project reference registered from such a row records it
+  ([ADR 0055](docs/architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)).
+- **Each converted output has its own Add** in the conversion results, where the
+  output can be adopted and the queue has finished, with the label for a labelled
+  output and **Show in Workbench** once the row exists
+  ([ADR 0052](docs/architecture/adr/0052-per-output-adoption.md)).
+- **Describe again is offered only where asking again could help.** A name
+  collision or a row of the wrong family keeps its reason and no longer offers it.
 - **A Thermo RAW row can be viewed in two presses.** Highlighting it shows **View**
   and starts nothing. View converts it with the verified default into MSCanvas's
   view cache, never beside your file, shows each phase with Cancel, and opens it in
