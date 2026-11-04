@@ -334,13 +334,23 @@ fn the_uninstall_hook_spells_the_cache_as_this_module_does() {
         assert!(hook.contains(&define), "the hook lacks {define}");
     }
     assert!(hook.contains("!macro NSIS_HOOK_POSTUNINSTALL\n"));
-    // NSIS's RMDir /r follows a junction out of the tree it is removing.
-    assert!(
+    let code = || {
         hook.lines()
             .filter(|line| !line.trim_start().starts_with(';'))
-            .all(|line| !line.to_lowercase().contains("/r")),
+    };
+    // NSIS's RMDir /r follows a junction out of the tree it is removing.
+    assert!(
+        code().all(|line| !line.to_lowercase().contains("/r")),
         "the hook must not remove anything recursively"
     );
+    // NSIS's own string tests go by collation, which ignores U+00AD and U+200D:
+    // one more such byte in the marker, or a link named "." and U+200D, would pass.
+    for comparison in ["==", "!=", "StrCmp"] {
+        assert!(
+            code().all(|line| !line.contains(comparison)),
+            "the hook must compare by code unit, not with {comparison}"
+        );
+    }
 
     let config: serde_json::Value =
         serde_json::from_str(include_str!("../../tauri.conf.json")).expect("the configuration");
