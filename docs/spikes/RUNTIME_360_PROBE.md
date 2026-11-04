@@ -452,10 +452,10 @@ It approximates an installer increment and is not a built installer.
 | `pyopenms` `.dist-info` | 5 | 5,646 |
 | `nanobind_backend` `.dist-info` | 3 | 1,902 |
 
-Three SHA-256 passes over every file, after all runs: 0.70, 0.70 and 0.78 s, each against
-the manifest, with 0 changed, 0 missing and 0 extra (1.21 to 1.57 s on an earlier set of
-three). The LZMA2 estimate gave the same count on both of its runs. The cost at the
-installed location is unmeasured.
+Three SHA-256 passes over every file, after all runs: 1.05, 2.28 and 3.81 s on a busy host,
+each against the manifest, with 0 changed, 0 missing and 0 extra (0.70 to 1.57 s on two
+earlier sets of three). The LZMA2 estimate gave the same count on both of its runs. The
+cost at the installed location is unmeasured.
 
 ### 9.2 The bundled native libraries
 
@@ -538,9 +538,10 @@ License`. Which text ships with it stays open. `share/OpenMS/LICENSES/` keeps 15
 - **Where the engine looks for its data.** The engine's message above calls
   `OPENMS_DATA_PATH` "a last-resort fallback", `pyopenms/__init__.py` says that libOpenMS
   "resolves its data directory from compiled-in paths before it consults
-  OPENMS_DATA_PATH", and `OpenMS.dll` holds `D:/a/OpenMS/OpenMS/share/OpenMS`. Whether a
-  folder at such a path would be read in place of the copy's was not tested. That belongs
-  with the confinement measurement.
+  OPENMS_DATA_PATH", and `OpenMS.dll` holds `D:/a/OpenMS/OpenMS/share/OpenMS`, a path on
+  upstream's build machine. `D:/a` does not exist on this host, which has a `D:` drive.
+  Whether a folder at such a path would be read in place of the copy's was not tested.
+  That belongs with the confinement measurement.
 - **Any licence conclusion.** The inventories are facts for the licence slice, RT-3 and the
   owner.
 
@@ -578,6 +579,8 @@ enters the repository except this record.
 | `mztab_names.py` | the shape and `<pinned>` | `MzTab`'s public names, `MapAlignmentAlgorithmKD`, the ions missed | `b2e6bbffcad8d6669d9bb03e3cba086f8ee442147486820fa7fb019d390ba596` |
 | `doc_350.py` | `<pinned>` | the 3.5.0 call forms | `3d538c43e5992df76917cc563aa2655739a3805c85810f96606e198e97e80d94` |
 | `debug_mtd.py` | the shape | the missed ions against `min_sample_rate` | `9d7c3d10481a31815bd78258ee7b91a5642e621447023d97947ee03bdc160442` |
+| `smoke_import.py` | the shape | the import facts of section 4 | `10cf38d8f53504168dc53e6ef285cf31f07c965f56f0930581aee1fc87a8a610` |
+| `dll_paths.py` | system Python `-I` | the compiled-in paths of section 10 | `7ff2e26644cae6480d67283e2346a91d0b76693183c56b86ec09fe1dc80fb98d` |
 
 `request_absent.json` is `request.json` without the target `C8H10N4O2`, written by a
 one-off command.
