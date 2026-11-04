@@ -202,7 +202,9 @@ pub struct SelectedFileDto {
     /// 2026-10-29 and 2026-10-31; for a row from a drop or a project, as built in
     /// PR #201, 2026-11-03, not an owner decision). `null` is the answer for every
     /// other row, and never itself a claim of verification.
-    /// 2026-11-04: accepted by the owner (P201-SCOPE), for a drop.
+    /// 2026-11-04: accepted by the owner (P201-SCOPE), for a drop. Also the label
+    /// a row Restore workspace put back had stored (owner decision P201-RESTORE,
+    /// 2026-11-04).
     pub not_verified_by_mscanvas: Option<crate::project::record::NotVerifiedByMscanvas>,
 }
 
