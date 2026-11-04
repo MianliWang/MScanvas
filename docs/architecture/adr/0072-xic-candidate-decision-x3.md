@@ -55,8 +55,8 @@ rows. No threshold, precedence or input was relaxed.
 **3. It is practical at the observed scale, as proposed here.** No number was set in
 advance, as decision 9 requires. On the largest file, 546,327,287 bytes and 43,878
 spectra, one window took 3.23 to 4.14 s on the scored build with the processor at a mean of
-26–40%, and 8.13 to 11.85 s on a build with the same library with the processor at a mean of
-86%. The process peaks at about 20 MB, whatever the window's width. The planning estimate
+17–53%, and 8.13 to 11.85 s on a build with the same library with the processor at a mean of
+84%. The process peaks at about 20 MB, whatever the window's width. The planning estimate
 was 5–11 s. Memory grows far more slowly than the file: about 5 MB at 17.7 million bytes,
 about 20 MB at 546 million. Every window is still a new full pass, so the judgment leans on
 two things X4 owes: progress, and a cancellation that takes effect between spectra. The
@@ -109,17 +109,18 @@ frozen before the candidate's first run on them
 runs. Host: Windows 11, Intel family 6 model 154, 20 logical processors, 63.7 GiB, never
 idle. These are observations of one host, never thresholds.
 
-| Source | Bytes | Spectra read / decoded | Points in window | Scored build, processor at 26% | Scored build, processor at 40% | Earlier build, processor at 86% | Peak working set, all sets (MB) |
+| Source | Bytes | Spectra read / decoded | Points in window | Scored build, processor at 17% | Scored build, processor at 53% | Earlier build, processor at 84% | Peak working set, all sets (MB) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Profile representative | 17,703,110 | 931 / 931 | 1,679,804 | 0.143 / 0.135 / 0.132 | 0.138 / 0.148 / 0.155 | 0.284 / 0.378 / 0.306 | 5.2–5.3 |
 | Centroid representative | 39,965,112 | 7,602 / 4,627 | 11,090 | 0.397 / 0.368 / 0.370 | 0.398 / 0.397 / 0.403 | 0.867 / 0.956 / 0.861 | 7.8–8.0 |
 | R0 profile, narrow window | 546,327,287 | 43,878 / 2,748 | 1,988 | 3.274 / 3.411 / 3.229 | 3.884 / 4.137 / 3.827 | 8.394 / 8.568 / 8.219 | 19.8–19.9 |
 | R0 profile, whole scan range | 546,327,287 | 43,878 / 2,748 | 24,744,260 | 3.354 / 3.349 / 3.275 | 3.993 / 3.919 / 3.932 | 8.127 / 11.850 / 11.014 | 19.8–19.9 |
 
-The processor figures are each set's mean load, sampled beside it. The earlier build's
-`crates/proteowizard/src` is the same, and its source differs only in how the example exits
-on a read failure. The time follows the processor's load, and memory does not. Here a
-megabyte is 2^20 bytes. The bytes are in the
+The processor figures are each set's mean load over the 7, 9 and 20 samples taken inside its
+run, so they are rough. The earlier build's `crates/proteowizard/src` is the same, and its
+source differs only in the example: how it exits on a read failure, and one helper's body.
+The time rose with the processor's load, and memory did not. Here a megabyte is 2^20 bytes.
+The bytes are in the
 [X2 record](../../spikes/XIC_X2_CANDIDATE_EVIDENCE.md#release-resource-observations).
 
 **What the practicality judgment does not have:**
@@ -240,6 +241,9 @@ records require, not a design.
 - **X-3.3, option `keep`:** the preview and engine divergences stay, each with its reason in
   the interface. The evidence adds one: this run's `source_metadata` lives in the example, so
   X4's DTO still has to retain the attributes a unit refusal saw (#207's as-built table).
+- **A read failure and a refused document** share `XicRefusal::Document`. The example tells
+  them apart by pattern, so a file it cannot read does not score as a refused one. X4's DTO
+  needs the same distinction, or it shows a disk error as a refusal of the file.
 - **ADR 0037's and ADR 0046's obligations for X4 and X5** stay as ADR 0071's Slices section
   cites them.
 

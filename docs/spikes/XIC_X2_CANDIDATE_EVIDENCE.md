@@ -32,7 +32,10 @@ spec ran.
 are uncommitted, so this binary is the one these sources make. It ran at commit
 `abc6b443`, on this branch. The manifest binds the build to its source by content, so a
 later documentation commit does not unbind it. A reader recomputes it at the PR's head,
-by the listing `identity` writes.
+by the listing `identity` writes. `rust-toolchain.toml` pins the channel to 1.97.1, and the
+manifest does not list that file. Read back after the run: all 189 run records under
+`final-3/` state the runner digests in this table, and its four summaries state this
+executable.
 
 **The comparator is byte-identical.** Before anything else, every digest in
 [PX.3's frozen artifact table](PX_3_XIC_COMPARATIVE_EVIDENCE.md#s3-and-s4-were-frozen-before-scoring)
@@ -269,17 +272,18 @@ Observed, never thresholds. Host: `Windows-11-10.0.26300-SP0`, `Intel64 Family 6
 serial runs per target. The source was read just before each set, so these are
 warm-cache numbers. A cold read was not measured.
 
-**The machine was never idle, and the time follows the processor's load.** Other work ran
-throughout. Each set below had a separate 2-second loop over
-`Win32_Processor.LoadPercentage` running beside it. The first two sets are this build. The
-third is build `73266bea…`, whose `crates/proteowizard/src` is the same and whose example
-differs only in how a read failure exits, taken about 40 minutes earlier.
+**The machine was never idle, and the time rose with the processor's load.** Other work ran
+throughout. A separate loop over `Win32_Processor.LoadPercentage`, about one sample every
+3 s, ran beside each set. It ran longer than the sets did, so the table counts only the
+samples inside each set's own run, and they are few. The first two sets are this build. The
+third is build `73266bea…`, about an hour earlier. Its `crates/proteowizard/src` is the same,
+and its example differs only in how a read failure exits and in one helper's body.
 
-| Set | Build | Processor load, mean (lowest–highest), samples | Memory load |
-| --- | --- | --- | --- |
-| First | `a7c6705c…` | 26% (2–56), 26 | 66–67% |
-| Second | `a7c6705c…` | 40% (19–71), 26 | 64–66% |
-| Third | `73266bea…` | 86% (66–100), 23 | 72–78% |
+| Set | Build | Run (UTC) | Processor load in the run, mean (lowest–highest), samples | Memory load |
+| --- | --- | --- | --- | --- |
+| First | `a7c6705c…` | 12:51:58–12:52:21 | 17% (2–40), 7 | 66–67% |
+| Second | `a7c6705c…` | 12:53:20–12:53:47 | 53% (41–71), 9 | 64–66% |
+| Third | `73266bea…` | 11:49:54–11:50:56 | 84% (66–100), 20 | 72–78% |
 
 `read_xic` alone, on the source itself, with no snapshot, echo or positions (mode
 `observe`), in seconds. Each cell is three serial runs.
@@ -340,6 +344,12 @@ no acquisition bytes are in this repository.
   oracle would differ on a document none of the 77 contains, among them an array with no
   known role, which the oracle refuses and the engine ignores, and an empty zlib payload.
   This run does not reach them, by construction.
+- **The reason on the six `honest_refusal` rows.** The frozen comparison passes any refusal
+  there, and the example labels every document refusal `MalformedMetadata`, a tripped cap
+  included. The reasons here, which no comparison checks, are the same on both repeats:
+  `missing_required_value` (`rt_missing_value`), `not_well_formed` (`truncated`,
+  `px2_truncated`), `count_disagrees` (`inventory_count_mismatch`), `conflicting_term`
+  (`px2_contradictory`) and `undefined_param_group` (`px2_unresolved`). None is a cap.
 - **`Missing`.** No row expects it, and the pass never produces it (ADR 0071 decision 3).
 - **Larger files, a cold read, or another host.** R0 is the largest file measured, and it
   is one acquisition on one instrument. Scaling past it is not measured.
@@ -357,4 +367,4 @@ observations in `superseded-3/observations-2/`; `superseded-discrimination/` and
 `superseded-discrimination-2/` earlier runs of the mutations; `xic-d5/` the throwaway
 rendering, with its patch. `MANIFEST.json` lists every file's length and SHA-256, and its
 own digest is
-`bad7f4e592b93559ec03997446a357a2a517113fca0a47e8345b89cfa922f45f`.
+`956f0ecfbd571994cab622841f010315d6959dc338e8da8d5a39cd40725499a1`.
