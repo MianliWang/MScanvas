@@ -27,6 +27,13 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **The preference record is now schema 2, and it keeps what beta 1 saved.** It
+  gains text size, contrast, motion, wheel habit, crosshair, grid and whether
+  preferences are remembered, each defaulting to what MSCanvas does today. No
+  Settings row uses them yet. A record from beta 1 or a later build of schema 1
+  reads with nothing lost and is written as schema 2 at its next change. After
+  that, an earlier build says the saved file was written by a newer version, runs
+  on its defaults and leaves the file alone.
 - **Conversion runs are now remembered, and you can see and forget them.**
   Conversion → **Conversion history** lists every run with when it started and
   ended, or that it was cut short, and reads one run's files, outputs and checks

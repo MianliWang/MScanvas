@@ -522,3 +522,65 @@ seams. The change is frontend only: no DTO, no Rust, no retry or
 classification change. `ownedErrorMessages.test.ts` holds each new resource in
 both locales, and `check_repo.py`'s boundary-code check still accounts for
 every code.
+
+## Schema 2 (2026-11-04)
+
+Appended; the record above is unchanged. It describes schema 1. Its line "No
+migration path exists or is needed" stopped being true when beta 1 shipped on
+2026-10-28, and this section supersedes it.
+
+The owner answered V-7 on 2026-11-03: V-7.1, one bump with every new setting;
+V-7.2, the wheel habit with today's default; V-7.3, remembering on by default
+with an off switch; V-7.4, touch later, with no field; V-7.5, text size,
+contrast, motion, crosshair and grid.
+
+Schema 2 adds one required root group. Nothing reads these fields yet and no
+Settings row exists for them; the lanes that add the rows bring the behaviour.
+
+| Field | Domain | Default | Today's behaviour it keeps |
+| --- | --- | --- | --- |
+| `schemaVersion` | `2` | — | |
+| `display.textSize` | `standard` \| `large` | `standard` | the one text size |
+| `display.contrast` | `normal` \| `high` | `normal` | the one contrast |
+| `display.motion` | `system` \| `reduce` | `system` | motion follows the system |
+| `display.wheelHabit` | `draw` \| `figma` | `draw` | the wheel zooms |
+| `display.crosshair` | `true` \| `false` | `false` | no pointer lines are drawn; the crosshair cursor is not this switch |
+| `display.grid` | `true` \| `false` | `true` | gridlines are drawn |
+| `display.remember` | `true` \| `false` | `true` | every commit is written |
+
+A record that remembers no folder is exactly this:
+
+    {"schemaVersion":2,"appearance":{"locale":"en","density":"comfortable"},"layout":{"roster":"automatic","details":"automatic"},"display":{"textSize":"standard","contrast":"normal","motion":"system","wheelHabit":"draw","crosshair":false,"grid":true,"remember":true}}
+
+**Reading schema 1.** Two shapes are on disk in principle: beta 1's, and
+`backendFolder` beside the two groups from 2026-10-29. Both read as schema 2
+with the defaults above, and nothing is lost. A read writes nothing; the file
+becomes schema 2 at its next change, as any record is rewritten. A schema-1
+record holding `display` or any other unknown field is `malformed`. Any version
+other than 1 and 2 stays `unsupportedVersion` and is left in place until a user
+confirms replacing it.
+
+**An earlier build reading schema 2.** It refuses the record, runs on its
+defaults and leaves the file, the cost V-7.1 accepted. Beta 1 probes the version
+first, so it reports `unsupportedVersion` and says "The saved file was written
+by a newer version of MSCanvas."
+
+**The write rule (V-7.3).** A commit that leaves remembering off is not written
+and answers `notRemembered`; the session keeps the choice and says it is this
+session's. The commit that turns it off writes that switch and no other change.
+The commit that turns it on is written whole. The record keeps the switch.
+
+Three parts of this are as built on 2026-11-04, each a reading and not an owner
+decision:
+
+- The ProteoWizard folder is still remembered and forgotten while remembering is
+  off, because it is what lets the next launch find the tools. It never reaches
+  the webview.
+- Turning remembering off leaves what was stored in place, so the next launch
+  still starts on it. The v5.11 demo removes it instead.
+- `display` is a new root group rather than part of `appearance`, and whether
+  Reset defaults reaches it belongs to the lanes that add the rows.
+
+The upgrade is proved by fixtures, not by an installed beta 1: the tests read the
+exact bytes beta 1's writer produces, and `m7.5-preferences.native.e2e.ts` is
+edited for schema 2 and has not been run.

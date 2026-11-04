@@ -17,20 +17,25 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The only schema this build reads or writes.
+/// The schema this build writes, and the newest it reads.
 ///
-/// A record carrying anything else is refused as unsupported, not migrated. No
-/// earlier schema was ever published, so a migration path would be code for a
-/// format that never existed; a later one belongs to the build that wrote it.
-pub const SCHEMA_VERSION: u32 = 1;
+/// Schema 1 has been on users' disks since beta 1 shipped on 2026-10-28, so it
+/// is read too, through [`SchemaOneRecord`], and becomes this schema the next
+/// time the record changes. Reading never rewrites it. Any other version is
+/// refused as unsupported and left in place: it belongs to the build that wrote
+/// it, and that includes a later one.
+pub const SCHEMA_VERSION: u32 = 2;
+
+/// The one earlier schema this build reads.
+const SCHEMA_ONE: u32 = 1;
 
 /// The largest stored record this build will read.
 ///
-/// Sixteen kibibytes for a record whose valid serialization is under two
-/// hundred bytes. It is a bound on what a reader will pull into memory and
-/// parse, not a budget to grow into: the point is that an unusable file cannot
-/// become an unbounded read, and the margin exists so that formatting or a
-/// future field never turns a legitimate record into a refusal.
+/// Sixteen kibibytes for a record whose valid serialization, without a folder,
+/// is under three hundred bytes. It is a bound on what a reader will pull into
+/// memory and parse, not a budget to grow into: the point is that an unusable
+/// file cannot become an unbounded read, and the margin exists so that
+/// formatting or a future field never turns a legitimate record into a refusal.
 pub const MAX_RECORD_BYTES: u64 = 16 * 1024;
 
 /// The longest ProteoWizard folder this build stores, in UTF-8 bytes.
@@ -79,7 +84,7 @@ pub enum PanelPresentation {
     Hidden,
 }
 
-/// The Settings-owned half of the record: exactly what the dialog edits.
+/// The Settings-owned group of the record: what the dialog edits today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AppearancePreferences {
@@ -96,7 +101,7 @@ impl Default for AppearancePreferences {
     }
 }
 
-/// The shell-owned half: what the two panel toggles asked for.
+/// The shell-owned group: what the two panel toggles asked for.
 ///
 /// No dimension is stored, and that is a finding rather than an omission. The
 /// workspace grid gives the roster and the inspector fixed track widths and
@@ -118,6 +123,73 @@ impl Default for LayoutPreferences {
     }
 }
 
+/// Interface text size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextSize {
+    Standard,
+    Large,
+}
+
+/// Interface text contrast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextContrast {
+    Normal,
+    High,
+}
+
+/// Interface motion: whatever the system asks for, or reduced regardless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MotionPreference {
+    System,
+    Reduce,
+}
+
+/// What the wheel does on a plot: draw style zooms; Figma style pans, and
+/// Ctrl+wheel zooms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WheelHabit {
+    Draw,
+    Figma,
+}
+
+/// The settings of the one bump the owner chose (V-7.1), in one group.
+///
+/// A group of its own rather than more of [`AppearancePreferences`], which the
+/// webview uses as its session state. Every default keeps what a build without
+/// these fields does, which is why `crosshair` is off: a plot draws no pointer
+/// lines today, only a crosshair cursor, and that cursor is not this switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DisplayPreferences {
+    pub text_size: TextSize,
+    pub contrast: TextContrast,
+    pub motion: MotionPreference,
+    pub wheel_habit: WheelHabit,
+    pub crosshair: bool,
+    pub grid: bool,
+    /// Whether interface preferences are written at all. The record keeps this
+    /// switch itself; [`super::UiPreferenceStore::save`] applies its rule.
+    pub remember: bool,
+}
+
+impl Default for DisplayPreferences {
+    fn default() -> Self {
+        Self {
+            text_size: TextSize::Standard,
+            contrast: TextContrast::Normal,
+            motion: MotionPreference::System,
+            wheel_habit: WheelHabit::Draw,
+            crosshair: false,
+            grid: true,
+            remember: true,
+        }
+    }
+}
+
 /// The whole stored record.
 ///
 /// `deny_unknown_fields` throughout, at every level. A field this build does
@@ -130,14 +202,13 @@ pub struct UiPreferences {
     pub schema_version: u32,
     pub appearance: AppearancePreferences,
     pub layout: LayoutPreferences,
+    pub display: DisplayPreferences,
     /// The ProteoWizard folder the next launch starts discovery on, if the
     /// user chose one that worked.
     ///
-    /// Optional and omitted when absent, so a record without it is still
-    /// schema 1 and a record that never had one is written byte for byte as
-    /// before: adding it needs no migration. Written only by Rust, after a
-    /// picker choice read as usable; the webview's write payload cannot name
-    /// it. Validated on read: absolute, bounded, no control characters.
+    /// Optional and omitted when absent. Written only by Rust, after a picker
+    /// choice read as usable; the webview's write payload cannot name it.
+    /// Validated on read: absolute, bounded, no control characters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_folder: Option<String>,
 }
@@ -148,7 +219,39 @@ impl Default for UiPreferences {
             schema_version: SCHEMA_VERSION,
             appearance: AppearancePreferences::default(),
             layout: LayoutPreferences::default(),
+            display: DisplayPreferences::default(),
             backend_folder: None,
+        }
+    }
+}
+
+/// A stored record of schema 1, in either of the shapes on users' disks.
+///
+/// Beta 1 wrote three fields. Builds from 2026-10-29 can add `backendFolder`
+/// and still call it schema 1. As strict as the current record: a field neither
+/// shape has, `display` included, is a refusal rather than something to drop.
+///
+/// It shares the two group types with schema 2, so a change to either of them
+/// has to keep reading these records. The fixtures in `tests.rs` hold it to that.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SchemaOneRecord {
+    #[serde(rename = "schemaVersion")]
+    _schema_version: u32,
+    appearance: AppearancePreferences,
+    layout: LayoutPreferences,
+    #[serde(default)]
+    backend_folder: Option<String>,
+}
+
+impl From<SchemaOneRecord> for UiPreferences {
+    fn from(record: SchemaOneRecord) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            appearance: record.appearance,
+            layout: record.layout,
+            display: DisplayPreferences::default(),
+            backend_folder: record.backend_folder,
         }
     }
 }
@@ -178,7 +281,8 @@ pub enum RecordProblem {
     /// Not JSON, not this shape, an unknown field, or a value outside its
     /// domain.
     Malformed,
-    /// Well-formed enough to read a `schemaVersion`, and it is not this one.
+    /// Well-formed enough to read a `schemaVersion`, and it is not one this
+    /// build reads.
     UnsupportedVersion,
     /// Longer than [`MAX_RECORD_BYTES`]. Never parsed.
     Oversized,
@@ -211,9 +315,9 @@ impl RecordProblem {
 ///
 /// # Errors
 ///
-/// Answers [`RecordProblem::UnsupportedVersion`] for a readable record of
-/// another schema, and [`RecordProblem::Malformed`] for anything whose
-/// structure, fields or values this build does not accept.
+/// Answers [`RecordProblem::UnsupportedVersion`] for a readable record of a
+/// schema this build does not read, and [`RecordProblem::Malformed`] for
+/// anything whose structure, fields or values this build does not accept.
 pub fn read_record(bytes: &[u8]) -> Result<UiPreferences, RecordProblem> {
     /// Tolerant on purpose: this exists only to find the version, so a record
     /// full of fields from another build must still get past it.
@@ -225,13 +329,16 @@ pub fn read_record(bytes: &[u8]) -> Result<UiPreferences, RecordProblem> {
 
     let probe: VersionProbe =
         serde_json::from_slice(bytes).map_err(|_| RecordProblem::Malformed)?;
-    match probe.schema_version {
-        Some(SCHEMA_VERSION) => {}
+    let record: UiPreferences = match probe.schema_version {
+        Some(SCHEMA_VERSION) => {
+            serde_json::from_slice(bytes).map_err(|_| RecordProblem::Malformed)?
+        }
+        Some(SCHEMA_ONE) => serde_json::from_slice::<SchemaOneRecord>(bytes)
+            .map_err(|_| RecordProblem::Malformed)?
+            .into(),
         Some(_) => return Err(RecordProblem::UnsupportedVersion),
         None => return Err(RecordProblem::Malformed),
-    }
-    let record: UiPreferences =
-        serde_json::from_slice(bytes).map_err(|_| RecordProblem::Malformed)?;
+    };
     // Defence in depth rather than a second opinion: the strict deserialization
     // above cannot admit another version, and a record whose version disagrees
     // with the fields beside it is exactly the thing not to publish onward.

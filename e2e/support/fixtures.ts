@@ -17,6 +17,7 @@ import {
   shimadzuDataset,
   shippedIntent,
 } from "../../apps/desktop/src/test/previewFixtures";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
 import { RUN_HISTORY_EMPTY } from "./runHistory";
 
 /**
@@ -240,9 +241,10 @@ export function ipcTable(
       outcome: "saved",
       revision: 1,
       preferences: {
-        schemaVersion: 1,
+        schemaVersion: PREFERENCE_SCHEMA_VERSION,
         appearance: { locale: "en", density: "comfortable" },
         layout: { roster: "automatic", details: "automatic" },
+        display: DISPLAY_DEFAULTS,
       },
     },
     get_workspace_roster: {

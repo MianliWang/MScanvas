@@ -3,7 +3,7 @@
 //! ## What this boundary is
 //!
 //! Three operations over one closed record. The webview sends a typed payload
-//! naming which half of the record it is committing, and receives the committed
+//! naming which groups of the record it is committing, and receives the committed
 //! snapshot back. It never sends a path, a file name, a key, a prefix, a JSON
 //! document or a store operation, and there is no operation here that takes one
 //! -- the location is decided in [`storage`] and the contents are decided by the
@@ -190,9 +190,15 @@ impl UiPreferenceStore {
     /// replacement confirmation, so nothing about ordinary use -- a startup
     /// read, a Cancel, a media-query event, an automatic layout adjustment --
     /// can silently overwrite a record this build does not understand.
+    ///
+    /// While remembering is off, the store stops writing what it would
+    /// otherwise remember: a commit that leaves it off answers `NotRemembered`
+    /// and writes nothing. The commit that turns it off writes that switch and
+    /// no other change, and what was stored stays stored, so the next launch
+    /// still starts on it. A commit that turns it on is written whole.
     #[must_use]
     pub fn save(&self, request: &UiPreferenceWriteDto) -> UiPreferenceSaveDto {
-        if request.appearance.is_none() && request.layout.is_none() {
+        if request.appearance.is_none() && request.layout.is_none() && request.display.is_none() {
             return UiPreferenceSaveDto::Failed {
                 problem: "nothingToSave",
                 retryable: false,
@@ -201,12 +207,24 @@ impl UiPreferenceStore {
             };
         }
         self.commit(request.replace_unusable, |merged| {
+            let remember = request
+                .display
+                .map_or(merged.display.remember, |display| display.remember);
+            if !remember {
+                let was_on = merged.display.remember;
+                merged.display.remember = false;
+                return was_on;
+            }
             if let Some(appearance) = request.appearance {
                 merged.appearance = appearance;
             }
             if let Some(layout) = request.layout {
                 merged.layout = layout;
             }
+            if let Some(display) = request.display {
+                merged.display = display;
+            }
+            true
         })
     }
 
@@ -235,6 +253,10 @@ impl UiPreferenceStore {
     /// merge, publish and read-back as [`Self::save`], under the same lock, so
     /// a layout or Settings commit and this one cannot overwrite each other.
     /// An unusable stored record is never replaced from here.
+    ///
+    /// The remember switch does not reach it. That is a reading, not an owner
+    /// decision: V-7.3 does not say, and the folder is what lets the next launch
+    /// find the tools. A different answer changes this closure and nothing else.
     #[must_use]
     pub fn remember_backend_folder(&self, folder: Option<&Path>) -> UiPreferenceSaveDto {
         let folder = match folder.map(Path::to_str) {
@@ -251,15 +273,20 @@ impl UiPreferenceStore {
             }
             Some(Some(folder)) => Some(folder.to_owned()),
         };
-        self.commit(false, |merged| merged.backend_folder = folder)
+        self.commit(false, |merged| {
+            merged.backend_folder = folder;
+            true
+        })
     }
 
     /// The shared body of every commit: merge onto what is stored, publish,
     /// read back, and only then call it saved.
+    ///
+    /// `apply` answers whether there is anything to publish.
     fn commit(
         &self,
         replace_unusable: bool,
-        apply: impl FnOnce(&mut UiPreferences),
+        apply: impl FnOnce(&mut UiPreferences) -> bool,
     ) -> UiPreferenceSaveDto {
         let mut lane = self.locked();
         let revision = lane.revision;
@@ -282,7 +309,9 @@ impl UiPreferenceStore {
                 UiPreferences::default()
             }
         };
-        apply(&mut merged);
+        if !apply(&mut merged) {
+            return UiPreferenceSaveDto::NotRemembered { revision };
+        }
         // The exact snapshot about to be published, judged by this build's own
         // reader before it is written. A record that would not survive being
         // read back is not one to hand to a user as saved.

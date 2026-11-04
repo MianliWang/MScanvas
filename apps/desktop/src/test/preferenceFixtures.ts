@@ -14,6 +14,7 @@
  */
 
 import {
+  DISPLAY_DEFAULTS,
   LAYOUT_DEFAULTS,
   PREFERENCE_SCHEMA_VERSION,
   type PreferenceReadOutcome,
@@ -28,16 +29,19 @@ export const STORED_DEFAULTS: StoredPreferences = {
   schemaVersion: PREFERENCE_SCHEMA_VERSION,
   appearance: SESSION_DEFAULTS,
   layout: LAYOUT_DEFAULTS,
+  display: DISPLAY_DEFAULTS,
 };
 
 export function storedRecord(overrides: {
   readonly appearance?: Partial<StoredPreferences["appearance"]>;
   readonly layout?: Partial<StoredPreferences["layout"]>;
+  readonly display?: Partial<StoredPreferences["display"]>;
 } = {}): StoredPreferences {
   return {
     schemaVersion: PREFERENCE_SCHEMA_VERSION,
     appearance: { ...SESSION_DEFAULTS, ...overrides.appearance },
     layout: { ...LAYOUT_DEFAULTS, ...overrides.layout },
+    display: { ...DISPLAY_DEFAULTS, ...overrides.display },
   };
 }
 
@@ -146,11 +150,19 @@ export function createFakePreferencesApi(
         // stored. Rust does this under the lock that publishes; here it is the
         // same rule, so the interface is tested against the same contract.
         const base = unusable !== null || stored === null ? STORED_DEFAULTS : stored;
-        stored = {
-          schemaVersion: PREFERENCE_SCHEMA_VERSION,
-          appearance: request.appearance ?? base.appearance,
-          layout: request.layout ?? base.layout,
-        };
+        // And its write rule: a commit that leaves remembering off writes the
+        // switch, only if that changes it, and nothing else.
+        if (!(request.display?.remember ?? base.display.remember)) {
+          if (!base.display.remember) return { outcome: "notRemembered", revision };
+          stored = { ...base, display: { ...base.display, remember: false } };
+        } else {
+          stored = {
+            schemaVersion: PREFERENCE_SCHEMA_VERSION,
+            appearance: request.appearance ?? base.appearance,
+            layout: request.layout ?? base.layout,
+            display: request.display ?? base.display,
+          };
+        }
         unusable = null;
         revision += 1;
         return { outcome: "saved", preferences: stored, revision };

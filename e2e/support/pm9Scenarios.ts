@@ -9,6 +9,7 @@
 
 import { MZML_ROW, SETTLED_AUTHORITY, VENDOR_ROW, ipcTable } from "./fixtures";
 import { targetedTable } from "./targeted";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
 import {
   FAKE_WORKSPACE_CAPACITY,
   collidingFile,
@@ -423,9 +424,10 @@ export function qcProject(captured: boolean) {
 
 export function preferences(locale: Locale) {
   return {
-    schemaVersion: 1,
+    schemaVersion: PREFERENCE_SCHEMA_VERSION,
     appearance: { locale, density: "comfortable" },
     layout: { roster: "automatic", details: "automatic" },
+    display: DISPLAY_DEFAULTS,
   };
 }
 
