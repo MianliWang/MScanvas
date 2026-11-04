@@ -41,6 +41,17 @@ All notable changes will be documented here once versioned releases begin.
   says which RAW file and conversion it came from. Its exports are refused until
   they can say so too; **Convert this file…** is the route to an output you can
   export ([ADR 0060](docs/architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).
+- **Uninstalling removes the view cache.** Every uninstall, silent and passive
+  included, removes MSCanvas's view cache folder, up to 10 GiB of converted copies
+  that can be made again. Only the uninstaller's own `/UPDATE` switch keeps it, and
+  no installer passes that, so installing a newer version with its default,
+  **Uninstall before installing**, removes it too, and each file's next View
+  converts again. Presets and preferences stay unless you select
+  **Delete the application data**. With that box not selected, a folder MSCanvas
+  would not recognize as its cache, or one with a symbolic link or junction inside
+  it, is left as found. With it selected, the whole folder goes, and a junction
+  inside it loses what its target holds
+  ([ADR 0060](docs/architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).
 - **Conversion runs are now remembered, and you can see and forget them.**
   Conversion → **Conversion history** lists every run with when it started and
   ended, or that it was cut short, and reads one run's files, outputs and checks

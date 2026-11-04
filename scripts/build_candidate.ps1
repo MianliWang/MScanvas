@@ -163,6 +163,7 @@ try {
         "apps/desktop/src-tauri/tauri.conf.json",
         "apps/desktop/src-tauri/Cargo.toml",
         "apps/desktop/src-tauri/capabilities/default.json",
+        "apps/desktop/src-tauri/installer-hooks.nsh",
         "apps/desktop/package.json",
         "package.json",
         "Cargo.toml",
@@ -236,6 +237,19 @@ try {
         $buildExit = $LASTEXITCODE
         $finishedUtc = [DateTime]::UtcNow.ToString("o")
         Assert-NativeSuccess -Step $command -ExitCode $buildExit
+
+        # The template calls the uninstall hook under `!ifmacrodef`, so a Tauri CLI
+        # that renames the macro, or a configuration that drops the hook, still
+        # builds, and the uninstaller then leaves the view cache without a word.
+        # What the hook does is uninstall-view-cache.yml; this is only that it is
+        # called.
+        $generatedScript = "target/release/nsis/x64/installer.nsi"
+        foreach ($required in '^\s*!include\s+".*[\\/]installer-hooks\.nsh"', '^\s*!insertmacro\s+NSIS_HOOK_POSTUNINSTALL\s*$') {
+            if (-not (Test-Path -LiteralPath $generatedScript -PathType Leaf) -or
+                -not (Select-String -LiteralPath $generatedScript -Pattern $required -Quiet)) {
+                throw "$generatedScript has no line matching $required, so the uninstaller would not run its hook."
+            }
+        }
     }
 
     # The compiled frontend is the largest thing the installer carries, and
