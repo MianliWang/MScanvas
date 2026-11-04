@@ -84,9 +84,9 @@ its table row reports each spectrum's polarity. It states no scan type yet.
     refused (`partly_declared_polarity`), as mixed retention-time units are
     (decision 4). The check covers every MS1 spectrum of the file, not the
     window.
-  - A file where no MS1 spectrum declares one has one map, whose caption states
-    "polarity not reported". A polarity-switching file that declares nothing
-    shares that one map. That is a known risk, stated on the figure (as built
+  - A file where no MS1 spectrum declares one does not separate by polarity, even
+    if it switches, and each of its maps states "polarity not reported"; it still
+    has one map per representation. That is a known risk, stated on the figure (as built
     2026-11-04, not an owner decision: MAP-1.6 does not answer this case).
   - A polarity stated two ways or unreadably is not reported, which is the
     reader's rule (#182), so it counts as not declared here (as built 2026-11-04,
@@ -213,8 +213,9 @@ its table row reports each spectrum's polarity. It states no scan type yet.
     would show the centroid value; either reads as a change in signal.
   - A file where only some MS1 spectra declare one has no map: it is refused
     (`partly_declared_representation`).
-  - A file where no MS1 spectrum declares one has one map, whose caption states
-    "representation not reported" (as built 2026-11-04, not an owner decision:
+  - A file where no MS1 spectrum declares one does not separate by representation,
+    and each of its maps states "representation not reported"; it still has one map
+    per polarity (as built 2026-11-04, not an owner decision:
     MAP-1.8 does not answer this case).
 
 ### 4. Units and "not reported"
@@ -470,8 +471,8 @@ zoomed: 2 spectra; 2044 points binned, 18855 outside m/z; 2044 of 2097152 cells 
 - The map is a Track A view: it needs no backend and no Python runtime.
 - A file where only some MS1 spectra declare a polarity or a representation has
   no map.
-- A file that declares no polarity maps everything into one map, even if it
-  switches polarity, and says "polarity not reported" (decision 1, as built
+- A file that declares no polarity does not separate by polarity, even if it
+  switches, and each of its maps says "polarity not reported" (decision 1, as built
   2026-11-04, not an owner decision).
 - A numpress file has no map.
 - Until `be/map-scan-type` lands, the library maps zoom or SIM scans with the
@@ -512,8 +513,8 @@ decision 7's record for this one computation, and its scope is its limit.
   retention-time bins (decision 2), the command, the plot kind and the screen:
   those belong to analysis-ms1-map.
 - The rest of this record. The raster cap, the bin edges, the narrow-range
-  refusal, the one map of a file that declares no polarity or no representation
-  and the desktop design in decision 6 are the design of 2026-10-30 and
+  refusal, how a file that declares no polarity or no representation maps (it does
+  not separate by what it does not declare) and the desktop design in decision 6 are the design of 2026-10-30 and
   the library as built. The owner was not asked about them: not an owner decision.
 
 *Owner decisions, 2026-11-04, on ADR 0070's two questions; its dated notes hold the

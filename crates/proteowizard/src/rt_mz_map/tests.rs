@@ -561,6 +561,27 @@ fn no_representation_declared_is_one_map_stating_not_reported() {
 }
 
 #[test]
+fn both_polarities_map_apart_when_no_representation_is_declared() {
+    let document = document(&[
+        stating(0, "1", "", &[POSITIVE], &arrays(&[100.0], &[3.0])),
+        stating(1, "2", "", &[NEGATIVE], &arrays(&[100.0], &[4.0])),
+    ]);
+    let undeclared = MzmlRepresentation::NotDeclared;
+    let positive = kind(Some(MzmlPolarity::Positive), undeclared);
+    let negative = kind(Some(MzmlPolarity::Negative), undeclared);
+
+    let extents = ms1_extent(&table(&document)).expect("has MS1");
+    assert_eq!(extents.len(), 2);
+    assert_eq!((extents[0].kind(), extents[1].kind()), (positive, negative));
+
+    let view = request((0.0, 4.0), 1, (99.0, 101.0), 1);
+    for (kind, value) in [(positive, 3.0), (negative, 4.0)] {
+        let map = map(&document, MapRequest { kind, ..view }).expect("maps");
+        assert_eq!((map.spectra(), map.cell(0, 0)), (1, Some(value)));
+    }
+}
+
+#[test]
 fn the_maps_are_the_kinds_present_and_any_other_is_refused_before_a_read() {
     // Would refuse if read, so reaching the read shows as this refusal.
     let numpress = arrays_with(&[100.0], &[1.0], (MZ, COUNTS), NUMPRESS);
