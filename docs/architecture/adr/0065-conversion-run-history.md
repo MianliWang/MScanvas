@@ -153,6 +153,10 @@ A refusal that ends a running queue is terminal too, with its code.
   keeps its file from being read, and a Clear or an Off forgets a run only once
   its file is gone. One a holder keeps stays, with its end owed: its next write
   lands that end, or removes the file while Off holds.
+- From memory a run reads as its file would, without its items where they would
+  not fit (section 4). While Off holds, what is owed is that removal and no write,
+  so the list does not say `notWritten`; Off's own answer said `notRemoved`. Both
+  as built on 2026-11-03, not owner decisions.
 - A running item records its state and attempts only. The result an earlier
   attempt of a retry left is not this attempt's; a pending item keeps it, for the
   reason section 5 gives.
@@ -290,7 +294,11 @@ and of G16, cross-session staging ownership, unchanged.
   (`set-aside-<ms>-<name>`) and taken off its name. A hard link refuses an
   existing name, so nothing is replaced. Every list counts each run kept
   aside as `unreadable`, whether a start or a list found it, until Clear
-  removes it.
+  removes it. One a holder keeps under its own name as well has one link: the
+  next start or list only tries to take the name off. It counts once, unless the
+  holder also keeps the name from being read, which counts it again until the
+  holder lets go. Another document at that name is another run, with its own
+  link. As built on 2026-11-03, not an owner decision.
 - **Newer schema:** left exactly where it is and never rewritten. The list
   counts it as `newer`. Neither pruning nor Clear removes it, and pruning does
   not count it: a later build's run may be one its live instance is still
@@ -328,12 +336,14 @@ and of G16, cross-session staging ownership, unchanged.
   included, and no instance records while it is off (accepted 2026-10-30,
   RUN-1, question 2). An instance whose run was removed stops recording it at
   its next write, whether or not recording is on again by then. On records
-  from the next run onwards. Two corners are open edge cases (below).
+  from the next run onwards, except a run Off could not remove. Three corners are
+  open edge cases (below).
 - **Clear** forgets every ended run and everything kept aside. It keeps runs
   still in progress (accepted 2026-10-30, RUN-1, question 5), so their end or
   interruption can still be recorded, and says how many it kept. A run this
   build cannot judge counts as one of them, since it may be. A retry of a run
-  Clear forgot starts a new run rather than writing the old one back.
+  Clear forgot starts a new run rather than writing the old one back, except at
+  the one moment named below.
 - **Source data:** neither Clear nor Off touches a source acquisition or an
   output.
 - **Open edge cases.** RUN-1 did not answer these, and they stay **open**:
@@ -342,11 +352,26 @@ and of G16, cross-session staging ownership, unchanged.
     removes it; if recording is on again before either, it stays.
   - **A first write that never landed:** such a run has no file to miss, so an
     Off and an On in another instance before that write lands do not stop it.
+  - **A run Off could not remove:** a file a holder keeps leaves the run this
+    session's (section 2). If recording is on again by then, its record, paths
+    included, goes on being written until that run ends. Shipped 2026-11-03, not
+    an owner decision.
+  - **A retry at the moment of a Clear:** a retry of the same queue that reopens
+    a run after Clear read it as ended and before Clear removes its file is not
+    recorded: its next write finds the file gone and stops, and nothing says so.
+    Writing it back would restore what Clear forgot. The window is one file's read
+    to its removal; this comes from reading the code and was not run. Shipped
+    2026-11-03, not an owner decision.
   - **What Clear and Off cannot reach:** a write that crashed between creating
     its private sibling and publishing it can leave that sibling
     (`.mscanvas-run-history-*`), which holds a whole record, paths included.
     Neither Clear nor Off removes it, because a sibling another instance is
     writing looks the same; see the consequences.
+  - **A retry of a run Off could not remove:** more on the third corner above. If
+    recording is on again by then, a retry of its queue reopens that run's record
+    and writes it again, paths included, even if the run ended before Off. Shipped
+    2026-11-03, not an owner decision, and not among the cases shown to the owner
+    on 2026-11-03.
 
 *Recommendation, accepted (2026-10-30, RUN-1, question 1):* history is on by
 default, as workspace restore is in ADR 0061. *Alternative:* off until the user
@@ -427,7 +452,11 @@ shows the queue.
 - **A run** shows its start, its end or when its interruption was found, the
   counts, the settings, the build, the "not verified by MSCanvas" label and what
   ended the queue. A file shows its state, attempts, failure in the queue's own
-  sentence beside its stable code, and on Details its outputs and checks. An
+  sentence beside its stable code, and on Details its outputs and checks. A file a
+  retry has not reached offers no Details: the record keeps its earlier attempt for
+  section 5, and that attempt is not why it waits. The queue's own row does offer
+  Details on such a file, because it goes by attempts. As built on 2026-11-03, not an
+  owner decision. An
   interrupted file says its outcome is unknown; an oversized run says its files
   were not kept. A code appears only beside its sentence. What ended the queue is
   said as what happened, since the queue's own sentence is about that moment.
