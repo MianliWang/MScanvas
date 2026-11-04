@@ -37,6 +37,10 @@
 //! included --, an entry with anything else in it, an attempt with a link or
 //! other reparse point anywhere below it, and a root without its marker.
 //!
+//! The uninstaller is the one other thing that removes anything here:
+//! `installer-hooks.nsh` removes a root this module would recognize, and a test
+//! pins its names to the constants below.
+//!
 //! ## Names are held while they are used
 //!
 //! The root, `entries` and `staging` are held open for the cache's lifetime,
@@ -276,11 +280,7 @@ impl ViewCache {
             held => held,
         }
         .map_err(root_refusal)?;
-        match local_document::read_bounded(&root.join(ROOT_MARKER), 64) {
-            Ok(Some(marker)) if marker == ROOT_MARKER_CONTENT => {}
-            Err(ReadRefusal::Unreadable) => return Err(RootRefusal::Unavailable),
-            _ => return Err(RootRefusal::Unrecognized),
-        }
+        read_marker(&root)?;
         let entries = held_subdirectory(&root, ENTRIES)?;
         let staging = held_subdirectory(&root, STAGING)?;
         Ok(Self {
@@ -288,6 +288,20 @@ impl ViewCache {
             cap_bytes,
             held: [held_root, entries, staging],
         })
+    }
+
+    /// What the availability answer may ask of the root (decision 12): it
+    /// makes nothing, unlike [`Self::open`], so highlighting a row leaves no
+    /// folder behind. A root that is not there yet is no refusal: View makes it.
+    pub(crate) fn inspect(parent: Option<&Path>) -> Result<(), RootRefusal> {
+        let root = parent.ok_or(RootRefusal::Unavailable)?.join(ROOT_NAME);
+        match hold_directory(&root) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            held => {
+                let _held = held.map_err(root_refusal)?;
+                read_marker(&root)
+            }
+        }
     }
 
     /// The root, for the free-space probe of decision 9. Never crosses IPC.
@@ -355,6 +369,15 @@ fn held_subdirectory(root: &Path, name: &str) -> Result<File, RootRefusal> {
         Err(_) => return Err(RootRefusal::Unavailable),
     }
     hold_directory(&path).map_err(root_refusal)
+}
+
+/// Whether a root carries MSCanvas's marker (decision 6).
+fn read_marker(root: &Path) -> Result<(), RootRefusal> {
+    match local_document::read_bounded(&root.join(ROOT_MARKER), 64) {
+        Ok(Some(marker)) if marker == ROOT_MARKER_CONTENT => Ok(()),
+        Err(ReadRefusal::Unreadable) => Err(RootRefusal::Unavailable),
+        _ => Err(RootRefusal::Unrecognized),
+    }
 }
 
 fn root_refusal(error: io::Error) -> RootRefusal {

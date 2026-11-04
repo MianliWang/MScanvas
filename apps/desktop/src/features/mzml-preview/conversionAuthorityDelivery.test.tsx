@@ -156,6 +156,7 @@ function mountOperation(answers: readonly WorkspaceConversionUpdate[]) {
   const environment = {
     backendUsable: true,
     backendChanging: false,
+    rawViewRunning: false,
     previewReading: false,
     configurationProbing: false,
     workspaceSettling: false,

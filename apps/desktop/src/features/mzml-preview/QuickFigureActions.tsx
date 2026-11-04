@@ -5,6 +5,12 @@ import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { UiMessage } from "../preferences/i18n";
 import { figureProblemMessageKey, type FigureSettingProblem, type FigureSettingsValidation } from "./figureSettingsValidation";
 
+/** Why a plot's exports are all refused, and the id of the visible line that says so. */
+export interface ExportWithheld {
+  readonly reason: string;
+  readonly reasonId: string;
+}
+
 /** One entry of a plot's ⋯ menu. */
 export interface PlotMenuItem {
   readonly key: string;
@@ -41,8 +47,10 @@ export function figureRefusal(t: UiMessage, busy: boolean, validation: FigureSet
  * data exports. A refused item says why inside itself. A running PNG or Copy
  * guards repeats until the lane frees.
  */
-export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, reason, onPreview, onPng, onCopy, leadingItems = [], menuItems, menuNote }: {
+export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, reason, onPreview, onPng, onCopy, leadingItems = [], menuItems, menuNote, withheld = null }: {
   readonly busy: boolean; readonly figureUnavailable: boolean; readonly pngUnavailable: boolean;
+  /** Every export refused, with the visible sentence that says why (a viewed RAW file). */
+  readonly withheld?: ExportWithheld | null;
   /** Why PNG or Copy is refused, while one is. */
   readonly reason?: string | null;
   readonly onPreview: () => void; readonly onPng: () => void; readonly onCopy: () => void;
@@ -73,9 +81,11 @@ export function QuickFigureActions({ busy, figureUnavailable, pngUnavailable, re
     { key: "copy", label: t(active === "copy" && busy ? "viewerCopying" : "viewerCopy"),
       refused: busy || figureUnavailable, reason: busy || figureUnavailable ? reason : null, onSelect: () => run("copy") },
   ];
-  const groups = [leadingItems, figureItems, menuItems].filter(group => group.length > 0);
+  const refuse = (item: PlotMenuItem): PlotMenuItem => withheld === null ? item
+    : { ...item, refused: true, reason: withheld.reason };
+  const groups = [leadingItems, figureItems.map(refuse), menuItems.map(refuse)].filter(group => group.length > 0);
   return <div className="figure-quick-actions">
-    <Button size="sm" icon={<Icon name="download" />} aria-label={t("figureExportTitle")} onClick={onPreview}>{t("plotExport")}</Button>
+    <Button size="sm" icon={<Icon name="download" />} aria-label={t("figureExportTitle")} refused={withheld !== null} reasonId={withheld?.reasonId} onClick={onPreview}>{t("plotExport")}</Button>
     <Menu.Root>
       <Menu.Trigger asChild>
         <IconButton ref={trigger} size="sm" variant="secondary" icon={<Icon name="more" />} label={t("plotMoreExports")} />

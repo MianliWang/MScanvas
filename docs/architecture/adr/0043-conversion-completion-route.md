@@ -2474,6 +2474,12 @@ state and the count beside it. The vocabulary below is what M6 may show and the
 addition is listed in it; what stays locked is the shape — counts and a named
 state, never a percentage, a fraction of an item or an estimate.
 
+> **Amended 2026-11-03 by [ADR 0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)
+> slice 3, as the owner confirmed under A0060.** The view pane, and only it, may
+> show a determinate bar of bytes MSCanvas itself reads and the elapsed time of a
+> running view. Its `msconvert` phase still shows no fraction and no estimate, and
+> the queue's progress is unchanged.
+
 What M6 may show:
 
 ```text

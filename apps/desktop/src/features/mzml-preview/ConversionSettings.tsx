@@ -75,10 +75,12 @@ export function precisionNote(precision: ConversionNumericPrecision, t: UiMessag
   return note("precision", precision, t);
 }
 
-export function ConversionSettings({ configuration, onChoose, refusalNoticeId, view, onViewChange }: {
+export function ConversionSettings({ configuration, onChoose, refusalNoticeId, rawViewHeldBy = null, view, onViewChange }: {
   readonly configuration: ConversionConfigurationView;
   readonly onChoose: (intentId: string) => void;
   readonly refusalNoticeId: string | null;
+  /** What a running view says of itself, for a read it holds back. */
+  readonly rawViewHeldBy?: string | null;
   /**
    * Basic or Advanced, where a parent keeps it. The Conversion panel does, so
    * the reader's choice survives the settings leaving the screen while a queue
@@ -111,7 +113,8 @@ export function ConversionSettings({ configuration, onChoose, refusalNoticeId, v
     <h3>{t("cnvSettingsTitle")}</h3>{controls}
   </div>;
   if (held === null || held.configuration === "unattempted") return <div className="conversion-settings" data-settings-state="loading">
-    {head()}<p className="quiet-text">{t("cnvSettingsLoading")}</p>{retry()}
+    {/* Held behind a view that has the slot, nothing is being read yet (ADR 0060 slice 3 note 8). */}
+    {head()}<p className="quiet-text">{configuration.refusal === "rawViewRunning" && !configuration.reading ? rawViewHeldBy ?? t("rawViewBusyUnnamed") : t("cnvSettingsLoading")}</p>{retry()}
   </div>;
   if (held.configuration === "unavailableForBinding") return null;
   if (held.configuration === "failed") return <div className="conversion-settings" data-settings-state="failed">
