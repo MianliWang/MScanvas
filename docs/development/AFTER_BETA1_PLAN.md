@@ -797,7 +797,7 @@ preview is refused too.*
 ### 7.4 Future capabilities
 
 - P1: WSP-010 restore workspace; FIG-007 saved FigureSpec; ENV-004 copy
-  diagnostics (*2026-10-30:* Rust side implemented, no interface yet; [ADR 0063](../architecture/adr/0063-copy-diagnostics.md), Accepted 2026-10-30).
+  diagnostics (*2026-11-03:* implemented; [ADR 0063](../architecture/adr/0063-copy-diagnostics.md), Accepted 2026-10-30).
   - *2026-10-30: FIG-007's Rust side is implemented with no interface, its
     decisions accepted by the owner on 2026-10-30 (A0062) in
     [ADR 0062](../architecture/adr/0062-saved-figurespec.md): a `.msfigure`
@@ -856,6 +856,10 @@ None can be delivered by engineering alone; each waits for one input.
       conversion stays serial until then.
     - **Presets** are adopted as user-saved conversion presets
       ([ADR 0058](../architecture/adr/0058-user-saved-conversion-presets.md)).
+  - *2026-11-04:* on-screen result sorting and filtering and view-scoped export
+    left this list for the targeted results table: the owner selected S-7.1 (a)
+    on 2026-11-03, and FIG-010 builds it. The feature table's half comes with
+    N-A5 and N-A6.
 - **Owned elsewhere:** Workbench restore on reopen (WSP-010), surviving queue
   and adoption history (RUN-007), remembered choices (M7.5 preferences),
   saved typed plans and large unattended batches (M10).

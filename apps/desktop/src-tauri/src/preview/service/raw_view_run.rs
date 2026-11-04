@@ -13,7 +13,9 @@
 
 use std::sync::PoisonError;
 
-use mscanvas_proteowizard::{ConflictPolicy, ConversionIntent, ConversionRunOutcome};
+use mscanvas_proteowizard::{
+    ConflictPolicy, ConversionIntent, ConversionRunOutcome, provider_build_admission,
+};
 
 use super::super::authority::BackendAuthorityState;
 use super::super::backend::backend_label;
@@ -245,6 +247,10 @@ impl PreviewService {
     /// the backend as last observed, never a fresh probe. A catalog not read
     /// yet cannot name the build, and "available" with no release says verified,
     /// so View waits for it; a read that failed answers as a press would.
+    ///
+    /// It names codes and builds no `PreviewErrorDto`: this is a polled refusal
+    /// carried in an `Ok` outcome, and building one would put it in the
+    /// recent-error ring (ADR 0063, decision 5). A press still builds its own.
     fn raw_view_availability(&self, handle: &str) -> RawViewAvailabilityDto {
         let refused = |code: &str| RawViewAvailabilityDto::Refused {
             available: false,
@@ -256,7 +262,7 @@ impl PreviewService {
             Some((file.source_kind(), file.byte_length()))
         });
         let Some((kind, byte_length)) = row else {
-            return refused(&unknown_dataset().kind);
+            return refused("unknown_file_handle");
         };
         let build = {
             let mut observed = self
@@ -281,33 +287,37 @@ impl PreviewService {
             return refused("backend_not_found");
         };
         if self.backend_is_quarantined() {
-            return refused(&backend_quarantined().kind);
+            return refused("backend_quarantined");
         }
         if let Some(capabilities) = &capabilities
-            && refuse_unevidenced_build(capabilities, ConversionSourceKind::ThermoRawFile).is_err()
+            && !provider_build_admission(capabilities, ConversionSourceKind::ThermoRawFile).admits()
         {
             return refused("provider_build_not_evidenced");
         }
         {
             let slot = self.conversion_slot();
             if slot.is_busy() {
-                return refused(&slot.busy_refusal().kind);
+                return refused(if slot.view_is_running() {
+                    "raw_view_busy"
+                } else {
+                    "conversion_busy"
+                });
             }
         }
         if kind != DatasetSourceKind::ThermoRaw {
-            return refused(&raw_view_unsupported_source().kind);
+            return refused("raw_view_unsupported_source");
         }
         let parent = self.raw_view_settings().parent.clone();
         match ViewCache::inspect(parent.as_deref()) {
-            Err(RootRefusal::Unavailable) => return refused(&view_cache_unavailable().kind),
+            Err(RootRefusal::Unavailable) => return refused("view_cache_unavailable"),
             Err(RootRefusal::Unrecognized) => {
-                return refused(&view_cache_root_unrecognized().kind);
+                return refused("view_cache_root_unrecognized");
             }
             // Retryable: the press answers it, with Try again.
             Err(RootRefusal::Unreadable) | Ok(()) => {}
         }
         if byte_length > MAX_RAW_BYTES {
-            return refused(&view_cache_entry_too_large().kind);
+            return refused("view_cache_entry_too_large");
         }
         // Last: a transient wait must not hide what would still refuse after it.
         match (capabilities, failed_read) {

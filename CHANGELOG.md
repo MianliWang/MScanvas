@@ -6,6 +6,15 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **Copy diagnostics.** Settings → Support → **Copy diagnostics** shows a short
+  environment summary in a read-only box, and **Copy** puts that text on
+  the clipboard, for you to paste into a bug report yourself. It holds the
+  MSCanvas, Windows, WebView2 and ProteoWizard versions, whether that
+  ProteoWizard is the verified build, and this session's recent error codes,
+  failed conversions among them. It holds no file name, path, user name or list
+  of what is in your workspace, though an error code can name a vendor or a
+  feature you used, and its time says when. Nothing is written or sent
+  ([ADR 0063](docs/architecture/adr/0063-copy-diagnostics.md)).
 - **Restore workspace.** MSCanvas remembers the Workbench's files, groups, order
   and checked rows for the next start, in one document in its own per-user folder.
   At the next start nothing comes back by itself: a notice says how many files can
@@ -24,6 +33,15 @@ All notable changes will be documented here once versioned releases begin.
   not altered. The CSV and TSV files do not change. The check of how Excel,
   LibreOffice and WPS open it is pending
   ([ADR 0054](docs/architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)).
+- **Sort, filter and save the rows shown of a stored targeted result.** The
+  results table sorts by a pressed column head, with missing values last and ties
+  in plan order, and filters by outcome and by text over target name and formula.
+  **Save 12 of 40 rows…** writes those rows, in that order, as CSV, TSV or
+  spreadsheet CSV. The file is a format of its own,
+  `mscanvas_targeted_ms1_results_view` or `…_view_spreadsheet` schema 1, and says
+  in its preamble which rows it holds and which of how many. Nothing is
+  recomputed, and the whole table's three exports do not change. The owner's
+  check of the spreadsheet CSV in Excel, LibreOffice and WPS is still pending.
 
 ### Changed
 
@@ -104,6 +122,17 @@ All notable changes will be documented here once versioned releases begin.
   **To be able to go back to beta 1, keep a copy of the `.mscanvas` file
   before you save it in this version.** Beta 1's roll back reinstalls the
   program; it does not convert a project back.
+
+### Fixed
+
+- **A malformed mzML file can no longer show a spectrum joined from separate
+  pieces.** Two `<binary>` elements in one m/z or intensity array, or an element
+  inside its `<binary>`, could read as one array when the pieces held the declared
+  length. That spectrum is now refused, and the file still opens and its other
+  spectra still read. Text in a `<binary>` nested elsewhere in the array, after
+  the array's own payload, was joined on the same way; it is now ignored, so the
+  array is read from its own payload alone
+  ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
 
 ### Known limitations
 
