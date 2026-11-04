@@ -262,6 +262,8 @@ a side effect, as in `file_identity`; this is a designed refusal. A **View** pre
 that is refused is an `Err` at the boundary and is recorded. The owner's answer to
 question 7 did not take the `Ok`-carried refusals, and this path was not put to them.
 
+*Found on 2026-11-04, not an owner decision:* a **Cancel** pressed while a **View** is reading the RAW, in Checking file or again in Checking output, or a RAW that has grown past the limit since it was added, which the read in Checking file finds before its first chunk, leaves `file_unreadable` in the ring, though the file reads, because `revalidate_thermo_raw_reporting` builds that error before the view run replaces it with a stop or with `view_cache_entry_too_large`. The owner's answer to question 2 accepted that an error built and then discarded counts; "A stop is not a failure and is not recorded" is about a conversion's stop. Whether a **View** should leave this line is unanswered.
+
 ### 6. Format
 
 Plain text, so it pastes into an issue as it is. The first line is
