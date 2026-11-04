@@ -741,14 +741,15 @@ keeps the failed fit visible and keeps the cell out of tests even if A-22 lets
 `reintegrated` in. One state byte cannot say which of two quantities a cell holds,
 and nothing else in the format says so per cell, so this is a rule of
 `mscanvas.studyMatrix/1`: an `engineImputed` value is the raw point sum or, in a
-value-changing step's output (this decision's last bullet), that sum as the step
-transformed it, and the engine's imputed number is never stored in a matrix. Which
-of the two holds for a whole artifact, and its run's plan names the step, so the
-byte still means one quantity within a matrix. A step that could supply
+value-changing step's output (this decision's last bullet), that sum as the steps
+behind the output transformed it, and the engine's imputed number is never stored
+in a matrix. One of the two holds for the whole of an artifact, and the plans of the
+runs behind it name those steps, so the byte still means one quantity within a
+matrix. A step that could supply
 only the imputed number needs a new version of the format with a state word of its
 own, which B-6.5's seven do not include and the owner would have to add. The state's
 legend and the export's state column say that the value is a raw point sum, or that
-sum as the named step transformed it, not an imputed number.
+sum as the named steps transformed it, not an imputed number.
 
 - **A failure is not a missing value.** A cell is `undecided` where the step
   could not decide: the M9 `FAILED` reasons `EXTRACTION_AT_SPECTRUM_EDGE`,
@@ -1204,7 +1205,7 @@ No answer approves a dependency.*
 - **Question 10's reading:** the commit limit and the worker count's place (decision
   3) were not asked.
 - **A backfilled cell whose fit failed:** its state, its value and the rule that an
-  `engineImputed` value is the raw point sum, or that sum as a value-changing step
+  `engineImputed` value is the raw point sum, or that sum as value-changing steps
   transformed it, are a reading (decision 7).
 - **For U2's recipe record:** which QC is the reference when several are marked,
   what B-6.3 does with a `null` role (decision 1), the LOWESS span, and KD's
