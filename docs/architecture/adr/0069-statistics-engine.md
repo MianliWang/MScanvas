@@ -305,17 +305,20 @@ df 2e4, far above a cohort's.
 
 ### 8. Which cell states a statistic uses
 
-ADR 0067 decision 7 (#184, Proposed on 2026-11-04, not on `main`) leaves this to
-this record. As proposed, its table has six states; B-6.5 (2026-11-03) makes the
-engine's discard a seventh, `engineDiscarded`.
+ADR 0067 decision 7 (#184, still Proposed at 2026-11-04, not on `main`) leaves
+this to this record. As proposed at `b3802085`, its table has six states; B-6.5
+(2026-11-03) makes the engine's discard a seventh, `engineDiscarded`.
 
 | State | In a statistic | Basis |
 | --- | --- | --- |
 | `measured`, `imported` | enters | S-2.6 says observed values and no row names the states: a reading, not an owner decision |
-| `reintegrated` | does not enter, for now | CK-3 |
-| `engineImputed` | never | ADR 0067 decision 7 |
+| `reintegrated` | does not enter, for now | CK-3, which asks about tests |
+| `engineImputed` | never | ADR 0067 decision 7, which says a test |
 | `engineDiscarded` | never | B-6.5 makes it a state, a whole fit's failure and not a finding about one feature; that it never enters is a reading, not an owner decision |
 | `missing`, `undecided` | have no value | ADR 0067 decision 7 |
+
+CK-3 and ADR 0067 speak of tests. Applying them to PCA and the QC metrics too is
+a reading, not an owner decision.
 
 Track A tables hold only `imported` and `missing`. The rest are left out and
 counted apart from missing. Whether `undecided` counts in a QC denominator is

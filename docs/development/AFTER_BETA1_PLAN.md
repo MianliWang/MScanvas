@@ -729,7 +729,7 @@ preview is refused too.*
 - P2: FIG-008 figure composer; VIEW-008 multi-layer comparison (needs an
   admitted normalization first); RUN-007 persistent conversion history;
   ANA-002 QC recipe or a second recipe.
-  - *2026-10-30:* the statistics library for ANA-002 and the v5.11
+  - *2026-11-03:* the statistics library for ANA-002 and the v5.11
     statistics page (PCA, Welch's test with a log2 fold change,
     Benjamini-Hochberg, volcano rows, QC RSD, detection rate and missing
     fraction) is `crates/stats`, with no command or interface. Its definitions
