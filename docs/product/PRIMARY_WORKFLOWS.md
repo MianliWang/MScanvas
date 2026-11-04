@@ -646,7 +646,7 @@ the two parameters → **Review plan** (Rust resolves a digest-named plan per
 acquisition and says, per line or per acquisition, what stops it) → **Run** or
 **Run N analyses**, one worker at a time, with **Cancel** or **Stop batch** →
 the result report (outcome counts, rows in plan order, one target's stored
-evidence as the canonical figure) → **Export** SVG, PNG, CSV or TSV, with
+evidence as the canonical figure) → **Export** SVG, PNG, CSV, TSV or spreadsheet CSV, with
 **Details** for the plan, the source as read and the attempt. Recovery: a
 problem in the request is named by line and nothing runs; a refusal before a
 run (unsaved project, no runtime, no room for a copy, a quarantined session)
