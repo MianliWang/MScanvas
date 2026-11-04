@@ -780,6 +780,10 @@ fn a_commit_keeps_the_groups_and_the_folder_it_does_not_name() {
     let chosen = DisplayPreferences {
         text_size: TextSize::Large,
         contrast: TextContrast::High,
+        motion: MotionPreference::Reduce,
+        wheel_habit: WheelHabit::Figma,
+        crosshair: true,
+        grid: false,
         ..DisplayPreferences::default()
     };
     let after_display = saved(&store.save(&display(chosen)));
