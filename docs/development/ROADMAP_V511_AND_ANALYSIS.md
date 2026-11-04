@@ -163,7 +163,7 @@ New ADR files are new files, and any lane may add one. Amendments to existing AD
 
 ### Phase 1: Core jobs completed; foundations of both tracks
 
-**Exit:** Conversion, viewing and figures complete apart from history and XIC; the new plot kinds, crates/stats, the schema-5 kinds and the study-model record in place; the runtime ported, confined and measured on GitHub Actions.
+**Exit:** Conversion, viewing and figures complete apart from history and XIC; the new plot kinds, crates/stats, the schema-5 kinds and the study-model record in place; the runtime ported and confined, its workflow on GitHub Actions, and U1 measured locally (B-11.2).
 
 30 items, 87-92 slices, 16 parallel lanes: L-REC, L-RUNTIME, L-READER, L-VIEW, L-CONV-A, L-CONV-B, L-VIEWRAW, L-DESIGN, L-SHELL, L-FIG, L-STATS-CORE, L-PROJECT, L-IMPORT, L-FEATURES, L-MEASURE, L-WORKER.
 
