@@ -210,8 +210,10 @@
    current one in the accent with its underline. */
 .viewer-file-title { display: flex; grid-row: 1; grid-column: 1; align-items: center; min-width: 0; }
 .viewer-file-name { min-width: 0; margin: 0; padding: 0 16px 0 12px; overflow: hidden; color: var(--color-text-primary); font-size: 16px; font-weight: 650; line-height: 36px; text-overflow: ellipsis; white-space: nowrap; }
-/* The name gives way before the label; its title attribute keeps it whole. */
-.viewer-file-title > .not-verified-tag { flex: none; margin-right: 16px; white-space: nowrap; }
+/* The name gives way before the label, down to a few characters; then the label
+   gives way from its end. Each one's title attribute keeps it whole. 92 px: the
+   name's 28 of padding and 48 of characters, and the label's margin. */
+.viewer-file-title > .not-verified-tag { flex: none; max-width: calc(100% - 92px); margin-right: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-tabs { display: contents; }
 .viewer-tabs > .ui-tablist { grid-row: 1; grid-column: 2; gap: 2px; overflow: visible; border-bottom: 0; }
 .viewer-tabs .ui-tab { height: 36px; min-height: 0; padding: 2px 10px 0; font-size: 13px; }
@@ -438,7 +440,7 @@
 .workbench-inspector .inspector-section h2.preview-file-identity { margin: 0; color: var(--color-text-primary); font-size: 16px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
 :is(.workbench-inspector, .preview-metadata) .metadata-list { gap: 0; }
 :is(.workbench-inspector, .preview-metadata) .metadata-list > div { padding: 7px 0; border-bottom: 1px solid #edf1f5; }
-:is(.workbench-inspector, .preview-metadata) .metadata-list dt { color: var(--color-text-secondary); }
+:is(.workbench-inspector, .preview-metadata) .metadata-list dt { flex: none; color: var(--color-text-secondary); }
 :is(.workbench-inspector, .preview-metadata) .metadata-list dd { overflow-wrap: anywhere; }
 .workbench-inspector .spectrum-facts { grid-template-columns: minmax(0, 1fr); }
 .inspector-text { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }

@@ -176,6 +176,81 @@ describe("A0055 and ADR 0052, rendered", () => {
     });
   }
 
+  // The least room the title row has: the narrowest windows that still dock both
+  // panels, which neither named size reaches.
+  for (const [locale, width] of [["en", 1051], ["en", 1100], ["en", 1200], ["zh-CN", 1051], ["zh-CN", 1100]] as const) {
+    it(`keeps the label off the tabs and a part of the name with both panels docked, ${locale} ${String(width)}x768`, async () => {
+      const name = "Plasma_QC_batch_08_replicate_04_long_acquisition_converted.mzML";
+      await open(labelledViewerWorld(locale, name), locale, width, 768);
+      await revealRosterRow(MZML_ROW.handle);
+      await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+      await selectTheSpectrum(0);
+      await browser.$('.workbench-header [aria-controls="workbench-inspector"]').click();
+      await browser.$(".workbench-inspector").waitForDisplayed({ timeout: 30_000 });
+
+      const title = await browser.execute((words: string) => {
+        const heading = document.querySelector<HTMLElement>("h1.viewer-file-name")!;
+        const tag = document.querySelector<HTMLElement>(".viewer-file-title [data-not-verified]")!;
+        const tabs = document.querySelector<HTMLElement>(".viewer-tabs > .ui-tablist")!;
+        const inset = parseFloat(getComputedStyle(heading).paddingLeft) + parseFloat(getComputedStyle(heading).paddingRight);
+        const first = document.createRange();
+        first.setStart(tag.firstChild!, 0);
+        first.setEnd(tag.firstChild!, words.length);
+        const tagEnd = tag.getBoundingClientRect().right - parseFloat(getComputedStyle(tag).paddingRight) - parseFloat(getComputedStyle(tag).borderRightWidth);
+        return {
+          docked: getComputedStyle(document.querySelector(".workbench-inspector")!).position !== "absolute",
+          tagClearOfTabs: tag.getBoundingClientRect().right <= tabs.getBoundingClientRect().left,
+          nameRoom: heading.getBoundingClientRect().width - inset >= 44,
+          firstWordsRoom: tagEnd - first.getBoundingClientRect().right,
+          tagText: tag.textContent,
+          tagTitle: tag.title,
+          overflowX: document.documentElement.scrollWidth - innerWidth,
+        };
+      }, BUNDLES[locale].m74CnvNotVerified);
+      await shot(`viewer-title-docked-${locale}-${String(width)}`);
+      const { firstWordsRoom, ...rest } = title;
+      expect(rest).toEqual({ docked: true, tagClearOfTabs: true, nameRoom: true, tagText: buildLabel(locale), tagTitle: buildLabel(locale), overflowX: 0 });
+      // The label's first words, its whole claim, stay readable from 1100 up, with
+      // room left for the ellipsis. Below that, the two panels beside it say it all.
+      if (width >= 1100) expect(firstWordsRoom).toBeGreaterThanOrEqual(10);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  }
+
+  for (const [locale, width, height] of EVERY_SIZE) {
+    it(`keeps Metadata's term on one line beside a long labelled name, ${locale} ${String(width)}x${String(height)}`, async () => {
+      const name = `${"Plasma_QC_batch_08_replicate_04_".repeat(3)}long.mzML`;
+      await open(labelledViewerWorld(locale, name), locale, width, height);
+      await revealRosterRow(MZML_ROW.handle);
+      await browser.$(`.grouped-roster [data-handle="${MZML_ROW.handle}"]`).click();
+      await selectTheSpectrum(0);
+      if (width > 1050) {
+        await browser.$('.workbench-header [aria-controls="workbench-inspector"]').click();
+        await browser.$(".workbench-inspector").waitForDisplayed({ timeout: 30_000 });
+      }
+      await browser.$('.viewer-tabs [role="tab"]:nth-child(3)').click();
+      await browser.$(".preview-metadata [data-not-verified]").waitForExist({ timeout: 30_000 });
+
+      const row = await browser.execute(() => {
+        const dt = document.querySelector<HTMLElement>(".preview-metadata .metadata-list dt")!;
+        const dd = dt.nextElementSibling as HTMLElement;
+        const tag = dd.querySelector<HTMLElement>("[data-not-verified]")!;
+        const term = document.createRange();
+        term.selectNodeContents(dt);
+        const lines = new Set(Array.from(term.getClientRects(), (rect) => Math.round(rect.top))).size;
+        const list = dt.closest<HTMLElement>(".metadata-list")!;
+        return {
+          termLines: lines,
+          ddInsideList: dd.getBoundingClientRect().right <= list.getBoundingClientRect().right + 1,
+          tagInsideDd: tag.getBoundingClientRect().right <= dd.getBoundingClientRect().right + 1,
+          overflowX: document.documentElement.scrollWidth - innerWidth,
+        };
+      });
+      await shot(`metadata-long-labelled-${locale}-${String(width)}`);
+      expect(row).toEqual({ termLines: 1, ddInsideList: true, tagInsideDd: true, overflowX: 0 });
+    });
+  }
+
   it("adds one labelled output from the keyboard, says so on its line and shows the row", async () => {
     const table = conversionWorld("en", [RAW], LABELLED_FINISHED);
     table.adopt_workspace_conversion_output = {
