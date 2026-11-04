@@ -597,12 +597,13 @@ export function PreviewWorkspace() {
   }, [evidenceState]);
   // And the way in: a press that re-reads a row takes its button with it, from a
   // failed or open preview or the offer to read it again, so the keyboard continues
-  // at the pane that replaced it.
-  const rawPaneHandle = rawPaneRow?.handle ?? null;
+  // at the pane that replaced it. Only the row being read: a pane another row's
+  // removal brought up has not been asked for, and the keyboard has its own way back.
+  const rawPaneOverOwnRead = rawPaneRow !== null && rawPaneRow.handle === (previewedHandle ?? workspace.activeDataset?.handle);
   useLayoutEffect(() => {
-    if (rawPaneHandle === null || document.activeElement !== document.body) return;
+    if (!rawPaneOverOwnRead || document.activeElement !== document.body) return;
     evidenceRef.current?.querySelector<HTMLElement>("[data-raw-view-pane] button")?.focus({ preventScroll: true });
-  }, [rawPaneHandle]);
+  }, [rawPaneOverOwnRead]);
 
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
