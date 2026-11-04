@@ -150,6 +150,12 @@ its table row reports each spectrum's polarity. It states no scan type yet.
   centroid MS1 spectrum, has no first view: its retention-time range is empty, and
   a request over it is refused (`map_bounds_invalid`). What the screen does then
   belongs to analysis-ms1-map (as built 2026-11-04, not an owner decision).
+- **A map whose stated m/z range is empty or inverted,** a lowest observed m/z at
+  or above the highest, has no first view either: `ms1_extent` reports the range as
+  stated, and a request over it is refused (`map_bounds_invalid`). MAP-1.5 speaks of
+  spectra that state no range, so it does not answer this case. What the screen
+  does then belongs to analysis-ms1-map (as built 2026-11-04, not an owner
+  decision).
 - **When the spectra do not state an m/z range (MAP-1.5),** the map has no first
   m/z range: the user enters one, and the reason is stated. No extra pass finds
   it.
@@ -501,7 +507,7 @@ MAP-1.1 is the form of the map:
 
 | Id | Answer | Cost stated with the option |
 | --- | --- | --- |
-| MAP-1.1 | Both forms, each as soon as it is ready; neither waits for the XIC or Python. This record is the MS1 map; the MS2 precursor map needs none | The two maps are easily confused and must be labelled clearly |
+| MAP-1.1 | Both forms, each as soon as it is ready; neither waits for the XIC or Python. This record is the MS1 map; the MS2 precursor map needs none | 3 and 4 slices; both wait for the new plot kinds (6 slices); the two maps are easily confused and must be labelled clearly |
 | MAP-1.2 | The greatest intensity per cell, stated in the caption | Weak signals in the same cell are hidden; on an ion trap, profile and centroid still cannot be compared |
 | MAP-1.3 | log10 only, with one colour for values at or below 0 | Differences in strength look compressed; no linear scale for the base peak |
 | MAP-1.4 | A vector cell grid with adjacent cells of one colour merged; no dependency change | With many cells the file can be large, so it needs a cap |
@@ -564,7 +570,7 @@ record does not state yet.
 | 3. Units | Decision 4 | |
 | 4. Profile and centroid | Decision 3 | |
 | 5. No invented values | Decisions 1 and 5: an empty cell has no value, zero and negative values are kept, a spectrum that cannot be used refuses the whole map, and nothing falls back to `msaccess` or another reader | |
-| 6. Arithmetic | Decision 1: the maximum of stored values as `f64`. ADR 0056's selected read widens each exactly or refuses it, and refuses a non-finite value, so none reaches a cell | |
+| 6. Arithmetic | Decisions 1 and 2: the maximum of stored values, in cells of `f64`. The rest is ADR 0056's, not this record's: its selected read widens each value exactly or refuses it (its decision 5) and refuses a non-finite value (its decision 1), so none reaches a cell | |
 | 7. Retention | Decision 2: at most 2^21 `f64` cells, returned to the caller, and the library keeps nothing; nothing is cached and no array outlives its spectrum's step. **Not stated yet:** where the desktop keeps the raster and when that ends, which slice 2 owes this record | The desktop's part, statement included (slice 2) |
 | 8. Running | Decision 6: cancellation between spectra, and progress as spectra read out of the table's count, with no estimate of time | Supersession and the generation check (slice 2) |
 | 9. Provenance | The result carries the map's polarity and representation, bounds, bins, units and counts of spectra and points. The pass resolves no operand, so the request is both as typed and as resolved. Spectra excluded: the other maps' counts, and the map's own beyond the window, from `ms1_extent`. Refused: none, because a refused spectrum refuses the map. Decision 9, step 2: the command's result also names the source, its generation and this record. Decision 7: both exports carry the same | The source, its generation and this record's name (slice 2); the count of narrow scans left out (`be/map-scan-type`); the exports (slice 3) |

@@ -31,8 +31,9 @@ use crate::process::CancellationToken;
 pub const MAX_MAP_CELLS: u64 = 1 << 21;
 
 /// Which MS1 spectra one map is of. A table whose MS1 spectra declare no
-/// polarity, or no representation, has one map that states it as not reported:
-/// `polarity: None`, or [`MzmlRepresentation::NotDeclared`].
+/// polarity, or no representation, does not separate by what it does not declare,
+/// and each of its maps states it as not reported: `polarity: None`, or
+/// [`MzmlRepresentation::NotDeclared`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MapKind {
     pub polarity: Option<MzmlPolarity>,
