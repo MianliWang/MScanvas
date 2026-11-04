@@ -35,6 +35,24 @@ fn a_matrix_refuses_a_length_that_does_not_match_its_shape() {
 }
 
 #[test]
+fn no_features_with_a_huge_sample_count_is_answered_without_a_panic() {
+    let m = Matrix::new(usize::MAX, 0, vec![]).unwrap();
+    assert_eq!(welch(&m, &[0, 1], &[2, 3]), Ok(vec![]));
+    assert_eq!(qc_metrics(&m, &[0], &[1]), Ok(vec![]));
+    assert_eq!(
+        welch(&m, &[0, 0], &[2, 3]),
+        Err(StatsError::DuplicateSample { sample: 0 })
+    );
+    assert_eq!(
+        pca(&m, Scaling::None, 1),
+        Err(StatsError::TooLarge {
+            samples: usize::MAX,
+            features: 0
+        })
+    );
+}
+
+#[test]
 fn a_matrix_refuses_a_non_finite_value_and_names_where_it_is() {
     for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let mut values = vec![Some(1.0); 6];

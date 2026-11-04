@@ -9,6 +9,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashSet;
+
 use nalgebra::{DMatrix, SymmetricEigen};
 use statrs::distribution::{ContinuousCDF, StudentsT};
 use statrs::function::beta;
@@ -124,9 +126,10 @@ impl Matrix {
 }
 
 /// Refuses an index outside the matrix, an index listed twice anywhere in
-/// `sets`, and a set smaller than `min`.
+/// `sets`, and a set smaller than `min`. `seen` grows with the sets, never with
+/// `samples`: a matrix with no features can declare any sample count.
 fn check_sets(samples: usize, sets: &[&[usize]], min: usize) -> Result<(), StatsError> {
-    let mut seen = vec![false; samples];
+    let mut seen = HashSet::new();
     for set in sets {
         if set.len() < min {
             return Err(StatsError::TooFewSamples {
@@ -135,13 +138,12 @@ fn check_sets(samples: usize, sets: &[&[usize]], min: usize) -> Result<(), Stats
             });
         }
         for &sample in *set {
-            let slot = seen
-                .get_mut(sample)
-                .ok_or(StatsError::SampleOutOfRange { sample, samples })?;
-            if *slot {
+            if sample >= samples {
+                return Err(StatsError::SampleOutOfRange { sample, samples });
+            }
+            if !seen.insert(sample) {
                 return Err(StatsError::DuplicateSample { sample });
             }
-            *slot = true;
         }
     }
     Ok(())
@@ -459,8 +461,8 @@ pub fn pca(values: &Matrix, scaling: Scaling, components: usize) -> Result<Pca, 
         // heuristic: scaling a spread that small to unit variance could weigh
         // rounding noise like a real feature. It also drops a resolvable spread
         // below about n·ε relative, e.g. [1e15, 1e15, 1e15, 1e15 + 1], whose
-        // corrected two-pass sd of 0.5 is exact; Welch and QC count only
-        // identical values as zero variance (ADR 0069, open question 4).
+        // corrected two-pass sd of 0.5 is exact; QC, and Welch on log2 values,
+        // count only identical values as zero variance (ADR 0069, open question 4).
         let peak = x.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
         if sd <= n as f64 * f64::EPSILON * peak {
             excluded_features.push((feature, Unavailable::ZeroVariance));
