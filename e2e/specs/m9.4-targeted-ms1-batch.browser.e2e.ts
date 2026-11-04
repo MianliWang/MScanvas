@@ -35,6 +35,7 @@ import {
 import { ipcTable } from "../support/fixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
 
 let output = "";
 const evidence: unknown[] = [];
@@ -310,9 +311,10 @@ function table(state: unknown, locale: "en" | "zh-CN" = "en") {
   answers.read_targeted_ms1_evidence = { targetId: CAFFEINE, traces: [] };
   answers.get_targeted_ms1_runtime = { newRuns: "available" };
   const preferences = {
-    schemaVersion: 1,
+    schemaVersion: PREFERENCE_SCHEMA_VERSION,
     appearance: { locale, density: "comfortable" },
     layout: { roster: "automatic", details: "shown" },
+    display: DISPLAY_DEFAULTS,
   };
   if (locale !== "en") {
     answers.load_ui_preferences = { outcome: "loaded", revision: 1, preferences };

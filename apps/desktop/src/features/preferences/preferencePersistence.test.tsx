@@ -31,6 +31,7 @@ import {
 } from "../../test/preferenceFixtures";
 import { PreferencesApiProvider } from "./preferencesApi";
 import { UI_RESOURCES } from "./i18n";
+import { DISPLAY_DEFAULTS } from "./storedPreferences";
 
 const en = UI_RESOURCES.en;
 const zh = UI_RESOURCES["zh-CN"];
@@ -161,6 +162,85 @@ describe("durable UI preferences", () => {
     expect(screen.queryByRole("grid", { name: zh.scansTitle })).toBeNull();
   });
 
+  // Rust reads both shapes of schema 1 from disk and answers schema 2, the folder
+  // left out. `preferences/tests.rs` proves those answers from the file's bytes;
+  // this is what the interface does with a schema 2 answer.
+  it.each([
+    ["zh-CN, compact, roster shown, details hidden", { locale: "zh-CN", density: "compact" }, { roster: "shown", details: "hidden" }],
+    ["en, compact, roster hidden, details shown", { locale: "en", density: "compact" }, { roster: "hidden", details: "shown" }],
+  ] as const)("starts on a schema 2 answer and writes nothing: %s", async (_shape, appearance, layout) => {
+    const { preferences } = mount({ preferences: { stored: storedRecord({ appearance, layout }) } });
+    await waitFor(() => expect(document.documentElement.lang).toBe(appearance.locale));
+    await waitFor(() => expect(density()).toBe(appearance.density));
+    expect(shell()).toHaveAttribute("data-roster-open", String(layout.roster === "shown"));
+    expect(shell()).toHaveAttribute("data-details-open", String(layout.details === "shown"));
+    // Reading is not a write. The file changes at the next change, as any does.
+    expect(preferences.requests).toEqual([]);
+  });
+
+  it("does not consume a schema 1 record, because Rust never answers one", async () => {
+    const { schemaVersion: _version, display: _display, ...old } = storedRecord({ appearance: { locale: "zh-CN" } });
+    const preferences = createFakePreferencesApi();
+    preferences.loadPreferences = () =>
+      Promise.resolve({ outcome: "loaded", preferences: { ...old, schemaVersion: 1 } as never, revision: 0 });
+    render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreferencesApiProvider value={preferences}>
+        <PreviewApiProvider value={createFakePreviewApi({ availability: unavailableBackend })}><App /></PreviewApiProvider>
+      </PreferencesApiProvider>
+    </WorkspaceDropTransportProvider>);
+    await screen.findByText("No ProteoWizard installation was found");
+    await within(openSettings()).findByText(en.storedMalformed);
+    expect(document.documentElement.lang).toBe("en");
+    expect(preferences.requests).toEqual([]);
+  });
+
+  it("keeps a choice for this session while remembering is off, and writes nothing", async () => {
+    const stored = storedRecord({ appearance: { density: "compact" }, display: { remember: false } });
+    const { preferences } = mount({ preferences: { stored } });
+    await waitFor(() => expect(density()).toBe("compact"));
+
+    const dialog = openSettings();
+    choose(dialog, en.comfortable);
+    await within(dialog).findByText(en.sessionOnlyNote);
+    await waitFor(() => expect(density()).toBe("comfortable"));
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    await applyAndClose(dialog, en.close);
+    expect(density()).toBe("comfortable");
+
+    // A panel toggle follows the same rule, and is not an arrangement to warn
+    // about losing: the user asked for it by turning remembering off.
+    const wasOpen = shell().getAttribute("data-roster-open");
+    fireEvent.click(rosterToggle());
+    await waitFor(() => expect(preferences.requests).toHaveLength(2));
+    await waitFor(() => expect(shell().getAttribute("data-roster-open")).not.toBe(wasOpen));
+    expect(document.querySelector("[data-layout-unsaved]")).toBeNull();
+
+    expect(preferences.stored()).toEqual(stored);
+  });
+
+  it("still says a panel reset happened while remembering is off, and writes nothing", async () => {
+    const stored = storedRecord({ layout: { roster: "hidden", details: "shown" }, display: { remember: false } });
+    const { preferences } = mount({ preferences: { stored, deferred: true } });
+    await preferences.release();
+    await waitFor(() => expect(shell()).toHaveAttribute("data-roster-open", "false"));
+
+    const dialog = openSettings();
+    const region = dialog.querySelector('[data-live-region="settings-layout"]');
+    fireEvent.click(within(dialog).getByRole("button", { name: en.layoutReset }));
+    await waitFor(() => expect(preferences.outstanding()).toBe(1));
+    expect(region).toHaveTextContent(en.layoutResetDone);
+
+    // A reset leaves nothing else on screen to read, and the answer is what could
+    // take these words away, so they are judged after it has arrived.
+    await act(async () => { await preferences.release(); });
+    expect(preferences.outstanding()).toBe(0);
+    expect(region).toHaveTextContent(en.layoutResetDone);
+    expect(document.querySelector("[data-layout-unsaved]")).toBeNull();
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    expect(preferences.requests).toEqual([{ layout: { roster: "automatic", details: "automatic" } }]);
+    expect(preferences.stored()).toEqual(stored);
+  });
+
   it("commits only the appearance group, with no path, roster or scientific field in the payload", async () => {
     const { preferences } = mount();
     await screen.findByText("No ProteoWizard installation was found");
@@ -178,9 +258,10 @@ describe("durable UI preferences", () => {
     // The whole stored document, named exactly. Anything else that ever reaches
     // the store fails here rather than in a user's profile.
     expect(preferences.stored()).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       appearance: { locale: "zh-CN", density: "compact" },
       layout: { roster: "automatic", details: "automatic" },
+      display: DISPLAY_DEFAULTS,
     });
   });
 
@@ -495,9 +576,10 @@ describe("durable UI preferences", () => {
     await waitFor(() => expect(preferences.requests).toHaveLength(1));
     expect(preferences.requests[0]).toEqual({ layout: { roster: "hidden", details: "automatic" } });
     expect(preferences.stored()).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       appearance: { locale: "en", density: "comfortable" },
       layout: { roster: "hidden", details: "automatic" },
+      display: DISPLAY_DEFAULTS,
     });
     expect(shell()).toHaveAttribute("data-roster-open", "false");
   });
@@ -514,9 +596,10 @@ describe("durable UI preferences", () => {
     await applyAndClose(dialog, zh.close);
     // Both groups, each from the surface that owns it.
     expect(preferences.stored()).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       appearance: { locale: "zh-CN", density: "comfortable" },
       layout: { roster: "hidden", details: "automatic" },
+      display: DISPLAY_DEFAULTS,
     });
 
     fireEvent.click(screen.getByRole("button", { name: zh.rosterToggle }));

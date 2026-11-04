@@ -3,8 +3,8 @@
  *
  * These are the mechanisms a campaign's conclusions rest on: whether it really
  * bound a root it owns, whether it can tell a replaced record from an untouched
- * one, and whether it can say that the bytes in a profile carry five values and
- * nothing else. A helper that silently answered "unchanged" would turn a failed
+ * one, and whether it can say that the bytes in a profile carry twelve values
+ * and nothing else. A helper that silently answered "unchanged" would turn a failed
  * publish into a passing scenario, so each one is exercised here first, against
  * a real directory, before any desktop time is asked for.
  */
@@ -44,10 +44,13 @@ function root(label: string): string {
   return path;
 }
 
+const DISPLAY = { textSize: "standard", contrast: "normal", motion: "system", wheelHabit: "draw", crosshair: false, grid: true, remember: true };
+
 const VALID = JSON.stringify({
-  schemaVersion: 1,
+  schemaVersion: 2,
   appearance: { locale: "zh-CN", density: "compact" },
   layout: { roster: "hidden", details: "shown" },
+  display: DISPLAY,
 });
 
 test("refuses every binding a campaign must not run on", () => {
@@ -149,23 +152,35 @@ test("accepts exactly the allowlisted fields and reports every violation", () =>
   assert.deepEqual(recordViolations(JSON.parse(VALID)), []);
 
   const extra = recordViolations({
-    schemaVersion: 1,
+    schemaVersion: 2,
     appearance: { locale: "en", density: "compact", theme: "dark" },
     layout: { roster: "shown", details: "shown" },
+    display: { ...DISPLAY, pinch: true },
     lastFolder: "D:\\data",
   });
   assert.deepEqual(extra, [
     { kind: "unknownKey", at: "root", key: "lastFolder" },
     { kind: "unknownKey", at: "appearance", key: "theme" },
+    { kind: "unknownKey", at: "display", key: "pinch" },
   ]);
 
-  const missing = recordViolations({ schemaVersion: 1, appearance: { locale: "en" }, layout: {} });
+  const missing = recordViolations({ schemaVersion: 2, appearance: { locale: "en" }, layout: {}, display: {} });
   assert.deepEqual(missing, [
     { kind: "missingKey", at: "root", key: "layout" },
     { kind: "missingKey", at: "appearance", key: "density" },
     { kind: "missingKey", at: "layout", key: "roster" },
     { kind: "missingKey", at: "layout", key: "details" },
+    ...Object.keys(DISPLAY).map(key => ({ kind: "missingKey", at: "display", key })),
   ].filter(violation => violation.key !== "layout" || violation.at !== "root"));
+
+  assert.deepEqual(recordViolations({ ...JSON.parse(VALID), schemaVersion: 1 }), [
+    { kind: "badValue", at: "root", key: "schemaVersion", value: 1 },
+  ]);
+  for (const [key, value] of [["textSize", "huge"], ["contrast", "low"], ["motion", "off"], ["wheelHabit", "touch"], ["crosshair", "on"], ["grid", 1], ["remember", null]] as const) {
+    assert.deepEqual(recordViolations({ ...JSON.parse(VALID), display: { ...DISPLAY, [key]: value } }), [
+      { kind: "badValue", at: "display", key, value },
+    ]);
+  }
 
   for (const value of [null, 1, "record", [], [JSON.parse(VALID)]]) {
     assert.deepEqual(recordViolations(value), [{ kind: "notAnObject" }], String(value));
