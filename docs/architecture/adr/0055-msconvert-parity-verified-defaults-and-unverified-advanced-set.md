@@ -279,10 +279,14 @@ default.
 >   says it, figures included, and a reference registered from it records `null`.
 >   A reference carried back from a project still brings its label to the row.
 >   The owner has not been asked.*
+>   *2026-11-04: asked (P201-RESTORE), not yet answered; still not an owner
+>   decision.*
 >   *As built in PR #201, 2026-11-03, not an owner decision: a label a reference
 >   carried back goes into the same table, so it outlives that row in this process.
 >   The object added back by any route carries it, and the next reference records
 >   it, not `null`. It still ends with the process. The owner has not been asked.*
+>   *2026-11-04: asked, with the first of these notes (P201-SCOPE), not yet
+>   answered; still not an owner decision.*
 > - (c) `Describe again` is offered only after a failure Rust calls retryable.
 >
 > **Owner decision, 2026-11-03:** asked whether to draw "Not verified by MSCanvas"
