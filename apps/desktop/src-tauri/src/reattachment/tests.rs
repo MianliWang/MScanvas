@@ -697,6 +697,71 @@ fn an_object_replaced_after_the_proof_is_not_claimed_however_identical_its_bytes
     assert_eq!(service.roster().datasets.len(), 1);
 }
 
+/// The same window, with a reference that carries a label.
+///
+/// The record's label is about the object the project proved, and only a claim
+/// says the row is that object. Labelled before the claim, the replacement would
+/// be marked, the table would keep it for the rest of the process, and the next
+/// reference to it would record a label nothing ever gave it.
+#[test]
+fn a_refused_claim_gives_its_label_to_neither_the_row_nor_the_table() {
+    let label = NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    assert!(label.is_some(), "the reference must have a label to leak");
+    let scratch = Scratch::new("reattach-swapped-labelled");
+    let bytes = b"<mzML>identical either way</mzML>";
+    let path = scratch.write("sample.mzML", bytes);
+    let projects = ProjectStore::new();
+    projects
+        .create("Labelled".to_owned(), false)
+        .expect("a new project");
+    let id = projects
+        .register_input_labelled(&path, |_| label.clone())
+        .expect("register the labelled reference");
+    assert_eq!(
+        projects.describe().inputs[0].not_verified_by_mscanvas,
+        label
+    );
+    let service = workspace();
+    let proved = crate::local_document::object_identity(&path);
+
+    let refusal = add_project_input_to_workspace_between(
+        &projects,
+        &service,
+        projects.accept_job().expect("accept"),
+        id,
+        || {
+            let replacement = scratch.write("replacement", bytes);
+            fs::remove_file(&path).expect("remove the proved object");
+            fs::rename(&replacement, &path).expect("put it in place");
+        },
+    )
+    .expect_err("a refusal");
+
+    assert_ne!(
+        crate::local_document::object_identity(&path),
+        proved,
+        "this test is only meaningful while the object really was replaced"
+    );
+    assert_eq!(project_refusal(refusal), ProjectError::ContentChanged);
+    assert_eq!(
+        service.roster().datasets[0].not_verified_by_mscanvas,
+        None,
+        "the row is not the object the label is about"
+    );
+    let next = ProjectStore::new();
+    next.create("Next".to_owned(), false)
+        .expect("a new project");
+    next.register_input_labelled(&path, |identity| {
+        service.not_verified_label_of_object(identity)
+    })
+    .expect("register the row's object");
+    assert_eq!(
+        next.describe().inputs[0].not_verified_by_mscanvas,
+        None,
+        "the table holds no label for an object the project never proved"
+    );
+}
+
 /// The same window, with a replacement that differs only in its bytes.
 ///
 /// Its length is identical, so nothing about the file's shape reveals it. This
