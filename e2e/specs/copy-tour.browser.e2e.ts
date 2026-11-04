@@ -244,6 +244,20 @@ async function inspectLabelledReference() {
   await revealInDetails('#workbench-inspector [data-provenance="input"]');
 }
 
+/** A project already saved somewhere, with a change, so Save is offered and not asked about. */
+function savedProject(locale: Locale) {
+  return { ...scenario("populated", locale), get_project_state: capturedProject({ name: "Plasma QC batch 08", published: true, dirty: true }) };
+}
+
+/** The targeted setup with a typed request, reviewed and ready to run. */
+async function reviewTargetedRequest() {
+  await go(3);
+  await browser.$("[data-project-targeted]").click();
+  await browser.$("[data-targeted-text]").setValue("Caffeine, C8H10N4O2, 120, 30\nAbsent, C9H9NO4, 300, 30");
+  await browser.$("[data-targeted-review]").click();
+  await browser.$("[data-targeted-review-area] [data-targeted-plan]").waitForDisplayed();
+}
+
 /** The populated world with its mzML row adopted from a labelled conversion. */
 function labelledMzmlRow(locale: Locale) {
   const table = scenario("populated", locale);
@@ -1154,6 +1168,81 @@ const STOPS: readonly Stop[] = [
       await browser.$(".project-actions > button:nth-child(2)").click();
     },
     anchor: "[data-project-problem]",
+  },
+  // Project in the v5.11 look (FE-2): every state the port has to hold that no
+  // stop above shows. The first read of a project has no state of its own, so
+  // loading is what Open project… shows while it reads.
+  {
+    name: "project-loading",
+    table: emptyTable,
+    hold: ["open_project"],
+    drive: async () => {
+      await go(3);
+      await browser.$(".project-actions > button:nth-child(2)").click();
+    },
+    anchor: "[data-project-busy]",
+  },
+  {
+    name: "project-saving",
+    table: savedProject,
+    hold: ["save_project"],
+    drive: async () => {
+      await go(3);
+      await browser.$(".project-actions > button:nth-child(3)").click();
+    },
+    anchor: "[data-project-busy]",
+  },
+  {
+    // The refused Save holding the ring, with its reason beside the title.
+    name: "project-save-refused-focus",
+    table: populated,
+    keepFocus: true,
+    drive: async () => {
+      await go(3);
+      await tabFrom(".project-actions > button:nth-child(2)", 1);
+    },
+    anchor: '.project-actions > button:nth-child(3)[aria-disabled="true"]:focus-visible',
+  },
+  {
+    // A refused row action holding the ring, with its reason under the row.
+    name: "project-row-refused-focus",
+    table: populated,
+    keepFocus: true,
+    drive: async () => {
+      await go(3);
+      await tabFrom("[data-project-input] .project-row-actions > button:nth-child(2)", 1);
+    },
+    anchor: '[data-project-input] .project-row-actions button[aria-disabled="true"]:focus-visible',
+  },
+  { name: "project-layers", table: (locale) => scenario("targetedTask", locale), drive: () => go(3), anchor: "[data-project-targeted]" },
+  {
+    name: "targeted-setup",
+    table: (locale) => scenario("targetedTask", locale),
+    drive: async () => {
+      await go(3);
+      await browser.$("[data-project-targeted]").click();
+    },
+    anchor: "[data-targeted-setup]",
+  },
+  {
+    name: "targeted-running",
+    table: (locale) => scenario("targetedTask", locale),
+    hold: ["run_targeted_ms1"],
+    drive: async () => {
+      await reviewTargetedRequest();
+      await browser.$("[data-targeted-run]").click();
+    },
+    anchor: '[data-targeted-run-block="running"]',
+  },
+  {
+    name: "project-qc",
+    table: (locale) => scenario("qcCapture", locale),
+    drive: async () => {
+      await openPreview();
+      await go(3);
+      await browser.$("[data-project-capture-qc]:not([aria-disabled])").click();
+    },
+    anchor: "[data-qc-report]",
   },
   {
     name: "settings",
