@@ -164,11 +164,11 @@ describe("durable UI preferences", () => {
 
   // Rust reads both shapes of schema 1 from disk and answers schema 2, the folder
   // left out. `preferences/tests.rs` proves those answers from the file's bytes;
-  // this is what the interface does with them.
+  // this is what the interface does with a schema 2 answer.
   it.each([
-    ["beta 1, no folder field", { locale: "zh-CN", density: "compact" }, { roster: "shown", details: "hidden" }],
-    ["main before schema 2, folder held back by Rust", { locale: "en", density: "compact" }, { roster: "hidden", details: "shown" }],
-  ] as const)("starts on a record upgraded from schema 1: %s", async (_shape, appearance, layout) => {
+    ["zh-CN, compact, roster shown, details hidden", { locale: "zh-CN", density: "compact" }, { roster: "shown", details: "hidden" }],
+    ["en, compact, roster hidden, details shown", { locale: "en", density: "compact" }, { roster: "hidden", details: "shown" }],
+  ] as const)("starts on a schema 2 answer and writes nothing: %s", async (_shape, appearance, layout) => {
     const { preferences } = mount({ preferences: { stored: storedRecord({ appearance, layout }) } });
     await waitFor(() => expect(document.documentElement.lang).toBe(appearance.locale));
     await waitFor(() => expect(density()).toBe(appearance.density));
@@ -215,6 +215,29 @@ describe("durable UI preferences", () => {
     await waitFor(() => expect(shell().getAttribute("data-roster-open")).not.toBe(wasOpen));
     expect(document.querySelector("[data-layout-unsaved]")).toBeNull();
 
+    expect(preferences.stored()).toEqual(stored);
+  });
+
+  it("still says a panel reset happened while remembering is off, and writes nothing", async () => {
+    const stored = storedRecord({ layout: { roster: "hidden", details: "shown" }, display: { remember: false } });
+    const { preferences } = mount({ preferences: { stored, deferred: true } });
+    await preferences.release();
+    await waitFor(() => expect(shell()).toHaveAttribute("data-roster-open", "false"));
+
+    const dialog = openSettings();
+    const region = dialog.querySelector('[data-live-region="settings-layout"]');
+    fireEvent.click(within(dialog).getByRole("button", { name: en.layoutReset }));
+    await waitFor(() => expect(preferences.outstanding()).toBe(1));
+    expect(region).toHaveTextContent(en.layoutResetDone);
+
+    // A reset leaves nothing else on screen to read, and the answer is what could
+    // take these words away, so they are judged after it has arrived.
+    await act(async () => { await preferences.release(); });
+    expect(preferences.outstanding()).toBe(0);
+    expect(region).toHaveTextContent(en.layoutResetDone);
+    expect(document.querySelector("[data-layout-unsaved]")).toBeNull();
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    expect(preferences.requests).toEqual([{ layout: { roster: "automatic", details: "automatic" } }]);
     expect(preferences.stored()).toEqual(stored);
   });
 
