@@ -166,6 +166,10 @@ impl FinalizedOutputAdoptionTicket {
         self.not_verified.as_ref()
     }
 
+    pub(super) const fn object_identity(&self) -> Option<(u64, [u8; 16])> {
+        self.finalized.object_identity()
+    }
+
     pub(super) fn output_id(&self) -> &str {
         &self.output_id
     }
@@ -758,6 +762,12 @@ impl SciexAttemptSettlement {
         } else {
             ItemState::Failed
         };
+        // Once per run, and only here: a stop never reaches a settlement, and
+        // the report's own constructor would count `multi_output_cancelled` as
+        // a failure (ADR 0063, decision 5).
+        if state == ItemState::Failed {
+            crate::environment_diagnostics::note_error(report.refusal_id().unwrap_or(outcome));
+        }
         Self {
             openable,
             state,

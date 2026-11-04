@@ -1,6 +1,7 @@
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import { ownedErrorDetail } from "./ownedErrorMessages";
-import { conversionCountParts, conversionErrorMessage, conversionJudgedOutputOnly, conversionNoticeMessage } from "./conversionMessages";
+import { statusItemTextId } from "../workbench/StatusBar";
+import { adoptionInFlightKey, conversionCountParts, conversionErrorMessage, conversionJudgedOutputOnly, conversionNoticeMessage } from "./conversionMessages";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type Ref, type RefObject } from "react";
 import { useListWindow, type ListWindowRow } from "./conversionListWindow";
 
@@ -22,7 +23,7 @@ import { conversionAvailability, conversionNoticeId } from "./conversionAvailabi
 import { OutputOpenActions } from "./OutputOpenActions";
 import { NotVerifiedTag, notVerifiedOf } from "./NotVerifiedTag";
 import { STAGING_STATUS_ID, StagingRecoveryActions } from "./StagingRecoveryActions";
-import { ADOPTION_REFUSAL_LABEL, ConversionItemJudgements } from "./ConversionItemJudgements";
+import { ConversionItemJudgements, notAddedSentence } from "./ConversionItemJudgements";
 import type { ConversionRefusal } from "./conversionNoticeRegistry";
 import { conversionNotices, conversionRefusalNoticeId } from "./conversionNoticeRegistry";
 import { formatByteLength, formatCount, formatDuration } from "./format";
@@ -126,6 +127,10 @@ export interface ConversionPanelProps {
   readonly onSortChange: (sort: SortMode) => void;
   /** The release the bound ProteoWizard build reports, for the plan rail (C11). */
   readonly buildRelease?: string | null;
+  /** The rows the workspace holds, so an added output offers only a live one. */
+  readonly liveDatasetHandles?: ReadonlySet<string>;
+  /** Takes the reader to one roster row (ADR 0052 decision 7). */
+  readonly onShowInWorkbench?: (handle: string) => void;
   /** A one-click view holding the slot, for the refusal that names it (ADR 0060 decision 5). */
   readonly rawViewHolder?: ConversionRawViewHolder | null;
   /** Kept mounted while the conversion history has the surface, so nothing here is lost. */
@@ -148,6 +153,8 @@ export function ConversionPanel({
   onScopeChange,
   onSortChange,
   buildRelease = null,
+  liveDatasetHandles,
+  onShowInWorkbench,
   rawViewHolder = null,
   hidden = false,
   onOpenHistory,
@@ -363,11 +370,13 @@ export function ConversionPanel({
     if (node === null) return;
     // Only the controls whose leaving the status line explains: Convert, and
     // the queue's own (Stop, Retry, Skip, Add…). A plan-side link that leaves
-    // under a finished queue is not answered by the old queue's status.
+    // under a finished queue is not answered by the old queue's status. Describe
+    // again is a plan-side control with no queue to speak for it: it hands on to
+    // Convert, a Tab stop beside it that is described by the plan's answer.
     const record = (event: FocusEvent) => {
       const target = event.target;
       lastFocused.current =
-        target instanceof HTMLElement && (target === convertButton.current || target.closest(".conversion-running") !== null)
+        target instanceof HTMLElement && (target === convertButton.current || target.closest(".conversion-running") !== null || target.hasAttribute("data-describe-again"))
           ? target
           : null;
     };
@@ -388,7 +397,8 @@ export function ConversionPanel({
     // that window with the slot still `terminal`.
     if (restoreAfterPicker.current &&
       (conversion.converting || state.status === "awaitingDestination" || state.status === "idle")) return;
-    const status = panel.current?.querySelector<HTMLElement>(`#${QUEUE_STATUS_ID}`) ?? null;
+    const status = left.hasAttribute("data-describe-again") ? convertButton.current
+      : panel.current?.querySelector<HTMLElement>(`#${QUEUE_STATUS_ID}`) ?? null;
     if (status === null) return;
     lastFocused.current = null;
     status.focus();
@@ -453,6 +463,8 @@ export function ConversionPanel({
               plan.invalidate();
               startAnother();
             }}
+            liveDatasetHandles={liveDatasetHandles}
+            onShowInWorkbench={onShowInWorkbench}
             conversion={conversion}
             retryAvailability={retryAvailability}
             retryOffered={retryOffered}
@@ -656,7 +668,7 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
   // Every refused output and why, windowed (ADR 0057 decision 3).
   const refusedNames = useMemo(() => (adoption?.outcomes ?? []).flatMap((outcome) => outcome.kind !== "refused" ? [] : [{
     key: `${String(outcome.itemIndex)}-${String(outcome.memberIndex)}`,
-    text: t("m74CnvNotAdded", { name: outcome.outputFileName, reason: t(ADOPTION_REFUSAL_LABEL[outcome.reason as keyof typeof ADOPTION_REFUSAL_LABEL] ?? "m74CnvAdoptUnverified") }),
+    text: notAddedSentence(outcome.outputFileName, outcome.reason, t),
   }]), [adoption, t]);
   // Labelled outputs keep their label in the roster and the project (ADR 0055
   // decision 2), so the action that adds them says so first. A SCIEX set is
@@ -684,7 +696,7 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
           only while there is nothing to say. */}
       <p aria-live="polite" className="conversion-adoption-summary" id={ADOPT_STATUS_ID}>
         {conversion.adopting
-          ? t("m74CnvAdoptInFlight")
+          ? t(adoptionInFlightKey(conversion.adoptingOutput))
           : adoption === null
             ? ""
             : t("m74CnvAdoptionSummary", { added: String(added.length), duplicates: String(duplicates.length), refused: String(refused.length) })}
@@ -700,7 +712,9 @@ function AdoptOutputs({ conversion, refusedBy, primary }: {
           recognises the file -- so the action stays rather than sending them to
           `Add files…` for something MSCanvas can still identify. */}
       <>
-        {adoption === null ? (
+        {/* Not beside a per-output answer: "ready to add" under an output that
+            says it was just added is two answers to one question. */}
+        {adoption === null && conversion.outputAnswers.size === 0 && conversion.adoptingOutput === null ? (
           <p>
             {eligibleOutputCount === 1
               ? t("m74CnvOneReady")
@@ -1062,9 +1076,10 @@ function PlanStart(props: PlanProps & {
       {/* An explicit re-ask of the same question, and nothing automatic. A
           plan can fail for a reason the reader cannot act on, and a machine
           whose only exit were a new question would pin `Convert` as refused
-          for the session over one lost reply. */}
+          for the session over one lost reply. A refusal Rust calls final is
+          not offered it: the same question gets the same answer. */}
       {plan.retryOffered ? (
-        <Button variant="secondary" size="sm" icon={<Icon name="refresh" />} onClick={plan.retry}>{t("m74CnvDescribeAgain")}</Button>
+        <Button variant="secondary" size="sm" icon={<Icon name="refresh" />} data-describe-again="" onClick={plan.retry}>{t("m74CnvDescribeAgain")}</Button>
       ) : null}
     </div>
   );
@@ -1339,6 +1354,8 @@ function PlanPending({ plan, noBackend }: { readonly plan: ConversionPlanView; r
 function QueueState({
   part,
   onReviewNewPlan,
+  liveDatasetHandles,
+  onShowInWorkbench,
   conversion,
   retryAvailability,
   retryOffered,
@@ -1348,6 +1365,8 @@ function QueueState({
 }: {
   readonly part: "rows" | "summary";
   readonly onReviewNewPlan?: () => void;
+  readonly liveDatasetHandles?: ReadonlySet<string> | undefined;
+  readonly onShowInWorkbench?: ((handle: string) => void) | undefined;
   /** Whether Add is the one primary: not once the next conversion is open. */
   readonly addPrimary?: boolean;
   /** The control that opens the next conversion, under Add (rebuild review 6). */
@@ -1446,6 +1465,13 @@ function QueueState({
             const single = singleReportOf(item);
             const set = setReportOf(item);
             const skipping = conversion.skippingItem(index);
+            // Whether this item's outputs each offer an Add: Rust's answer and
+            // nothing else (ADR 0052 decision 3). The outputs an item lists for
+            // opening include ones that must not be adopted one by one, and the
+            // item's signals do not look at the queue, so only the count says
+            // it has settled.
+            const addOffered = conversion.eligibleOutputCount > 0 && !conversion.retrying &&
+              item.state === "finalized" && item.adoption.kind !== "nothingToAdopt" && item.finalizedOutputs.length > 0;
             // While the queue runs, a converted or skipped row is one line (its
             // state and name); its outputs and Open actions wait for the
             // results. A failure keeps its reason and its recovery in view.
@@ -1504,8 +1530,9 @@ function QueueState({
                 </span>
                 {/* Waiting, running and settled alike, even when every check
                     passed (ADR 0055 decision 3), on its own line under the
-                    names so neither is cut for it. */}
-                {itemNotVerified(item) === null ? null : (
+                    names so neither is cut for it. Where the row offers an Add
+                    it is said once, beside the action that carries it on. */}
+                {itemNotVerified(item) === null || addOffered ? null : (
                   <span className="conversion-run-label"><NotVerifiedTag label={itemNotVerified(item)} /></span>
                 )}
                 {compact ? null : <div className="conversion-run-detail">
@@ -1616,7 +1643,25 @@ function QueueState({
                   {item.stagingRecovery !== null && (item.stagingRecovery.status !== "cleaned" || (single?.stagingResidue ?? set?.stagingResidue ?? item.cancellation?.stagingResidue) != null) ? (
                     <StagingRecoveryActions key={item.stagingRecovery.recoveryId} recovery={item.stagingRecovery} enabled={state.status === "terminal" && !conversion.busy && !conversion.backendQuarantined} refusedBy={refusedBy.cleanup} reclaim={conversion.reclaimStaging} onReview={onReviewNewPlan ?? (() => {})} />
                   ) : null}
-                  {item.finalizedOutputs.map(output => <OutputOpenActions key={output.outputId} output={output} />)}
+                  {item.finalizedOutputs.map(output => {
+                    const answer = conversion.outputAnswers.get(output.outputId) ?? null;
+                    // "Already in the workspace" is false once that row has left,
+                    // and Rust never reissues a handle, so no newer row can answer for it.
+                    const left = answer !== null && "handle" in answer && liveDatasetHandles?.has(answer.handle) !== true;
+                    return <OutputOpenActions key={output.outputId} output={output} add={addOffered ? {
+                      onAdd: () => conversion.adopt(output.outputId),
+                      refused: !conversion.canAdopt,
+                      // Down a long list the summary column is out of sight, so
+                      // an adoption under way is said in the status bar as well
+                      // and these point at that sentence: another reason, such as a
+                      // running view, can hold the bar's busy id. Its own Add has its own line.
+                      refusedBy: conversion.adopting ? statusItemTextId("conversionActivity") : refusedBy.adopt,
+                      adding: conversion.adoptingOutput === output.outputId,
+                      answer: left ? null : answer,
+                      notVerified: itemNotVerified(item),
+                      onShow: onShowInWorkbench ?? null,
+                    } : null} />;
+                  })}
                   {/* Where the row's one word stops being the whole answer. The
                       label is a projection and is lossy on purpose; the five
                       judgements it projects from stay inspectable here rather

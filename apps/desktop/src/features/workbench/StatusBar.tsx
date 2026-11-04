@@ -13,6 +13,8 @@ export const STATUS_BUSY_ID = "shell-status-busy";
 export const STATUS_BACKEND_ID = "shell-status-backend";
 /** A work or project item's id, for a refusal that it is the reason for. */
 export const statusItemId = (id: ShellContextItem["id"]) => `shell-status-${id}`;
+/** An item's sentence, for a refusal that it is the reason for whatever the bar's busy reason is. */
+export const statusItemTextId = (id: ShellContextItem["id"]) => `${statusItemId(id)}-text`;
 
 const BACKEND_ICON = {
   ready: "checkCircle",
@@ -137,7 +139,7 @@ export function WorkbenchStatusBar({ backend, items, busy, rawView = null, rawVi
     {items.map(item => <Button key={item.id} variant="quiet" size="sm" className="status-item"
       id={conversionItem && item.id === "conversionActivity" ? STATUS_BUSY_ID : statusItemId(item.id)}
       data-shell-context={item.id} title={item.text} onClick={() => go(item.target)}>
-      <span className="status-item-text">{item.text}</span>
+      <span id={statusItemTextId(item.id)} className="status-item-text">{item.text}</span>
       {item.unsaved === true ? <>{" "}<span className="status-tag">{t("statusUnsaved")}</span></> : null}
     </Button>)}
     {busy === null || conversionItem || busy === rawView?.reason ? null

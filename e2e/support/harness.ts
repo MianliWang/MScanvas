@@ -331,6 +331,12 @@ export async function boxOf(selector: string): Promise<Box> {
   }, selector) as Promise<Box>;
 }
 
+/** A press where the element is now. An element click would scroll it into view first. */
+export async function pressAt(selector: string): Promise<void> {
+  const box = await boxOf(selector);
+  await browser.action("pointer").move({ x: Math.round((box.left + box.right) / 2), y: Math.round((box.top + box.bottom) / 2) }).down().up().perform();
+}
+
 /** Reads the bounding rectangle of one element found by accessible name. */
 export async function boxOfButton(name: string): Promise<Box> {
   return browser.execute((label: string) => {

@@ -1,4 +1,4 @@
-import { announceConversion } from "./conversionMessages";
+import { adoptionInFlightKey, announceConversion } from "./conversionMessages";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { formatWorkspaceNotice } from "../workbench/workspaceMessages";
 import type { UiMessage } from "../preferences/i18n";
@@ -21,10 +21,10 @@ import { resolveConversionScope } from "./conversionScope";
 import { ConversionHistory } from "../run-history/ConversionHistory";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
+import { NotVerifiedTag } from "./NotVerifiedTag";
 import { WorkspaceRestoreNotice, announceRestore } from "./WorkspaceRestoreNotice";
 import { useWorkspaceRestore } from "./useWorkspaceRestore";
 import { InspectorClose, PreviewMetadata, PreviewSummary } from "./PreviewSummary";
-import { NotVerifiedTag } from "./NotVerifiedTag";
 import { RawViewPane, formatElapsed, ownRawViewState, rawViewFailureText, rawViewFirstAction, rawViewPhaseText, rawViewRefusalText, refuseHeldEnter, shortFileName } from "./RawViewPane";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
@@ -296,12 +296,14 @@ export function PreviewWorkspace() {
   const backendView = presentBackend(workspace.backend, workspace.backendReadingStale, t, workspace.conversion.backendQuarantined);
 
   // Curating the workspace is not backend work, so it stays available when no
-  // ProteoWizard is installed. What it waits for is a picker already on screen,
-  // an installation request whose own modal dialog is open, a folder import
-  // that has not settled, and a workspace change that has not been answered yet
-  // -- the last three because two mutations in flight at once let an older
-  // reply's roster snapshot overwrite a newer one's, and Rust serialises them
-  // anyway, so waiting costs a moment and no more.
+  // ProteoWizard is installed. What it waits for is the start-up installation
+  // check, refused with its visible reason "Checking the installation…" (owner
+  // decision INST-1, 2026-10-31), a picker already on screen, an installation
+  // request whose own modal dialog is open, a folder import that has not
+  // settled, and a workspace change that has not been answered yet -- the last
+  // three because two mutations in flight at once let an older reply's roster
+  // snapshot overwrite a newer one's, and Rust serialises them anyway, so
+  // waiting costs a moment and no more.
   //
   // One expression for both acquisition actions, so they cannot come to mean
   // different things: they are mutually exclusive by construction, and each is
@@ -435,6 +437,7 @@ export function PreviewWorkspace() {
     conversionStatus: workspace.conversion.state.status === "running" && workspace.conversion.stopping
       ? "stopping"
       : workspace.conversion.state.status,
+    conversionAdopting: workspace.conversion.adopting ? adoptionInFlightKey(workspace.conversion.adoptingOutput) : null,
   }, t);
   /**
    * Why adding, re-reading or changing the list waits: the visible reason the
@@ -928,7 +931,7 @@ export function PreviewWorkspace() {
         {rawViewFailedUnseen === null ? "" : rawViewFailureText(rawViewFailedUnseen, t)}
       </p>
       <p aria-live="polite" className="visually-hidden" data-live-region="restore">
-        {announceRestore(restore, t)}
+        {announceRestore(restore, t, workspace.workspaceError)}
       </p>
 
       {activeClear !== null ? <ActiveClearDialog viewHolds={workspace.rawView.busy} returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onEmptyRosterClosed={claim => {
@@ -938,6 +941,7 @@ export function PreviewWorkspace() {
         kind={figureDialog.kind}
         sourceLabel={figureSourceLabel(figureDialog.kind, previewFile?.fileName ?? (preview.status === "loaded" ? preview.preview.file.fileName : null),
           spectrum.status === "loaded" ? spectrum.spectrum : null, t)}
+        notVerified={previewFile?.notVerifiedByMscanvas}
         question={workspace.figurePreviewQuestion(figureDialog.kind)} preview={workspace.previewFigure} onExport={workspace.exportPreviewedFigure}
         onCopy={workspace.copyPreviewedFigure}
         returnTo={figureDialog.returnTo} onClose={() => setFigureDialog(null)} busy={workspace.scientificExportBusy}
@@ -1074,6 +1078,8 @@ export function PreviewWorkspace() {
             onScopeChange={workspace.setConversionScope}
             onSortChange={(sort) => workspace.dispatchRoster({ type: "sortChanged", sort })}
             buildRelease={backendView.names?.release ?? null}
+            liveDatasetHandles={liveDatasetHandles}
+            onShowInWorkbench={revealInWorkbench}
             rawViewHolder={rawViewRunning === null || rawViewReason === null ? null : {
               reason: rawViewReason,
               title: rawViewRunning.fileName,
@@ -1104,9 +1110,14 @@ export function PreviewWorkspace() {
           // read, then its three views as tabs. One view is mounted at a time;
           // what it shows lives in the workspace, so a switch loses nothing.
           <div className="viewer-file" data-viewed={viewSource === null ? undefined : ""}>
-            <h1 id="surface-title-workbench" className="viewer-file-name" title={formatDatasetLabel(previewFile ?? preview.preview.file)}>
-              {formatDatasetLabel(previewFile ?? preview.preview.file)}
-            </h1>
+            <div className="viewer-file-title">
+              <h1 id="surface-title-workbench" className="viewer-file-name" title={formatDatasetLabel(previewFile ?? preview.preview.file)}>
+                {formatDatasetLabel(previewFile ?? preview.preview.file)}
+              </h1>
+              {/* Beside the heading, so the file's name stays the heading's
+                  name (ADR 0055; owner decision A0055 (a)). */}
+              <NotVerifiedTag label={(previewFile ?? preview.preview.file).notVerifiedByMscanvas} />
+            </div>
             {/* Decision 11's provenance is ADR 0060 slice 4: until an export can
                 name the RAW and the conversion, a view exports nothing, and this
                 line is what every refused export points at. */}

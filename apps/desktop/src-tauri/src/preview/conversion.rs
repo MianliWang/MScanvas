@@ -285,6 +285,13 @@ impl WorkspaceConversionReport {
         run: &ConversionRunReport,
         capabilities: &InstalledHelpCapabilities,
     ) -> Self {
+        // Once per run, here where the run becomes the session's report: the
+        // DTO is rebuilt on every queue read, and two failed rows read in turn
+        // would push every other code out of the ring (ADR 0063, decision 5).
+        // A stop never reaches this: it is not a completed attempt.
+        if let ConversionRunOutcome::Failed(failure) = run.outcome() {
+            crate::environment_diagnostics::note_error(failure.detailed_stable_id());
+        }
         let finalized = run.finalized();
         Self {
             unverified_build_release: unverified_build_release(capabilities, plan.source().kind()),

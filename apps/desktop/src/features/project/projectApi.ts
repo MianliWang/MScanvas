@@ -70,7 +70,7 @@ export interface ProjectInput {
   readonly workbenchDatasetHandle: string | null;
   /**
    * The "not verified by MSCanvas" label recorded with this reference
-   * (project schema 5): the session had adopted the registered object from a
+   * (project schema 5): the session had finalized the registered object from a
    * labelled conversion. `null` means none is recorded, never verified.
    * Optional only until fixtures carry it; Rust always sends it.
    */
@@ -364,6 +364,21 @@ export interface TargetedFigure {
 
 export type TargetedFigureFormat = "svg" | "png";
 export type TargetedTableFormat = "csv" | "tsv" | "spreadsheetCsv";
+
+/** A column a results table's view sorts by, named as the table names it. */
+export type TargetedTableSortKey = "label" | "outcome" | "feature_apex_rt_s" | "raw_area";
+
+/** The rows a person is looking at, in the order shown, and what they did to get them. */
+export interface TargetedTableView {
+  readonly targetIds: readonly string[];
+  /** Every outcome the view keeps; no filter on outcome is all of them. */
+  readonly outcomes: readonly RowOutcome[];
+  readonly text: string;
+  readonly sort: {
+    readonly key: TargetedTableSortKey;
+    readonly direction: "ascending" | "descending";
+  } | null;
+}
 
 export type TargetedFigureExport =
   | { readonly status: "cancelled" }
@@ -755,6 +770,12 @@ export interface ProjectApi {
     artifactId: string,
     format: TargetedTableFormat,
   ): Promise<TargetedTableExport>;
+  /** Writes the rows of one view, in the order shown, as a table that says so. */
+  exportTargetedMs1TableView(
+    artifactId: string,
+    format: TargetedTableFormat,
+    view: TargetedTableView,
+  ): Promise<TargetedTableExport>;
   /** Whether a new targeted run could start in this session. */
   getTargetedMs1Runtime(): Promise<{ readonly newRuns: TargetedNewRuns }>;
 }
@@ -862,6 +883,12 @@ export const tauriProjectApi: ProjectApi = {
       { artifactId, format },
       documentAuthorityHeaders(),
     ),
+  exportTargetedMs1TableView: (artifactId, format, view) =>
+    invoke<TargetedTableExport>(
+      "export_targeted_ms1_table_view",
+      { artifactId, format, view },
+      documentAuthorityHeaders(),
+    ),
   getTargetedMs1Runtime: () =>
     invoke<{ readonly newRuns: TargetedNewRuns }>(
       "get_targeted_ms1_runtime",
@@ -908,6 +935,7 @@ export const unavailableProjectApi: ProjectApi = {
   previewTargetedMs1Figure: () => Promise.reject(new Error("noProjectStore")),
   exportTargetedMs1Figure: () => Promise.reject(new Error("noProjectStore")),
   exportTargetedMs1Table: () => Promise.reject(new Error("noProjectStore")),
+  exportTargetedMs1TableView: () => Promise.reject(new Error("noProjectStore")),
   getTargetedMs1Runtime: () => Promise.reject(new Error("noProjectStore")),
 };
 

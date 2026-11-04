@@ -386,9 +386,11 @@ async fn save_project_as(
 ///
 /// Registering a file records where it is and what it currently contains. It
 /// asserts nothing about the file being a supported acquisition, and it admits
-/// nothing to the workspace roster. Where the object hashed is a row this
-/// session adopted from a conversion not verified by MSCanvas, its label is
-/// recorded with it (ADR 0055; owner decision 2 of 2026-10-29).
+/// nothing to the workspace roster. Where the object hashed is one this
+/// session finalized from a conversion not verified by MSCanvas, its label is
+/// recorded with it (ADR 0055; owner decisions of 2026-10-29 and 2026-10-31,
+/// for an object with a row; with no row, as built in PR #201, 2026-11-03, not
+/// an owner decision).
 #[tauri::command]
 async fn add_project_input(
     app: tauri::AppHandle,
@@ -991,7 +993,17 @@ fn targeted_table_refusal(refusal: project::targeted_output::TableRefusal) -> Pr
             "This result holds a row this table has no columns for, so nothing was written.",
             false,
         ),
+        TableRefusal::ViewNotOfResult => targeted_table_view_refused(),
     }
+}
+
+fn targeted_table_view_refused() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "targeted_table_view_refused",
+        "These rows are not the ones this view holds, so nothing was written. Reset the view and \
+         try again.",
+        false,
+    )
 }
 
 fn parsed_target_id(value: &str) -> Result<project::record::TargetId, PreviewErrorDto> {
@@ -1162,33 +1174,106 @@ async fn export_targeted_ms1_table(
     service: State<'_, SharedService>,
     projects: State<'_, SharedProjects>,
 ) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
-    use project::targeted_output::{TableFormat, result_table};
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let artifact = parsed_artifact_id(&artifact_id)?;
-    let table_format =
-        TableFormat::from_wire(&format).ok_or_else(targeted_export_format_unknown)?;
-    let (facts, variant) = match table_format {
-        TableFormat::Csv => (TARGETED_TABLE_CSV, ""),
-        TableFormat::Tsv => (TARGETED_TABLE_TSV, ""),
-        TableFormat::SpreadsheetCsv => (TARGETED_TABLE_SPREADSHEET_CSV, "-spreadsheet"),
+    save_targeted_table(&app, &projects, artifact, &format, None).await
+}
+
+/// Exports the rows of one view of a stored result, in the order shown (S-7.1).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn export_targeted_ms1_table_view(
+    artifact_id: String,
+    format: String,
+    view: project::dto::TargetedTableViewDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let view = read_table_view(view)?;
+    save_targeted_table(&app, &projects, artifact, &format, Some(view)).await
+}
+
+/// A view as the table writer reads it, or the refusal of a word it does not have.
+fn read_table_view(
+    view: project::dto::TargetedTableViewDto,
+) -> Result<project::targeted_output::TableView, PreviewErrorDto> {
+    view.view().ok_or_else(targeted_table_view_refused)
+}
+
+const fn targeted_table_facts(
+    format: project::targeted_output::TableFormat,
+) -> preview::dialog::SaveDialogFacts {
+    use project::targeted_output::TableFormat;
+    match format {
+        TableFormat::Csv => TARGETED_TABLE_CSV,
+        TableFormat::Tsv => TARGETED_TABLE_TSV,
+        TableFormat::SpreadsheetCsv => TARGETED_TABLE_SPREADSHEET_CSV,
+    }
+}
+
+/// One stored result's table, its row count and the name it is offered under:
+/// every row, or the rows of a view, whose name cannot pass for the whole table's.
+fn targeted_table_document(
+    stored: &project::targeted_output::StoredResult,
+    artifact: mscanvas_core::ArtifactId,
+    format: project::targeted_output::TableFormat,
+    view: Option<&project::targeted_output::TableView>,
+) -> Result<(String, usize, String), project::targeted_output::TableRefusal> {
+    use project::targeted_output::{TableFormat, result_table, view_table};
+    let (text, count, scope) = match view {
+        None => {
+            let (text, count) = result_table(stored, format)?;
+            (text, count, String::new())
+        }
+        Some(view) => {
+            let (text, count) = view_table(stored, format, view)?;
+            let scope = format!("-view-{count}-of-{}", stored.rows.len());
+            (text, count, scope)
+        }
     };
+    let variant = if format == TableFormat::SpreadsheetCsv {
+        "-spreadsheet"
+    } else {
+        ""
+    };
+    let name = format!(
+        "mscanvas-targeted-ms1-{}-results{scope}{variant}.{}",
+        short_id(artifact),
+        targeted_table_facts(format).default_extension
+    );
+    Ok((text, count, name))
+}
+
+/// One stored result's table through a native dialog, never over a file: every
+/// row, or the rows of a view.
+async fn save_targeted_table(
+    app: &tauri::AppHandle,
+    projects: &SharedProjects,
+    artifact: mscanvas_core::ArtifactId,
+    format: &str,
+    view: Option<project::targeted_output::TableView>,
+) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
+    use project::targeted_output::TableFormat;
+    let table_format = TableFormat::from_wire(format).ok_or_else(targeted_export_format_unknown)?;
+    let facts = targeted_table_facts(table_format);
     let lane = projects.begin_output().map_err(project_error)?;
-    let projects = Arc::clone(&projects);
+    let projects = Arc::clone(projects);
     // The whole table before the dialog, so a result that cannot be written
     // refuses without asking where to put it.
-    let (text, row_count) = off_the_async_runtime(move || {
+    let (text, row_count, suggested) = off_the_async_runtime(move || {
         let stored = projects
             .stored_targeted_result(artifact)
             .map_err(project_error)?;
-        result_table(&stored, table_format).map_err(targeted_table_refusal)
+        targeted_table_document(&stored, artifact, table_format, view.as_ref())
+            .map_err(targeted_table_refusal)
     })
     .await??;
-    let suggested = format!(
-        "mscanvas-targeted-ms1-{}-results{variant}.{}",
-        short_id(artifact),
-        facts.default_extension
-    );
-    let receiver = targeted_destination(&app, facts, suggested)?;
+    let receiver = targeted_destination(app, facts, suggested)?;
     off_the_async_runtime(move || {
         let _lane = lane;
         let Some(destination) = receiver
@@ -2718,6 +2803,9 @@ async fn choose_backend_installation(
                     UiPreferenceSaveDto::StoredRecordUnusable { problem, .. }
                     | UiPreferenceSaveDto::Unavailable { problem, .. }
                     | UiPreferenceSaveDto::Failed { problem, .. } => Err(problem),
+                    // A folder's commit does not answer this today. If it did,
+                    // the folder would not be stored, and that is what to say.
+                    UiPreferenceSaveDto::NotRemembered { .. } => Err("notRemembered"),
                 }
             })
         }))
@@ -3083,6 +3171,7 @@ pub fn run() {
             preview_targeted_ms1_figure,
             export_targeted_ms1_figure,
             export_targeted_ms1_table,
+            export_targeted_ms1_table_view,
             get_targeted_ms1_runtime,
             inspect_backend,
             choose_backend_installation,

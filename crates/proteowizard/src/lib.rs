@@ -38,6 +38,7 @@ mod mzml_xic;
 mod output_inspect;
 mod preview;
 mod process;
+mod rt_mz_map;
 mod sciex_completeness;
 mod sciex_wiff;
 mod sha256;
@@ -154,6 +155,10 @@ pub use process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,
     SystemProcessRunner, Termination, TreeOwnership, execute, execute_cancellable,
 };
+pub use rt_mz_map::{
+    MAX_MAP_CELLS, MapError, MapKind, MapRequest, Ms1Extent, RtMzMap, bin_rt_mz_map,
+    bin_rt_mz_map_from, ms1_extent,
+};
 pub use sciex_completeness::{
     EstablishedSampleCompleteness, SampleCompletenessRefusal, SciexSampleCompleteness,
 };
@@ -163,5 +168,5 @@ pub use structured::{
     IntegrityRoute, IntensityArray, LinearTolerance, Lowering, MAX_CHAIN_STEPS, Mz5Encoding,
     MzArray, MzMlEncoding, MzMlbEncoding, MzMlbIntensityArray, MzMlbMzArray, MzMlbPlainArray,
     MzXmlEncoding, OutputEncoding, Precision, Prediction, ProviderRequirement, SourceBlock,
-    StructuredIntent, StructuredIntentParts, Switch, Tier, Truncation,
+    StructuredIntent, StructuredIntentParts, Switch, Tier, Truncation, VERIFIED_MSCONVERT_SHA256,
 };

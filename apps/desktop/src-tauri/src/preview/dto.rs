@@ -198,9 +198,10 @@ pub struct SelectedFileDto {
     /// display only -- not searched, not sorted by, and not part of identity.
     pub relative_context: Option<String>,
     /// The "not verified by MSCanvas" label of the conversion this session
-    /// adopted this row's object from, or `null` (ADR 0055; owner decision 2
-    /// of 2026-10-29). `null` is the answer for every row not adopted from a
-    /// labelled conversion, and never itself a claim of verification.
+    /// finalized this row's object from, or `null` (ADR 0055; owner decisions of
+    /// 2026-10-29 and 2026-10-31; for a row from a drop or a project, as built in
+    /// PR #201, 2026-11-03, not an owner decision). `null` is the answer for every
+    /// other row, and never itself a claim of verification.
     pub not_verified_by_mscanvas: Option<crate::project::record::NotVerifiedByMscanvas>,
 }
 

@@ -111,6 +111,14 @@ describe("the project-owned reader's refusals (ADR 0056)", () => {
       expect(ownedErrorDetail(error, t)).toBe("intensity:integer_not_exact");
     }
   });
+  it.each(["en", "zh-CN"] as const)("says the same in %s for a payload stated twice or an element inside one", locale => {
+    const t = bindUiMessages(createUiRuntime().instance.getFixedT(locale, "ui"));
+    for (const detail of ["mz:payload_stated_twice", "intensity:element_in_payload"]) {
+      const error = { kind: "spectrum_refused", summary: "boundary words", detail, retryable: false };
+      expect(ownedErrorMessage(error, t)).toBe(t("errSpectrumRefused"));
+      expect(ownedErrorDetail(error, t)).toBe(detail);
+    }
+  });
 });
 
 describe("the declared remainder", () => {

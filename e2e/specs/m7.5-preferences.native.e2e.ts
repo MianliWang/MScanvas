@@ -23,7 +23,7 @@
  *
  * ## What each chain is for
  *
- *   1. that one explicit choice becomes a file holding five allowed values and
+ *   1. that one explicit choice becomes a file holding twelve allowed values and
  *      nothing else, and that a restarted application starts on it;
  *   2. that Cancel, Reset-then-Cancel, a genuinely refused write and a record
  *      this build cannot use all leave the saved file exactly as they found it,
@@ -56,6 +56,8 @@ const ROSTER = '[aria-controls="workbench-roster"]', SHELL = ".workbench-shell";
 const ROW = '.dataset-roster-list [role="row"][data-handle]';
 const BANNER = "[data-backend-status]", HELP = "[data-backend-help]";
 const PANEL = ".conversion-panel", CONVERT = PANEL + " button.conversion-start";
+/** The display group a record holds until something commits one. Bytes on disk, so a literal. */
+const STORED_DISPLAY = { textSize: "standard", contrast: "normal", motion: "system", wheelHabit: "draw", crosshair: false, grid: true, remember: true };
 const input = process.env.MSCANVAS_M75_INPUT_ROOT;
 const root = requireOwnedPreferenceRoot(process.env[PREFERENCE_ROOT_VARIABLE]);
 /** The real per-user record, read only to show this campaign never made one. */
@@ -428,11 +430,11 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     expect(applied.density).toBe("compact");
     expect(applied.preferenceRegion).toBe(zh.applied);
 
-    // On disk: five values, all of them allowed, and a bounded record.
+    // On disk: twelve values, all of them allowed, and a bounded record.
     const saved = noted("after one applied choice");
     expect(saved.exists).toBe(true);
     expect(recordViolations(saved.json)).toEqual([]);
-    expect(saved.json).toEqual({ schemaVersion: 1, appearance: { locale: "zh-CN", density: "compact" }, layout: { roster: "automatic", details: "automatic" } });
+    expect(saved.json).toEqual({ schemaVersion: 2, appearance: { locale: "zh-CN", density: "compact" }, layout: { roster: "automatic", details: "automatic" }, display: STORED_DISPLAY });
     expect(saved.byteLength).toBeLessThanOrEqual(16 * 1024);
     // No residue: the private sibling this write created is gone.
     expect(saved.temporaries).toEqual([]);
@@ -452,8 +454,8 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     await browser.waitUntil(() => browser.execute((shell, open) => document.querySelector(shell)?.getAttribute("data-roster-open") === open, SHELL, wasOpen ? "false" : "true"));
     const layout = noted("after one panel commit");
     expect(replaced(saved, layout)).toBe(true);
-    expect(layout.json).toEqual({ schemaVersion: 1, appearance: { locale: "zh-CN", density: "compact" },
-      layout: { roster: wasOpen ? "hidden" : "shown", details: "automatic" } });
+    expect(layout.json).toEqual({ schemaVersion: 2, appearance: { locale: "zh-CN", density: "compact" },
+      layout: { roster: wasOpen ? "hidden" : "shown", details: "automatic" }, display: STORED_DISPLAY });
     const committed = await capture("04-panel-committed");
     expect(committed.layoutReset?.refused).toBe(false);
     expect(committed.layoutUnsaved).toBeNull();
@@ -575,7 +577,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
 
     // A record this build cannot use, written by something that is not this
     // build. A startup has to survive it and leave it alone.
-    seedStoredBytes(root, JSON.stringify({ schemaVersion: 2, appearance: { locale: "zh-CN", density: "compact" }, layout: { roster: "shown", details: "shown" } }));
+    seedStoredBytes(root, JSON.stringify({ schemaVersion: 3, appearance: { locale: "zh-CN", density: "compact" }, layout: { roster: "shown", details: "shown" } }));
     const seeded = noted("a future-schema record, seeded");
     await relaunch("12-unusable-record-startup");
     const recovered = await capture("13-unusable-record-recovery");
@@ -605,7 +607,7 @@ describe("M7.5 native preferences, first-run recovery and bilingual coverage", f
     const replacement = noted("after the confirmed replacement");
     expect(replaced(seeded, replacement)).toBe(true);
     expect(recordViolations(replacement.json)).toEqual([]);
-    expect(replacement.json).toEqual({ schemaVersion: 1, appearance: { locale: "en", density: "compact" }, layout: { roster: "automatic", details: "automatic" } });
+    expect(replacement.json).toEqual({ schemaVersion: 2, appearance: { locale: "en", density: "compact" }, layout: { roster: "automatic", details: "automatic" }, display: STORED_DISPLAY });
     // A replacement publishes the whole record, not just the group Settings
     // owns. Merging one group into bytes this build cannot read would mean
     // nothing, so the arrangement on screen goes with it -- and the store then

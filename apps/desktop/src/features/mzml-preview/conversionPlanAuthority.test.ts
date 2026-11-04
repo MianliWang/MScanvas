@@ -259,6 +259,8 @@ describe("the plan machine", () => {
       error: previewError(),
     };
     expect(retryStep(failed, 5)).toEqual({ kind: "issue", identity: identity(), ordinal: 5 });
+    // A refusal Rust calls final answers the same question the same way.
+    expect(retryStep({ ...failed, error: previewError({ kind: "queue_output_name_collision", retryable: false }) }, 5)).toEqual({ kind: "hold" });
     // And nothing else re-asks: a machine whose failure re-issued itself would
     // be this document reacting to its own bookkeeping, for ever.
     expect(planStep(failed, planQuestion(inputs()), 5)).toEqual({ kind: "hold" });

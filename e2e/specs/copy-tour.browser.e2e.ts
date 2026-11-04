@@ -23,21 +23,24 @@ import { fileURLToPath } from "node:url";
 import { cdp, metrics } from "../support/cdp";
 import { answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
 import { CONVERT, answerPlans as answerPlansFor, checkMembers, waitUntilOffered } from "../support/conversion";
-import { IPC_TABLE_KEY, installIpcBoundary, revealInDetails, setInvokeResult } from "../support/harness";
+import { IPC_TABLE_KEY, holdInvoke, installIpcBoundary, pressAt, revealInDetails, setInvokeResult } from "../support/harness";
 import { MZML_ROW, ipcTable } from "../support/fixtures";
 import { CAPTURED_INPUT, CAPTURED_RUN, EMPTY_ROSTER, NO_PROJECT, RESULT, capturedProject, scenario, type Locale } from "../support/pm9Scenarios";
 import { ENDED, ENDED_ITEMS, INTERRUPTED, INTERRUPTED_ITEMS, LABELLED, LABELLED_ITEMS, MANY_ITEMS, MANY_RUNS, OMITTED, REFUSED_END, REFUSED_END_ITEMS, REQUEST_REFUSED, RETRYING, RETRY_WAITING_ITEM, RUNNING, RUNNING_ITEMS, SET_ITEM, STOPPED, STOPPED_ITEMS, STOP_FAILED, STOP_FAILED_ITEMS, WHOLE_SET_ITEM, found, listed } from "../support/runHistory";
 import { PLOT, TABLE, readBackSavedPreferences, revealRosterRow, revealTheSpectrum, selectTheSpectrum } from "../support/viewer";
 import {
+  ENVIRONMENT_DIAGNOSTICS,
   admittedIntents,
   availableBackend,
   chosenBackend,
   chosenFolderWithoutTools,
   completeCatalog,
   finalizedAttemptFacts,
+  outputSetReport,
   quarantinedBackend,
   queueItem,
   queueOf,
+  sciexQueueItem,
   settledAt,
   shippedIntent,
   unavailableBackend,
@@ -239,6 +242,73 @@ function labelledProject(locale: Locale) {
   return onUnmeasured(table);
 }
 
+/** That row under a long name, for the viewer's title, where the name gives way to the label. */
+function labelledLongMzmlRow(locale: Locale): Record<string, unknown> {
+  const table: Record<string, unknown> = labelledMzmlRow(locale);
+  const roster = table.get_workspace_roster as { datasets: SelectedFile[]; capacity: number };
+  table.get_workspace_roster = { ...roster, datasets: roster.datasets.map((row) => row.handle === MZML_ROW.handle
+    ? { ...row, fileName: "Plasma_QC_batch_08_replicate_04_long_acquisition_converted.mzML" } : row) };
+  return table;
+}
+
+/** A complete SCIEX set at its largest (ADR 0027), each member with its own Add (ADR 0052). */
+const SET_ROW: SelectedFile = { handle: "wiff-1", fileName: "Plasma_QC_batch_08_sciex_set.wiff", byteLength: 1_048_576, sourceKind: "sciex_wiff", relativeContext: null };
+const SET_NAMES = Array.from({ length: 24 }, (_, index) => `Plasma_QC_batch_08_sciex_set-${String(index + 1).padStart(2, "0")}.mzML`);
+const SET_FINISHED = {
+  status: "terminal",
+  reason: "completed",
+  operationId: OPERATION,
+  queue: queueOf([sciexQueueItem(SET_ROW.handle, SET_ROW.fileName, {
+    state: "finalized",
+    attempts: 1,
+    finalizedOutputs: SET_NAMES.map((fileName, index) => ({ outputId: `set-output-${String(index)}`, fileName })),
+    result: { kind: "outputSet", report: outputSetReport(SET_ROW.handle, SET_NAMES) },
+    ...finalizedAttemptFacts(),
+  })]),
+};
+
+/** What the per-output command answers for an output `name` of the first item. */
+function outputAnswer(rows: readonly SelectedFile[], sourceHandle: string, name: string, outcome: "added" | "alreadyInWorkspace" | "refused") {
+  const dataset: SelectedFile = { handle: "added-output", fileName: name, byteLength: 1_048_576, sourceKind: "mzml", relativeContext: null, notVerifiedByMscanvas: LABEL };
+  return {
+    operationId: OPERATION,
+    retryRound: 0,
+    roster: { datasets: outcome === "refused" ? rows : [...rows, dataset], capacity: 1024 },
+    outcomes: [outcome === "refused"
+      ? { kind: "refused", itemIndex: 0, memberIndex: 0, sourceHandle, outputFileName: name, reason: "workspace_full" }
+      : { kind: outcome, itemIndex: 0, memberIndex: 0, sourceHandle, outputFileName: name, dataset }],
+  };
+}
+
+/** An output's Add: the third button of its group, after Open file and Open folder. */
+const OUTPUT_ADD = ".output-open-actions button:nth-of-type(3)";
+
+/** The conversion surface, then the first output's Add pressed. */
+async function addTheFirstOutput() {
+  await go(2);
+  await browser.$(OUTPUT_ADD).waitForExist({ timeout: 30_000 });
+  await browser.$(OUTPUT_ADD).scrollIntoView({ block: "center" });
+  await browser.$(OUTPUT_ADD).click();
+  await frames();
+}
+
+/** The conversion surface, then the Add of member 20 of 24, with the list's head scrolled away. */
+async function addMemberTwenty() {
+  const add = `.output-open-actions[aria-label*="${SET_NAMES[19]!}"] button:nth-of-type(3)`;
+  await go(2);
+  await browser.$(add).waitForExist({ timeout: 30_000 });
+  await browser.$(add).scrollIntoView({ block: "center" });
+  await browser.$(add).click();
+  await frames();
+}
+
+/** A finished queue whose one labelled output has a name near the filesystem's limit. */
+const LONG_OUTPUT_NAME = `${"Plasma_QC_batch_08_replicate_04_".repeat(5)}.mzML`;
+const FINISHED_LONG_NAME = {
+  ...FINISHED_LABELLED,
+  queue: queueOf(FINISHED_LABELLED.queue.items.map((item) => ({ ...item, finalizedOutputs: [{ outputId: "long-name-output", fileName: LONG_OUTPUT_NAME }] }))),
+};
+
 /** The project's Details on that reference. */
 async function inspectLabelledReference() {
   await go(3);
@@ -389,6 +459,33 @@ function withBackend(verdict: unknown) {
 }
 
 const populated = (locale: Locale) => scenario("populated", locale);
+const withDiagnostics = (locale: Locale) => ({ ...populated(locale), read_environment_diagnostics: ENVIRONMENT_DIAGNOSTICS });
+
+/** Settings open, and Copy diagnostics pressed. */
+async function readDiagnostics() {
+  await browser.$("[data-settings-entry]").click();
+  await browser.$("[data-settings-dialog]").waitForDisplayed();
+  await browser.$("[data-diagnostics-read]").click();
+}
+
+/** The text read, a stand-in for the machine's clipboard answering, and Copy pressed. */
+async function copyDiagnostics(refuse: boolean, onTheEdge = false) {
+  await readDiagnostics();
+  await browser.$("[data-diagnostics-preview]").waitForExist();
+  await browser.execute((refused: boolean) => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      configurable: true,
+      value: () => (refused ? Promise.reject(new DOMException("denied", "NotAllowedError")) : Promise.resolve()),
+    });
+  }, refuse);
+  if (!onTheEdge) {
+    await browser.$("[data-diagnostics-copy]").click();
+    return;
+  }
+  // Against the body's lower edge, where a wheel or a Tab can leave it.
+  await browser.execute(() => document.querySelector("[data-diagnostics-copy]")?.scrollIntoView({ block: "end" }));
+  await pressAt("[data-diagnostics-copy]");
+}
 
 // ---------------------------------------------------------- workspace restore
 
@@ -420,14 +517,35 @@ const RESTORE_MARKED = {
   ],
 };
 
+const RESTORE_STATES = ["changed", "missing", "unreachable", "unreadable", "unsafe"] as const;
+const BACKEND_FAILED = { __reject: { kind: "unexpected_error", summary: "The record could not be changed.", detail: null, retryable: true } };
+
 const RESTORE_ANSWER = {
   workspace: { roster: { datasets: [MZML_ROW], capacity: 1024 }, outcomes: [{ outcome: "added", dataset: MZML_ROW }] },
-  placed: [{ handle: MZML_ROW.handle, group: null, checked: true, added: true }],
+  placed: [{ handle: MZML_ROW.handle, group: 0, checked: true, added: true }],
 };
+
+const RESTORE_PARTLY_ROWS = [
+  ...Array.from({ length: 9 }, (_, index) => restoredRow(index, `QC_${String(index + 1).padStart(2, "0")}.raw`, "matching")),
+  ...[9, 10, 11, 12].map(index => restoredRow(index, `run_${String(index)}.raw`, "missing")),
+];
 
 /** A first run whose start-up read answers `read`. */
 function restoreTable(read: unknown) {
   return (locale: Locale) => ({ ...emptyTable(locale), read_workspace_restore: read });
+}
+
+/** Start fresh on the marked rows, answered `answer`: the record is off afterwards if it says so. */
+function startFreshAnswered(answer: { readonly outcome: string }) {
+  return {
+    table: (locale: Locale) => ({ ...restoreTable(RESTORE_MARKED)(locale), clear_workspace_restore: answer }),
+    drive: async () => {
+      await browser.$('[data-restore="offer"] [data-restore-start-fresh]').waitForClickable();
+      if (answer.outcome === "turnedOff") await setInvokeResult("read_workspace_restore", { outcome: "off", leftoverCopies: 0 });
+      await browser.$('[data-restore="offer"] [data-restore-start-fresh]').click();
+    },
+    anchor: '[data-restore="action"]',
+  };
 }
 
 /** A change after the start-up read, which is what the first save is. */
@@ -777,6 +895,39 @@ const STOPS: readonly Stop[] = [
       await frames();
     },
     anchor: "#workbench-inspector .inspector-panel [data-not-verified]",
+  },
+  // The viewer's title, the Metadata tab's File row and the figure dialog's
+  // source line of a labelled output (owner decision A0055 (a), 2026-10-31).
+  { name: "viewer-title-not-verified", table: labelledMzmlRow, drive: openPreview, anchor: ".viewer-file-title [data-not-verified]" },
+  { name: "viewer-title-not-verified-long", table: labelledLongMzmlRow, drive: openPreview, anchor: ".viewer-file-title [data-not-verified]" },
+  { name: "viewer-metadata-not-verified", table: labelledMzmlRow, drive: () => openViewerTab(3), anchor: ".preview-metadata [data-not-verified]" },
+  {
+    name: "export-figure-not-verified",
+    table: labelledMzmlRow,
+    drive: async () => {
+      await answerFigurePreviews();
+      await openSpectrum();
+      await openFigureDialog(".spectrum-panel");
+      await waitForFigurePreview();
+    },
+    anchor: ".figure-export-heading [data-not-verified]",
+  },
+  {
+    // Under a name far too long for its line: the head stays where it is.
+    name: "export-figure-not-verified-long",
+    table: (locale) => {
+      const table: Record<string, unknown> = labelledMzmlRow(locale);
+      const roster = table.get_workspace_roster as { datasets: SelectedFile[]; capacity: number };
+      table.get_workspace_roster = { ...roster, datasets: roster.datasets.map((row) => row.handle === MZML_ROW.handle ? { ...row, fileName: LONG_OUTPUT_NAME } : row) };
+      return table;
+    },
+    drive: async () => {
+      await answerFigurePreviews();
+      await openSpectrum();
+      await openFigureDialog(".spectrum-panel");
+      await waitForFigurePreview();
+    },
+    anchor: ".figure-export-heading [data-not-verified]",
   },
   {
     // A chromatogram export's result, over the plot's corner: the plot keeps
@@ -1138,6 +1289,160 @@ const STOPS: readonly Stop[] = [
     anchor: "#conversion-adopt-not-verified",
   },
   {
+    // One output's Add under the keyboard, after Open folder (ADR 0052).
+    name: "conversion-output-add-keyboard",
+    table: (locale) => onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)),
+    keepFocus: true,
+    drive: async () => {
+      await go(2);
+      await browser.$(".output-open-actions button:nth-of-type(2)").waitForExist({ timeout: 30_000 });
+      await browser.execute(() => document.querySelector<HTMLElement>(".output-open-actions button:nth-of-type(2)")?.focus());
+      await browser.keys("Tab");
+      await frames();
+    },
+    anchor: `${OUTPUT_ADD}:focus-visible`,
+  },
+  {
+    // While one Add is out every Add is refused, and says why.
+    name: "conversion-output-adding",
+    table: (locale) => onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)),
+    hold: ["adopt_workspace_conversion_output"],
+    keepFocus: true,
+    drive: addTheFirstOutput,
+    anchor: `${OUTPUT_ADD}[aria-disabled="true"]`,
+  },
+  {
+    // Added: its own line, the named Show in Workbench, no queue summary.
+    name: "conversion-output-added",
+    table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)), adopt_workspace_conversion_output: outputAnswer(ROWS, FIRST.handle, "QC_pool_01.mzML", "added") }),
+    drive: addTheFirstOutput,
+    anchor: ".output-open-actions button:nth-of-type(4)",
+  },
+  {
+    // A full workspace: the output's own "not added" sentence.
+    name: "conversion-output-refused-full",
+    table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)), adopt_workspace_conversion_output: outputAnswer(ROWS, FIRST.handle, "QC_pool_01.mzML", "refused") }),
+    drive: addTheFirstOutput,
+    anchor: '.output-open-actions [role="status"]:not(:empty)',
+  },
+  {
+    // An output the queue no longer offers: the same sentence, not the queue's.
+    name: "conversion-output-refused-not-adoptable",
+    table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)),
+      adopt_workspace_conversion_output: { __reject: { kind: "outputs_not_adoptable", summary: "This queue has no complete finalized output eligible to add.", detail: null, retryable: false } } }),
+    drive: addTheFirstOutput,
+    anchor: '.output-open-actions [role="status"]:not(:empty)',
+  },
+  {
+    // Already a row: its own line and Show in Workbench, nothing else said.
+    name: "conversion-output-already",
+    table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)), adopt_workspace_conversion_output: outputAnswer(ROWS, FIRST.handle, "QC_pool_01.mzML", "alreadyInWorkspace") }),
+    drive: addTheFirstOutput,
+    anchor: ".output-open-actions button:nth-of-type(4)",
+  },
+  {
+    // That row removed: the line says nothing of it, no Show, Add offered again.
+    name: "conversion-output-row-left",
+    table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LABELLED)),
+      adopt_workspace_conversion_output: outputAnswer(ROWS, FIRST.handle, "QC_pool_01.mzML", "alreadyInWorkspace"),
+      remove_workspace_datasets: { roster: { datasets: ROWS, capacity: 1024 }, removedHandles: ["added-output"], unknownHandles: [] } }),
+    drive: async () => {
+      await addTheFirstOutput();
+      await browser.$(".output-open-actions button:nth-of-type(4)").waitForExist({ timeout: 30_000 });
+      await revealRosterRow("added-output");
+      await browser.$('.grouped-roster [data-handle="added-output"] .dataset-row-name').click();
+      await revealRosterRow("added-output");
+      await browser.$("[data-roster-list-menu]").click();
+      await browser.$("[data-roster-remove]").click();
+      await browser.$('.grouped-roster [data-handle="added-output"]').waitForExist({ reverse: true, timeout: 30_000 });
+      await go(2);
+      await browser.$(OUTPUT_ADD).scrollIntoView({ block: "center" });
+      await frames();
+    },
+    anchor: `${OUTPUT_ADD}:not([aria-disabled="true"])`,
+  },
+  {
+    // A refusal naming a long output: its line wraps inside the results.
+    name: "conversion-output-refused-long-name",
+    table: (locale) => ({ ...onUnmeasured(conversionWorld(locale, FINISHED_LONG_NAME)), adopt_workspace_conversion_output: outputAnswer(ROWS, FIRST.handle, LONG_OUTPUT_NAME, "refused") }),
+    drive: addTheFirstOutput,
+    anchor: '.output-open-actions [role="status"]:not(:empty)',
+  },
+  {
+    // Member 20 of 24 pressed: its line says so, and the status bar for the rest.
+    name: "conversion-set-member-adding",
+    table: (locale) => conversionWorld(locale, SET_FINISHED, [SET_ROW]),
+    hold: ["adopt_workspace_conversion_output"],
+    keepFocus: true,
+    drive: addMemberTwenty,
+    anchor: '.output-open-actions [role="status"]:not(:empty)',
+  },
+  {
+    // Member 20 of 24 refused: on its line, where the press was, and not above.
+    name: "conversion-set-member-failed",
+    table: (locale) => ({ ...conversionWorld(locale, SET_FINISHED, [SET_ROW]),
+      adopt_workspace_conversion_output: { __reject: { kind: "adoption_superseded", summary: "The workspace changed.", detail: null, retryable: true } } }),
+    drive: addMemberTwenty,
+    anchor: '.output-open-actions [role="status"]:not(:empty)',
+  },
+  {
+    // ADR 0052's rendered check: a large SCIEX set, one Add per member.
+    name: "conversion-set-finished",
+    table: (locale) => conversionWorld(locale, SET_FINISHED, [SET_ROW]),
+    drive: () => go(2),
+    anchor: 'li[data-item-state="finalized"] .output-open-actions',
+  },
+  {
+    // One member added, and the item's record of that (ADR 0052 decision 5).
+    name: "conversion-set-member-added",
+    table: (locale) => ({ ...conversionWorld(locale, SET_FINISHED, [SET_ROW]),
+      adopt_workspace_conversion_output: outputAnswer([SET_ROW], SET_ROW.handle, SET_NAMES[0]!, "added") }),
+    drive: addTheFirstOutput,
+    anchor: ".output-open-actions button:nth-of-type(4)",
+  },
+  {
+    // A refusal Rust calls final: its sentence, and no Describe again.
+    name: "conversion-plan-refused-final",
+    table: (locale) => ({ ...conversionWorld(locale, { status: "idle" }), describe_workspace_conversion_queue: { __reject: { kind: "dataset_not_convertible", summary: "That row is already mzML, so there is nothing to convert.", detail: null, retryable: false } } }),
+    drive: async () => {
+      await go(2);
+      await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+      await browser.$(".conversion-plan-pending").waitForExist({ timeout: 30_000 });
+      await frames();
+      const offered = await browser.execute(() => document.querySelectorAll(".conversion-start-actions button").length);
+      if (offered !== 1) throw new Error(`Describe again offered after a final refusal: ${String(offered)} buttons`);
+    },
+    anchor: ".conversion-plan-pending",
+  },
+  {
+    // A failure that may pass: Describe again stays.
+    name: "conversion-plan-failed-retryable",
+    table: (locale) => ({ ...conversionWorld(locale, { status: "idle" }), describe_workspace_conversion_queue: { __reject: { kind: "plan_unreadable", summary: "The plan was not read.", detail: null, retryable: true } } }),
+    drive: async () => {
+      await go(2);
+      await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+      await browser.$(".conversion-start-actions button:nth-of-type(2)").waitForExist({ timeout: 30_000 });
+    },
+    anchor: ".conversion-start-actions button:nth-of-type(2)",
+  },
+  {
+    // Describe again answered with a final refusal: the keyboard is on Convert.
+    name: "conversion-plan-refused-after-describe-again",
+    table: (locale) => ({ ...conversionWorld(locale, { status: "idle" }), describe_workspace_conversion_queue: { __reject: { kind: "plan_unreadable", summary: "The plan was not read.", detail: null, retryable: true } } }),
+    keepFocus: true,
+    drive: async () => {
+      await go(2);
+      await browser.execute(() => document.querySelector<HTMLInputElement>('input[name="conversion-scope"][value="all"]')?.click());
+      await browser.$("[data-describe-again]").waitForExist({ timeout: 30_000 });
+      await setInvokeResult("describe_workspace_conversion_queue", { __reject: { kind: "dataset_not_convertible", summary: "That row is already mzML, so there is nothing to convert.", detail: null, retryable: false } });
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-describe-again]")?.focus());
+      await browser.keys("Enter");
+      await browser.$("[data-describe-again]").waitForExist({ reverse: true, timeout: 15_000 });
+      await frames();
+    },
+    anchor: ".conversion-start:focus",
+  },
+  {
     // Its results at the queue's full size: windowed, every row labelled.
     name: "conversion-finished-long",
     table: (locale) => onUnmeasured(conversionWorld(locale, LONG_FINISHED, MANY)),
@@ -1271,6 +1576,28 @@ const STOPS: readonly Stop[] = [
     anchor: '[data-targeted-table-export] [data-targeted-output="savedTable"]',
   },
   {
+    // The rows shown, sorted and filtered, and those rows just saved (S-7.1).
+    name: "targeted-table-view-saved",
+    table: (locale) => ({
+      ...scenario("projectWithResult", locale),
+      export_targeted_ms1_table_view: {
+        status: "saved",
+        format: "csv",
+        fileName: "mscanvas-targeted-ms1-eeeeeeee-results-view-1-of-2.csv",
+        rowCount: 1,
+      },
+    }),
+    drive: async () => {
+      await go(3);
+      await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+      await browser.$('[data-targeted-sort="raw_area"]').click();
+      await browser.$("[data-targeted-view-outcome]").click();
+      await browser.$("[data-targeted-view-save-button]").click();
+      await browser.$('[data-targeted-view-export="csv"]').click();
+    },
+    anchor: '[data-targeted-table-export] [data-targeted-output="savedTable"]',
+  },
+  {
     // Open project… refused by Rust: the refusal in words, with the head's buttons to try again.
     name: "project-open-failed",
     table: (locale) => ({ ...emptyTable(locale), open_project: { __reject: { kind: "unreadable" } } }),
@@ -1377,6 +1704,96 @@ const STOPS: readonly Stop[] = [
       await frames();
     },
     anchor: '[data-layout-reset][aria-disabled="true"]:focus-visible',
+  },
+  // Copy diagnostics (ADR 0063, decision 10): its row is in the `settings` stop.
+  {
+    name: "diagnostics-reading",
+    table: withDiagnostics,
+    hold: ["read_environment_diagnostics"],
+    drive: readDiagnostics,
+    anchor: '[data-diagnostics-read][aria-disabled="true"]',
+  },
+  {
+    name: "diagnostics-reading-again",
+    table: withDiagnostics,
+    drive: async () => {
+      await readDiagnostics();
+      await browser.$("[data-diagnostics-preview]").waitForExist();
+      await holdInvoke("read_environment_diagnostics");
+      await browser.$("[data-diagnostics-read]").click();
+    },
+    anchor: '[data-diagnostics-copy][aria-disabled="true"]',
+  },
+  {
+    name: "diagnostics-read",
+    table: withDiagnostics,
+    drive: readDiagnostics,
+    anchor: "[data-diagnostics-preview]",
+  },
+  {
+    name: "diagnostics-read-failed",
+    table: (locale) => ({ ...populated(locale), read_environment_diagnostics: { __reject: { kind: "preview_worker_unavailable", summary: "", detail: null, retryable: true } } }),
+    drive: readDiagnostics,
+    anchor: "[data-diagnostics-failed]",
+  },
+  {
+    name: "diagnostics-copied",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(false),
+    anchor: "[data-diagnostics-copied]:not(:empty)",
+  },
+  {
+    name: "diagnostics-copy-refused",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(true),
+    anchor: "[data-diagnostics-copy-failed]",
+  },
+  {
+    name: "diagnostics-read-from-the-end",
+    table: withDiagnostics,
+    drive: async () => {
+      await browser.$("[data-settings-entry]").click();
+      await browser.$("[data-settings-dialog]").waitForDisplayed();
+      // Support is last, so this is where a person who wheels down to it presses.
+      await browser.execute(() => {
+        const body = document.querySelector(".settings-dialog-body");
+        if (body !== null) body.scrollTop = body.scrollHeight;
+      });
+      await pressAt("[data-diagnostics-read]");
+    },
+    anchor: "[data-diagnostics-preview]:focus",
+  },
+  {
+    name: "diagnostics-copied-on-the-edge",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(false, true),
+    anchor: "[data-diagnostics-copied]:not(:empty)",
+  },
+  {
+    name: "diagnostics-copy-refused-on-the-edge",
+    table: withDiagnostics,
+    drive: () => copyDiagnostics(true, true),
+    anchor: "[data-diagnostics-copy-failed]",
+  },
+  {
+    name: "settings-save-failed-after-read",
+    table: (locale) => ({ ...withDiagnostics(locale), save_ui_preferences: { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false, revision: 1 } }),
+    drive: async () => {
+      await readDiagnostics();
+      await browser.$("[data-diagnostics-preview]").waitForExist();
+      await browser.$('[data-settings-dialog] [role="radio"]:has([data-setting-value="compact"])').click();
+    },
+    anchor: "[data-save='failed']",
+  },
+  {
+    // The text read with a restore refusal above it: the tallest Settings there is.
+    name: "diagnostics-read-below-restore-refusal",
+    table: (locale) => ({ ...restoreTable({ outcome: "refused", problem: "malformed", leftoverCopies: 1 })(locale), read_environment_diagnostics: ENVIRONMENT_DIAGNOSTICS }),
+    drive: async () => {
+      await openRestoreSettings('[data-restore-settings="refused"]');
+      await browser.$("[data-diagnostics-read]").click();
+    },
+    anchor: "[data-diagnostics-preview]",
   },
   // One-click view of a Thermo RAW file (ADR 0060 slice 3): every state of the
   // pane, each refusal of decision 4, and the view it opens.
@@ -1765,6 +2182,7 @@ const STOPS: readonly Stop[] = [
   { name: "restore-offer", table: restoreTable(RESTORE_OFFER), anchor: "[data-restore-action]" },
   { name: "restore-marked", table: restoreTable(RESTORE_MARKED), anchor: "[data-restored-row]" },
   { name: "restore-expired", table: restoreTable(restored([], 3)), anchor: "[data-restore-expired]" },
+  { name: "restore-expired-one", table: restoreTable(restored([], 1)), anchor: "[data-restore-expired]" },
   {
     // Refused like Add files, and for the same visible reason.
     name: "restore-refused-busy",
@@ -1789,18 +2207,152 @@ const STOPS: readonly Stop[] = [
     anchor: '[data-restore="read-failed"]',
   },
   { name: "restore-document-refused", table: restoreTable({ outcome: "refused", problem: "newerVersion", leftoverCopies: 1 }), anchor: '[data-restore="refused"]' },
+  { name: "restore-unavailable", table: restoreTable({ outcome: "unavailable", problem: "rootUnresolved" }), anchor: '[data-restore="unavailable"]' },
+  {
+    name: "restore-longest-group-name",
+    table: restoreTable(restored([restoredRow(0, "QC_01.raw", "missing")], 0, 0, "组".repeat(120))),
+    anchor: "[data-restored-row]",
+  },
+  {
+    // A dismiss held: every action is refused, for the reason on the line.
+    name: "restore-working",
+    table: restoreTable(RESTORE_MARKED),
+    hold: ["dismiss_restored_row"],
+    drive: async () => {
+      await browser.$('[data-state="missing"] [data-restore-dismiss]').click();
+    },
+    anchor: '.notice[data-restore="working"]',
+  },
+  {
+    name: "restore-putting-back",
+    table: (locale) => ({ ...restoreTable(RESTORE_OFFER)(locale), restore_workspace: RESTORE_ANSWER }),
+    hold: ["restore_workspace"],
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await browser.$("[data-restore-action]").click();
+    },
+    anchor: '[data-restore-action][aria-busy="true"]',
+  },
+  {
+    name: "restore-putting-back-one",
+    table: (locale) => ({ ...restoreTable(restored([restoredRow(0, "QC_01.raw", "matching")]))(locale), restore_workspace: RESTORE_ANSWER }),
+    hold: ["restore_workspace"],
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await browser.$("[data-restore-action]").click();
+    },
+    anchor: '[data-restore-action][aria-busy="true"]',
+  },
   {
     name: "restore-later-writer",
     table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }),
     drive: toggleTheFirstRow,
-    anchor: '[data-restore="problem"]',
+    anchor: '[data-restore="stopped"]',
   },
+  {
+    name: "restore-record-held",
+    table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "identityUnknown" } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"] [data-restore-retry]',
+  },
+  { name: "restore-turned-off-elsewhere", ...startFreshAnswered({ outcome: "turnedOff", problem: "changedElsewhere" } as { outcome: string }) },
+  { name: "restore-turned-off-held", ...startFreshAnswered({ outcome: "turnedOff", problem: "identityUnknown" } as { outcome: string }) },
+  { name: "restore-start-fresh-failed", ...startFreshAnswered({ outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: true } as { outcome: string }) },
   {
     name: "restore-too-many",
     table: (locale) => ({ ...populated(locale), read_workspace_restore: RESTORE_MARKED, save_workspace_restore: { outcome: "refused", problem: "tooManyRows" } }),
     drive: toggleTheFirstRow,
     anchor: '[data-restore="problem"]',
   },
+  {
+    name: "restore-too-many-start-fresh",
+    table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "tooManyRows" } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"] [data-restore-start-fresh]',
+  },
+  { name: "restore-marked-only", table: restoreTable(restored(RESTORE_STATES.map((state, index) => restoredRow(index, `${state}.raw`, state)))), anchor: "[data-restored-row]" },
+  {
+    name: "restore-dismiss-failed",
+    table: (locale) => ({ ...restoreTable(RESTORE_MARKED)(locale), dismiss_restored_row: BACKEND_FAILED }),
+    drive: async () => {
+      await browser.$('[data-state="missing"] [data-restore-dismiss]').click();
+      await browser.$('[data-restore="action"]').waitForDisplayed();
+    },
+    anchor: '[data-restore="action"] [data-restore-retry]',
+    keepFocus: true,
+  },
+  {
+    // The answer and the row the keyboard is on, with the list scrolled to its end.
+    name: "restore-dismiss-failed-end-of-list",
+    table: (locale) => ({ ...restoreTable(restored(Array.from({ length: 30 }, (_, index) => restoredRow(index, `run_${String(index)}.raw`, "missing"))))(locale), dismiss_restored_row: BACKEND_FAILED }),
+    drive: async () => {
+      await browser.$("[data-restored-row]").waitForDisplayed();
+      await browser.execute(() => [...document.querySelectorAll<HTMLElement>("[data-restore-dismiss]")].at(-1)?.focus());
+      await browser.keys("Enter");
+      await browser.$('[data-restore="action"]').waitForDisplayed();
+    },
+    anchor: '[data-restore="action"] [data-restore-retry]',
+    keepFocus: true,
+  },
+  {
+    name: "restore-put-back-refused",
+    table: (locale) => ({ ...restoreTable(RESTORE_OFFER)(locale), restore_workspace: { __reject: { kind: "conversion_busy", summary: "A conversion is running.", detail: null, retryable: true } } }),
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await browser.$("[data-restore-action]").click();
+    },
+    anchor: ".shell-notices > .notice-danger",
+  },
+  {
+    name: "restore-put-back-partly",
+    table: (locale) => ({
+      ...restoreTable(RESTORE_OFFER)(locale),
+      restore_workspace: { ...RESTORE_ANSWER, workspace: { ...RESTORE_ANSWER.workspace, outcomes: [...RESTORE_ANSWER.workspace.outcomes, { outcome: "rejected", candidateName: "QC_02.raw", error: { kind: "workspace_full", summary: "The workspace is full.", detail: null, retryable: false } }] } },
+    }),
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await setInvokeResult("read_workspace_restore", restored([restoredRow(1, "QC_02.raw", "matching")]));
+      await browser.$("[data-restore-action]").click();
+      await browser.$(`[data-handle="${MZML_ROW.handle}"]`).waitForExist();
+    },
+    anchor: "[data-restore-action]",
+  },
+  {
+    // The answer takes its most height, with the keyboard still on Restore workspace and rows marked below.
+    name: "restore-put-back-partly-marked",
+    table: (locale) => ({
+      ...restoreTable(restored(RESTORE_PARTLY_ROWS))(locale),
+      restore_workspace: { ...RESTORE_ANSWER, workspace: { ...RESTORE_ANSWER.workspace, outcomes: [...RESTORE_ANSWER.workspace.outcomes, ...RESTORE_PARTLY_ROWS.slice(1, 9).map(({ displayName }) => ({ outcome: "rejected", candidateName: displayName, error: { kind: "workspace_full", summary: "The workspace is full.", detail: null, retryable: true } }))] } },
+    }),
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await setInvokeResult("read_workspace_restore", restored(RESTORE_PARTLY_ROWS.slice(1)));
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-restore-action]")?.focus());
+      await browser.keys("Enter");
+      await browser.$(`[data-handle="${MZML_ROW.handle}"]`).waitForExist();
+    },
+    anchor: "[data-restore-action]",
+    keepFocus: true,
+  },
+  { name: "restore-refused-conversion", table: (locale) => ({ ...conversionWorld(locale, STARTED), read_workspace_restore: RESTORE_OFFER }), anchor: "#restore-reason" },
+  // The last: a code this build does not know is shown, not swallowed.
+  ...(["staleArrangement", "invalidArrangement", "notStorable", "storedDocumentKept", "someCodeFromANewerBuild"] as const).map(problem => ({
+    name: `restore-save-refused-${problem}`,
+    table: (locale: Locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"]',
+  })),
+  ...([["directoryUnusable", true], ["notWritten", true], ["oversized", false], ["unsafeTarget", false]] as const).map(([problem, retryable]) => ({
+    name: `restore-save-failed-${problem}`,
+    table: (locale: Locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "failed", problem, retryable, temporaryLeftBehind: false } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"]',
+  })),
+  ...(["unsupportedVersion", "oversized", "unsafeTarget"] as const).map(problem => ({
+    name: `restore-document-refused-${problem}`,
+    table: restoreTable({ outcome: "refused", problem, leftoverCopies: 0 }),
+    anchor: '[data-restore="refused"]',
+  })),
   {
     name: "settings-restore",
     table: restoreTable(restored([], 0, 2)),
@@ -1824,6 +2376,83 @@ const STOPS: readonly Stop[] = [
     table: restoreTable({ outcome: "unavailable", problem: "rootUnresolved" }),
     drive: () => openRestoreSettings('[data-restore-settings="unavailable"]'),
     anchor: '[data-restore-settings="unavailable"]',
+  },
+  {
+    name: "settings-restore-read-failed",
+    table: restoreTable({ __reject: { kind: "unexpected_error", summary: "The record could not be read.", detail: null, retryable: true } }),
+    drive: () => openRestoreSettings('[data-restore-settings="read-failed"]'),
+    anchor: '[data-restore-settings="read-failed"]',
+  },
+  {
+    name: "settings-restore-off-failed",
+    table: (locale) => ({ ...restoreTable(restored([]))(locale), set_workspace_restore_enabled: { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false } }),
+    drive: async () => {
+      await openRestoreSettings('[role="radio"]:has([data-setting-value="restore-off"])');
+      await browser.$('[role="radio"]:has([data-setting-value="restore-off"])').click();
+      await browser.$('[data-restore-settings="action"]').waitForExist();
+    },
+    anchor: '[data-restore-settings="action"]',
+  },
+  {
+    name: "settings-restore-working",
+    table: restoreTable(restored([])),
+    hold: ["set_workspace_restore_enabled"],
+    drive: async () => {
+      await openRestoreSettings('[role="radio"]:has([data-setting-value="restore-off"])');
+      await browser.$('[role="radio"]:has([data-setting-value="restore-off"])').click();
+      await browser.$('.settings-storage-note[data-restore-settings="working"]').waitForExist();
+    },
+    anchor: '.settings-storage-note[data-restore-settings="working"]',
+  },
+  {
+    name: "settings-restore-off",
+    table: restoreTable({ outcome: "off", leftoverCopies: 1 }),
+    drive: () => openRestoreSettings("[data-restore-settings-clear]"),
+    anchor: '[role="radio"][aria-checked="true"]:has([data-setting-value="restore-off"])',
+  },
+  {
+    name: "settings-restore-loading",
+    table: emptyTable,
+    hold: ["read_workspace_restore"],
+    drive: () => openRestoreSettings('[data-restore-settings="loading"]'),
+    anchor: '[data-restore-settings="loading"]',
+  },
+  {
+    name: "settings-restore-waiting-for-list",
+    table: emptyTable,
+    hold: ["get_workspace_roster"],
+    drive: () => openRestoreSettings('[data-restore-settings="loading"]'),
+    anchor: '[data-restore-settings="loading"]',
+  },
+  {
+    name: "settings-restore-on-refused",
+    table: (locale) => ({ ...restoreTable({ outcome: "off", leftoverCopies: 0 })(locale), set_workspace_restore_enabled: { outcome: "refused", problem: "changedElsewhere" } }),
+    drive: async () => {
+      await openRestoreSettings('[role="radio"]:has([data-setting-value="restore-on"])');
+      await browser.$('[role="radio"]:has([data-setting-value="restore-on"])').click();
+      await browser.$('[data-restore-settings="action"]').waitForExist();
+    },
+    anchor: '[data-restore-settings="action"]',
+  },
+  {
+    name: "settings-restore-later-writer",
+    table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }),
+    drive: async () => {
+      await toggleTheFirstRow();
+      await browser.$('[data-restore="stopped"]').waitForDisplayed();
+      await openRestoreSettings('[data-restore-settings="stopped"]');
+    },
+    anchor: '[data-restore-settings="stopped"]',
+  },
+  {
+    name: "settings-restore-save-failed",
+    table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "failed", problem: "notWritten", retryable: true, temporaryLeftBehind: false } }),
+    drive: async () => {
+      await toggleTheFirstRow();
+      await browser.$('[data-restore="problem"]').waitForDisplayed();
+      await openRestoreSettings('[data-restore-settings="problem"]');
+    },
+    anchor: '[data-restore-settings="problem"]',
   },
 ];
 
