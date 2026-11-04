@@ -659,6 +659,78 @@ writer and Rust's ownership of files.
     recommendation is to always remove the cache folder (except on
     `/UPDATE`) and keep the key, presets and preferences opt-in. A
     release-path change, so the owner's.
+  - Owner decision, 2026-11-03 (DEF-2, option (b)): always remove the cache
+    folder on uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets
+    and preferences stay opt-in behind Delete the application data.
+  - *2026-11-03, built:* `apps/desktop/src-tauri/installer-hooks.nsh`, at
+    `NSIS_HOOK_POSTUNINSTALL`, so after the template has closed the application
+    and, with the box checked, removed the parent, when it finds nothing to do.
+    It removes `view-cache` only where Rust would open it: spelled so, a plain
+    directory under a parent that is no reparse point, with the marker byte for
+    byte; and, narrower than Rust, with no reparse point anywhere below, every
+    folder listable, which a path past `MAX_PATH` is not, no name ending in a
+    space or a dot, which Win32 reads as another name, and, on a UNC parent,
+    nothing in the root but the marker, since its `\\?\` probe cannot read any
+    other name there; otherwise nothing. The cases
+    where it removes nothing are not an owner decision. It never fails the uninstall
+    and never prompts. With the box not checked, a locked file stays with the
+    marker, and the marker comes back if something holds the root itself, so the
+    root is still recognized, and once the lock has gone the next uninstall
+    finishes it. Some names never go, on this uninstall or a later one, and stay with
+    the marker with nothing said, among them `NUL` or `nul` as a file or a folder, a
+    file whose name takes its path past `MAX_PATH`, and some folders whose whole name
+    is combining marks or high surrogates, such as U+0301, U+20DD, U+3099, U+FE0F,
+    U+D800, U+DBFF, or two of U+0301 or of U+D800, though not all (U+1AB0 and U+0903
+    go) (run against scratch folders with NSIS 3.13, the last two on 2026-11-04, not
+    an owner decision).
+    A hard link is no reparse point: its name goes with the tree, its content stays
+    under its other names, and they lose the read-only bit they share (the same run,
+    not an owner decision); `view_cache.rs` makes none. A test in
+    `view_cache/tests.rs` pins its names to Rust's constants, the probe that reads
+    a name's attributes through `\\?\`, and the refusal of those names, and
+    refuses any comparison by collation, which ignores some bytes and names;
+    `scripts/build_candidate.ps1` lists the hook among a candidate's inputs and
+    refuses a build whose generated script does not call it;
+    `.github/workflows/uninstall-view-cache.yml`, not a required check, installs
+    and uninstalls a debug build for real on a GitHub-hosted runner, and drives
+    the interactive pages by window messages. With the box not checked the cache
+    goes and the rest stays. With it checked, the local folder, the roaming folder
+    and the registry key go, which answers "not observed" above for those three.
+    No person has looked at those pages with the hook in place.
+  - *2026-11-03, run against scratch folders with NSIS 3.11 and with 3.13, which
+    Tauri CLI 2.12.4 pins, not an owner decision:* `RMDir /r` follows a junction,
+    as the folder named or inside it, and deletes what the target holds. The hook
+    never uses it. The template's checked path does
+    (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not changed; read with
+    that run, not run itself: with the box checked, a junction under that folder
+    loses its target's contents.
+  - *2026-11-03, run on that runner and read from `view_cache.rs`, not an owner
+    decision:* with the box checked and a file locked, that `RmDir /r` takes the
+    marker first and leaves the locked file in a root with no marker. The hook then
+    recognizes nothing, on that uninstall or on a later one with the box not
+    checked, and after a reinstall Rust refuses the root as unrecognized (read, not
+    run), so no View is served from it until a person removes the folder or checks
+    the box again with nothing locked. Clear view cache is in the next slice
+    (A0060-split). Only converted copies are at stake, and no one has been asked
+    about this state.
+  - *2026-11-03, read from `PageLeaveReinstall` and run on that runner (the same
+    build, with the recorded version set to 0.0.1), not an owner decision:* no
+    installer passes `/UPDATE` to the old uninstaller. One given `/UPDATE` jumps
+    past the uninstall, so the template's line that appends the switch is never
+    reached, and the exception in DEF-2 counts only for someone who runs
+    `uninstall.exe /UPDATE` directly. A person who runs a newer installer and keeps
+    the page's first choice, Uninstall before installing, runs the old uninstaller
+    without it, and once that uninstaller carries the hook the cache goes; each
+    file's next View converts again. Presets and preferences stay. Installing over
+    an install with `/S` or `/S /UPDATE` runs no uninstaller and keeps the cache.
+    `/P` over the same version runs the uninstaller and the cache goes; `/P` over
+    an older version runs none and the cache stays. The hook cannot tell these
+    apart by its switches.
+  - *2026-11-03, run on that runner and read from `MUI_UNGETLANGUAGE`, not an owner
+    decision:* a `/P` uninstall after a silent install had not finished when the
+    job stopped it after five minutes. A silent install records no language, so
+    anything but a silent uninstall asks for one, which is the likely cause: no one
+    saw the dialog. With a language recorded, `/P` runs to its end.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
@@ -750,6 +822,7 @@ None can be delivered by engineering alone; each waits for one input.
 | Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2). Later the same day a public Q Exactive profile-MS2 file (PRIDE `PXD066799`) was measured, so "MS2 and up" meets that condition; its verified row is a follow-up code change ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#consequences)). That change is made: "MS2 and up" is the eleventh verified row (section 2, the later decisions of 2026-10-30)* | M–L |
 | Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
 | Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |
+| Untargeted single-file feature detection (U1) and its worker limits | A measurement of `MassTraceDetection` → `ElutionPeakDetection` → `FeatureFindingMetabo` time and memory on realistic public data, against today's 600 s and 4 GiB. *2026-10-30: measured on two public centroided runs of 0.53 and 0.89 GiB ([evidence](../spikes/U1_FEATURE_DETECTION_MEASUREMENT.md)). At noise 1e4 and 1e5 the engine's peak commit was at most 0.95 GiB and the longest run 94.8 s; memory is modelled per MS1 peak, an inference these two files cannot test against encoding. Recommended U1 limits: 600 s; a 4 GiB cap plus a refusal before the load above 150 M MS1 peaks at noise 1e4 or more and above 80 M below 1e4, provided U1's source check keeps no copy of the MS1 spectra as the M9 adapter's does; one thread, as in M9; and a noise floor of 1e3. They are the owner's to set in the U1 recipe record. 2026-11-03: the owner answered these limits, replacing the one-thread and noise-floor recommendations; below 1e3 stays refused until measured, the record's reading, not an owner decision (the record's section 7), and A-13's remainder is still owed* | M–L |
 
 ### 7.6 Refused or not adopted
 
