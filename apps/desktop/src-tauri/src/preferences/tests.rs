@@ -1164,6 +1164,32 @@ fn the_replace_flag_on_a_usable_record_leaves_the_write_rule_alone() {
     );
 }
 
+/// With no record there is nothing being replaced, so the rule is the ordinary
+/// one, with the flag or without it: the switch and no other change.
+#[test]
+fn a_first_commit_that_turns_remembering_off_writes_only_the_switch() {
+    for replace_unusable in [false, true] {
+        let root = Root::new("remember-first-off");
+        let store = root.store();
+
+        let committed = saved(&store.save(&every_group_with_remembering_off(replace_unusable)));
+        assert_eq!(
+            committed,
+            UiPreferences {
+                display: DisplayPreferences {
+                    remember: false,
+                    ..DisplayPreferences::default()
+                },
+                ..UiPreferences::default()
+            }
+        );
+        assert_eq!(
+            root.stored_bytes(),
+            write_record(&committed).expect("bytes")
+        );
+    }
+}
+
 // ------------------------------------------------------ remembered folder
 
 #[test]
