@@ -575,8 +575,9 @@ is never chosen silently (open question 3). Its costs:
 > `scripts/provision_targeted_ms1_runtime.py` still reads it.
 >
 > The cost the owner was shown: agreement measured on one synthetic file and two
-> targets; a longer exclusion list, re-measured with each new version or
-> interpreter; no metabolite library out of the box, so an accurate-mass search
+> targets; compressed, only about 8 MB below the tier before it; a longer exclusion
+> list, re-measured with each new version or interpreter; no metabolite library out
+> of the box, so an accurate-mass search
 > needs a database the user chooses; matplotlib excluded by hand, because pyOpenMS
 > declares it; and a development environment that can no longer be reproduced from
 > the old lock.
@@ -592,7 +593,8 @@ is never chosen silently (open question 3). Its costs:
 > - `share/OpenMS/LICENSES/vcpkg/openms-thermo-bridge.txt` (1,583 B), also outside
 >   that folder: the bridge's own BSD 3-Clause text, headed by the `.doc`'s name and
 >   first bytes. These two are the only Thermo-named files outside it, and decision
->   6's 3.6.0 rows take the notices file that names them;
+>   6's 3.6.0 rows take the notices file that names them. The owner's answer names
+>   the folder: leaving out these two is a reading, not an owner decision;
 > - `share/OpenMS/CHEMISTRY/HMDB2StructMapping.tsv` (49,085,948 B), beside
 >   `HMDBMappingFile.tsv` and both Modomics files, which that wheel also carries.
 >
@@ -644,7 +646,8 @@ is never chosen silently (open question 3). Its costs:
 > does not bring it. Two sources join the list above on this branch: OpenSSL's
 > vulnerabilities page, now also for the copy linked into `OpenMS.dll` (3.6.4 with
 > 13 advisories on the decision page; unmeasured here), and curl's security
-> advisories. Qt's advisories apply on the fail branch only.
+> advisories. Qt's advisories apply on the fail branch only. This note applies
+> decision 5 to B-2.1's linked libraries: a reading, not an owner decision.
 
 ### 6. Licence notices for every component
 
@@ -791,7 +794,8 @@ neither outcome.
   B-2.2 takes in full): leaving out the Thermo folder; a port and re-qualification
   of 3–5 slices (A-07, the decision page's estimate, not a measurement); a new
   dependency, `nanobind-backend`, that needs approval (decision 10); and curl, the
-  AWS SDK and OpenSSL 3.6.4 linked in (decision 6).
+  AWS SDK and OpenSSL 3.6.4 linked in (decision 6). B-2.2 adds that whether libiconv
+  is linked is undecided.
 - **Fail:** pyOpenMS 3.5.0 on CPython 3.14, with the legal opinion on Qt before any
   release. There is no release without that opinion, and its time and cost are
   unknown. As B-2 records, the bump is then decided before U2.
