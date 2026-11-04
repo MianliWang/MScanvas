@@ -30,8 +30,8 @@ decision below is a recommendation with its alternatives; the owner decides
 >   **B-3.3,** do not ship matplotlib and Pillow, and delete the experiment
 >   lock. This confirms the departure from the recorded Pillow 13.0.0 route, so
 >   "deleted or bumped" below now reads "deleted".
-> - **Question 5: B-2.2,** use 3.6.0, which has no Qt, valid only if the probe
->   passes.
+> - **Question 5: B-2.2,** use 3.6.0 without Qt (none in its wheel by decision 8's
+>   informal check), valid only if the probe passes.
 > - **Question 7: B-2.1,** 3.6.0 before release, if the probe passes.
 > - **If the probe fails: CK-2,** ship 3.5.0 first and obtain a legal opinion on
 >   Qt first. No release without that opinion; its time and cost are unknown.
@@ -47,14 +47,19 @@ decision below is a recommendation with its alternatives; the owner decides
 > [Decision 8](#8-engine-and-interpreter-the-owners-rule-on-cpython-314) states
 > the rule, and [what still blocks a release](#what-still-blocks-a-release) is
 > listed after the questions. Nothing about 3.6.0 is proved in this record: each
-> 3.6.0 statement is labelled unmeasured or as decision 8's informal check.
+> 3.6.0 statement added on 2026-11-03 is labelled unmeasured or as decision 8's
+> informal check, and the dated note under the [engine table](#engine-version)
+> labels those of 2026-10-30.
 >
 > **Dated text stays as written.** The B-1 block above and the passages the
 > owner answered keep their words, with a dated note beside them. Only decision
 > 8's heading and engine paragraph, which B-2.1 replaced, and the mark on decision
 > 6's Qt row were changed. Decisions 3 and 5 beyond "every fix is an application
-> release", decision 6 beyond its Qt and MSVC rows, decision 9 and decision 11 were
-> not asked: they are the text of 2026-10-30, not an owner decision.
+> release", decision 4 beyond its contents and the experiment lock's fate (the
+> release lock's mechanics, for one), decision 6 beyond its Qt and MSVC rows,
+> decision 7 beyond question 6, decision 8's interpreter alternatives (3.13.17, a
+> source build), decision 9 and decision 11 were not asked: they are the text of
+> 2026-10-30, not an owner decision.
 
 Related: [0002](0002-external-proteowizard.md),
 [0046](0046-post-m6-xic-provider-runtime-route-lock.md),
@@ -339,6 +344,11 @@ requirement". It stays useful to a developer only.
 | Network-capable code | Qt6Network; Python's `socket`, `_ssl` | libcurl, the AWS SDK and OpenSSL linked into `OpenMS.dll` (research string scan) | unknown |
 | Other | the extractor-edge defect (#10673) stays typed `FAILED` | KD linking and PoseClustering fixes (#10157, #10148); a new, unpinned `nanobind-backend` dependency; libiconv (LGPL-2.1) listed in its notices, linking unconfirmed | #10673 fixed; no release date |
 
+*2026-11-03:* this table's 3.6.0 column, decision 4's "3.6.0 adds
+`HMDB2StructMapping.tsv`" and option 3 of the LGPL-3 question are the research of
+2026-10-30. They are unmeasured; see
+[decision 8's informal check](#8-engine-and-interpreter-the-owners-rule-on-cpython-314).
+
 ### Interpreter
 
 PyPI has `win_amd64` wheels of the pinned `pyopenms` 3.5.0, `numpy` 2.5.3 and
@@ -558,20 +568,31 @@ is never chosen silently (open question 3). Its costs:
   whether one without usable terms can be left out.
 
 > **Answered by the owner, 2026-11-03 (B-3.1, B-3.2, B-3.3, question 4).** Tier 3,
-> without the HMDB and Modomics files, and without matplotlib and Pillow, as
-> written above. B-3.3 confirms the departure from the recorded Pillow route, and
-> of "deleted or bumped" it takes "deleted". The experiment lock goes in the same
-> change as the release lock that replaces it. It is not deleted here:
+> without the HMDB and Modomics files, and without matplotlib and Pillow. B-3.3
+> confirms the departure from the recorded Pillow route, and of "deleted or bumped"
+> it takes "deleted". The experiment lock goes in the same change as the release
+> lock that replaces it. It is not deleted here:
 > `scripts/provision_targeted_ms1_runtime.py` still reads it.
+>
+> The cost the owner was shown: agreement measured on one synthetic file and two
+> targets; a longer exclusion list, re-measured with each new version or
+> interpreter; no metabolite library out of the box, so an accurate-mass search
+> needs a database the user chooses; matplotlib excluded by hand, because pyOpenMS
+> declares it; and a development environment that can no longer be reproduced from
+> the old lock.
 
 > **What 3.6.0's shape also leaves out, on decision 8's pass branch.** The paths
-> are from the informal check's copy of the wheel, and that this shape runs is
-> unmeasured until the probe:
+> (under `pyopenms/`) and the metadata below them are from the informal check's copy
+> of the wheel, and that this shape runs is unmeasured until the probe:
 >
 > - the whole `share/OpenMS/openms_thermo_bridge/` folder (the Thermo
 >   RawFileReader assemblies, which AGENTS.md forbids vendoring);
 > - `share/OpenMS/LICENSES/ThermoRawFileReader-License.doc`, the licence of those
 >   assemblies, which lies outside that folder and needs its own exclusion;
+> - `share/OpenMS/LICENSES/vcpkg/openms-thermo-bridge.txt` (1,583 B), also outside
+>   that folder: the bridge's own BSD 3-Clause text, headed by the `.doc`'s name and
+>   first bytes. These two are the only Thermo-named files outside it, and decision
+>   6's 3.6.0 rows take the notices file that names them;
 > - `share/OpenMS/CHEMISTRY/HMDB2StructMapping.tsv` (49,085,948 B), beside
 >   `HMDBMappingFile.tsv` and both Modomics files, which that wheel also carries.
 >
@@ -679,6 +700,7 @@ and the licence slice settle them.
 | COIN-OR | `LICENSES/vcpkg/coin-or-clp.txt` and its neighbours; `coin-or-clp.txt` is EPL 2.0, where the 3.5.0 contrib list says EPL 1.0 | **open**: which COIN-OR libraries are linked, and the notice and source pointer their terms ask for |
 | libiconv | listed in the notices, text in `LICENSES/vcpkg/libiconv.txt`; the DLL has 0 `iconv` strings and no such import, which does not prove the absence of a static link | **undecided**: part of the probe's pass condition; whether its terms would be accepted is the owner's, on the evidence |
 | The MSVC copies and the other libraries | not inventoried for 3.6.0 | **unmeasured**: the probe's inventory; RT-3's reading applies on this branch too |
+| `share/OpenMS/THIRD-PARTY-NOTICES.txt` itself | lists `Thermo RawFileReader` with the `.doc`, and `openms-thermo-bridge` with texts [25] and [47]; [47] is `openms_thermo_bridge/managed/THIRD-PARTY-NOTICES.txt`, inside the folder decision 4 leaves out | **open**: whether this file is left out, revised or replaced by the generated notices, so that the package does not declare what it does not ship |
 
 > **Fail branch only, 2026-11-03.** The Qt row above and the question below apply
 > only if the probe fails: CK-2 then ships 3.5.0 first and obtains a legal opinion
@@ -763,7 +785,13 @@ linked or its terms are accepted". The probe has not run, and this record assume
 neither outcome.
 
 - **Pass:** pyOpenMS 3.6.0 on CPython 3.14, leaving out the Thermo folder
-  (decision 4). No Qt ships, so the LGPL-3 question does not arise (decision 6).
+  (decision 4). The informal check found no Qt in the wheel, and the probe's
+  inventory settles that. If it holds, no Qt ships on this branch and the LGPL-3
+  question does not arise (decision 6). The cost the owner was shown (B-2.1, which
+  B-2.2 takes in full): leaving out the Thermo folder; a port and re-qualification
+  of 3–5 slices (A-07, the decision page's estimate, not a measurement); a new
+  dependency, `nanobind-backend`, that needs approval (decision 10); and curl, the
+  AWS SDK and OpenSSL 3.6.4 linked in (decision 6).
 - **Fail:** pyOpenMS 3.5.0 on CPython 3.14, with the legal opinion on Qt before any
   release. There is no release without that opinion, and its time and cost are
   unknown. As B-2 records, the bump is then decided before U2.
@@ -776,8 +804,8 @@ that holds for the port to 3.6.0's bindings, not for this qualification.
 The recommendation of 2026-10-30, 3.5.0 first with the bump decided before
 alignment and linking, was not taken: B-2.1 replaces it.
 
-**The interpreter, as recommended and answered by B-2.3.** The rest of this
-decision is the text of 2026-10-30. In it, "it" is the engine the rule names, and
+**The interpreter, as recommended and answered by B-2.3.** The next paragraph and
+its list are the text of 2026-10-30. In them, "it" is the engine the rule names, and
 "the same pyOpenMS, numpy and pandas versions" holds on the fail branch. On the
 pass branch the only Windows wheel is `pyopenms-3.6.0-cp311-abi3-win_amd64.whl`,
 which uv resolves on 3.14 (informal check, below).
@@ -807,10 +835,13 @@ pandas versions, not on the pinned 3.13.15
 removed, one synthetic file; not committed) imported pyOpenMS 3.6.0 and ran U1's
 three steps: 3,929 features, the same count as 3.5.0, with a largest relative
 difference of 4.99e-7. matplotlib, PIL and pandas were not loaded. The 3.5.0 call
-`mtd.run(exp,tr,0)` raised `TypeError: run(): incompatible function arguments`, so
-the adapter needs a port. In the wheel it found no Qt DLL, no Qt import in the
-OpenMS DLL and 0 `Qt6` or `QString` strings. ANA-004 and the other planned classes
-did not run, and this environment is not the shipping shape.
+`mtd.run(exp,tr,0)`, in U1's chain, raised
+`TypeError: run(): incompatible function arguments`, so U1's measurement script
+needs a change. `adapter_v1.py` makes no such call; whether it runs on 3.6.0, and
+what A-07's port must change in it, is unmeasured until the probe lists its edits.
+In the wheel the check found no Qt DLL, no Qt import in the OpenMS DLL and 0 `Qt6`
+or `QString` strings. ANA-004 and the other planned classes did not run, and this
+environment is not the shipping shape.
 
 ### 9. Uninstall and repair
 
@@ -855,15 +886,17 @@ needs the owner's approval.
 > then. Which wheels ship still depends on B-2 (questions 5 and 7), B-3
 > (question 4) and question 10.
 
-> **The owner, 2026-11-03: no answer approves a new dependency.** pyOpenMS 3.6.0
-> and its backend are asked for when the work starts. This narrows what this
-> decision and B-1 question 8 can be read to cover. There are three separate asks,
-> and none is approved on 2026-11-04:
+> **The answers of 2026-11-03: no answer approves a new dependency.** pyOpenMS 3.6.0
+> and its backend are asked for when the work starts. A reading, not an owner
+> decision: this decision and B-1 question 8 cannot be read to cover that pair.
+> There are three separate asks, and none is approved on 2026-11-04:
 >
 > 1. the probe's wheels (A-03);
 > 2. the same pair, pyOpenMS 3.6.0 and `nanobind-backend`, for the development
 >    runtime (A-07 and U1);
-> 3. shipping (A-05).
+> 3. shipping that pair (A-05).
+>
+> Asks 2 and 3 arise on the pass branch only.
 >
 > B-3.3 answers "(open question 4)" above: the experiment lock is deleted, not
 > bumped.
@@ -1008,7 +1041,7 @@ needs the owner's approval.
    and the release-workflow change that builds the package?
 
    *Answered 2026-10-30: B-1, approved, effective at the first runtime release.
-   Narrowed 2026-11-03: no answer approves a new dependency (decision 10).*
+   2026-11-03: no answer approves a new dependency (decision 10).*
 9. **MSVC runtime copies.** Ask for a reading on redistributing the MSVC DLLs
    that the OpenMS, numpy and pandas builds carry?
 
@@ -1024,7 +1057,11 @@ needs the owner's approval.
 
 - **The probe (A-03).** It has not run, and its wheels are not approved
   (decision 10). Its verdict names decision 8's branch. Whether libiconv's terms
-  would be accepted is the owner's, on its evidence.
+  would be accepted is the owner's, on its evidence. On the fail branch, A-03 also
+  runs the planned classes on 3.5.0 without matplotlib and Pillow, as B-3 records;
+  only ANA-004's path is measured so far.
+- **On the pass branch, the approval to ship pyOpenMS 3.6.0 and
+  `nanobind-backend`** (decision 10's third ask). It is not given.
 - **The MSVC reading (RT-3),** on either branch. Who gives it and how long it
   takes are not recorded. It does not block development.
 - **On the fail branch, the legal opinion on Qt (CK-2).** Its time and cost are
