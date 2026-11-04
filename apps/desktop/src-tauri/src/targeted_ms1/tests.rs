@@ -6422,6 +6422,15 @@ fn a_view_table_refuses_rows_that_are_not_the_views() {
             ),
         ),
         (
+            "every row and one named twice, which is not collapsed",
+            golden_view(
+                &[1, 1, 2, 3, 4, 5, 6],
+                &EVERY_OUTCOME,
+                "",
+                Some(("label", "ascending")),
+            ),
+        ),
+        (
             "an outcome the view does not keep",
             golden_view(&[1, 2], &["FAILED"], "", None),
         ),
@@ -6486,6 +6495,16 @@ fn a_view_of_words_the_contract_does_not_have_is_refused() {
         "an empty set is not every outcome"
     );
     assert!(view(&target, &["detected".to_owned()], "", None).is_none());
+    assert!(
+        view(
+            &target,
+            &["DETECTED".to_owned(), "detected".to_owned()],
+            "",
+            None
+        )
+        .is_none(),
+        "a known word does not carry an unknown one"
+    );
     assert!(view(&target, &every, "a\tb", None).is_none());
     assert!(view(&target, &every, "a\nb", None).is_none());
     let longest = "a".repeat(record::MAX_LABEL_CHARS);
