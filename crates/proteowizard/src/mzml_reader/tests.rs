@@ -1141,7 +1141,7 @@ fn a_binary_element_elsewhere_in_the_array_is_not_its_payload() {
 /// before its first `binary`. An array whose role comes later is refused too, and
 /// which id it gets is as built on 2026-11-04, not an owner decision.
 #[test]
-fn a_role_stated_after_the_first_binary_is_refused_outside_the_two_ids() {
+fn a_role_stated_after_the_first_binary_is_refused_under_an_as_built_id() {
     let no_role = [term(F64), term(NONE)];
     let (mz, intensity) = (mz_term(), intensity_term());
     let whole = b64(&le_f64(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]));

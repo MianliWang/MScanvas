@@ -196,8 +196,8 @@ for:
 > and is closed again with them:
 >
 > - a second `binary` element directly in an m/z or intensity array whose role
->   was stated before its first `binary` started: no one payload is its stored
->   values, and two are never joined (`payload_stated_twice`);
+>   was stated before the first `binary` directly in it started: no one payload
+>   is its stored values, and two are never joined (`payload_stated_twice`);
 > - an element that starts inside such an array's own `binary` element: its text
 >   is not one run of stored values, and the text around the element is never
 >   joined (`element_in_payload`).
@@ -207,11 +207,11 @@ for:
 > `mz:element_in_payload` or `intensity:element_in_payload`, so they add no
 > error kind or webview resource.
 >
-> The answer covers these two ids only. An array whose role is stated after its
-> first `binary` is refused too, under an id that is as built on 2026-11-04, not
-> an owner decision (`term_after_payload` for two `binary` elements with the role
-> between them). PR #216's other readings of the cases around them stay as built,
-> not an owner decision.
+> The answer covers these two ids only. An array whose role is stated after the
+> first `binary` directly in it is refused too, under an id that is as built on
+> 2026-11-04, not an owner decision (`term_after_payload` for two `binary`
+> elements with the role between them). PR #216's other readings of the cases
+> around them stay as built, not an owner decision.
 
 **It must not panic or abort on any input.** That is a requirement slice 1
 proves with its probes (decision 9). The spike did not establish it (see
