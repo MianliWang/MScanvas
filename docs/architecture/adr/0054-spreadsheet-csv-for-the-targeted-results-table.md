@@ -3,8 +3,8 @@
 Status: **Accepted**, with the owner's answers of 2026-10-28
 ([after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md), sections 2 and
 6.4). The Rust side is implemented: the closed word, the document and its
-tests. No interface control offers it yet; the webview's control follows after
-PR #164. The check in Excel, LibreOffice and WPS is the owner's and is
+tests. The results table offers it as a third export button, "spreadsheet CSV"
+/ "电子表格 CSV" (2026-11-03). The check in Excel, LibreOffice and WPS is the owner's and is
 **pending**. Until it passes, no help, release or interface text claims
 formula protection.
 Related: [0047](0047-first-windows-beta-scope-and-implementation-route.md),
@@ -188,9 +188,8 @@ LibreOffice and WPS. That check is the owner's and is pending. Until it passes:
   apostrophe is written as it is, so the stored labels `'=x` and `=x` are both
   written `'=x`: two different labels of one plan can print the same. Only the
   CSV or `target_id` tells them apart.
-- Until the webview adds `spreadsheetCsv` to `TargetedTableFormat`
-  (`projectApi.ts`) and offers a control, after PR #164, the variant is reached
-  only through the command.
+- The webview's `TargetedTableFormat` (`projectApi.ts`) carries `spreadsheetCsv`,
+  and the results table offers it as a third export button (2026-11-03).
 - The golden fixtures in `fixtures/targeted-table-golden/` pin all three
   documents. The spreadsheet fixture holds the text after the byte-order mark;
   the test asserts the mark separately.
