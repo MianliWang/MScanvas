@@ -14,7 +14,7 @@ use std::time::Instant;
 use mscanvas_proteowizard::CancellationRequest;
 use serde::{Deserialize, Serialize};
 
-use super::dto::PreviewErrorDto;
+use super::dto::{ConversionIntentDto, PreviewErrorDto};
 use super::selection::DatasetId;
 
 /// Decision 9: a RAW larger than this is refused before any work. A
@@ -66,9 +66,8 @@ pub enum RawViewStateDto {
         bytes_read: Option<u64>,
         bytes_total: Option<u64>,
         intent_id: String,
-        /// Always `None` until ADR 0055's build gate (draft PR #156) lets an
-        /// unmeasured build convert a vendor family; such a build is refused
-        /// today.
+        /// The release of an unmeasured build (ADR 0055): this view is "not
+        /// verified by MSCanvas". `None` until the worker has bound the build.
         unverified_build_release: Option<String>,
         /// The cached copy was damaged and was removed, so this press converts
         /// again (decision 8).
@@ -94,6 +93,8 @@ pub enum RawViewStateDto {
         retryable: bool,
         /// For `view_cache_no_space`: the space a miss needs, and what was
         /// free, so the pane states both numbers without parsing a message.
+        /// For a run that failed with less than the reserve free: the reserve,
+        /// and what is free (decision 9).
         needed_bytes: Option<u64>,
         free_bytes: Option<u64>,
     },
@@ -104,6 +105,60 @@ pub enum RawViewStateDto {
         /// (decision 10).
         stored: bool,
     },
+}
+
+/// `get_raw_view_state`'s request: the highlighted RAW row, or nothing.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RawViewStateRequestDto {
+    pub handle: Option<String>,
+}
+
+/// `get_raw_view_state`'s answer (decision 12).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawViewSnapshotDto {
+    pub state: RawViewStateDto,
+    /// `None` when no row was named.
+    pub availability: Option<RawViewAvailabilityDto>,
+}
+
+/// Whether View can be pressed for the row named (decision 4), computed here so
+/// the webview never recomputes the policy. It reads none of the file's
+/// content, launches nothing and makes no folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum RawViewAvailabilityDto {
+    #[serde(rename_all = "camelCase")]
+    Available {
+        available: bool,
+        /// The release of an unmeasured build, beside View (ADR 0055).
+        unverified_build_release: Option<String>,
+    },
+    Refused {
+        available: bool,
+        /// The first of decision 4's codes that holds, in its table order.
+        code: String,
+    },
+}
+
+/// `PreviewDto.viewSource` (decision 12): what a viewed RAW row's preview was
+/// made from. The settings' summary is the webview's to word, from the same
+/// intent shape the conversion catalog carries, so it follows the locale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewSourceDto {
+    pub kind: &'static str,
+    pub source_file_name: String,
+    pub source_kind: &'static str,
+    pub source_sha256: String,
+    pub provider_release: String,
+    pub provider_sha256: String,
+    pub intent: ConversionIntentDto,
+    pub verified: bool,
+    /// The release of an unmeasured build, or `None` on the measured one.
+    pub unverified_build_release: Option<String>,
+    pub converted_at: String,
 }
 
 /// `begin_raw_view`'s request. No intent field: View always converts with
@@ -182,6 +237,8 @@ pub(super) struct RawView {
     pub(super) dataset: DatasetId,
     pub(super) file_name: String,
     pub(super) progress: Progress,
+    /// The release of an unmeasured build, once the worker has bound the build.
+    pub(super) unverified_build_release: Option<String>,
     started: Instant,
     /// Cancel's flag, asked between chunks and between phases.
     cancel: Arc<AtomicBool>,
@@ -221,6 +278,7 @@ impl RawView {
                 bytes: None,
                 cached_copy_damaged: false,
             },
+            unverified_build_release: None,
             started: Instant::now(),
             cancel: Arc::new(AtomicBool::new(false)),
             conversion: None,
@@ -345,7 +403,7 @@ impl RawView {
                 bytes_read: bytes.map(|(read, _)| read),
                 bytes_total: bytes.map(|(_, total)| total),
                 intent_id,
-                unverified_build_release: None,
+                unverified_build_release: self.unverified_build_release.clone(),
                 cached_copy_damaged: *cached_copy_damaged,
             },
             // Whether the row still holds the pin is the service's to add.
@@ -354,7 +412,7 @@ impl RawView {
                 handle,
                 intent_id,
                 cache_hit: *cache_hit,
-                unverified_build_release: None,
+                unverified_build_release: self.unverified_build_release.clone(),
                 openable: !*opened,
             },
             Progress::Failed { error, space } => RawViewStateDto::Failed {
@@ -395,6 +453,18 @@ pub(super) fn raw_view_busy() -> PreviewErrorDto {
         "raw_view_busy",
         "A Thermo RAW file is being prepared for viewing. Wait for it, or cancel it.",
         true,
+    )
+}
+
+/// A figure or data document of a viewed RAW row. Decision 11's provenance is
+/// slice 4, so until an export can name the RAW and the conversion, a viewed
+/// preview exports nothing (slice 2 note 6).
+pub(super) fn view_export_withheld() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "view_export_withheld",
+        "An export from a viewed RAW file cannot yet name the RAW file and the conversion. \
+         Convert this file, add the output, and export from that.",
+        false,
     )
 }
 

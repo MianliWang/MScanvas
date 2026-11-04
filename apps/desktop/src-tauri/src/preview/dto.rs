@@ -2958,6 +2958,9 @@ pub struct PreviewDto {
     /// refused rather than attributed to a guess, and the page says why
     /// before anyone presses.
     pub qc_producer_identified: bool,
+    /// `None` for an mzML row. For a Thermo RAW row viewed through the view
+    /// cache, what the preview was made from (ADR 0060 decision 12).
+    pub view_source: Option<super::raw_view::ViewSourceDto>,
 }
 
 /// One precursor. Either value may be unstated in mzML, and an unstated value

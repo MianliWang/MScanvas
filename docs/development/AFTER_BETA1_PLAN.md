@@ -538,6 +538,12 @@ writer and Rust's ownership of files.
     [slice 2 notes](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-2-notes-2026-10-30),
     including the two cases below (accepted by the owner, 2026-10-30, A0060).
     Slice 3, the interface, builds on #164's structure once it lands (A0060).
+  - *Status, 2026-11-03:* slice 3, the interface, is [PR #203](https://github.com/MianliWang/MScanvas/pull/203),
+    not merged. A0060 answered the direction this section says it waits on, through
+    FE-1 and FE-2. With #203 on `main`, `begin_raw_view`, `get_raw_view_state`,
+    `cancel_raw_view` and `open_raw_view` have their caller; `describe_view_cache` and
+    `clear_view_cache` wait for the next slice (A0060-split). Its departures are ADR 0060's
+    [slice 3 notes](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-3-notes-2026-11-03).
   - Left to slice 2, and done there: a chunked, cancellable hash of the RAW for Checking file
     and Checking output; reading the volume's free space for `make_space`; the
     1.5 GiB refusal before any work; the summary and Clear DTOs over `usage`
@@ -653,6 +659,78 @@ writer and Rust's ownership of files.
     recommendation is to always remove the cache folder (except on
     `/UPDATE`) and keep the key, presets and preferences opt-in. A
     release-path change, so the owner's.
+  - Owner decision, 2026-11-03 (DEF-2, option (b)): always remove the cache
+    folder on uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets
+    and preferences stay opt-in behind Delete the application data.
+  - *2026-11-03, built:* `apps/desktop/src-tauri/installer-hooks.nsh`, at
+    `NSIS_HOOK_POSTUNINSTALL`, so after the template has closed the application
+    and, with the box checked, removed the parent, when it finds nothing to do.
+    It removes `view-cache` only where Rust would open it: spelled so, a plain
+    directory under a parent that is no reparse point, with the marker byte for
+    byte; and, narrower than Rust, with no reparse point anywhere below, every
+    folder listable, which a path past `MAX_PATH` is not, no name ending in a
+    space or a dot, which Win32 reads as another name, and, on a UNC parent,
+    nothing in the root but the marker, since its `\\?\` probe cannot read any
+    other name there; otherwise nothing. The cases
+    where it removes nothing are not an owner decision. It never fails the uninstall
+    and never prompts. With the box not checked, a locked file stays with the
+    marker, and the marker comes back if something holds the root itself, so the
+    root is still recognized, and once the lock has gone the next uninstall
+    finishes it. Some names never go, on this uninstall or a later one, and stay with
+    the marker with nothing said, among them `NUL` or `nul` as a file or a folder, a
+    file whose name takes its path past `MAX_PATH`, and some folders whose whole name
+    is combining marks or high surrogates, such as U+0301, U+20DD, U+3099, U+FE0F,
+    U+D800, U+DBFF, or two of U+0301 or of U+D800, though not all (U+1AB0 and U+0903
+    go) (run against scratch folders with NSIS 3.13, the last two on 2026-11-04, not
+    an owner decision).
+    A hard link is no reparse point: its name goes with the tree, its content stays
+    under its other names, and they lose the read-only bit they share (the same run,
+    not an owner decision); `view_cache.rs` makes none. A test in
+    `view_cache/tests.rs` pins its names to Rust's constants, the probe that reads
+    a name's attributes through `\\?\`, and the refusal of those names, and
+    refuses any comparison by collation, which ignores some bytes and names;
+    `scripts/build_candidate.ps1` lists the hook among a candidate's inputs and
+    refuses a build whose generated script does not call it;
+    `.github/workflows/uninstall-view-cache.yml`, not a required check, installs
+    and uninstalls a debug build for real on a GitHub-hosted runner, and drives
+    the interactive pages by window messages. With the box not checked the cache
+    goes and the rest stays. With it checked, the local folder, the roaming folder
+    and the registry key go, which answers "not observed" above for those three.
+    No person has looked at those pages with the hook in place.
+  - *2026-11-03, run against scratch folders with NSIS 3.11 and with 3.13, which
+    Tauri CLI 2.12.4 pins, not an owner decision:* `RMDir /r` follows a junction,
+    as the folder named or inside it, and deletes what the target holds. The hook
+    never uses it. The template's checked path does
+    (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not changed; read with
+    that run, not run itself: with the box checked, a junction under that folder
+    loses its target's contents.
+  - *2026-11-03, run on that runner and read from `view_cache.rs`, not an owner
+    decision:* with the box checked and a file locked, that `RmDir /r` takes the
+    marker first and leaves the locked file in a root with no marker. The hook then
+    recognizes nothing, on that uninstall or on a later one with the box not
+    checked, and after a reinstall Rust refuses the root as unrecognized (read, not
+    run), so no View is served from it until a person removes the folder or checks
+    the box again with nothing locked. Clear view cache is in the next slice
+    (A0060-split). Only converted copies are at stake, and no one has been asked
+    about this state.
+  - *2026-11-03, read from `PageLeaveReinstall` and run on that runner (the same
+    build, with the recorded version set to 0.0.1), not an owner decision:* no
+    installer passes `/UPDATE` to the old uninstaller. One given `/UPDATE` jumps
+    past the uninstall, so the template's line that appends the switch is never
+    reached, and the exception in DEF-2 counts only for someone who runs
+    `uninstall.exe /UPDATE` directly. A person who runs a newer installer and keeps
+    the page's first choice, Uninstall before installing, runs the old uninstaller
+    without it, and once that uninstaller carries the hook the cache goes; each
+    file's next View converts again. Presets and preferences stay. Installing over
+    an install with `/S` or `/S /UPDATE` runs no uninstaller and keeps the cache.
+    `/P` over the same version runs the uninstaller and the cache goes; `/P` over
+    an older version runs none and the cache stays. The hook cannot tell these
+    apart by its switches.
+  - *2026-11-03, run on that runner and read from `MUI_UNGETLANGUAGE`, not an owner
+    decision:* a `/P` uninstall after a silent install had not finished when the
+    job stopped it after five minutes. A silent install records no language, so
+    anything but a silent uninstall asks for one, which is the likely cause: no one
+    saw the dialog. With a language recorded, `/P` runs to its end.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained

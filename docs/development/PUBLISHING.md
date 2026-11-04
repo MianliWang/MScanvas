@@ -93,3 +93,10 @@ recorded in the [installed check](../release/beta-1/INSTALLED_CHECK.md).
 Publishing needs the owner's consent for the exact artifacts; beta 1 was
 published with it on 2026-10-28 as
 [`v0.1.0-beta.1`](https://github.com/MianliWang/MScanvas/releases/tag/v0.1.0-beta.1).
+
+Update, 2026-11-03, not an owner decision: a candidate build refuses a generated
+installer script that does not call the uninstall hook, but what the hook does
+is checked only by the `Uninstall view cache` workflow. That workflow is not a
+required check, and a Tauri CLI update does not start it, because its path filter
+leaves out `pnpm-lock.yaml`. Run it by hand (`workflow_dispatch`) on the
+candidate's commit before asking for consent to publish.
