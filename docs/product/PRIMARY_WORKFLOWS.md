@@ -293,9 +293,9 @@ availability, queue, adoption and export contracts.
    membership, eligibility or order (PM9.4 O2). The three families may be mixed. Vendor rows cannot be previewed,
    and say so, except a Thermo RAW row, which is read through View (ADR 0060, 2026-11-03). There is no `Convert visible` scope: search changes presentation
    only; the selected/all actions remain available.
-   **Convert this file… is a third scope (N-C3, 2026-11-04).** It, in a RAW row's
-   pane, a viewed file's row and a failed open, and Open in Conversion on a Shimadzu
-   or SCIEX row, hold the page to that one file and leave every check as it was,
+   **A third scope holds one file (N-C3, 2026-11-04).** Convert this file…, in a RAW
+   row's pane, a viewed file's row and a failed open, and Open in Conversion, on a
+   Shimadzu or SCIEX row, hold the page to that file and leave every check as it was,
    before and after the run. A third button, named for the file, is there only while
    that scope is current. Checked rows or All workspace rows leaves it for good, a
    later press replaces the file, and a removed row leaves the scope empty, with the

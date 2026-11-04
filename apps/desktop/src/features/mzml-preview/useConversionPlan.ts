@@ -32,7 +32,7 @@ export interface ConversionPlanView {
    * The rows a conversion would act on, as the surface that owns the selection
    * says they are.
    *
-   * The scope model resolves the complete roster's selected/all query and sort.
+   * The scope model resolves the complete roster's selected/all/one-file query and sort.
    * Search and focus never contribute members. Everything else about the
    * question is read from authorities this hook already holds.
    */
