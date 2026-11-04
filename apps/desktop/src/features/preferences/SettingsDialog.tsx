@@ -302,13 +302,13 @@ function CopyDiagnostics() {
   const [copied, setCopied] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (read.status === "failed") failed.current?.scrollIntoView?.({ block: "nearest" });
-    // Into the text, and all of it into view in a short window: focus alone only
-    // reveals the caret. Only from the button that asked: a reader who has since
-    // moved keeps their place.
-    if (read.status !== "read" || document.activeElement !== opener.current) return;
-    preview.current?.focus();
-    preview.current?.scrollIntoView?.({ block: "nearest" });
+    // Only from the button that asked, or from what the failure took away, which
+    // leaves the keyboard on the dialog: a reader who has since moved keeps their place.
+    const active = document.activeElement;
+    if (read.status === "read" && active === opener.current) preview.current?.focus();
+    if (read.status !== "failed") return;
+    if (active === null || active === document.body || active.matches("[data-settings-dialog]")) opener.current?.focus({ preventScroll: true });
+    failed.current?.scrollIntoView?.({ block: "nearest" });
   }, [read]);
 
   const readSummary = () => {
@@ -339,7 +339,7 @@ function CopyDiagnostics() {
   };
 
   return <>
-    <SettingField labelId={labelId} label={message("diagnosticsField")} help={reading ? message("diagnosticsReading") : undefined}>
+    <SettingField className="settings-diagnostics-field" labelId={labelId} label={message("diagnosticsField")} help={reading ? message("diagnosticsReading") : undefined}>
       <Button size="sm" data-diagnostics-read="" ref={opener} refused={reading} reasonId={`${labelId}-help`} onClick={readSummary}>
         {message(read.status === "idle" ? "diagnosticsShow" : "diagnosticsReadAgain")}
       </Button>

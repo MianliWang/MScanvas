@@ -33,13 +33,16 @@ const PREVIEW = "[data-diagnostics-preview]";
 const COPY = "[data-diagnostics-copy]";
 const COPIED = "[data-diagnostics-copied]";
 const COPY_FAILED = "[data-diagnostics-copy-failed]";
+const FAILED = "[data-diagnostics-failed]";
+/** Why the button is refused while a read is out. */
+const REASON = ".settings-diagnostics-field .setting-field-help";
 
 const SECOND_READING = `${TEXT}a second reading\n`;
 const SAVE_FAILED = { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false, revision: 1 };
 
 async function open(locale: "en" | "zh-CN", width: number, height: number, table: Record<string, unknown> = {}) {
   await metrics(width, height);
-  await installIpcBoundary({ ...scenario("populated", locale), [COMMAND]: TEXT, ...table });
+  await installIpcBoundary({ ...scenario("populated", locale), ...table });
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 60_000 });
   await browser.waitUntil(() => browser.execute((lang: string) => document.documentElement.lang === lang, locale));
@@ -88,6 +91,8 @@ async function inTheBody(...selectors: readonly string[]) {
   const body = await boxOf(".settings-dialog-body");
   for (const selector of selectors) expect([selector, contains(body, await boxOf(selector))]).toEqual([selector, true]);
 }
+/** Where the three things a second read must not move are. */
+const places = async () => [await boxOf(READ), await boxOf(PREVIEW), await boxOf(COPY)];
 const choose = (value: string) => browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click();
 
 describe("Copy diagnostics, rendered", () => {
@@ -98,7 +103,6 @@ describe("Copy diagnostics, rendered", () => {
   });
 
   for (const [width, height] of [[1366, 768], [960, 640]] as const) {
-    const viewport = { left: 0, top: 0, right: width, bottom: height, width, height };
     for (const [locale, words] of [["en", en], ["zh-CN", zh]] as const) {
       it(`goes from the button to the clipboard by keyboard, ${locale} ${String(width)}x${String(height)}`, async () => {
         await open(locale, width, height);
@@ -114,18 +118,18 @@ describe("Copy diagnostics, rendered", () => {
         // In flight: refused, focusable, and the reason in sight.
         await browser.$(`${READ}[aria-disabled="true"]`).waitForExist();
         expect(await activeMatches(READ)).toBe(true);
-        expect(await browser.$(DIALOG).getText()).toContain(words.diagnosticsReading);
+        expect(await browser.$(REASON).getText()).toBe(words.diagnosticsReading);
+        await inTheBody(READ, REASON);
         await browser.keys("Enter");
         await releaseInvokeHold(COMMAND);
 
-        // Read: the text itself, with the keyboard in it, and all of it in the window.
+        // Read: the text itself, with the keyboard in it, and all of it in the body.
         await browser.$(PREVIEW).waitForExist();
         await browser.waitUntil(() => activeMatches(PREVIEW));
         expect(await value()).toBe(TEXT);
         expect(await reads()).toEqual([{ command: COMMAND, args: {} }]);
         expect(await browser.$(READ).getText()).toBe(words.diagnosticsReadAgain);
-        expect(contains(viewport, await boxOf(PREVIEW))).toBe(true);
-        expect(contains(viewport, await boxOf(COPY))).toBe(true);
+        await inTheBody(PREVIEW, COPY);
         expect(await browser.execute(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         expect(await written()).toEqual([]);
 
@@ -137,7 +141,7 @@ describe("Copy diagnostics, rendered", () => {
         expect(await written()).toEqual([TEXT]);
         expect(await activeMatches(COPY)).toBe(true);
         expect(await browser.$(COPIED).getAttribute("role")).toBe("status");
-        expect(contains(viewport, await boxOf(COPIED))).toBe(true);
+        await inTheBody(COPIED);
 
         // Escape closes Settings, focus goes home, and the text is gone.
         await browser.keys("Escape");
@@ -158,20 +162,19 @@ describe("Copy diagnostics, rendered", () => {
         await browser.waitUntil(async () => (await browser.$(COPIED).getText()) === words.diagnosticsCopied);
 
         await browser.$(READ).scrollIntoView({ block: "nearest" });
-        const before = await boxOf(READ);
+        const before = await places();
         await holdInvoke(COMMAND);
         await setInvokeResult(COMMAND, SECOND_READING);
         await browser.$(READ).click();
         await browser.$(`${READ}[aria-disabled="true"]`).waitForExist();
 
-        // A second press lands on the same refused button, not on what is near it.
-        expect(await browser.execute((x: number, y: number, css: string) => document.elementFromPoint(x, y)?.closest(css) !== null,
-          before.left + before.width / 2, before.top + before.height / 2, READ)).toBe(true);
+        // Nothing moves, so a second press lands on the same refused button.
+        expect(await places()).toEqual(before);
         expect(await browser.$(READ).getText()).toBe(words.diagnosticsReadAgain);
-        expect(await browser.$(DIALOG).getText()).toContain(words.diagnosticsReading);
+        expect(await browser.$(REASON).getText()).toBe(words.diagnosticsReading);
         expect(await value()).toBe(TEXT);
         expect(await browser.$(COPIED).getText()).toBe(words.diagnosticsCopied);
-        await inTheBody(READ);
+        await inTheBody(READ, REASON);
 
         // Copy is refused and says why: that text is about to be replaced.
         expect(await browser.$(COPY).getAttribute("aria-disabled")).toBe("true");
@@ -180,6 +183,7 @@ describe("Copy diagnostics, rendered", () => {
 
         await releaseInvokeHold(COMMAND);
         await browser.waitUntil(async () => (await value()) === SECOND_READING);
+        expect(await places()).toEqual(before);
         expect(await browser.$(COPIED).getText()).toBe("");
         expect(await browser.$(COPY).getAttribute("aria-disabled")).toBe(null);
         await browser.$(COPY).click();
@@ -221,8 +225,8 @@ describe("Copy diagnostics, rendered", () => {
 
       await setInvokeRejection(COMMAND, { kind: "preview_worker_unavailable", summary: "", detail: null, retryable: true });
       await browser.$(READ).click();
-      await browser.$("[data-diagnostics-failed]").waitForDisplayed();
-      await inTheBody("[data-diagnostics-failed]");
+      await browser.$(FAILED).waitForDisplayed();
+      await inTheBody(FAILED);
     });
 
     // Radix wraps Tab with preventScroll, and the text has scrolled the body down.
@@ -245,11 +249,11 @@ describe("Copy diagnostics, rendered", () => {
       await open(locale, 960, 640);
       await setInvokeRejection(COMMAND, { kind: "preview_worker_unavailable", summary: "the boundary's own words", detail: null, retryable: true });
       await browser.$(READ).click();
-      const failed = browser.$("[data-diagnostics-failed]");
+      const failed = browser.$(FAILED);
       await failed.waitForDisplayed();
       expect(await failed.getAttribute("role")).toBe("alert");
       expect(await failed.getText()).toBe(words.errPreviewWorkerUnavailable);
-      expect(contains(await boxOf(".settings-dialog-body"), await boxOf("[data-diagnostics-failed]"))).toBe(true);
+      await inTheBody(FAILED);
       expect(await browser.$(PREVIEW).isExisting()).toBe(false);
       expect(await browser.$(COPY).isExisting()).toBe(false);
 
@@ -260,6 +264,28 @@ describe("Copy diagnostics, rendered", () => {
       expect(await value()).toBe(TEXT);
       expect(await failed.isExisting()).toBe(false);
     });
+
+    // Radix leaves the keyboard on the dialog when what held it goes, and the next
+    // Tab from there starts over at the top, with the failure out of sight.
+    for (const holder of [COPY, PREVIEW]) {
+      it(`a failed read that takes away ${holder} gives the keyboard to the button, ${locale}`, async () => {
+        await open(locale, 960, 640);
+        await browser.$(READ).click();
+        await browser.$(PREVIEW).waitForExist();
+        await setInvokeRejection(COMMAND, { kind: "preview_worker_unavailable", summary: "", detail: null, retryable: true });
+        // One script, so the keyboard has moved before the refusal's reaction runs.
+        await browser.execute((read: string, target: string) => {
+          document.querySelector<HTMLElement>(read)!.click();
+          document.querySelector<HTMLElement>(target)!.focus();
+        }, READ, holder);
+        await browser.$(FAILED).waitForDisplayed();
+        await browser.waitUntil(() => activeMatches(READ));
+        await inTheBody(READ, FAILED);
+        await browser.keys("Tab");
+        expect(await activeMatches('[role="radio"]')).toBe(false);
+        await inTheBody(FAILED);
+      });
+    }
 
     it(`a refused clipboard claims no copy, stays in sight and keeps the text to select, ${locale}`, async () => {
       await open(locale, 960, 640);

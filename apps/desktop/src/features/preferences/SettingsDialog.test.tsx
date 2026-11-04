@@ -183,6 +183,41 @@ describe("Copy diagnostics (ADR 0063, decision 10)", () => {
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(en.diagnosticsCopyFailed);
   });
 
+  it.each([
+    ["answers", (read: Deferred<string>) => { read.resolve("text\n"); }],
+    ["fails", (read: Deferred<string>) => { read.reject(refusedRead); }],
+  ] as const)("leaves the keyboard with a reader who moved on when a read %s", async (_ending, end) => {
+    const answer = deferred<string>();
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics: () => answer.promise }));
+    const dialog = openSettings();
+    const opener = button(dialog, "data-diagnostics-read");
+    opener.focus();
+    fireEvent.click(opener);
+    const elsewhere = dialog.querySelector<HTMLButtonElement>('[role="radio"]')!;
+    elsewhere.focus();
+
+    await act(async () => { end(answer); await answer.promise.catch(() => undefined); });
+    expect(dialog.querySelector("[data-diagnostics-preview], [data-diagnostics-failed]")).not.toBeNull();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it.each(["data-diagnostics-copy", "data-diagnostics-preview"])("gives the keyboard to Read again when a failed read takes away %s", async (holder) => {
+    const second = deferred<string>();
+    const readEnvironmentDiagnostics = vi.fn<() => Promise<string>>()
+      .mockResolvedValueOnce("first\n").mockReturnValueOnce(second.promise);
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics }));
+    const dialog = openSettings();
+    const opener = button(dialog, "data-diagnostics-read");
+    fireEvent.click(opener);
+    await waitFor(() => expect(dialog.querySelector(`[${holder}]`)).not.toBeNull());
+    fireEvent.click(opener);
+    dialog.querySelector<HTMLElement>(`[${holder}]`)!.focus();
+
+    await act(async () => { second.reject(refusedRead); await second.promise.catch(() => undefined); });
+    expect(dialog.querySelector(`[${holder}]`)).toBeNull();
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
   it("reads anew each time and keeps nothing once Settings closes", async () => {
     const readEnvironmentDiagnostics = vi.fn<() => Promise<string>>()
       .mockResolvedValueOnce("first\n").mockResolvedValueOnce("second\n").mockResolvedValueOnce("third\n");

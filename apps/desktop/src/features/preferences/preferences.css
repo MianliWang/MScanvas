@@ -122,6 +122,8 @@
    a usable target instead of being squeezed out of one. */
 .settings-storage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* "Reading…" beside the label, so a read in flight moves neither the row nor what is below it. */
+.settings-diagnostics-field .setting-field-copy { flex-direction: row; align-items: baseline; gap: 8px; }
 /* The diagnostics text, as Copy will take it, with Copy beside it. */
 .settings-diagnostics-preview { display: flex; align-items: flex-start; gap: 8px; }
 .settings-diagnostics-preview textarea {
@@ -141,7 +143,8 @@
 }
 .settings-diagnostics-preview textarea:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
 .settings-diagnostics-actions { display: flex; flex: none; flex-direction: column; align-items: flex-start; gap: 6px; }
-.settings-diagnostics-actions p { margin: 0; color: var(--color-text-secondary); font-size: 12px; }
+/* As wide empty as with "已复制。", so a new reading clearing it does not rewrap the text. */
+.settings-diagnostics-actions p { min-width: 4em; margin: 0; color: var(--color-text-secondary); font-size: 12px; }
 .settings-diagnostics-problem { margin: 0 0 8px; }
 
 @media (max-width: 520px) {
