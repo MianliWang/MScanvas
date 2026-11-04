@@ -1084,6 +1084,88 @@ fn replacing_an_unusable_record_starts_with_remembering_on() {
     assert_eq!(committed.display, DisplayPreferences::default());
 }
 
+/// A commit with remembering off and every group named, as a replacement or a
+/// turn-off would carry them.
+fn every_group_with_remembering_off(replace_unusable: bool) -> UiPreferenceWriteDto {
+    UiPreferenceWriteDto {
+        appearance: Some(AppearancePreferences {
+            locale: UiLocale::ZhCn,
+            density: RosterDensity::Compact,
+        }),
+        layout: Some(LayoutPreferences {
+            roster: PanelPresentation::Hidden,
+            details: PanelPresentation::Shown,
+        }),
+        display: Some(DisplayPreferences {
+            text_size: TextSize::Large,
+            remember: false,
+            ..DisplayPreferences::default()
+        }),
+        replace_unusable,
+    }
+}
+
+/// The confirmation promises "stores the preferences shown here", and the record
+/// it replaces has nothing to keep, so the switch does not narrow it.
+#[test]
+fn replacing_an_unusable_record_stores_what_was_confirmed_with_remembering_off() {
+    let root = Root::new("remember-replace-off");
+    let store = root.store();
+    root.store_bytes(br#"{"schemaVersion":3,"theme":"dark"}"#);
+    let request = every_group_with_remembering_off(true);
+
+    let committed = saved(&store.save(&request));
+    assert_eq!(
+        committed,
+        UiPreferences {
+            appearance: request.appearance.expect("named"),
+            layout: request.layout.expect("named"),
+            display: request.display.expect("named"),
+            ..UiPreferences::default()
+        }
+    );
+    assert_eq!(
+        root.stored_bytes(),
+        write_record(&committed).expect("bytes")
+    );
+
+    // Replaced, it is an ordinary record with remembering off.
+    let before = root.stored_bytes();
+    assert_eq!(
+        store.save(&request),
+        UiPreferenceSaveDto::NotRemembered { revision: 1 }
+    );
+    assert_eq!(root.stored_bytes(), before);
+}
+
+/// The confirmation is for a record this build refused. On a usable one it
+/// widens nothing, so the flag alone cannot be what writes a whole commit.
+#[test]
+fn the_replace_flag_on_a_usable_record_leaves_the_write_rule_alone() {
+    let root = Root::new("remember-replace-usable");
+    let store = root.store();
+    let chosen = saved(&store.save(&layout(
+        PanelPresentation::Shown,
+        PanelPresentation::Hidden,
+    )));
+
+    let committed = saved(&store.save(&every_group_with_remembering_off(true)));
+    assert_eq!(
+        committed,
+        UiPreferences {
+            display: DisplayPreferences {
+                remember: false,
+                ..DisplayPreferences::default()
+            },
+            ..chosen
+        }
+    );
+    assert_eq!(
+        root.stored_bytes(),
+        write_record(&committed).expect("bytes")
+    );
+}
+
 // ------------------------------------------------------ remembered folder
 
 #[test]

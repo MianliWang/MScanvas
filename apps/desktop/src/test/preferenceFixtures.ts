@@ -151,8 +151,10 @@ export function createFakePreferencesApi(
         // same rule, so the interface is tested against the same contract.
         const base = unusable !== null || stored === null ? STORED_DEFAULTS : stored;
         // And its write rule: a commit that leaves remembering off writes the
-        // switch, only if that changes it, and nothing else.
-        if (!(request.display?.remember ?? base.display.remember)) {
+        // switch, only if that changes it, and nothing else. A confirmed
+        // replacement is written whole, and an unusable record that got this
+        // far is one.
+        if (unusable === null && !(request.display?.remember ?? base.display.remember)) {
           if (!base.display.remember) return { outcome: "notRemembered", revision };
           stored = { ...base, display: { ...base.display, remember: false } };
         } else {

@@ -194,11 +194,15 @@ impl UiPreferenceStore {
     /// While remembering is off, the store stops writing what it would
     /// otherwise remember: a commit that leaves it off answers `NotRemembered`
     /// and writes nothing. The commit that turns it off writes that switch and
-    /// no other change. A commit that turns it on is written whole.
+    /// no other change. A commit that turns it on is written whole, and so is a
+    /// confirmed replacement of an unusable record, whatever its switch says:
+    /// the confirmation promises to store the preferences shown, and the record
+    /// it replaces has nothing to keep.
     ///
-    /// What was stored stays stored, so the next launch still starts on it. That
-    /// is a reading, not an owner decision: the rule stops writing and says
-    /// nothing about erasing.
+    /// What was stored stays stored, so the next launch still starts on it.
+    ///
+    /// All of this is a reading, not an owner decision. V-7.3 chose the switch
+    /// and left its rule open, and nothing says whether off also erases.
     #[must_use]
     pub fn save(&self, request: &UiPreferenceWriteDto) -> UiPreferenceSaveDto {
         if request.appearance.is_none() && request.layout.is_none() && request.display.is_none() {
@@ -209,11 +213,11 @@ impl UiPreferenceStore {
                 revision: self.locked().revision,
             };
         }
-        self.commit(request.replace_unusable, |merged| {
+        self.commit(request.replace_unusable, |merged, replacing| {
             let remember = request
                 .display
                 .map_or(merged.display.remember, |display| display.remember);
-            if !remember {
+            if !remember && !replacing {
                 let was_on = merged.display.remember;
                 merged.display.remember = false;
                 return was_on;
@@ -276,7 +280,7 @@ impl UiPreferenceStore {
             }
             Some(Some(folder)) => Some(folder.to_owned()),
         };
-        self.commit(false, |merged| {
+        self.commit(false, |merged, _replacing| {
             merged.backend_folder = folder;
             true
         })
@@ -285,11 +289,13 @@ impl UiPreferenceStore {
     /// The shared body of every commit: merge onto what is stored, publish,
     /// read back, and only then call it saved.
     ///
-    /// `apply` answers whether there is anything to publish.
+    /// `apply` is told whether its base stands in for an unusable record being
+    /// replaced under confirmation, and answers whether there is anything to
+    /// publish.
     fn commit(
         &self,
         replace_unusable: bool,
-        apply: impl FnOnce(&mut UiPreferences) -> bool,
+        apply: impl FnOnce(&mut UiPreferences, bool) -> bool,
     ) -> UiPreferenceSaveDto {
         let mut lane = self.locked();
         let revision = lane.revision;
@@ -299,9 +305,9 @@ impl UiPreferenceStore {
                 return UiPreferenceSaveDto::Unavailable { problem, revision };
             }
         };
-        let mut merged = match storage::read(root) {
-            StoredRecord::Usable(stored) => stored,
-            StoredRecord::Absent => UiPreferences::default(),
+        let (mut merged, replacing) = match storage::read(root) {
+            StoredRecord::Usable(stored) => (stored, false),
+            StoredRecord::Absent => (UiPreferences::default(), false),
             StoredRecord::Unusable(problem) => {
                 if !replace_unusable {
                     return UiPreferenceSaveDto::StoredRecordUnusable {
@@ -309,10 +315,10 @@ impl UiPreferenceStore {
                         revision,
                     };
                 }
-                UiPreferences::default()
+                (UiPreferences::default(), true)
             }
         };
-        if !apply(&mut merged) {
+        if !apply(&mut merged, replacing) {
             return UiPreferenceSaveDto::NotRemembered { revision };
         }
         // The exact snapshot about to be published, judged by this build's own
