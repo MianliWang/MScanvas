@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize, Serializer};
 
-use super::record::{AppearancePreferences, LayoutPreferences, UiPreferences};
+use super::record::{AppearancePreferences, DisplayPreferences, LayoutPreferences, UiPreferences};
 
 /// What a starting document is told about the stored record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -69,6 +69,10 @@ pub enum UiPreferenceSaveDto {
         problem: &'static str,
         revision: u64,
     },
+    /// Remembering is off, so this commit was not written. Not a fault: the
+    /// store still works, and it still writes the commit that turns remembering
+    /// back on. A restart finds what was stored before this commit.
+    NotRemembered { revision: u64 },
     /// The write did not complete. The last confirmed record, if there was
     /// one, is still what a restart will find.
     ///
@@ -97,13 +101,13 @@ fn without_backend_folder<S: Serializer>(
     .serialize(serializer)
 }
 
-/// One commit request: which half of the record, and whether an unusable
+/// One commit request: which groups of the record, and whether an unusable
 /// stored record may be replaced.
 ///
-/// Two optional groups rather than a whole record, because the two live in
-/// different places in the interface and must not carry each other. Settings
-/// commits appearance and never the shell's live panel state; a panel toggle
-/// commits layout and never the Settings dialog's unapplied draft.
+/// Optional groups rather than a whole record, because they live in different
+/// places in the interface and must not carry each other. Settings commits
+/// appearance and never the shell's live panel state; a panel toggle commits
+/// layout and never the Settings dialog's unapplied draft.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiPreferenceWriteDto {
@@ -111,6 +115,8 @@ pub struct UiPreferenceWriteDto {
     pub appearance: Option<AppearancePreferences>,
     #[serde(default)]
     pub layout: Option<LayoutPreferences>,
+    #[serde(default)]
+    pub display: Option<DisplayPreferences>,
     /// The explicit reset-and-replace confirmation. False for every ordinary
     /// commit, so nothing routine can overwrite a record this build refused.
     #[serde(default)]

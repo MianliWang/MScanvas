@@ -56,6 +56,13 @@ All notable changes will be documented here once versioned releases begin.
   SVG and PNG changes by this inset**, though no colour, word or height does. The
   range itself does not change: a pointer in the inset reads as that end of the
   range, and a range you draw or export is the true one.
+- **The preference record is now schema 2, and it keeps what beta 1 saved.** It
+  gains text size, contrast, motion, wheel habit, crosshair, grid and whether
+  preferences are remembered, each defaulting to what MSCanvas does today. No
+  Settings row uses them yet. A record from beta 1 or a later build of schema 1
+  reads with nothing lost and is written as schema 2 at its next change. After
+  that, an earlier build says the saved file was written by a newer version, runs
+  on its defaults and leaves the file alone.
 - **"Not verified by MSCanvas" follows a labelled output further.** The viewer's
   file title, the Metadata tab's File row, the figure dialog and the figure
   itself say it: a labelled source's SVG, PNG, copied image and preview draw the

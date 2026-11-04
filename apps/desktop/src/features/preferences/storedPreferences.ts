@@ -7,7 +7,7 @@
  * open anything, and a record written to it cannot ask for anything to be
  * opened.
  *
- * The two field groups are separate because they are committed from different
+ * The field groups are separate because they are committed from different
  * places in the interface. Settings commits appearance; the shell's panel
  * toggles commit layout. A commit that carried both would let one surface
  * publish the other's unapplied draft.
@@ -15,8 +15,11 @@
 
 import type { UiLocale, RosterDensity, SessionPreferences } from "./sessionPreferences";
 
-/** The schema this build reads and writes. Rust refuses any other. */
-export const PREFERENCE_SCHEMA_VERSION = 1;
+/**
+ * The schema this side consumes. Rust also reads schema 1 from disk, and answers
+ * it as this one, so an older record never reaches here in its old shape.
+ */
+export const PREFERENCE_SCHEMA_VERSION = 2;
 
 /**
  * What the user asked of one workspace panel.
@@ -34,18 +37,48 @@ export interface LayoutPreferences {
   readonly details: PanelPresentation;
 }
 
+export type TextSize = "standard" | "large";
+export type TextContrast = "normal" | "high";
+export type MotionPreference = "system" | "reduce";
+export type WheelHabit = "draw" | "figma";
+
+/** The settings of one schema bump, in one group. Nothing reads them yet. */
+export interface DisplayPreferences {
+  readonly textSize: TextSize;
+  readonly contrast: TextContrast;
+  readonly motion: MotionPreference;
+  readonly wheelHabit: WheelHabit;
+  readonly crosshair: boolean;
+  readonly grid: boolean;
+  /** Off, a commit that does not turn it back on is not written. */
+  readonly remember: boolean;
+}
+
 export interface StoredPreferences {
   readonly schemaVersion: number;
   readonly appearance: AppearancePreferences;
   readonly layout: LayoutPreferences;
+  readonly display: DisplayPreferences;
 }
 
 export const LAYOUT_DEFAULTS: LayoutPreferences = { roster: "automatic", details: "automatic" };
+
+/** Every default keeps what a build without these fields does. */
+export const DISPLAY_DEFAULTS: DisplayPreferences = {
+  textSize: "standard",
+  contrast: "normal",
+  motion: "system",
+  wheelHabit: "draw",
+  crosshair: false,
+  grid: true,
+  remember: true,
+};
 
 /** What one commit names. At least one group, and never a path or a key. */
 export interface PreferenceWriteRequest {
   readonly appearance?: AppearancePreferences;
   readonly layout?: LayoutPreferences;
+  readonly display?: DisplayPreferences;
   /**
    * The explicit reset-and-replace confirmation.
    *
@@ -76,6 +109,8 @@ export type PreferenceSaveOutcome =
   | { readonly outcome: "saved"; readonly preferences: StoredPreferences; readonly revision: number }
   | { readonly outcome: "storedRecordUnusable"; readonly problem: string; readonly revision: number }
   | { readonly outcome: "unavailable"; readonly problem: string; readonly revision: number }
+  /** Remembering is off, so nothing was written. Not a fault. */
+  | { readonly outcome: "notRemembered"; readonly revision: number }
   | {
       readonly outcome: "failed";
       readonly problem: string;
@@ -87,6 +122,10 @@ export type PreferenceSaveOutcome =
 const LOCALES: readonly UiLocale[] = ["en", "zh-CN"];
 const DENSITIES: readonly RosterDensity[] = ["comfortable", "compact"];
 const PRESENTATIONS: readonly PanelPresentation[] = ["automatic", "shown", "hidden"];
+const TEXT_SIZES: readonly TextSize[] = ["standard", "large"];
+const CONTRASTS: readonly TextContrast[] = ["normal", "high"];
+const MOTIONS: readonly MotionPreference[] = ["system", "reduce"];
+const WHEEL_HABITS: readonly WheelHabit[] = ["draw", "figma"];
 
 /**
  * Whether a record from the store is one this build can consume.
@@ -103,15 +142,25 @@ export function isStoredPreferences(value: unknown): value is StoredPreferences 
   if (record.schemaVersion !== PREFERENCE_SCHEMA_VERSION) return false;
   const appearance = record.appearance;
   const layout = record.layout;
+  const display = record.display;
   if (typeof appearance !== "object" || appearance === null) return false;
   if (typeof layout !== "object" || layout === null) return false;
+  if (typeof display !== "object" || display === null) return false;
   const { locale, density } = appearance as Record<string, unknown>;
   const { roster, details } = layout as Record<string, unknown>;
+  const { textSize, contrast, motion, wheelHabit, crosshair, grid, remember } = display as Record<string, unknown>;
   return (
     LOCALES.includes(locale as UiLocale) &&
     DENSITIES.includes(density as RosterDensity) &&
     PRESENTATIONS.includes(roster as PanelPresentation) &&
-    PRESENTATIONS.includes(details as PanelPresentation)
+    PRESENTATIONS.includes(details as PanelPresentation) &&
+    TEXT_SIZES.includes(textSize as TextSize) &&
+    CONTRASTS.includes(contrast as TextContrast) &&
+    MOTIONS.includes(motion as MotionPreference) &&
+    WHEEL_HABITS.includes(wheelHabit as WheelHabit) &&
+    typeof crosshair === "boolean" &&
+    typeof grid === "boolean" &&
+    typeof remember === "boolean"
   );
 }
 
