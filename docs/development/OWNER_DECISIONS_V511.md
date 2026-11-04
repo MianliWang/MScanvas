@@ -280,7 +280,7 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 | HR-1.7 | **Separately, each when its turn comes.** The smallest scope each time and a clear record; items not due do not run early. Cost: the owner is asked more often; the idle desktop may have to be given up several times | Each window is asked for when its step is reached |
 | HR-1.8 | **Grant one, at M10's closure.** Cancel evidence is retaken on the changed launch; 7 slices are developed on a simulated backend, and only the closure waits. Cost: one window, after the rest of M10 | Work: M10's closure, when the window is approved (HR-1.7). This answers ADR 0064 question 7's window |
 | S-6.1 | **Four fields: group, type, batch, injection order.** One pass covers v5.11's row classification and statistics groups; injection-order plots and grouping by batch work directly; far below the project document's 4 MiB limit. Cost: this step is L (5 slices); computations that need injection order refuse while it is empty; v5.11 only shows injection order, and here it must also be edited | Work: N-A3 |
-| S-6.2 | **Hold schema 5 open; join before a release.** Users go through one one-way upgrade; the same window rule as B-6's study records; if B-6 is answered first, one write, saving at most 2 slices. Cost: test projects written by development builds may not open later; if a release ships first, these records go to schema 6 | Work: N-A2. ADR 0067 question 9 has no page row of its own; this row names the same rule |
+| S-6.2 | **Hold schema 5 open; join before a release.** Users go through one one-way upgrade; the same window rule as B-6's study records; if B-6 is answered first, one write, saving at most 2 slices. Cost: test projects written by development builds may not open later; if a release ships first, these records go to schema 6 | Work: N-A2. Answers ADR 0067 question 9's schema window, with B-6.15 for its generic record |
 | S-6.3 | **Confirm first, listing each row's old and new value.** As in v5.11's dialog, and the change to a scientific class is seen first. Cost: one more step per batch of moves; confirmation and its acceptance about 1 slice (inside the metadata's 5) | Work: N-A3 |
 | S-6.4 | **On the data layer; each study revision stores a copy.** Classified once in the list, as in v5.11; editing a class does not change a finished study; a revision already lists these fields. Cost: one file cannot be grouped differently in two designs; departs from ADR 0067's recommendation, so the record changes; columns of an imported table have no data layer and need another home | Open: that home. Work: ADR 0067 question 2's answer, on its branch |
 | S-6.5 | **Add the row to the project first, then classify it.** Every class has a lasting identity, and the file can still be checked on another machine. Cost: classifying waits for the hash; one more explicit add to the project | Work: N-A3 |
@@ -312,7 +312,7 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 | S-5.7 | **Ratio of standard deviations: 100·sd_QC/sd_sample.** The definition in the research's table, and the same statistic as QC RSD, so the simplest. Cost: the source says non-Gaussian data should be transformed first or use MAD; one high value moves it easily | Work: N-A9 |
 | S-5.8 | **The observed mean of control and treatment samples (v5.11).** Same as the demo; one number and a simple rule. Cost: with one group high and one low, the mean falls and contamination may be misjudged | Work: N-A9 |
 | S-7.1 | **Select now, for the targeted table and the future feature table.** Targeted results do not wait for the Features page; the exported file names its filter; the scan table's sorter can be reused. Cost: the targeted table's part has no estimate of its own; a partial export may be taken for the whole table | Work: N-A5, N-A6; the targeted table's part has no roadmap item yet |
-| S-7.2 | **With the feature table, stored in the project and exported with the CSV.** Note and feature sit in one place; no measured value changes; inside N-A6's 3 slices. Cost: it waits for the Features page; it uses up the project document's 4 MiB limit | Work: N-A6 |
+| S-7.2 | **With the feature table, stored in the project and exported with the CSV.** Note and feature sit in one place; no measured value changes; inside N-A6's 3 slices. Cost: it waits for the Features page; it counts against the project document's 4 MiB limit | Work: N-A6 |
 | S-7.3 | **With the library candidates.** It appears with the candidate it marks, so its meaning is clear; the same step as choosing a candidate, M (2 slices). Cost: at the end of the critical path, about 39 slices then (42 in the roadmap now); it depends on the Python track's annotation | Work: A-26 |
 | MAP-1.1 | **Both, each when ready.** Neither waits for the XIC or Python. Cost: 3 and 4 slices; both wait for the new plot kinds (6 slices); the two maps are easily confused and must be labelled clearly | Work: N-F4, N-X3, N-X4 |
 | MAP-1.2 | **The greatest intensity per cell.** The same rule for profile and centroid, not affected by sampling density; the library implements it, and the caption says so. Cost: weak signals in the same cell are hidden; on an ion trap, profile and centroid still cannot be compared | Work: N-14 |
@@ -326,9 +326,9 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 | B-2.1 | *Pick; there was no recommendation.* **Move to 3.6.0 before release, when the probes pass.** No Qt, so the Qt LGPL-3 question ends; KD linking is fixed, and a failed adduct solve reports an error; every function is verified once, on the released version. Cost: the Thermo folder must be excluded; port and re-qualification 3–5 slices; a new dependency, `nanobind-backend` 1.0.0, needs approval (PyPI has no licence field, only a BSD classifier); curl, the AWS SDK and OpenSSL 3.6.4 (13 advisories) are linked in. If the probe fails: CK-2 | Open: the probes (A-03), and whether libiconv is linked. Work: A-07 |
 | B-2.2 | *Pick; the recommendation was to keep the refusal and obtain a legal opinion first.* **Use 3.6.0, which has no Qt.** The question goes away with no reading of the terms; checked: the 3.6.0 wheel has no Qt DLL, and the OpenMS DLL imports no Qt. Cost: all of 3.6.0's cost (B-2.1); this answer does not hold if the probes fail (CK-2); whether libiconv (LGPL-2.1) is linked is not settled | Answers ADR 0066 questions 5 and 7 with B-2.1 and CK-2, on its branch |
 | B-2.3 | **CPython 3.14, the latest embeddable.** Official binaries until about 2027-10, so security fixes keep up; OpenSSL 3.5.9, supported until 2030-04; pyOpenMS 3.5.0, numpy and pandas all have 3.14 wheels. Cost: whether targeted MS1 runs on 3.14 is untested and needs full verification; by 2027-10 it must move to the next line and be verified again | Work: A-07, or its own slice on CK-2's branch. Answers ADR 0066 question 10 |
-| B-3.1 | **Also leave out sources and tests (1,790 files).** 150 MB, about 35.5 MB compressed (HMDB and Modomics already out); checking takes about 3–4 s (development machine, measured on the same tier). Cost: agreement was tested on one synthetic file and two targets only; compressed, only about 8 MB smaller than the tier before; the exclusion list is longer, and each entry must be retested on a new version or interpreter | Work: A-03, A-05. Answers ADR 0066 question 4 with B-3.2 and B-3.3 |
+| B-3.1 | **Also leave out sources and tests (1,790 files).** 150 MB, about 35.5 MB compressed (HMDB and Modomics already out); checking takes about 3–4 s (development machine, measured on the same tier). Cost: agreement was tested on one synthetic file and two targets only; compressed, only about 8 MB smaller than the tier before; the exclusion list is longer, and each entry must be retested on a new version or interpreter | Work: A-03, A-05. Answers ADR 0066 question 4 with B-3.2 and B-3.3. Open: the terms of `brenda.obo`, on which shipping this tier depends, and of the data files that state none (ADR 0066's licence slice, in A-05) |
 | B-3.2 | **Leave them out.** No commercial redistribution limit is touched; targeted MS1 results do not change (measured on one file). Cost: accurate-mass search needs a database the user chooses; no metabolite library out of the box | Work: A-05 |
-| B-3.3 | **Do not ship them, and delete the experiment lock.** The shipped package has no Pillow, so 41 alerts close; about 49 MB of packages that never load go. Cost: departs from the recorded Pillow 13.0.0 route; pyOpenMS declares matplotlib, so it must be excluded by hand; a development environment can no longer be reproduced from the old lock. CK-1 keeps this for the first runtime only | Work: A-03, A-05 |
+| B-3.3 | **Do not ship them, and delete the experiment lock.** The shipped package has no Pillow, so 41 alerts close; about 49 MB of packages that never load go. Cost: departs from the recorded Pillow 13.0.0 route; pyOpenMS declares matplotlib, so it must be excluded by hand; a development environment can no longer be reproduced from the old lock. CK-1 keeps matplotlib and Pillow out until A-25's runtime | Work: A-03, A-05 |
 | B-4.1 | **Drop it now; add a display preview after the XIC ships.** No field that cannot change a result; the chromatographic FWHM parameter really does; smoothing can still be seen after the XIC. Cost: the first workflow has one step fewer than the demo; the preview waits for the XIC and needs its own decision | Work: A-20. Open: that decision |
 | B-4.2 | **Drop it; only OpenMS's peak width and signal-to-noise.** Every field takes effect, with no extra engine or dependency. Cost: MZmine users will not find ADAP; OpenMS has only upper and lower FWHM limits and signal-to-noise, not the demo's peak width; OpenMS uses seconds and the demo minutes, so the interface converts | Work: A-20-UI |
 | B-4.3 | **Drop them; pose clustering with KD, fixed.** The route of the pyOpenMS tutorials and UmetaFlow, and KD copes with large sample counts. Cost: only an affine correction, so non-linear drift relies on LOWESS at linking; 3.5.0's KD has a charge-conflict defect (OpenMS #10157) | Work: A-21 |
@@ -350,7 +350,7 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
 | B-6.12 | **The user declares it at import.** Its meaning is in the import plan, so it can be traced, and nothing is guessed. Cost: one more question per import | Work: N-A4. ADR 0067 question 4 |
 | B-6.13 | **Refuse, naming the row and column, unless declared.** A bad value cannot enter the matrix silently; declared text counts as missing and is in the import plan. Cost: an existing table may need a declaration or an edit | Work: N-A4. ADR 0067 question 4 |
 | B-6.14 | **In the application cache, with a digest in the result.** Saving a project elsewhere need not copy gigabytes; the same as the RAW view's cache. Cost: the cache may be cleared, and the file is then regenerated and checked against the digest | Answers ADR 0067 question 8 |
-| B-6.15 | **One generic step record.** A new step with valid parameters needs no format bump, so fewer one-way upgrades. Cost: an older build shows it as history only and refuses to run that step; departs from the existing rule "refuse to open on an unimplemented operation" | Work: A-08, A-08-KINDS |
+| B-6.15 | **One generic step record.** A new step with valid parameters needs no format bump, so fewer one-way upgrades. Cost: an older build shows it as history only and refuses to run that step; departs from the existing rule "refuse to open on an unimplemented operation" | Work: A-08, A-08-KINDS. Answers ADR 0067 question 9's generic record, with S-6.2 for its schema window |
 | B-11.1 | **Approve; probe the runner first.** Heavy work stays off the owner's computer, in a clean environment with hash-locked dependencies. Cost: 2–3 slices (about 1–3 days); the runner is unknown, and numbers are trusted only after the probe | Work: A-04, smaller now: B-11.2 moves the measurements off it |
 | B-11.2 | *Pick; the recommendation was CC0 or CC-BY data, already centroided.* **Accept the EMBL-EBI terms; measure locally only.** #191 already measured on such data, and MetaboLights has centroided files. Cost: not an open-data licence, so files are neither committed nor redistributed; whether they may go on Actions is unconfirmed; the 1–2 GiB Orbitrap files checked are all profile, and the usable large file is QTOF (MTBLS449, about 1.6 GiB), so a large Orbitrap file probably takes the hold-release fallback | Work: A-13, A-14, run locally under the memory gate. HR-1.3 stays the fallback |
 | B-11.3 | **One 1–2 GiB Orbitrap run is still needed.** Extrapolation becomes measurement, so the budget is more credible, and a large Orbitrap file is covered. Cost: first estimated at 2 slices, of which #191 did part, the rest not estimated; B-11.2's data question comes first | Work: A-13 |
@@ -391,8 +391,8 @@ CK-1 to CK-8：2026-11-03 在聊天里回复“全部按推荐”
   2. The crate's guidance: keep the two lines of `crates/proteowizard/AGENTS.md` ("only the m/z and intensity arrays of one selected spectrum"; never "compute from the arrays") until the first record's code lands, and change them in that slice? Recommended: yes.
 - **"As built, not an owner decision".** Text marked so stays dated and marked so. On `main` that is ADR 0065 section 6's `schemaVersion` line; open PRs may carry more. No answer here accepts it.
 - **Answers that depend on a result not yet in:** the 3.6.0 probes (A-03, which decide between B-2.1 and CK-2), the Qt opinion on CK-2's branch, the MSVC reading (RT-3), the BPI match (R-3, HR-1.6), and CK-3's decision after A-22.
-- **Open questions no row asked:** ADR 0071 question 3 (carried to X4); the roster in the project file, which section 1b says "comes back with S-6" and S-6's rows do not cover; analyzer and filter string from R-1, which B-4.6's analyzer default now also needs read; the open items each row names above.
-- **Not approved by any of this:** a new dependency, a hold-release window that has not reached its turn, a release, an upload and outbound contact. Each keeps its own approval.
+- **Open questions no row asked:** ADR 0071 question 3 (carried to X4); the roster in the project file, which section 1b says "comes back with S-6" and S-6's rows do not cover; the per-scan analyzer term and filter string from R-1 (#154's columns); which item reads the file's declared analyzer for B-4.6, since #182, as R-1 accepted it, widens instrument configurations for the library only; the open items each row names above.
+- **Not approved by any of this:** a new dependency, any hold-release window (each is approved separately when its step is reached, HR-1.7), a release, an upload and outbound contact. Each keeps its own approval.
 
 ---
 
@@ -443,7 +443,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 | 39 | HR-1 | ProteoWizard hold releases for the pending measurements | Decided 2026-11-03: HR-1.1, HR-1.4, HR-1.6 and HR-1.8 granted in principle, each window approved when its turn comes (HR-1.7); HR-1.2 waits for a plan, HR-1.3 is a fallback, HR-1.5 waits for Thermo. No run starts on this alone | choice | before-its-slice |
 | 40 | X-3 | XIC exports and panel | Decided 2026-11-03: include exports; the trace has its own panel under the chromatogram; the divergences stay, each with its reason | choice | before-its-slice |
 | 41 | B-2 | pyOpenMS version (and the Qt6 LGPL question); ADR 0066 questions 5 and 7 | Decided 2026-11-03: 3.6.0 before release if the probes pass, which ends the Qt question; if they fail, 3.5.0 first and a legal opinion on Qt first, with no release until then (CK-2). CPython 3.14 | choice | before-its-slice |
-| 42 | B-3 | What the shipped runtime leaves out: HMDB files, matplotlib and Pillow; ADR 0066 question 4 | Decided 2026-11-03: tier 3 without HMDB and Modomics; matplotlib and Pillow not shipped and the experiment lock deleted, for the runtimes before A-25's (CK-1) | choice | before-its-slice |
+| 42 | B-3 | What the shipped runtime leaves out: HMDB files, matplotlib and Pillow; ADR 0066 question 4 | Decided 2026-11-03: tier 3 without HMDB and Modomics; matplotlib and Pillow not shipped until A-25's runtime (CK-1); the experiment lock deleted | choice | before-its-slice |
 | 43 | B-4 | v5.11 fields with no OpenMS equivalent; smoothing; centroided input | Decided 2026-11-03: drop the fields with no effect; require centroided input; noise default by instrument: Orbitrap 1e4, QTOF 1e3 | choice | before-its-slice |
 | 44 | B-5 | Negative mode in the first untargeted domain | Decided 2026-11-03: both modes at once; the recommendation was positive first | choice | before-its-slice |
 | 45 | B-6 | The study model for cross-sample work; ADR 0067's ten questions | Decided 2026-11-03: study-level runs, with metadata on layers copied into each study revision; a LOWESS second stage now; seven cell states; the in-house chunked store plus a later Parquet export (CK-4); parallel count from free memory once measured | choice | before-its-slice |
@@ -899,6 +899,8 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 ### X-1. XIC re-entry and its evidence gates
 
 *Decided 2026-10-30: option 2 with those gates, as recommended (section 1b).*
+
+*Answered 2026-11-03, see 1d (X-3.1 to X-3.3): X-3, which this left open.*
 
 - **Question.** Should the XIC re-enter as the evaluation's option 2? That means a full XIC with stated profile semantics, through a new scope record (X0) for a sibling pass over ADR 0056's reader, with these gates:
   - **§11.6:** the frozen PX.3 comparator, byte-identical, with new hashed runner revisions;
@@ -1420,7 +1422,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### B-4. v5.11 fields with no OpenMS equivalent
 
-*Answered 2026-11-03, see 1d (B-4.1 to B-4.6, U1-2.1 to U1-2.3, CK-7).*
+*Answered 2026-11-03, see 1d (B-4.1 to B-4.6, U1-1, U1-2.1 to U1-2.3, CK-6, CK-7).*
 
 - **Question.** Six parts:
   1. **Smoothing (MOD-03).** (a) a display-only S-G preview on an extracted trace (v5.11: "不改写原始轨迹"), or (b) drop the step and expose `chrom_fwhm`.
@@ -1457,7 +1459,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### B-6. The study model for cross-sample work
 
-*Answered 2026-11-03, see 1d (B-6.1 to B-6.15, CK-4, U1-1, CK-6).*
+*Answered 2026-11-03, see 1d (B-6.1 to B-6.15, CK-4).*
 
 - **Question.** Alignment, linking, gap filling and statistics are multi-acquisition. Three constraints stand in the way:
   - ADR 0050 decision 1 gives no algorithm more than one acquisition;
@@ -1493,7 +1495,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 
 ### B-11. Measurement infrastructure for Track B
 
-*Answered 2026-11-03, see 1d (B-11.1 to B-11.4, CK-7).*
+*Answered 2026-11-03, see 1d (B-11.1 to B-11.4, U1-1, U1-2.1 to U1-2.3, CK-6, CK-7).*
 
 - **Question.** Two parts, from the analysis plan's A-04, A-13 and A-14:
   - May a new GitHub Actions workflow run the analysis runtime? It is `workflow_dispatch` on Windows, provisions the runtime from the hash-locked wheels, checks the manifest digest against the compiled pin, runs the `#[ignore]`d real-engine tests and hosts the measurement harnesses. It is not one of the nine required checks and not the release workflow.
@@ -1749,6 +1751,8 @@ These are left out on purpose; each is still open in its own record:
 ## 9. Roadmap items each decision gates
 
 Generated by the planning workspace's merge script from the same data as `ROADMAP_V511_AND_ANALYSIS.md`. Item ids are the roadmap's; "-UI" marks a unit's interface item.
+
+*2026-11-03:* the rows of B-4, B-5 and B-11 were edited by hand for the owner's answers, as the top of `ROADMAP_V511_AND_ANALYSIS.md` says of its tables. The script was not rerun, and rerunning it would write back its older data.
 
 | Decision | Roadmap items it gates |
 | --- | --- |
