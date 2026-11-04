@@ -575,8 +575,9 @@ describe("A0055 and ADR 0052, rendered", () => {
     });
 
     // A running view takes the bar's busy reason, and it is not why the other Adds wait.
-    for (const viewing of [false, true]) it(`says an Add under way on that member's line and in the status bar${viewing ? ", with a view running" : ""}, ${size}`, async () => {
-      const table = conversionWorld(locale, viewing ? [RAW, WIFF] : [WIFF], setFinished());
+    // A labelled set keeps every member's tag, and each Add says it before its reason.
+    for (const [viewing, labelled] of [[false, false], [true, false], [true, true]] as const) it(`says an Add under way on that member's line and in the status bar${viewing ? ", with a view running" : ""}${labelled ? ", of a labelled set" : ""}, ${size}`, async () => {
+      const table = conversionWorld(locale, viewing ? [RAW, WIFF] : [WIFF], setFinished({}, labelled ? { notVerifiedByMscanvas: LABEL } : {}));
       if (viewing) {
         table.get_raw_view_state = {
           state: { state: "running", operation: 1, handle: RAW.handle, fileName: RAW.fileName, phase: "converting", elapsedMs: 12_000, bytesRead: null, bytesTotal: null, intentId: shippedIntent.id, unverifiedBuildRelease: null, cachedCopyDamaged: false },
@@ -591,25 +592,61 @@ describe("A0055 and ADR 0052, rendered", () => {
       const seen = await browser.execute((button: string, one: string, other: string) => {
         const reason = (css: string) => {
           const add = document.querySelector<HTMLElement>(css)!;
-          const said = document.getElementById(add.getAttribute("aria-describedby")!)!;
-          const box = said.getBoundingClientRect();
-          const text = said.querySelector<HTMLElement>(".status-item-text") ?? said;
+          const said = add.getAttribute("aria-describedby")!.split(/\s+/u).map((id) => document.getElementById(id));
+          // The reason, always last. A member's own tag has scrolled away with its Add.
+          const last = said.at(-1)!;
+          const box = last.getBoundingClientRect();
+          const text = last.querySelector<HTMLElement>(".status-item-text") ?? last;
           return {
             refused: add.getAttribute("aria-disabled"),
-            text: said.textContent,
+            texts: said.map((each) => each?.textContent ?? null),
             inView: box.height > 0 && box.top >= 0 && box.bottom <= innerHeight,
             clipped: text.scrollWidth > text.clientWidth + 1,
           };
         };
-        return { pressed: reason(`${one} ${button}`), other: reason(`${other} ${button}`) };
+        return {
+          pressed: reason(`${one} ${button}`),
+          other: reason(`${other} ${button}`),
+          tags: document.querySelectorAll(".conversion-run-list [data-not-verified]").length,
+        };
       }, OUTPUT_ADD, pressed, group(locale, SET_NAMES[2]!));
-      await shot(`set-member-adding${viewing ? "-viewing" : ""}-${locale}-${String(width)}`);
+      await shot(`set-member-adding${viewing ? "-viewing" : ""}${labelled ? "-labelled" : ""}-${locale}-${String(width)}`);
+      const tag = labelled ? [buildLabel(locale)] : [];
       const line = BUNDLES[locale].outputAdding;
       const bar = BUNDLES[locale].shellContextActivity.replace("{{activity}}", BUNDLES[locale].m74CnvAdoptOneInFlight);
       expect(seen).toEqual({
-        pressed: { refused: "true", text: line, inView: true, clipped: false },
-        other: { refused: "true", text: bar, inView: true, clipped: false },
+        pressed: { refused: "true", texts: [...tag, line], inView: true, clipped: false },
+        other: { refused: "true", texts: [...tag, bar], inView: true, clipped: false },
+        tags: labelled ? 24 : 0,
       });
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+
+    // A reason other than an Add under way stays on that action's own line.
+    it(`says diagnostics being saved as the reason on a member's refused Add, ${size}`, async () => {
+      const table = conversionWorld(locale, [WIFF], setFinished());
+      table.get_workspace_conversion_state = {
+        ...(table.get_workspace_conversion_state as object),
+        diagnostics: { eligibleItemCount: 1, available: true, exporting: false, lastExport: null },
+      };
+      await open(table, locale, width, height, ["begin_workspace_conversion_diagnostics_export"]);
+      await showConversion();
+      const action = browser.$(".conversion-diagnostics button");
+      await action.waitForExist({ timeout: 30_000 });
+      await action.scrollIntoView({ block: "center" });
+      await action.click();
+      const saving = BUNDLES[locale].m74CnvDiagnosticsInFlight;
+      await browser.waitUntil(async () => (await browser.$(".conversion-diagnostics-summary").getText()) === saving, { timeout: 15_000 });
+      const member = await browser.execute((css: string) => {
+        const add = document.querySelector<HTMLElement>(css)!;
+        return {
+          refused: add.getAttribute("aria-disabled"),
+          texts: add.getAttribute("aria-describedby")!.split(/\s+/u).map((id) => document.getElementById(id)?.textContent ?? null),
+        };
+      }, `${group(locale, SET_NAMES[2]!)} ${OUTPUT_ADD}`);
+      await shot(`set-member-refused-by-diagnostics-${locale}-${String(width)}`);
+      expect(member).toEqual({ refused: "true", texts: [saving] });
+      expect(await unexpectedConsole()).toEqual([]);
     });
 
     for (const length of [100, 165]) {
