@@ -10,15 +10,15 @@ with no release before a legal opinion on Qt)".
 | --- | --- | --- |
 | "Every planned class runs" | **PASS** | 26 of 26 ran: a real call on synthetic data, on the positive and on the relabelled negative files, each with a non-empty observable (80 rows for the 26 classes, plus 2 `fitModel` checks; section 5.2 says what those rows are). None was only imported, and none failed in the final run. |
 | "without the Thermo folder" | **PASS** | The copy holds 0 Thermo-named files, 0 of its 76 native files has a CLR header, and neither any group nor the adapter's process loaded a Thermo module, `hostfxr` or `coreclr`. `OPENMS_THERMO_MANAGED_DIR` stayed unset. No RAW file was read (section 7). |
-| "libiconv is shown not to be linked" | **NOT SHOWN** | 0 of 76 native files imports it, and `iconv`, `libiconv`, `libcharset`, `locale_charset` and, in exact case, 10 libiconv alias names each count 0, where a control libiconv DLL holds all 10 alias names. No SBOM or link map was found, and upstream's Windows build installed `libiconv` 1.18 for `libxml2[core,iconv,zlib]` and logged `Arrow is linked statically: added LibXml2 to its link interface` (section 8). |
+| "libiconv is shown not to be linked" | **NOT SHOWN** | 0 of 76 native files imports it, and `iconv`, `libiconv`, `libcharset`, `locale_charset` and, in exact case, 10 libiconv alias names each count 0, where a control libiconv DLL holds all 10 alias names. No SBOM or link map was found. Upstream's Windows build installed `libiconv` 1.18 for `libxml2[core,iconv,zlib]` and logged `Arrow is linked statically: added LibXml2 to its link interface`, and upstream's comment says the one object in that archive needing libxml2 is Azure's, which this build's Arrow leaves out. Those point opposite ways, and none is a record of this DLL's link (section 8). |
 | "or its terms are accepted" | **NOT SHOWN** | The owner's to answer, and not asked here. This record does not answer it. |
 
 **What the rule gives on this evidence.** The first half holds. The second half
 has neither of its two ways shown, so the rule gives no pass. No line is FAIL, so
 it gives no failure either: B-2.1's pass branch and CK-2's fail branch both wait
 for the owner's reading of the libiconv lines. Whether libiconv's terms are
-accepted, and whether NOT SHOWN counts as a pass, are the owner's. B-2 is not
-decided here.
+accepted, and whether NOT SHOWN counts as a pass, are the owner's. Which branch of
+B-2 applies is not decided here.
 
 Five other results size later work:
 
@@ -30,12 +30,14 @@ Five other results size later work:
   `rawArea` falls by 0.18 % (section 6).
 - **An outcome can change too.** On a variant of the protocol's `main` fixture, a target
   with no `neutralMass` goes from `DETECTED_AMBIGUOUS` to `DETECTED`. With its declared
-  mass it stays `DETECTED`, and its model status and `rawArea` change (section 6.3).
-  This and the numbers above are A-07's to qualify; neither is part of the pass
-  condition.
+  mass it stays `DETECTED` and its `rawArea` changes; its model status changes too in the
+  seven-target batch, and not when it runs alone. On both engines, model status depends
+  on which targets share the batch (section 6.3). This and the numbers above are A-07's
+  to qualify; neither is part of the pass condition.
 - **U1's chain gives the same features.** On three synthetic files, 3.6.0 and the
   pinned 3.5.0 give the same 51 features, with no difference in RT, m/z or intensity
-  (section 5.3). The call forms differ.
+  (section 5.3, which also gives the one difference found, below U1's noise floor). The
+  call forms differ, and four classes have new parameters.
 - **The copy is smaller and loads less.** 621 files, 130,632,028 B, about 33.3 MB
   compressed. It loads no Qt, no pandas and no matplotlib stack (sections 7 and 9).
 - **The AWS SDK leaves no marker in `OpenMS.dll`,** although the notices list it and
@@ -276,6 +278,17 @@ no trace at the default `min_sample_rate` 0.5. On sample 1 they appear at 0.1, o
 `trace_termination_criterion` `sample_rate`. Why these compounds and not the others was
 not investigated. It is a fact for A-20 and A-13, on synthetic data.
 
+**Other noise floors and width filters** (`u1_floor.py`, second review round). Six files (`main`, this
+run's variant of it from section 6.3, `fmt_plain` and the three positive samples), thresholds
+100, 300, 1e3, 3e3 and 1e4, and `width_filtering` `fixed`, `auto` and `off`: 88 of the 90 cells
+are identical, with 1,818 features in the 3.5.0 runs. The two that differ are `main` and its
+variant at 100 with `fixed`, where 3.6.0 adds 2 features and removes none (m/z 132.102 at RT
+157.5 s, intensity 150289.906; m/z 269.107 at RT 172.0 s, intensity 645.65). Traces, split traces
+and features go from 21, 30, 24 to 21, 32, 26 on `main`, and from 21, 31, 25 to 21, 33, 27 on the
+variant. That floor is below U1's 1e3, and nothing in this grid differs at 1e3 or above. The
+review of this record reports the same two cells on a wider grid, which was not repeated. A-13
+needs this only if it measures below 1e3.
+
 The call forms that changed, for A-07 and A-20:
 
 | 3.5.0 | 3.6.0 |
@@ -288,6 +301,23 @@ The call forms that changed, for A-07 and A-20:
 
 The first three rows ran on both engines. The last two ran on 3.6.0, and their 3.5.0
 forms are from that binding's docstrings.
+
+The parameter sets changed too (`param_keys.py`, second review round). The 17 classes of section 5.2
+that expose default parameters hold 201 keys on 3.5.0. None is removed on 3.6.0, and one default
+changes, `EMGScoring:init_mom` (section 6.2). Boolean values also read as words on 3.5.0 and as
+booleans on 3.6.0, as section 6.1 says for the adapter. Eight keys are new, for the recipe records
+of A-20 and A-21 to pin; the runs of this section had these defaults in effect on 3.6.0:
+
+| Class | New key | Default on 3.6.0 |
+| --- | --- | --- |
+| `FeatureFindingMetabo` | `isotope_rt_overlap_reference` | `longer` |
+| `FeatureFindingMetabo` | `local_im_range` | 0.02 |
+| `FeatureFindingMetabo` | `min_isotope_rt_overlap` | 0.7 |
+| `MetaboliteFeatureDeconvolution` | `max_multimer` | 1 |
+| `MetaboliteFeatureDeconvolution` | `multimer_log_penalty` | -2.0 |
+| `MetaboliteFeatureDeconvolution` | `rt_overlap_reference` | `union` |
+| `MetaboliteSpectralMatching` | `ccs_error_percent` | 0.0 |
+| `PeakPickerHiRes` | `allow_missing_flank` | false |
 
 ## 6. ANA-004
 
@@ -325,25 +355,33 @@ The scratch copy with these two has SHA-256
 
 **Outside the adapter, listed and not touched:** `REQUIRED_MODULES`, `ENGINE_VERSION`,
 `ENGINE_REVISION` (`5d5cbff`, where the pin is `c1370fb`) and `RUNTIME_MANIFEST_SHA256`,
-and then what names the pinned runtime. `git grep -c 'c1370fb\|python313\|3\.13\.15' --
-apps scripts` gives:
+and then what names the pinned runtime, its version or its files. At `origin/main`
+`8f5c5614`, `git grep -c -i -E
+'c1370fb|python313|3\.13\.15|3\.5\.0|qt6core|openms\.dll|openswathalgo|cp313|msvcp140\.dll' --
+apps scripts e2e` gives:
 
 | File | Lines |
 | --- | ---: |
-| `apps/desktop/src-tauri/src/project/recipe.rs` | 1 |
-| `apps/desktop/src-tauri/src/project/schema_4_canonical.json` | 6 |
-| `apps/desktop/src-tauri/src/project/schema_5_canonical.json` | 6 |
-| `apps/desktop/src-tauri/src/targeted_ms1.rs`; line 177 is the development runtime's path | 2 |
-| `apps/desktop/src-tauri/src/targeted_ms1/adapter_v1.py` | 1 |
-| `apps/desktop/src-tauri/src/targeted_ms1/tests.rs`; line 4505 is the same path | 2 |
-| `apps/desktop/src-tauri/src/targeted_ms1/tests/batch.rs` | 3 |
-| `apps/desktop/src/test/projectFixtures.ts` | 3 |
-| `scripts/provision_targeted_ms1_runtime.py`, with `python313._pth` | 7 |
+| `apps/desktop/src-tauri/src/project/recipe.rs` | 3 |
+| `apps/desktop/src-tauri/src/project/schema_4_canonical.json` | 16 |
+| `apps/desktop/src-tauri/src/project/schema_5_canonical.json` | 16 |
+| `apps/desktop/src-tauri/src/targeted_ms1.rs`; lines 109 to 112 are `REQUIRED_MODULES`, and line 177 is the development runtime's path | 5 |
+| `apps/desktop/src-tauri/src/targeted_ms1/adapter_v1.py`; `KEY_MODULES` | 2 |
+| `apps/desktop/src-tauri/src/targeted_ms1/tests.rs`; line 4505 is the same path | 4 |
+| `apps/desktop/src-tauri/src/targeted_ms1/tests/batch.rs`; line 1090 names 8 `_pyopenms_*.cp313` modules, and lines 1092 to 1095 name the DLLs | 10 |
+| `apps/desktop/src/features/project/TargetedMs1.test.tsx`; line 685 asserts `pyOpenMS 3.5.0` | 1 |
+| `apps/desktop/src/test/projectFixtures.ts` | 6 |
+| `scripts/provision_targeted_ms1_runtime.py`, with `python313._pth` | 9 |
+| `e2e/specs/m9.1-targeted-ms1.browser.e2e.ts`; line 646 asserts `pyOpenMS 3.5.0 · FeatureFinderMetaboIdent · c1370fb` | 7 |
+| `e2e/specs/m9.4-targeted-ms1-batch.browser.e2e.ts` | 6 |
+| `e2e/support/pm9Scenarios.ts` | 5 |
+| `e2e/support/targeted.ts` | 6 |
 
-The same grep over the whole tree also hits `e2e/` specs and support files, `README.md`,
-`ROADMAP.md` and `docs/architecture/ANALYSIS_WORKERS.md` line 44, which describe the current
-runtime, and experiments and evidence records, which stay as what they measured. These lists
-and the two edits are what this record offers for sizing A-07.
+The same grep over the rest of the tree hits `README.md`, `ROADMAP.md`,
+`docs/architecture/ANALYSIS_WORKERS.md` line 44 and other documents, which describe the current
+runtime; experiments and evidence records, which stay as what they measured; and `Cargo.lock`,
+where `3.5.0` is the unrelated crate `proc-macro-crate`. A grep sees names only, so this list and
+the two edits are a floor for sizing A-07 and not its full extent.
 
 ### 6.2 The comparison
 
@@ -408,35 +446,49 @@ the five `engineProfile` words of section 6.1 as differences, and they are left 
 variant here is this run's and not a repository fixture: `main` without the second of them
 (index 128, 30 points, the protocol's `factor=0.9` scan), renumbered. It has 437 spectra,
 891,078 B, SHA-256 `a3f5875b225775a6253d7204aa9be0b1da7c2c5c7d2a6d0610a03f6aebb8e843`. Two
-requests ran on it, with the protocol's seven targets, and a one-target request of `boundary`
-gave the same outcome as the seven in each case.
+requests ran on it, each with the protocol's seven targets and with `boundary` alone. In each
+cell, the last two entries are the model status and `engineIntensitySource` (`batch_cells.py`).
 
-| Request | `boundary` on 3.5.0 | `boundary` on 3.6.0 |
+| Request and batch | `boundary` on 3.5.0 | `boundary` on 3.6.0 |
 | --- | --- | --- |
-| The protocol's: `neutralMass` 242.1154 | `DETECTED`, 1 candidate; bounds 112.5 to 127.5 s; `rawArea` 2809931.0; `0 (valid)`; `modelArea` | `DETECTED`, 1 candidate; bounds 113.0 to 127.0 s; `rawArea` 3254714.5; `5 (width too large)`; `imputedFromRunRegression` |
-| `neutralMass` null, so the mass comes from `C12H18O5` | **`DETECTED_AMBIGUOUS`**, 4 candidates; bounds 112.0 to 128.0 s; `rawArea` 3325694.5; `5 (width too large)`; `imputedFromRunRegression` | **`DETECTED`**, 1 candidate; bounds 113.0 to 127.0 s; `rawArea` 3254830.5; `5 (width too large)`; `imputedFromRunRegression` |
+| The protocol's `neutralMass` 242.1154, seven targets | `DETECTED`, 1 candidate; bounds 112.5 to 127.5 s; `rawArea` 2809931.0; `0 (valid)`; `modelArea` | `DETECTED`, 1 candidate; bounds 113.0 to 127.0 s; `rawArea` 3254714.5; `5 (width too large)`; `imputedFromRunRegression` |
+| The protocol's `neutralMass` 242.1154, alone | `DETECTED`, 1 candidate; bounds 112.5 to 127.5 s; `rawArea` 2809931.0; `0 (valid)`; `modelArea` | `DETECTED`, 1 candidate; bounds 113.0 to 127.0 s; `rawArea` 3254714.5; `0 (valid)`; `modelArea` |
+| `neutralMass` null, so the mass comes from `C12H18O5`, seven targets | **`DETECTED_AMBIGUOUS`**, 4 candidates; bounds 112.0 to 128.0 s; `rawArea` 3325694.5; `5 (width too large)`; `imputedFromRunRegression` | **`DETECTED`**, 1 candidate; bounds 113.0 to 127.0 s; `rawArea` 3254830.5; `5 (width too large)`; `imputedFromRunRegression` |
+| `neutralMass` null, alone | **`DETECTED_AMBIGUOUS`**, 4 candidates; bounds 112.0 to 128.0 s; `rawArea` 3325694.5; `0 (valid)`; `modelArea` | **`DETECTED`**, 1 candidate; bounds 113.0 to 127.0 s; `rawArea` 3254830.5; `0 (valid)`; `modelArea` |
 
-The other six targets keep their outcomes in both requests: `DETECTED`, `NOT_DETECTED`,
-`DETECTED_AMBIGUOUS`, `DETECTED`, `SUPPRESSED_BY_OVERLAP`, `NOT_DETECTED`.
+The other six targets keep their outcomes in both seven-target requests: `DETECTED`,
+`NOT_DETECTED`, `DETECTED_AMBIGUOUS`, `DETECTED`, `SUPPRESSED_BY_OVERLAP`, `NOT_DETECTED`.
 
-- **The first row has a measured mechanism.** Every ion's `mzTheoretical` is lower by
-  1.4775e-8 Da on 3.6.0, whatever its formula or mass (for example `243.122676466771` and
-  `243.12267645199572`). Alone that is within the rule. But the protocol places exact
-  boundary probes on 3.5.0's open-window edges, with intensity 7777 on each edge and 11 and
-  13 just inside. On 3.6.0 the window sits that much lower, so the lower edge's 7777 and its
-  11 fall inside and the upper edge's 7777 and its 13 fall outside. The extracted baseline
-  of that trace goes from `24.0` (11 + 13) to `7788.0` (7777 + 11). The probes no longer sit
-  on the edges. Whether M9.0's exact-boundary check still holds is A-07's, and why the value
-  moved was not investigated.
-- **The second row's cause is not shown.** The evidence points agree by the rule there, and
-  the engine returns fewer candidates: `candidates.featureXML` holds 27 features on 3.5.0 and
-  18 on 3.6.0. The rule's comparison does not read that file. It changes on `fmt_plain` too,
-  where the rule sees only section 6.2's nine numbers: `sn_ratio: 58.140442086098886 ->
-  39.351242010876334`, `xx_lda_prelim_score: 9.022829233389071 -> 8.737897162906719`, and an
-  `adduct` value only on 3.6.0. That is a lead and not a shown cause.
-- **For A-07:** outcomes and diagnostic fields can move as well as numbers. These are single
-  runs, the last two on this run's own variant of one fixture. How much of it matters is
-  A-07's.
+- **The engine and the batch are separate factors.** Outcome, candidates, bounds and `rawArea`
+  follow the engine and the request, and they are the same alone and among seven. Model status
+  and its intensity source also follow the batch, on both engines. Alone, all four cells are `0
+  (valid)`, `modelArea`. Among seven, the null-mass request is `5 (width too large)` on both
+  engines, and only the declared-mass request differs between them. The width alone does not
+  settle it: on 3.6.0 the same `modelFwhmS` 6.202611552828848 reads `5 (width too large)` among
+  seven and `0 (valid)` alone. Why was not investigated.
+- **The change in the declared-mass `rawArea` has a measured mechanism.** Every ion's
+  `mzTheoretical` is lower by 1.4775e-8 Da on 3.6.0, whatever its formula or mass (for example
+  `243.122676466771` and `243.12267645199572`). Alone that is within the rule. But the protocol
+  places exact boundary probes on 3.5.0's open-window edges, with intensity 7777 on each edge
+  and 11 and 13 just inside. On 3.6.0 the window sits that much lower, so the lower edge's 7777
+  and its 11 fall inside and the upper edge's 7777 and its 13 fall outside. The extracted baseline
+  goes from `24.0` (11 + 13) to `7788.0` (7777 + 11). At all 61 RTs of both traces, in both batch
+  sizes, the 3.6.0 point minus the 3.5.0 point is 7,764 within 1e-6 relative, which is that
+  difference. Inside 113 to 127 s that adds 450,312 over 29 points on each of two traces, the
+  narrower bounds take 5,528 from the 3.5.0 sum, and together those are the whole change in
+  `rawArea`. It does not explain the status, which stays `0 (valid)` alone with the same window
+  and the same `rawArea`. The probes no longer sit on the edges. Whether M9.0's exact-boundary
+  check still holds is A-07's, and why the value moved was not investigated.
+- **The cause of the null-mass outcome is not shown.** The evidence points agree by the rule
+  there, and the engine returns fewer candidates: `candidates.featureXML` holds 27 features on
+  3.5.0 and 18 on 3.6.0 among seven, and 12 and 3 alone. With the declared mass it holds 18 and
+  18 among seven, and 3 and 3 alone. The rule's comparison does not read that file. It changes on
+  `fmt_plain` too, where the rule sees only section 6.2's nine numbers: `sn_ratio:
+  58.140442086098886 -> 39.351242010876334`, `xx_lda_prelim_score: 9.022829233389071 ->
+  8.737897162906719`, and an `adduct` value only on 3.6.0. That is a lead and not a shown cause.
+- **For A-07:** outcomes and diagnostic fields can move as well as numbers, and a diagnostic field
+  can depend on what else is in the batch. Each cell above is one run, on this run's own variant
+  of one fixture. How much of it matters is A-07's.
 
 ## 7. What loads
 
@@ -483,7 +535,7 @@ has `ThermoRawFile`, `ThermoRawFileOptions` and `ThermoRawFileParser`, and
 `_pyopenms_metadata.pyd` and `_pyopenms_misc.pyd` have `Thermo`. No file of the bridge is
 present, and none of that code was exercised.
 
-**The Thermo check at the end,** after the last run, review round included: no path in the
+**The Thermo check at the end,** after the last run, both review rounds included: no path in the
 copy contains `thermo`, in any case; no native file has a CLR header; 0 `.cpp`, 0 `.pyi`,
 nothing under a `tests/` folder, no pandas and no matplotlib file; `CV/brenda.obo` is there.
 
@@ -514,11 +566,14 @@ drive-root row that folder's drive. This belongs with lane runtime-confinement's
 
 ## 8. libiconv
 
-**Report: not shown.** Every binary check found nothing, and none of them is a link map.
-The general statements point the other way: the notices say the installation "contains" what
-they list, `libiconv` among it, and upstream's comment below says an installation "carries the
-code of each port". Neither is evidence for this port alone, and neither is the binary
-silence proof of absence.
+**Report: not shown.** Every binary check found nothing, and none of them is a link map. The
+written statements go both ways, and none of them is a record of this DLL's link. The general
+ones say present: the notices say the installation "contains" what they list, `libiconv` among
+it, and upstream's `third_party_licenses.cmake` says an installation "carries the code of each
+port". Upstream's `cmake_findExternalLibs.cmake` points the other way on the one route found: it
+says the only object in the Arrow archive that needs libxml2 is Azure's, and this build's Arrow
+has no Azure. Neither is evidence for this port in this DLL, and binary silence is not proof of
+absence.
 
 | Check | Result |
 | --- | --- |
@@ -526,8 +581,8 @@ silence proof of absence.
 | `iconv`, `libiconv`, `libcharset`, `locale_charset`, ASCII and UTF-16, any case, in all 76 | 0 each |
 | 10 names of libiconv's alias table (`ARMSCII-8`, `MULELAO-1`, `GEORGIAN-PS`, `KOI8-T`, `TCVN-5712`, `BIG5-HKSCS`, `NEXTSTEP`, `MACTHAI`, `CSISO2022KR`, `UCS-2-INTERNAL`) in all 76 | 0 each in exact case. In any case, `OpenMS.dll` has UTF-16 `Big5-HKSCS` and `csISO2022KR`, once each, in a mixed-case list of IANA-style names (`CP01149`, `ebcdic-is-871+euro`, `Big5-HKSCS`, `UNICODE-1-1`), which is not libiconv's upper-case ASCII table |
 | The same names in a control, MSYS2's `libiconv-2.dll` | 10 of 10, and `iconv` 14, `libiconv` 11 (control only; it is a dynamic build) |
-| `libxml2`, `xmlParse`, `xmlCharEnc`, `xmlFindCharEncodingHandler`, `xmlIconv`, `xmlSAX`, `xmlBuffer`, `xmlReader`, `Azure` in `OpenMS.dll` | 0 each in exact case. In any case, `xmlBuffer` 3 and `xmlReader` 4, all Xerces' `XMLBuffer` and `XMLReader` (for example `src\xercesc\framework\XMLBuffer.cpp`) |
-| Source paths the static libraries left in `OpenMS.dll`, by vcpkg port (`buildtrees\<port>\`) | `arrow` 49, `openssl` 9, `xerces-c` 111; no `libiconv`, no `libxml2` |
+| `libxml`, `libxml2`, `xmlParse`, `xmlCharEnc`, `xmlFindCharEncodingHandler`, `xmlIconv`, `xmlSAX`, `xmlBuffer`, `xmlReader`, `xmlCreate`, `xmlBufferCreate`, `xmlBufferFree`, `htmlParse`, `xml_wrapper`, `Azure`, ASCII and UTF-16, in all 76 | 0 each in exact case. In any case, `xmlBuffer` 3 and `xmlReader` 4 in `OpenMS.dll`, all Xerces' `XMLBuffer` and `XMLReader` (for example `src\xercesc\framework\XMLBuffer.cpp`), and `xmlParse` 4 in `_elementtree.pyd` and 5 in `pyexpat.pyd`, which are `XMLParser` and expat's `xmlparse.c`. `Azure` is 0 in any case too |
+| Source paths the static libraries left, by vcpkg port (`buildtrees\<port>\`), in all 76 | `OpenMS.dll`: `arrow` 49, `openssl` 9, `xerces-c` 111. `_arrow_zerocopy.pyd`, which also carries a static Arrow, so the same route applies to it: `arrow` 36. No other file has any; no `libiconv`, no `libxml2` |
 | The wheel's own notices | lists `libiconv [16]`; text `[16]` is `LICENSES/vcpkg/libiconv.txt`: "The libiconv and libcharset libraries and their header files are under LGPL", with LGPL-2.1 below it |
 | An SBOM or link map from upstream | none found: release `v3.6.0` has five assets (two `.deb`, `.pkg`, `.exe`, `.tar.gz`); the wheel has no `sboms` folder; the tree at `5d5cbff` holds no SBOM (`tools/SPDX.txt` is not one); run `36703348530` has four artifacts, `wheels-windows-x64`, `wheels-macos-arm64`, `wheels-linux-x64` and `wheels-linux-arm64`, none an SBOM or a map |
 
@@ -546,10 +601,22 @@ silence proof of absence.
   build's plan: `libxml2`, and two that exclude Windows at the baseline, `boost-locale`
   (`!uwp & !windows & !mingw`) and `xerces-c` (`!windows & !osx`). So `libxml2` is the one
   route found. A search is not a dependency graph.
-- `cmake/cmake_findExternalLibs.cmake`: "A statically linked Arrow needs libxml2:
+- `cmake/cmake_findExternalLibs.cmake`, on that route: "A statically linked Arrow needs libxml2:
   arrow_bundled_dependencies vendors azure-storage-common, whose xml_wrapper.cpp ...
-  references xmlBufferCreate/xmlBufferFree and friends." This build's Arrow features have
-  no Azure: `acero, compute, core, dataset, filesystem, json, parquet, s3`.
+  references xmlBufferCreate/xmlBufferFree and friends. It is the only object in that archive
+  that does -- the AWS SDK is bundled too but brings its own parser (aws_xml_node_*) and needs no
+  libxml2." This build's Arrow features have no Azure: `acero, compute, core, dataset,
+  filesystem, json, parquet, s3`. If the comment holds for this build, nothing in that archive
+  takes libxml2's objects. It is a comment about one archive, and not a record of this link.
+- The same file, above its lookup: "Deliberately not REQUIRED: only the platforms that actually
+  resolve those symbols against a system libxml2 need it. MSVC has no --as-needed and the Windows
+  contrib build links a static Arrow with no system libxml2 present at all". That names another
+  build. This one is a vcpkg build that installed `libxml2`, and the message its log shows below
+  is printed only inside `if(LibXml2_FOUND)`. `src/openms/CMakeLists.txt` line 255 says "libxml2 is
+  needed by a statically linked Arrow, but listing it here put it ahead of the archive that
+  references it". The review of this record read the 17 files a code search gives for `libxml` and
+  reports that line as the only one naming libxml2, with `MzIdentMLDOMHandler.cpp`'s `xmlDoc` a
+  Xerces `DOMDocument`; that was not repeated.
 - `pyopenms-wheels-cibuildwheel`, run `36703348530`, job `109847769486`
   (`build-wheels-windows`), triplet `x64-windows-static-md-release`. The log as read is
   2,456,346 B, SHA-256 `7f6a687f91e4f8a155141fff889ddb19ed16c02ce8c0d2e279c8281d38432ef5`, and
@@ -601,15 +668,18 @@ It approximates an installer increment and is not a built installer.
 | `pyopenms` `.dist-info` | 5 | 5,646 |
 | `nanobind_backend` `.dist-info` | 3 | 1,902 |
 
-Three SHA-256 passes over every file, after all runs, review round included: 0.70, 0.72 and
-0.80 s, each against the manifest, with 0 changed, 0 missing and 0 extra. An earlier set took
-1.05, 2.28 and 3.81 s on a busier host, and another 0.70, 0.70 and 0.78 s. The LZMA2 estimate
-gave the same count on its two kept runs. The cost at the installed location is unmeasured.
+Three SHA-256 passes over every file, after all runs, both review rounds included: 0.58, 0.64 and
+0.72 s, each against the manifest, with 0 changed, 0 missing and 0 extra. Earlier sets took 1.05,
+2.28 and 3.81 s on a busier host, 0.70, 0.70 and 0.78 s, and 0.70, 0.72 and 0.80 s. The LZMA2
+estimate gave the same count on its three kept runs. The cost at the installed location is
+unmeasured.
 
 ### 9.2 The bundled native libraries
 
 Where a file states a version, that is the version given. The log is the build log of
-section 8.
+section 8. This is not every port: the notices' own lists have 156 entries, and the log installs
+155 packages. Only the libraries in this table were looked for, so a port missing here says
+nothing about that port.
 
 | Library | Where | What the file states | Upstream's build log |
 | --- | --- | --- | --- |
@@ -626,7 +696,12 @@ section 8.
 | Thermo bridge | left out | code stays in `OpenMS.dll` (section 7) | `openms-thermo-bridge` 0.3.1 |
 | libffi | `libffi-8.dll` (the embeddable's; `_ctypes.pyd` imports it, and it loads) | no version resource; the SPDX file on python.org says 3.4.4 | — |
 | libtommath | `libtommath.dll` (the embeddable's, 95,456 B; no native file in the copy imports it, and it does not load) | no version resource; named in neither the SPDX file on python.org nor `LICENSE.txt` | — |
-| OpenBLAS | `numpy.libs/libscipy_openblas64_-ed4f….dll` | no version resource; `numpy/__config__.py` says `scipy-openblas` `0.3.34.106.0` | — |
+| OpenBLAS | `numpy.libs/libscipy_openblas64_-ed4f….dll` (it loads) | no version resource; `numpy/__config__.py` says `scipy-openblas` `0.3.34.106.0` | — |
+| OpenBLAS | in `OpenMS.dll` | its messages (`OpenBLAS warning: precompiled NUM_THREADS exceeded, adding auxiliary array for thread metadata.`), `OPENBLAS_NUM_THREADS`; no version string | `openblas` 0.3.33; the notices list `openblas [24]` |
+| zlib | in `OpenMS.dll` and `_arrow_zerocopy.pyd` | ` deflate 1.3.2 Copyright 1995-2026 Jean-loup Gailly and Mark Adler `, ` inflate 1.3.2 Copyright 1995-2026 Mark Adler ` | 1.3.2 |
+| zlib-ng | in `python314.dll` (the embeddable's) | `1.3.1.zlib-ng`; the SPDX file on python.org says `zlib-ng` 2.2.4 | — |
+| bzip2 | in `OpenMS.dll` and `_arrow_zerocopy.pyd` | `1.0.8, 13-Jul-2019` | `bzip2[core,tool]` 1.0.8#6 |
+| bzip2 | in `_bz2.pyd` (the embeddable's) | `1.0.8, 13-Jul-2019`; the SPDX file on python.org says 1.0.8 | — |
 | libsvm | in `OpenMS.dll` | `nr_class`, `total_sv`; no version | 3.35 |
 | COIN-OR | in `OpenMS.dll` | `Cbc`; no version | `coin-or-cbc` 2024-06-04#1, `coin-or-clp` 2023-02-01#1 |
 | Qt | none | 0 `Qt6`, 0 `QString` in `OpenMS.dll`; no Qt import in any of the 76 files; no Qt DLL | — |
@@ -634,8 +709,12 @@ section 8.
 No version here is a licence conclusion. Whether the AWS SDK or any other listed port is
 linked is the same question as section 8; only `libiconv` is part of the pass condition.
 
-`pyopenms/_arrow_zerocopy.pyd` (7,720,448 B) carries Arrow's C data interface and was
-never loaded. Its status belongs to the licence slice.
+Two OpenBLAS copies sit in the adapter's process, with different versions stated for them: the
+numpy DLL, which loads, and what `OpenMS.dll` holds. Which one a call reaches was not measured.
+
+`pyopenms/_arrow_zerocopy.pyd` (7,720,448 B) carries Arrow's C data interface and a static copy of
+Arrow (36 source paths under `buildtrees\arrow\`), with zlib 1.3.2 and bzip2 1.0.8. It was never
+loaded. Its status belongs to the licence slice.
 
 ### 9.3 Every MSVC runtime copy
 
@@ -738,11 +817,20 @@ enters the repository except this record.
 | `loads_after.py` | the shape | review round: what is loaded after a script, or after imports in a given order | `faefb885e6ad03d900a6edad7da014f0f0a94023777285b0fe5bd3b2cb0a808e` |
 | `trace_nt.py` | the shape | review round: the file trace of sections 7 and 7.1, through kernelbase's import table, so it does not see the loader's own DLL search | `21ae6b339cdb4450ad72e505887b0ac670408c12862c4cf52a116d9d0dc257f6` |
 | `epd_doublet.py` | the shape | review round: `ElutionPeakDetection` on a doublet | `8e729fecbffd4ef38996c25dc8d78d3e5901305307a8158d4eea9ffefc909007` |
+| `batch_cells.py` | system Python `-I` | second review round: section 6.3's cells and evidence sums, from runs already made | `3f191031827f52613a7656bfdd7e62be84dbdf31ffcbcc681ee0db1496bec759` |
+| `param_keys.py` | the shape and `<pinned>` | second review round: the planned classes' default parameters | `ef3561e35708dac1e2a72d690fb3443529de31589e1e711891c98aa70849118e` |
+| `u1_floor.py` | the shape and `<pinned>` | second review round: U1 over noise floors and width filters | `0eaf981ef88ecb77af84efdb724f00ac0ffa1c99bd196312999f509289ef72bc` |
+| `u1_floor_cmp.py` | system Python `-I` | second review round: compares two `u1_floor.py` outputs | `c9a26f9928d4749e0edff35f54f45a161101915ae4eb6253737e55c9a95178a9` |
+| `review2_static.py` | system Python `-I` | second review round: the libxml2 names, the source paths by port and the self-stated versions | `0353346421897897ea4d4a12c7c534069e55c389a9b646456f9810dfc51db401` |
+| `review2_more.py` | system Python `-I` | second review round: the `xmlparse` strings, the embeddable's zlib-ng, the defaults compared | `5e13079f684e24674b0b357d38cd00fcc11c72ba4816dc2a229807518f59234e` |
 
-`request_absent.json` is `request.json` without the target `C8H10N4O2`, written by a
-one-off command. So is section 6.3's second request, which is that section's first with every
-`neutralMass` null (SHA-256 `9911b8ced6f6ac6409da4b4f5c2d8c209563baef68e901e6caa30b18e27042a9`
-and `60c176489bc0490fb6a1c3cf607139bc6d0f83bf7ed19b6066f9a81876d4886e`).
+`request_absent.json` is `request.json` without the target `C8H10N4O2`, written by a one-off
+command. So are section 6.3's requests. Its null-mass request is the protocol's with every
+`neutralMass` null, and each alone request holds only `boundary` (SHA-256: seven targets
+`9911b8ced6f6ac6409da4b4f5c2d8c209563baef68e901e6caa30b18e27042a9` and
+`60c176489bc0490fb6a1c3cf607139bc6d0f83bf7ed19b6066f9a81876d4886e`; alone
+`33e5c4a8a72f6ddbed797befd8b699b6ce951d19d0be3857529c1a6f9e1eaf02` and
+`e8932a00d1e6989a21801f14c01793445844b6d88f509cad339d502949f15d40`).
 
 Downloads, runs and outputs are not committed either. Sections 3 to 9 give what a re-run
 needs: the artefacts' digests, the exclusion list, the launch and the calls.
