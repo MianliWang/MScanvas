@@ -254,6 +254,41 @@ export function rosterProjection(
   return { ...projection, datasets, handles, pinned: new Map([...projection.pinned].filter(([handle]) => handles.has(handle))) };
 }
 
+/**
+ * What pressing one row takes, when the list may not be showing it.
+ *
+ * A row the list is not showing cannot be pressed. There are two reasons a row
+ * is not on screen and the reducer treats neither as a press it can act on, so
+ * both are cleared before the row is pressed.
+ */
+export function pressRowActions(state: RosterState, handle: string): readonly RosterAction[] {
+  const actions: RosterAction[] = [];
+  // The search first. Deliberate, and only where it is needed: a row the
+  // query already shows keeps the reader's query exactly as they left it.
+  // A row that has just arrived is never in the projection this render
+  // was drawn from, so an add with a query set always clears it -- which
+  // is the right answer, because the row is the thing they asked to see.
+  if (!rosterProjection(state).handles.has(handle)) actions.push({ type: "searchCleared" });
+  // Then the group. A collapsed group drops its rows from the projection
+  // entirely, and the default destination for every new row is a group
+  // that can be collapsed -- so without this, revealing into one is a
+  // navigation that lands on nothing. The handle is named to the
+  // reconciliation as well, because a row that has just arrived is not in
+  // the organization this render was drawn from and belongs to the
+  // ungrouped group until it is.
+  const holding = reconcileOrganization(state.organization, [
+    ...state.datasets.map((dataset) => dataset.handle),
+    handle,
+  ]).groups.find((group) => group.handles.includes(handle));
+  // `disclose` toggles, so this is asked only of a group that is closed.
+  if (holding?.collapsed === true) actions.push({ type: "organization", action: { type: "disclose", groupId: holding.id } });
+  // The same thing pressing the row does: it becomes the focused row and
+  // the highlighted one. It starts no read -- that is the component's
+  // separate response to a press, not the reducer's.
+  actions.push({ type: "rowPressed", handle, modifiers: { ctrl: false, shift: false } });
+  return actions;
+}
+
 function handlesOf(datasets: readonly SelectedFile[]): Set<string> {
   return new Set(datasets.map((dataset) => dataset.handle));
 }

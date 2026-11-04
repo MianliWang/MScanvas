@@ -32,6 +32,7 @@ const CLEAR: ConversionLane = {
   backendUsable: true,
   backendChanging: false,
   backendQuarantined: false,
+  rawViewRunning: false,
   previewReading: false,
   laneClaimed: false,
   reclaimingStaging: false,
@@ -108,6 +109,7 @@ describe("the facts a notice can be keyed on", () => {
       "backend-changing",
       "backend-unavailable",
       "conversion-running",
+      "raw-view-running",
       "preview-running",
       "configuration-probing",
       "adoption-running",
@@ -141,6 +143,7 @@ describe("the two vocabularies over one set of facts", () => {
     expect(probeRefusalFact("backendQuarantined")).toBe("backend-quarantined");
     expect(probeRefusalFact("backendChanging")).toBe("backend-changing");
     expect(probeRefusalFact("laneClaimed")).toBe("conversion-running");
+    expect(probeRefusalFact("rawViewRunning")).toBe("raw-view-running");
     expect(probeRefusalFact("previewReading")).toBe("preview-running");
   });
 
@@ -215,6 +218,7 @@ describe("what the surviving element says", () => {
               "staging-reclaiming": { reclaimingStaging: true },
               "backend-changing": { backendChanging: true },
               "conversion-running": { laneClaimed: true },
+              "raw-view-running": { rawViewRunning: true },
               "preview-running": { previewReading: true },
               "configuration-probing": { configurationProbing: true },
               "adoption-running": { adopting: true },

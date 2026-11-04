@@ -53,6 +53,12 @@ export interface DatasetRosterProps {
    */
   readonly onClearList: (returnTo?: HTMLElement | null) => boolean;
   readonly onActivate: (handle: string) => void;
+  /** A Thermo RAW row was highlighted. It starts nothing (ADR 0060 decision 1). */
+  readonly onRawHighlighted?: (handle: string) => void;
+  /** Enter on the highlighted Thermo RAW row: the pane's first action. */
+  readonly onRawEnter?: (handle: string) => void;
+  /** An mzML row pressed while a view holds the slot: nothing is read, and the evidence says why. */
+  readonly onReadHeld?: () => void;
   /**
    * A row another surface has asked to reveal, with the activation that asked.
    *
@@ -179,6 +185,9 @@ export const DatasetRoster = memo(function DatasetRoster({
   onRemoveSelected,
   onClearList,
   onActivate,
+  onRawHighlighted,
+  onRawEnter,
+  onReadHeld,
   revealRow = null,
   canAddFiles,
   canAddFolder,
@@ -711,7 +720,13 @@ export const DatasetRoster = memo(function DatasetRoster({
       handle,
       modifiers: { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey },
     });
-    if (!event.ctrlKey && !event.metaKey && !event.shiftKey && canPreview && state.datasets.some(row => row.handle === handle && row.sourceKind === "mzml")) onActivate(handle);
+    if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const kind = state.datasets.find(row => row.handle === handle)?.sourceKind;
+    if (kind === "thermo_raw") onRawHighlighted?.(handle);
+    else if (kind === "mzml") {
+      if (canPreview) onActivate(handle);
+      else onReadHeld?.();
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -738,13 +753,28 @@ export const DatasetRoster = memo(function DatasetRoster({
         }
         dispatch({ type: "allSelected" });
         break;
-      case "Enter":
+      case "Enter": {
         // The one keystroke that reads a file. Every other key here moves
         // focus or changes the selection, and neither costs a process.
-        if (state.focused !== null && canPreview && state.datasets.some(row => row.handle === state.focused && row.sourceKind === "mzml")) {
-          onActivate(state.focused);
+        const focused = state.datasets.find(row => row.handle === state.focused);
+        if (focused?.sourceKind === "mzml" && !canPreview && onReadHeld !== undefined) {
+          dispatch({ type: "rowPressed", handle: focused.handle, modifiers: { ctrl: false, shift: false } });
+          onReadHeld();
+        } else if (focused?.sourceKind === "mzml" && canPreview) {
+          onActivate(focused.handle);
+        } else if (focused?.sourceKind === "thermo_raw" && !event.repeat) {
+          // Two presses (ADR 0060 decision 1): the first highlights the row and
+          // starts nothing, the second presses its pane's first action. A held
+          // key is neither, so it cannot start a conversion.
+          if (state.selected.has(focused.handle)) {
+            onRawEnter?.(focused.handle);
+          } else {
+            dispatch({ type: "rowPressed", handle: focused.handle, modifiers: { ctrl: false, shift: false } });
+            onRawHighlighted?.(focused.handle);
+          }
         }
         break;
+      }
       default:
         return;
     }

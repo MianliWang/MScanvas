@@ -538,6 +538,12 @@ writer and Rust's ownership of files.
     [slice 2 notes](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-2-notes-2026-10-30),
     including the two cases below (accepted by the owner, 2026-10-30, A0060).
     Slice 3, the interface, builds on #164's structure once it lands (A0060).
+  - *Status, 2026-11-03:* slice 3, the interface, is [PR #203](https://github.com/MianliWang/MScanvas/pull/203),
+    not merged. A0060 answered the direction this section says it waits on, through
+    FE-1 and FE-2. With #203 on `main`, `begin_raw_view`, `get_raw_view_state`,
+    `cancel_raw_view` and `open_raw_view` have their caller; `describe_view_cache` and
+    `clear_view_cache` wait for the next slice (A0060-split). Its departures are ADR 0060's
+    [slice 3 notes](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-3-notes-2026-11-03).
   - Left to slice 2, and done there: a chunked, cancellable hash of the RAW for Checking file
     and Checking output; reading the volume's free space for `make_space`; the
     1.5 GiB refusal before any work; the summary and Clear DTOs over `usage`
