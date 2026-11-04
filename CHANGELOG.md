@@ -15,7 +15,10 @@ All notable changes will be documented here once versioned releases begin.
   of what is in your workspace, though an error code can name a vendor or a
   feature you used, and its time says when. Nothing is written or sent
   ([ADR 0063](docs/architecture/adr/0063-copy-diagnostics.md)).
-- **Restore workspace.** MSCanvas remembers the Workbench's files, groups, order
+- **Restore workspace.** MSCanvas remembers the Workbench's files, groups that hold
+  a file (an empty one does not come back, accepted by the owner on 2026-11-03), order
+  (a row's place does not hold in a group put back only in part, accepted by the
+  owner on 2026-11-04)
   and checked rows for the next start, in one document in its own per-user folder.
   At the next start nothing comes back by itself: a notice says how many files can
   be added again and lists any that changed, went missing or cannot be reached,
@@ -23,8 +26,9 @@ All notable changes will be documented here once versioned releases begin.
   hashing each file, previews nothing and says they were added again, not verified
   against the last session. **Start fresh** forgets them, one marked file can be
   dismissed, and Settings turns restore off, saying that kept-aside copies remain.
-  A file not taken is offered at the next start only; a marked file waits
-  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md)).
+  A file not taken is offered at the next start only, except one the workspace
+  refused at a press, accepted by the owner on 2026-11-03; a marked file waits
+  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md), decision 10).
 - **Spreadsheet CSV on a stored targeted result's table.** The results table has
   a third export, spreadsheet CSV / 电子表格 CSV, beside CSV and TSV. It is a
   document of its own, `mscanvas_targeted_ms1_results_spreadsheet` schema 1, that
