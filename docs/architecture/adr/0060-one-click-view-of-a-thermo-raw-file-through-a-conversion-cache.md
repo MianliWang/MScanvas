@@ -1462,7 +1462,8 @@ unless it carries "Owner decision, 2026-11-03".
      recovery, and Enter presses it only then. A failure of the build
      (`provider_build_not_evidenced`, `backend_not_found`) offers Choose ProteoWizard
      folder…, and Try again once availability says the cause has gone. That is the
-     one Try again decision 10 does not list.
+     one Try again of the pane that decision 10 does not list; a failed open's re-read
+     has its own exception (note 10).
      Owner decision, 2026-11-03 (P203): accepted. Try again appears after a failure
      of the build once the cause has gone.
    - **A failure out of sight** has the status bar's line and Show {name} until its
