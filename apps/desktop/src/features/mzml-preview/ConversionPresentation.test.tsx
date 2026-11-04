@@ -210,14 +210,16 @@ describe("PM9.4 O2: the excluded rows, named", () => {
     expect(within(screen.getByRole("row", { name: /Calibration_reference_/ })).getByRole("checkbox")).toBeChecked();
   });
 
-  it("names at most twenty and counts the rest", async () => {
+  it("names every excluded row, windowed past the threshold like every conversion list", async () => {
     const rows = Array.from({ length: 25 }, (_, index) => mzml(index + 1));
     const panel = await panelOf(createFakePreviewApi({ initialDatasets: rows, availability: availableBackend }));
     fireEvent.click(within(panel).getByRole("radio", { name: "All workspace rows" }));
     const toggle = within(panel).getByRole("button", { name: "Excluded rows (25)" });
     const details = document.getElementById(toggle.getAttribute("aria-controls")!)!;
-    expect(details.querySelectorAll("li")).toHaveLength(20);
-    expect(within(details).getByText("5 more not listed here.")).toBeInTheDocument();
+    const list = details.querySelector(".conversion-name-list")!;
+    expect(list).toHaveAttribute("aria-label", "Excluded rows (25)");
+    expect(list.querySelectorAll("li")).toHaveLength(25);
+    expect(list).toHaveAttribute("data-windowed", "false");
   });
 });
 
@@ -300,9 +302,10 @@ describe("PM9.4 O4: a failed request names its own control", () => {
     fireEvent.click(await within(panel).findByRole("button", { name: "Stop queue" }));
     const label = await within(panel).findByText("Stop queue:", { selector: "strong" });
     const banner = label.closest<HTMLElement>(".notice")!;
-    expect(banner).toHaveAttribute("role", "status");
-    expect(banner).toHaveTextContent("Stop queue: There is no conversion of yours to stop.");
-    expect(panel.querySelectorAll(".notice-danger[role='status']")).toHaveLength(1);
+    // Its sentences are the live part; Dismiss is not.
+    expect(label.closest("[role='status']")).toHaveTextContent("Stop queue: There is no conversion of yours to stop.");
+    expect(within(label.closest<HTMLElement>("[role='status']")!).queryByRole("button")).toBeNull();
+    expect(panel.querySelectorAll(".notice-danger [role='status']")).toHaveLength(1);
     fireEvent.click(within(banner).getByRole("button", { name: "Dismiss" }));
     expect(within(panel).queryByText("Stop queue:")).toBeNull();
   });

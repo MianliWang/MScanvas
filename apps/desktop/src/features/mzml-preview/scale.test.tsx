@@ -130,7 +130,7 @@ describe("stick spectrum at profile-scale point counts", () => {
     };
     // Details says what the caption cannot, from the same reduction.
     function Source() {
-      return <p>{describeSpectrumSource(mz, intensity, drawing, false, useUiMessages())}</p>;
+      return <p>{describeSpectrumSource(mz, intensity, drawing, "notReported", useUiMessages())}</p>;
     }
     const { container } = render(
       <>
@@ -150,7 +150,7 @@ describe("stick spectrum at profile-scale point counts", () => {
     expect(screen.getByText(/nearby points can merge into one stick/)).toBeVisible();
     // The spike survives the reduction: it is the axis maximum, and the top tick.
     expect(container.querySelector("svg.spectrum-plot")).toHaveAttribute("data-value-high", "5.000e+6");
-    expect([...container.querySelectorAll(".plot-y-ticks .plot-tick")].at(-1)).toHaveTextContent("5e+6");
+    expect([...container.querySelectorAll(".plot-y-ticks .plot-tick")].at(-1)).toHaveTextContent("5e6");
   });
 });
 

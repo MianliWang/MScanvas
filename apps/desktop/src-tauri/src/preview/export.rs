@@ -61,8 +61,7 @@ use mscanvas_plot_spec::spec::{
     SpectrumRepresentation, StyleRole, UnitState, measurement_domains,
 };
 use mscanvas_proteowizard::{
-    RunSummaryResult, SelectedSpectrumResult, SpectrumRepresentationState,
-    UnitState as SourceUnitState,
+    RunSummaryResult, SelectedSpectrumResult, SpectrumRepresentationState, ValueUnitState,
 };
 
 use super::chromatogram::{
@@ -87,27 +86,34 @@ use super::selection::DatasetId;
 /// be able to say so, and splitting a joined field to find out would be a parse
 /// rule of its own.
 ///
-/// **Frozen at 1.** This is the document M4.1 shipped and its shape already
-/// means *the complete spectrum*: the same source writes the same bytes it
-/// always did, and a reader holding one of those files needs no new rule to
-/// read it. A range is expressed by [`SPECTRUM_DATA_CURRENT_SCHEMA_VERSION`]
-/// instead, because silently changing what version 1 means is the one thing a
-/// schema version exists to prevent.
-pub(super) const SPECTRUM_DATA_FULL_SCHEMA_VERSION: u32 = 1;
+/// **3, and versions 1 and 2 are no longer written.** The full-source and range
+/// documents share one `#format` and so one version sequence. Versions 1 (full
+/// source, ADR 0029) and 2 (range, ADR 0040) were read through `msaccess`:
+/// eight-decimal text, and a representation and units that could only be
+/// `unreported`. Since ADR 0056 slice 2 the values are the file's stored binary
+/// values, and the representation and unit fields carry what the file
+/// declares. The keys did not change, but a reader of version 1 cannot tell
+/// which of the two it holds, and silently changing what a version means is the
+/// one thing a schema version exists to prevent. So the same full-source shape
+/// takes the next unused version, 3, and the range document takes 4.
+pub(super) const SPECTRUM_DATA_FULL_SCHEMA_VERSION: u32 = 3;
 
 /// The version a **current-range** data document answers to.
 ///
-/// A separate version rather than an extra key on version 1. The two documents
-/// answer different questions -- one is the spectrum, the other is a window of
-/// it -- and a v1 reader meeting a `range_scope` it does not know would have to
-/// guess whether the rows it is holding are all of them. They are not, so it is
-/// told in the one field it is guaranteed to look at.
+/// A separate version rather than an extra key on the full-source one. The two
+/// documents answer different questions -- one is the spectrum, the other is a
+/// window of it -- and a full-source reader meeting a `range_scope` it does not
+/// know would have to guess whether the rows it is holding are all of them.
+/// They are not, so it is told in the one field it is guaranteed to look at.
 ///
-/// Version 2 is self-describing: it carries the resolved m/z bounds, the
-/// complete source point count and the exported point count as **separate**
-/// keys, so a reader can tell what was written from the file alone, with no
-/// interface, no viewport and no session to ask.
-pub(super) const SPECTRUM_DATA_CURRENT_SCHEMA_VERSION: u32 = 2;
+/// It is self-describing: it carries the resolved m/z bounds, the complete
+/// source point count and the exported point count as **separate** keys, so a
+/// reader can tell what was written from the file alone, with no interface, no
+/// viewport and no session to ask.
+///
+/// **4.** Version 2 was this shape read through `msaccess`; see
+/// [`SPECTRUM_DATA_FULL_SCHEMA_VERSION`] for why both moved.
+pub(super) const SPECTRUM_DATA_CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// What the data document calls itself.
 pub(super) const SPECTRUM_DATA_FORMAT_ID: &str = "mscanvas_spectrum_export";
@@ -1151,6 +1157,24 @@ impl ScientificExportSlots {
         }
     }
 
+    /// The commit of a completed open of a cached view (ADR 0060): the same
+    /// ownership test and chromatogram as
+    /// [`Self::reconcile_preview_chromatogram`], and no run summary. A summary
+    /// of the converted copy is not the RAW's, so a QC capture is given none
+    /// to copy (decision 11); `begin_preview_open` already revoked the last.
+    ///
+    /// `None` when stale, with nothing touched; otherwise the chromatogram this
+    /// open installed, if its run has one.
+    pub(super) fn reconcile_viewed_preview(
+        &mut self,
+        ticket: PreviewOpenTicket,
+        owner: DatasetId,
+        source: Option<ChromatogramSource>,
+    ) -> Option<Option<ChromatogramSnapshot>> {
+        (ticket == self.latest_preview_open)
+            .then(|| self.reconcile_preview_chromatogram(ticket, owner, source))
+    }
+
     /// Retains one chromatogram as the one a new export may name.
     ///
     /// Takes the source already decided to be exportable rather than deciding
@@ -1887,28 +1911,55 @@ pub(super) fn figure_spec(
 
 /// What a spectrum figure says about itself.
 ///
-/// The full-source sentence is **unchanged**, down to its wording, because the
-/// document it describes is unchanged. A current-range figure needs its own,
-/// and what it has to establish is what a reader would otherwise get wrong:
-/// that the series is still the complete spectrum, that the window is what is
-/// drawn, and how many of the source's observations fall inside it. A figure
-/// that said only "current range" would leave a reader unable to tell this from
-/// a picture of a screen.
+/// A spectrum that declares nothing keeps the full-source sentence it always
+/// had, down to its wording. A declared representation or unit is stated as
+/// the file declares it (ADR 0056, decision 5), because the panel and its axes
+/// carry it too, and a caption that called them unreported would contradict
+/// the drawing in the same document. A current-range figure needs its own
+/// sentence, and what it has to establish is what a reader would otherwise get
+/// wrong: that the series is still the complete spectrum, that the window is
+/// what is drawn, how many of the source's observations fall inside it, and
+/// whether anything at its edges is interpolated -- which only a joined
+/// profile trace is.
 fn spectrum_caption(spectrum: &SelectedSpectrumResult, range: ResolvedSpectrumRange) -> String {
     let source_points = spectrum.mz_values().len();
-    match range.domain() {
-        None => format!(
-            "Complete selected spectrum, {source_points} points. Representation {UNREPORTED}; m/z \
-             and intensity units {UNREPORTED}."
+    let representation = match spectrum.representation() {
+        SpectrumRepresentationState::Centroid => "centroid, as the file declares",
+        SpectrumRepresentationState::Profile => "profile, as the file declares",
+        SpectrumRepresentationState::NotEmitted | SpectrumRepresentationState::NotDeclared => {
+            UNREPORTED
+        }
+    };
+    let units = match (
+        declared_accession(spectrum.mz_unit()),
+        declared_accession(spectrum.intensity_unit()),
+    ) {
+        (None, None) => format!("m/z and intensity units {UNREPORTED}"),
+        (mz, intensity) => format!(
+            "units as the file declares them: m/z {}, intensity {}",
+            mz.unwrap_or(UNREPORTED),
+            intensity.unwrap_or(UNREPORTED),
         ),
+    };
+    let terms = format!("Representation {representation}; {units}.");
+    match range.domain() {
+        None => format!("Complete selected spectrum, {source_points} points. {terms}"),
         Some(window) => format!(
             "Selected spectrum over m/z {} to {}, {} of {source_points} measured points in that \
              range. The complete spectrum is the figure's source series and the range is the \
-             window drawn over it; nothing is interpolated at either edge. Representation \
-             {UNREPORTED}; m/z and intensity units {UNREPORTED}.",
+             window drawn over it; {} {terms}",
             window.low(),
             window.high(),
             within(spectrum, window).0.len(),
+            if matches!(
+                spectrum.representation(),
+                SpectrumRepresentationState::Profile
+            ) {
+                "where the profile trace crosses an edge between two measured samples, it is cut \
+                 there at the height interpolated between them."
+            } else {
+                "nothing is interpolated at either edge."
+            },
         ),
     }
 }
@@ -1967,7 +2018,10 @@ fn ranged_spectrum_panel(
     if window.low() <= panel.full_domain().low() && window.high() >= panel.full_domain().high() {
         return Ok(panel);
     }
-    let (low, high) = visible_value_extent(spectrum, window);
+    // Asked of the panel, through the predicate the renderer asks, so the scale
+    // and the drawing cannot disagree about whether the edges are geometry.
+    let joined = panel.series().iter().any(|series| panel.joins(series));
+    let (low, high) = visible_value_extent(spectrum, window, joined);
     panel
         .with_visible_domain(window)?
         .with_visible_value_domain(Domain::new(low, high)?)
@@ -1988,15 +2042,50 @@ fn ranged_spectrum_panel(
 /// not deleted to obtain the scale; the axis is told which part of it is being
 /// shown, and the renderer says so in words.
 ///
-/// **No boundary value is interpolated.** For the representation this product
-/// is actually in, a value between two measured m/z is a value nobody measured,
-/// so a window holding no reported peak scales to zero-to-zero -- an honest
-/// empty window rather than a fabricated one.
-fn visible_value_extent(spectrum: &SelectedSpectrumResult, window: Domain) -> (f64, f64) {
+/// **Discrete marks: no boundary value is interpolated.** For a centroid or
+/// unreported spectrum a value between two measured m/z is a value nobody
+/// measured, so a window holding no reported peak scales to zero-to-zero -- an
+/// honest empty window rather than a fabricated one.
+///
+/// **A joined profile trace: the edge heights count**, by the chromatogram's
+/// rule. The renderer cuts the trace where it crosses each edge, at the height
+/// interpolated along that segment, and that height is on the page; an axis
+/// that left it out would draw the cut above the frame, or flat across a
+/// zero-to-zero axis for a window between two samples. The heights set the
+/// scale only; no data document records them.
+fn visible_value_extent(
+    spectrum: &SelectedSpectrumResult,
+    window: Domain,
+    joined: bool,
+) -> (f64, f64) {
     let (mut low, mut high) = (0.0_f64, 0.0_f64);
+    let mut consider = |value: f64| {
+        low = low.min(value);
+        high = high.max(value);
+    };
     for value in within(spectrum, window).1 {
-        low = low.min(*value);
-        high = high.max(*value);
+        consider(*value);
+    }
+    if joined {
+        // The m/z array is non-decreasing (an admitted viewport domain says so),
+        // so the one segment straddling an edge sits at that edge's partition
+        // point, and the renderer's own formula gives its height there.
+        let (mz, intensity) = (spectrum.mz_values(), spectrum.intensity_values());
+        for edge in [window.low(), window.high()] {
+            let after = mz.partition_point(|value| *value <= edge);
+            if after == 0 || after == mz.len() {
+                continue;
+            }
+            let (x0, y0, x1, y1) = (
+                mz[after - 1],
+                intensity[after - 1],
+                mz[after],
+                intensity[after],
+            );
+            if x0 < edge && edge < x1 {
+                consider(y0 + (y1 - y0) * ((edge - x0) / (x1 - x0)));
+            }
+        }
     }
     (low, high)
 }
@@ -2014,16 +2103,18 @@ fn visible_value_extent(spectrum: &SelectedSpectrumResult, window: Domain) -> (f
 /// non-decreasing, or which carries a value the contract will not accept, is
 /// refused here rather than drawn into a figure that misstates it.
 pub(super) fn spectrum_panel(spectrum: &SelectedSpectrumResult) -> Result<PanelSpec, SpecError> {
-    // Exhaustive, with no wildcard arm. Both of these enumerations carry one
-    // state today, and that is exactly why the match is written this way: a
-    // backend that starts emitting a real representation or a real unit must
+    // Exhaustive, with no wildcard arm, so a state added to the evidence must
     // arrive here as a compile error and be mapped from that evidence, rather
     // than falling into a default that happens to keep building.
     let representation = match spectrum.representation() {
-        SpectrumRepresentationState::NotEmitted => SpectrumRepresentation::Unreported,
+        SpectrumRepresentationState::Centroid => SpectrumRepresentation::Centroid,
+        SpectrumRepresentationState::Profile => SpectrumRepresentation::Profile,
+        SpectrumRepresentationState::NotEmitted | SpectrumRepresentationState::NotDeclared => {
+            SpectrumRepresentation::Unreported
+        }
     };
-    let unit = match spectrum.value_units() {
-        SourceUnitState::NotEmitted => UnitState::Unreported,
+    let axis_unit = |unit: &ValueUnitState| {
+        declared_accession(unit).map_or(Ok(UnitState::Unreported), known_unit)
     };
 
     // Asked of the borrowed arrays, before either is copied, and asked through
@@ -2046,18 +2137,42 @@ pub(super) fn spectrum_panel(spectrum: &SelectedSpectrumResult) -> Result<PanelS
 
     let panel = PanelSpec::new(
         PlotKind::Spectrum { representation },
-        // Both axes carry the same state because the backend reports one
-        // answer for the arrays rather than one per axis. Cloned rather than
-        // copied: an established unit is a `Label`, so the state owns a string
-        // in the case this build cannot reach yet.
-        AxisSpec::new(Label::new("m/z")?, unit.clone()),
-        AxisSpec::new(Label::new("Intensity")?, unit),
+        // Each axis carries the unit its own array declares, by accession.
+        AxisSpec::new(Label::new("m/z")?, axis_unit(spectrum.mz_unit())?),
+        AxisSpec::new(
+            Label::new("Intensity")?,
+            axis_unit(spectrum.intensity_unit())?,
+        ),
         domains.domain(),
         domains.value_domain(),
         vec![series],
     )?;
 
     Ok(panel)
+}
+
+/// The accession one array declares, or `None` where its unit is unreported.
+///
+/// Exhaustive for the reason [`spectrum_panel`] is. The reader admits only an
+/// accession of ASCII letters and digits, so it needs no quoting in a data
+/// document and is a valid figure label.
+pub(super) fn declared_accession(unit: &ValueUnitState) -> Option<&str> {
+    match unit {
+        ValueUnitState::Declared(accession) => Some(accession),
+        ValueUnitState::NotEmitted | ValueUnitState::NotDeclared => None,
+    }
+}
+
+/// A unit the file declared, as a figure axis states it.
+///
+/// # Errors
+///
+/// The label rule's refusal. Never a fallback to "unreported": the file did
+/// declare a unit, and a figure that dropped it would misstate the file.
+pub(super) fn known_unit(unit: &str) -> Result<UnitState, SpecError> {
+    Ok(UnitState::Known {
+        unit: Label::new(unit)?,
+    })
 }
 
 /// Renders one selected spectrum as the SVG document a user receives.
@@ -2236,53 +2351,57 @@ pub(super) fn png_document(
 /// full-source document and a current-range one cannot come to disagree about
 /// how a measurement is written, in what order, or in what form.
 ///
-/// # Schema, version 1 -- the full source
+/// # Schema, version 3 -- the full source
 ///
 /// A metadata preamble, then a header row, then exactly one record per source
 /// point in source order:
 ///
 /// ```text
 /// #format,mscanvas_spectrum_export
-/// #schema_version,1
+/// #schema_version,3
 /// #spectrum_index,42
 /// #point_count,2
-/// #representation,unreported
-/// #mz_unit,unreported
-/// #intensity_unit,unreported
+/// #representation,centroid
+/// #mz_unit,MS:1000040
+/// #intensity_unit,MS:1000131
 /// mz,intensity
 /// 100.5,12
 /// 100.75,0
 /// ```
 ///
-/// Unchanged since M4.1 and deliberately frozen. Its shape already means *the
-/// complete spectrum*, so the same source writes the same bytes it always did.
+/// Version 1's keys, in its order. Its shape means *the complete spectrum*.
+/// `representation` is `centroid` or `profile` as the file declares it, each
+/// unit is the accession the array declares, and a state the file does not
+/// declare is `unreported`.
 ///
-/// # Schema, version 2 -- one committed m/z range
+/// # Schema, version 4 -- one committed m/z range
 ///
 /// The same document about a window of the same spectrum, and self-describing
 /// enough to be read with no interface, no viewport and no session to ask:
 ///
 /// ```text
 /// #format,mscanvas_spectrum_export
-/// #schema_version,2
+/// #schema_version,4
 /// #spectrum_index,42
 /// #range_scope,current
 /// #source_point_count,4
 /// #exported_point_count,2
 /// #range_low,100.5
 /// #range_high,100.75
-/// #representation,unreported
-/// #mz_unit,unreported
-/// #intensity_unit,unreported
+/// #representation,centroid
+/// #mz_unit,MS:1000040
+/// #intensity_unit,MS:1000131
 /// mz,intensity
 /// 100.5,12
 /// 100.75,0
 /// ```
 ///
-/// Two counts rather than one. `point_count` in version 1 is unambiguous
-/// because the two numbers are the same there; in a ranged document they are
-/// not, and a single key would leave a reader unable to tell whether the rows
-/// they hold are all the spectrum has.
+/// Version 2's keys, in its order, with the declared terms of version 3.
+///
+/// Two counts rather than one. `point_count` in the full-source document is
+/// unambiguous because the two numbers are the same there; in a ranged document
+/// they are not, and a single key would leave a reader unable to tell whether
+/// the rows they hold are all the spectrum has.
 ///
 /// `range_low` and `range_high` are the range **Rust resolved**, not the one the
 /// interface asked for -- so a file records the window it was actually taken
@@ -2304,14 +2423,16 @@ pub(super) fn png_document(
 ///
 /// **No quoting rule exists, because no field can need one.** Every preamble
 /// key is a fixed ASCII identifier, every preamble value is either an integer,
-/// a finite `f64` or one of this module's fixed state words, and every record
-/// field is a number. None of them can contain a delimiter, a quote or a line
-/// break, and a test asserts that over the whole document rather than trusting
-/// it.
+/// a finite `f64`, one of this module's fixed state words or a unit accession
+/// the reader admitted (ASCII letters and digits around one colon), and every
+/// record field is a number. None of them can contain a delimiter, a quote or a
+/// line break, and a test asserts that over the whole document rather than
+/// trusting it.
 ///
 /// Numbers are written with Rust's shortest round-tripping form: locale
 /// independent, `.` as the decimal point, no thousands separator, and exactly
-/// the `f64` the backend parsed comes back out of the file.
+/// the `f64` the source holds comes back out of the file. For a native mzML
+/// spectrum that is the stored value itself, widened exactly (ADR 0056).
 ///
 /// Lines end with `\n`. One ending, chosen rather than inherited from the host,
 /// so the same spectrum is the same bytes on every platform.
@@ -2322,11 +2443,14 @@ pub(super) fn data_document(
 ) -> Option<String> {
     let delimiter = format.delimiter()?;
     let representation = match spectrum.representation() {
-        SpectrumRepresentationState::NotEmitted => UNREPORTED,
+        SpectrumRepresentationState::Centroid => "centroid",
+        SpectrumRepresentationState::Profile => "profile",
+        SpectrumRepresentationState::NotEmitted | SpectrumRepresentationState::NotDeclared => {
+            UNREPORTED
+        }
     };
-    let unit = match spectrum.value_units() {
-        SourceUnitState::NotEmitted => UNREPORTED,
-    };
+    let mz_unit = declared_accession(spectrum.mz_unit()).unwrap_or(UNREPORTED);
+    let intensity_unit = declared_accession(spectrum.intensity_unit()).unwrap_or(UNREPORTED);
 
     let source_points = spectrum.mz_values().len();
     // Borrowed, never copied. The records this document writes are a run of the
@@ -2356,8 +2480,8 @@ pub(super) fn data_document(
             ("spectrum_index", index),
             ("point_count", source_points.to_string()),
             ("representation", representation.to_owned()),
-            ("mz_unit", unit.to_owned()),
-            ("intensity_unit", unit.to_owned()),
+            ("mz_unit", mz_unit.to_owned()),
+            ("intensity_unit", intensity_unit.to_owned()),
         ],
         Some(window) => vec![
             ("format", SPECTRUM_DATA_FORMAT_ID.to_owned()),
@@ -2372,8 +2496,8 @@ pub(super) fn data_document(
             ("range_low", window.low().to_string()),
             ("range_high", window.high().to_string()),
             ("representation", representation.to_owned()),
-            ("mz_unit", unit.to_owned()),
-            ("intensity_unit", unit.to_owned()),
+            ("mz_unit", mz_unit.to_owned()),
+            ("intensity_unit", intensity_unit.to_owned()),
         ],
     };
     for (key, value) in preamble {
@@ -2653,9 +2777,9 @@ mod tests {
 
     // -------------------------------------------------------- the data files
 
-    /// The v1 preamble, exactly.
+    /// The full-source preamble, exactly.
     #[test]
-    fn the_data_document_carries_the_version_one_preamble() {
+    fn the_data_document_carries_the_full_source_preamble() {
         let document = data_document(
             &spectrum(42, vec![100.5], vec![12.0]),
             SpectrumExportFormat::Csv,
@@ -2666,7 +2790,7 @@ mod tests {
             preamble(&document),
             vec![
                 "#format,mscanvas_spectrum_export".to_owned(),
-                "#schema_version,1".to_owned(),
+                "#schema_version,3".to_owned(),
                 "#spectrum_index,42".to_owned(),
                 "#point_count,1".to_owned(),
                 "#representation,unreported".to_owned(),
@@ -2845,7 +2969,7 @@ mod tests {
             preamble(&document),
             vec![
                 "#format,mscanvas_spectrum_export".to_owned(),
-                "#schema_version,1".to_owned(),
+                "#schema_version,3".to_owned(),
                 "#spectrum_index,4".to_owned(),
                 "#point_count,0".to_owned(),
                 "#representation,unreported".to_owned(),
@@ -3442,7 +3566,8 @@ mod tests {
         // A size, a resolution and a theme are properties of a drawing. The
         // measurement is the same measurement whatever it is being drawn at,
         // and a byte of difference here would mean a figure setting had reached
-        // the data -- which is the one thing schema v1 must never depend on.
+        // the data -- which is the one thing a data document must never depend
+        // on.
         let source = spectrum(9, vec![100.5, 200.25, 300.0], vec![1.0, -2.0, 0.0]);
         let baseline_csv = data_document(
             &source,
@@ -3733,8 +3858,24 @@ mod tests {
     /// One exportable run, for the lane tests.
     fn seeded_chromatogram() -> ChromatogramSource {
         let rows = std::sync::Arc::new(vec![
-            super::super::service::TableRowFacts::for_test(0, Some(1), 1, 1.0, false, 100.0, 40.0),
-            super::super::service::TableRowFacts::for_test(1, Some(2), 1, 2.0, false, 300.0, 120.0),
+            super::super::service::TableRowFacts::for_test(
+                0,
+                Some(1),
+                1,
+                1.0,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
+                100.0,
+                40.0,
+            ),
+            super::super::service::TableRowFacts::for_test(
+                1,
+                Some(2),
+                1,
+                2.0,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
+                300.0,
+                120.0,
+            ),
         ]);
         ChromatogramSource::from_rows(&rows, false).expect("an exportable run")
     }
@@ -4203,13 +4344,21 @@ mod tests {
     /// A second exportable run, told apart from the first by how long it is.
     fn other_chromatogram() -> ChromatogramSource {
         let rows = std::sync::Arc::new(vec![
-            super::super::service::TableRowFacts::for_test(0, Some(1), 1, 10.0, false, 100.0, 40.0),
+            super::super::service::TableRowFacts::for_test(
+                0,
+                Some(1),
+                1,
+                10.0,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
+                100.0,
+                40.0,
+            ),
             super::super::service::TableRowFacts::for_test(
                 1,
                 Some(2),
                 1,
                 20.0,
-                false,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
                 300.0,
                 120.0,
             ),
@@ -4218,7 +4367,7 @@ mod tests {
                 Some(3),
                 1,
                 30.0,
-                false,
+                mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
                 500.0,
                 220.0,
             ),
@@ -4537,7 +4686,15 @@ mod tests {
 
     /// One retained row, named the way these tests read them.
     fn row(index: u64, scan: u64, retention_time: f64, tic: f64, bpi: f64) -> TableRowFacts {
-        TableRowFacts::for_test(index, Some(scan), 1, retention_time, false, tic, bpi)
+        TableRowFacts::for_test(
+            index,
+            Some(scan),
+            1,
+            retention_time,
+            mscanvas_proteowizard::RetentionTimeUnitState::NotDeclared,
+            tic,
+            bpi,
+        )
     }
 
     /// A run of three scans at three distinct retention times.
@@ -5717,7 +5874,7 @@ mod tests {
             vec![(200.0, 1.0), (100.0, 2.0)],
             "in source order, which is not m/z order and is not made into one",
         );
-        assert_eq!(preamble_value(&document, "schema_version", ','), "1");
+        assert_eq!(preamble_value(&document, "schema_version", ','), "3");
     }
 
     /// A range document carries source observations in source order.
@@ -5888,7 +6045,7 @@ mod tests {
         assert_eq!(figure.panels()[0].visible_value_domain(), None);
     }
 
-    /// The current-range data document is schema 2, and says everything a
+    /// The current-range data document is schema 4, and says everything a
     /// reader needs with no interface to ask.
     #[test]
     fn the_current_range_document_carries_its_own_schema_and_both_counts() {
@@ -5902,7 +6059,7 @@ mod tests {
         .expect("a document");
         for (key, value) in [
             ("format", "mscanvas_spectrum_export"),
-            ("schema_version", "2"),
+            ("schema_version", "4"),
             ("spectrum_index", "42"),
             ("range_scope", "current"),
             ("source_point_count", "5"),
@@ -5917,20 +6074,20 @@ mod tests {
         }
         assert!(
             !document.contains("#point_count"),
-            "the ambiguous single count belongs to version 1 and is not carried into version 2",
+            "the ambiguous single count belongs to the full-source document only",
         );
     }
 
-    /// The full-source data document is schema 1, unchanged.
+    /// The full-source data document is schema 3, with version 1's keys.
     #[test]
-    fn the_full_source_document_stays_schema_one() {
+    fn the_full_source_document_is_schema_three_with_version_one_keys() {
         let document = data_document(
             &ranged_spectrum(),
             SpectrumExportFormat::Csv,
             ResolvedSpectrumRange::Full,
         )
         .expect("a document");
-        assert_eq!(preamble_value(&document, "schema_version", ','), "1");
+        assert_eq!(preamble_value(&document, "schema_version", ','), "3");
         assert_eq!(preamble_value(&document, "point_count", ','), "5");
         for absent in [
             "range_scope",
@@ -5940,7 +6097,7 @@ mod tests {
         ] {
             assert!(
                 !document.contains(&format!("#{absent}")),
-                "version 1 gains no field: #{absent}",
+                "the full-source document gains no field: #{absent}",
             );
         }
     }
@@ -6017,6 +6174,109 @@ mod tests {
             !lowered.contains("screen") && !lowered.contains("reduc"),
             "a scientific figure is never labelled as a drawing of a screen: {caption}",
         );
+    }
+
+    use super::super::mzml_fixture::native_spectrum;
+
+    /// A profile peak whose flanks fall between samples.
+    const PEAK: [(f64, f64); 4] = [(100.0, 0.0), (101.0, 1_000.0), (102.0, 10.0), (103.0, 0.0)];
+    const PROFILE: &str = "MS:1000128";
+    const CENTROID: &str = "MS:1000127";
+    const DECLARED: (Option<&str>, Option<&str>) = (Some("MS:1000040"), Some("MS:1000131"));
+
+    /// A declared spectrum's caption states what its axes and description
+    /// state, and a profile range does not claim its edges are uninterpolated.
+    #[test]
+    fn a_declared_spectrum_s_caption_agrees_with_its_axes_and_description() {
+        let source = native_spectrum(PROFILE, DECLARED, &PEAK);
+        let snapshot = retained(source.clone());
+        let full = svg_document(&source, defaults(), ResolvedSpectrumRange::Full).expect("an SVG");
+        let caption = "Complete selected spectrum, 4 points. Representation profile, as the file \
+                       declares; units as the file declares them: m/z MS:1000040, intensity \
+                       MS:1000131.";
+        assert!(
+            full.contains(&format!("<desc>{caption} Profile samples")),
+            "{full}"
+        );
+        assert!(full.contains("m/z (MS:1000040)") && full.contains("Intensity (MS:1000131)"));
+        assert!(
+            !full.contains(UNREPORTED) && !full.contains("reports no unit"),
+            "{full}"
+        );
+
+        let ranged = figure_spec(
+            &source,
+            defaults(),
+            resolve_current(&snapshot, 101.5, 102.5),
+        )
+        .expect("specifiable");
+        let caption = ranged.caption().expect("a caption").as_str();
+        assert!(
+            caption.contains("it is cut there at the height interpolated between them"),
+            "{caption}"
+        );
+        assert!(!caption.contains("nothing is interpolated"), "{caption}");
+
+        // A centroid spectrum with one declared unit: sticks, so nothing is
+        // interpolated, and the undeclared unit stays unreported by name.
+        let centroid = native_spectrum(CENTROID, (Some("MS:1000040"), None), &PEAK);
+        let snapshot = retained(centroid.clone());
+        assert_eq!(
+            figure_spec(&centroid, defaults(), ResolvedSpectrumRange::Full)
+                .expect("specifiable")
+                .caption()
+                .expect("a caption")
+                .as_str(),
+            "Complete selected spectrum, 4 points. Representation centroid, as the file declares; \
+             units as the file declares them: m/z MS:1000040, intensity unreported.",
+        );
+        let ranged = figure_spec(
+            &centroid,
+            defaults(),
+            resolve_current(&snapshot, 101.5, 102.5),
+        )
+        .expect("specifiable");
+        assert!(
+            ranged
+                .caption()
+                .expect("a caption")
+                .as_str()
+                .contains("nothing is interpolated at either edge."),
+        );
+    }
+
+    /// A joined profile trace's window is scaled to the heights drawn at its
+    /// edges; discrete marks keep the in-window rule.
+    #[test]
+    fn a_profile_window_scales_to_the_interpolated_edges_it_draws() {
+        let profile = native_spectrum(PROFILE, DECLARED, &PEAK);
+        let centroid = native_spectrum(CENTROID, DECLARED, &PEAK);
+        // (window, profile extent, centroid extent). The first cuts the peak's
+        // flank, so the edge at 101.5 is drawn at 505, above every sample in
+        // the window; the second holds no sample at all, and the trace crosses
+        // it from 802 down to 604.
+        let at = |x: f64| 1_000.0 + (10.0 - 1_000.0) * ((x - 101.0) / (102.0 - 101.0));
+        for (window, joined, discrete) in [
+            ((101.5, 102.5), (0.0, at(101.5)), (0.0, 10.0)),
+            ((101.2, 101.4), (0.0, at(101.2)), (0.0, 0.0)),
+        ] {
+            for (source, expected) in [(&profile, joined), (&centroid, discrete)] {
+                let snapshot = retained(source.clone());
+                let figure = figure_spec(
+                    source,
+                    defaults(),
+                    resolve_current(&snapshot, window.0, window.1),
+                )
+                .expect("specifiable");
+                assert_eq!(
+                    figure.panels()[0].visible_value_domain(),
+                    Some(Domain::new(expected.0, expected.1).expect("an interval")),
+                    "{window:?} {:?}",
+                    source.representation(),
+                );
+            }
+        }
+        assert_eq!(at(101.5), 505.0);
     }
 
     /// The full figure's caption is exactly the sentence it always was.

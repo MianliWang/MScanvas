@@ -5,7 +5,7 @@ import { zhCN } from "./locales/zh-CN";
 import type { UiLocale } from "./sessionPreferences";
 
 export const UI_RESOURCES = { en, "zh-CN": zhCN } as const;
-type PluralKey = "projectMemberCount" | "projectRunInputs" | "projectArtifactMembers" | "rosterRetainedAnnouncement" | "dragPicked" | "dragCount" | "dropRelease" | "noticeAdded" | "noticeDuplicates" | "noticeUnreadable" | "noticeFull" | "noticeRemoved" | "noticeGone" | "noticeCleared" | "noticeFolderLinked" | "noticeFolderInaccessible" | "noticeDropLinkedRoot" | "noticeDropInaccessibleRoot" | "noticeDropRemoteRoot" | "noticeDropUnsupportedRoot" | "noticeDropLinkedEntry" | "noticeDropInaccessibleEntry";
+type PluralKey = "restoreOffer" | "restoreAttention" | "restoreExpired" | "restoreWorking" | "restoreLeftovers" | "noticeRestored" | "projectMemberCount" | "projectRunInputs" | "projectArtifactMembers" | "rosterRetainedAnnouncement" | "dragPicked" | "dragCount" | "dropRelease" | "noticeAdded" | "noticeDuplicates" | "noticeUnreadable" | "noticeFull" | "noticeRemoved" | "noticeGone" | "noticeCleared" | "noticeFolderLinked" | "noticeFolderInaccessible" | "noticeDropLinkedRoot" | "noticeDropInaccessibleRoot" | "noticeDropRemoteRoot" | "noticeDropUnsupportedRoot" | "noticeDropLinkedEntry" | "noticeDropInaccessibleEntry" | "targetedTableSavedSpreadsheet";
 export type MessageKey = Exclude<keyof typeof en, `${PluralKey}_${string}`> | PluralKey;
 export interface MessageParameters {
   readonly projectMemberCount: { readonly count: number };
@@ -50,6 +50,7 @@ export interface MessageParameters {
   readonly targetedFigureAlt: { readonly name: string; readonly outcome: string; readonly drawn: string };
   readonly m92ErrorDpi: { readonly min: number; readonly max: number };
   readonly targetedTableSaved: { readonly name: string; readonly count: number };
+  readonly targetedTableSavedSpreadsheet: { readonly name: string; readonly count: number };
   readonly targetedSignalSome: { readonly count: number };
   readonly targetedSignalNone: { readonly count: number };
   readonly targetedFailureStage: { readonly stage: string };
@@ -78,8 +79,10 @@ export interface MessageParameters {
   readonly m74CnvNamedDestination: { readonly name: string };
   readonly m74CnvOutputBound: { readonly count: number };
   readonly m74CnvAdoptionSummary: { readonly added: string; readonly duplicates: string; readonly refused: string };
-  readonly m74CnvMoreRefused: { readonly count: number };
   readonly m74CnvManyReady: { readonly count: number };
+  readonly m74CnvNotVerifiedBuild: { readonly release: string };
+  readonly m74CnvNotVerifiedCount: { readonly labelled: string; readonly planned: string };
+  readonly m74CnvAddNotVerified: { readonly labelled: string };
   readonly m74CnvManyDiagnostics: { readonly count: number };
   readonly m74CnvConvertSelected: { readonly count: number };
   readonly m74CnvConvertAll: { readonly count: number };
@@ -106,6 +109,12 @@ export interface MessageParameters {
   readonly m74CnvCancelNamed: { readonly name: string };
   readonly m74CnvOutputMetrics: { readonly bytes: string; readonly spectra: string; readonly chromatograms: string };
   readonly m74CnvPartialCounts: { readonly count: number; readonly total: number; readonly unpublished: string };
+  readonly runHistoryRunTitle: { readonly when: string };
+  readonly runHistoryUnreadable: { readonly count: number };
+  readonly runHistoryNewer: { readonly count: number };
+  readonly runHistoryClearedKept: { readonly count: number };
+  readonly runHistoryNotRemoved: { readonly count: number };
+  readonly runHistoryCompletenessNotEstablished: { readonly reason: string };
   readonly m74CnvCountConverted: { readonly count: number };
   readonly m74CnvCountSkipped: { readonly count: number };
   readonly m74CnvCountFailed: { readonly count: number };
@@ -148,7 +157,6 @@ export interface MessageParameters {
   readonly stagingRecoveryOwned: { readonly count: number };
   readonly clearCounts: { readonly count: number; readonly total: number; readonly protected: string };
   readonly linkedHeight: { readonly value: string };
-  readonly viewerExportRtHelp: { readonly low: string; readonly high: string };
   readonly viewerExportRtWindow: { readonly low: string; readonly high: string };
   readonly viewerLinkedCopied: { readonly width: string; readonly height: string; readonly theme: string; readonly index: string; readonly count: number };
   readonly viewerLinkedSaved: { readonly name: string; readonly index: string; readonly rt: string; readonly count: number };
@@ -159,7 +167,11 @@ export interface MessageParameters {
   readonly plotNegativeMixed: { readonly count: number };
   readonly plotNegativeCount: { readonly count: number };
   readonly plotCaption: { readonly count: number; readonly total: number };
+  readonly plotLineCaption: { readonly count: number; readonly total: number };
   readonly plotTransferCaption: { readonly count: number; readonly total: number };
+  readonly plotAxisRtUnit: { readonly unit: string };
+  readonly plotAxisIntensityUnit: { readonly unit: string };
+  readonly plotAxisMzUnit: { readonly unit: string };
   readonly viewerShowing: { readonly low: string; readonly high: string };
   readonly viewerScanSource: { readonly count: number };
   readonly viewerScanReadout: { readonly name: string; readonly index: string; readonly scan: string; readonly level: string; readonly rt: string; readonly tic: string; readonly bpc: string };
@@ -178,8 +190,8 @@ export interface MessageParameters {
   readonly viewerSpectrumAbsent: { readonly index: string };
   readonly viewerSpectrumFailed: { readonly index: string };
   readonly viewerSpectrumSummary: { readonly index: string; readonly level: string; readonly count: number };
-  readonly viewerSpectrumPrefixRetained: { readonly count: number };
-  readonly viewerSpectrumPrefix: { readonly count: number };
+  readonly viewerSpectrumPrefixRetained: { readonly count: number; readonly total: number };
+  readonly viewerSpectrumPrefix: { readonly count: number; readonly total: number };
   readonly viewerPrecursorPrefix: { readonly count: number; readonly total: number };
   readonly viewerRetentionValue: { readonly value: string };
   readonly viewerBasePeakValue: { readonly mz: string; readonly value: string };
@@ -205,6 +217,14 @@ export interface MessageParameters {
   readonly scanSelectedOutside: { readonly name: string };
   readonly rosterRetainedAnnouncement: { readonly count: number };
   readonly dropRelease: { readonly count: number };
+  readonly restoreOffer: { readonly count: number };
+  readonly restoreAttention: { readonly count: number };
+  readonly restoreExpired: { readonly count: number };
+  readonly restoreWorking: { readonly count: number };
+  readonly restoreLeftovers: { readonly count: number };
+  readonly restoreDismissNamed: { readonly name: string };
+  readonly restoreProblemUnknown: { readonly code: string };
+  readonly noticeRestored: { readonly count: number };
   readonly noticeAdded: { readonly count: number };
   readonly noticeDuplicates: { readonly count: number };
   readonly noticeUnreadable: { readonly count: number };
@@ -296,7 +316,7 @@ export class ResourceProblem extends Error {
   }
 }
 
-const pluralKeys: readonly PluralKey[] = ["projectMemberCount", "projectRunInputs", "projectArtifactMembers", "rosterRetainedAnnouncement", "dragPicked", "dragCount", "dropRelease", "noticeAdded", "noticeDuplicates", "noticeUnreadable", "noticeFull", "noticeRemoved", "noticeGone", "noticeCleared", "noticeFolderLinked", "noticeFolderInaccessible", "noticeDropLinkedRoot", "noticeDropInaccessibleRoot", "noticeDropRemoteRoot", "noticeDropUnsupportedRoot", "noticeDropLinkedEntry", "noticeDropInaccessibleEntry"];
+const pluralKeys: readonly PluralKey[] = ["restoreOffer", "restoreAttention", "restoreExpired", "restoreWorking", "restoreLeftovers", "noticeRestored", "projectMemberCount", "projectRunInputs", "projectArtifactMembers", "rosterRetainedAnnouncement", "dragPicked", "dragCount", "dropRelease", "noticeAdded", "noticeDuplicates", "noticeUnreadable", "noticeFull", "noticeRemoved", "noticeGone", "noticeCleared", "noticeFolderLinked", "noticeFolderInaccessible", "noticeDropLinkedRoot", "noticeDropInaccessibleRoot", "noticeDropRemoteRoot", "noticeDropUnsupportedRoot", "noticeDropLinkedEntry", "noticeDropInaccessibleEntry", "targetedTableSavedSpreadsheet"];
 const simpleKeys = Object.keys(en).filter((key) => !pluralKeys.some(base => key.startsWith(`${base}_`)));
 const parameters = (message: string): string =>
   [...new Set([...message.matchAll(/\{\{\s*(\w+)(?:,\s*number)?\s*\}\}/gu)].map((match) => match[1]))].sort().join(",");

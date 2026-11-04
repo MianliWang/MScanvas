@@ -125,6 +125,11 @@ are not read out of SVG coordinates and the figure is not drawn from the rows.
 | Saving | Rust-owned native dialog, no overwrite, private-sibling publication, no path crosses to React |
 | Figure size and theme | M4.1 fixed 1200×640 light; **M4.2 makes both the user's**, defaulting to the same figure |
 
+> **2026-10-30, ADR 0056 slice 2:** a spectrum is read by MSCanvas's own mzML
+> reader, so its representation and units are what the file declares, and
+> `Unreported` only where it declares none. The data documents moved to new
+> versions: spectrum full source 3 and range 4, chromatogram 2.
+
 ## Second slice — M4.2
 
 PNG, `Copy plot`, and the figure settings all three figure outputs share.
@@ -202,6 +207,7 @@ and the axis changes are the renderer's alone.
 | --- | --- |
 | Ticks | 1-2-5 steps, aiming for five and taking four to six where the span allows; fewer where labels would collide or leave the page, never overlapping ones. Every tick is `k × m × 10^e` parsed from its decimal string, so `0.3` is the `f64` nearest three tenths and no label prints a binary artefact or a negative zero |
 | Tick labels | the step's own decimals (`0.0, 0.5, 1.0`); exponents (`2e6`, `1e-20`) from 10^6 up, below 10^-3, or past twelve characters. Where no exact tick exists -- a zero span, or a span narrow beside its magnitude -- the axis falls back to the end labels it always had |
+| Ticks on screen | the same rule in `plotAxes.ts` `niceTicks`, with both sides held to `fixtures/plot-ticks/nice-ticks.json`, and the same end labels where no tick exists. It has no collision check, so a figure can keep fewer ticks than the screen where its labels would collide or leave the page; on screen, an x label that would leave its frame moves back inside it |
 | Value axis | labels outside the plotting area, right-aligned against outward ticks; light gridlines at the ticks, in the axis colour at 18% opacity; 5% headroom past the data, never across zero. A range that excludes zero labels its floor, so it cannot read as zero-based |
 | Domain axis | labels centred under outward ticks; the data's own ends are not labelled |
 | Axis titles | `label (unit)` for a reported unit, `label (unit not reported)` for an unreported one, the bare label for a dimensionless one. No unit is ever inferred |

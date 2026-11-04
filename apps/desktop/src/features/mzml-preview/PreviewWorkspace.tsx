@@ -18,8 +18,11 @@ import { presentBackend } from "./backendPresentation";
 import { Chromatogram } from "./Chromatogram";
 import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportTools, LinkedFigureResult, describeUnavailable } from "./ChromatogramExportPanel";
 import { resolveConversionScope } from "./conversionScope";
+import { ConversionHistory } from "../run-history/ConversionHistory";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
+import { WorkspaceRestoreNotice, announceRestore } from "./WorkspaceRestoreNotice";
+import { useWorkspaceRestore } from "./useWorkspaceRestore";
 import { InspectorClose, PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
@@ -42,7 +45,11 @@ export function PreviewWorkspace() {
   const openFigure = (kind: FigurePreviewKind, returnTo: HTMLElement | null = document.activeElement instanceof HTMLElement ? document.activeElement : null) => setFigureDialog({ kind, returnTo });
   const t = useUiMessages();
   const notice = workspace.workspaceNotice === null ? null : formatWorkspaceNotice(workspace.workspaceNotice, t);
-  const [surface, setSurface] = useState<WorkbenchSurface>("workbench");
+  const [surface, setSurfaceOnly] = useState<WorkbenchSurface>("workbench");
+  /** The conversion history has the Conversion surface (ADR 0065). */
+  const [runHistoryOpen, setRunHistoryOpen] = useState(false);
+  /** Whatever sends the reader to a surface sends them to what it holds now, the queue included. */
+  const setSurface = useCallback((next: WorkbenchSurface) => { setSurfaceOnly(next); setRunHistoryOpen(false); }, []);
   /** The open file's tab (direction A): kept across files and surfaces, so switching loses nothing. */
   const [viewerView, setViewerView] = useState<"spectra" | "scans" | "metadata">("spectra");
   /** The two side panels, so focus can follow a drawer that opens. */
@@ -156,6 +163,14 @@ export function PreviewWorkspace() {
     [workspace.roster.datasets],
   );
   const { preview, roster, spectrum, recordMeasurement, completeRenderMeasurements } = workspace;
+  const restore = useWorkspaceRestore({
+    roster,
+    rosterReady: workspace.rosterLoad.status === "ready",
+    rosterSettlementToken: workspace.rosterSettlementToken,
+    mutationBusy: workspace.pickerBusy || workspace.folderBusy || workspace.dropBusy || workspace.workspaceBusy || project.busy === "admitting",
+    putBack: workspace.restoreWorkspace,
+    reloadRoster: workspace.reloadRoster,
+  });
   /**
    * The preview on screen, as a QC capture needs it: which row, its opaque
    * run-summary token, and whether its build can be identified. Only a loaded
@@ -466,11 +481,13 @@ export function PreviewWorkspace() {
     expanded: backendOpen,
     onToggle: () => setBackendOpen((was) => !was),
   };
+  /** The run's one declared retention-time unit, for the sentences that print a retention time. */
+  const runRtUnit = workspace.scanModel.status === "ready" ? workspace.scanModel.retentionTimeUnit : "notReported";
   /**
    * The visible reason a refused read points at: the backend item when the
    * backend is why, the busy reason when a workspace change is.
    */
-  const previewReasonId = !backendUsable || workspace.backendBusy || workspace.conversion.backendQuarantined
+  const previewReasonId =!backendUsable || workspace.backendBusy || workspace.conversion.backendQuarantined
     ? STATUS_BACKEND_ID
     : busyReason !== null ? STATUS_BUSY_ID : undefined;
   /**
@@ -540,7 +557,8 @@ export function PreviewWorkspace() {
       <WorkbenchHeader surface={surface} onNavigate={setSurface}
         conversionBusy={workspace.conversion.busy}
         conversionRetained={workspace.conversion.state.status === "terminal"}
-        projectBusy={project.busy !== "idle"} />
+        projectBusy={project.busy !== "idle"}
+        restore={restore} />
 
       {workspace.dropPresentation.status === "idle" ? null : (
         <div
@@ -729,6 +747,9 @@ export function PreviewWorkspace() {
           </div>
         )}
 
+        <WorkspaceRestoreNotice session={restore} canRestore={canAcquire}
+          reason={busyReason === "conversion" ? t("shellConversionRunning") : busyReason} />
+
         {workspace.rosterLoad.status === "failed" && roster.datasets.length > 0 ? (
           <div className="notice notice-danger" role="status">
             <strong>{t("rosterFailed")}</strong>
@@ -811,6 +832,9 @@ export function PreviewWorkspace() {
       <p aria-live="polite" className="visually-hidden" data-live-region="conversion">
         {announceConversion(workspace.conversion, t)}
       </p>
+      <p aria-live="polite" className="visually-hidden" data-live-region="restore">
+        {announceRestore(restore, t)}
+      </p>
 
       {activeClear !== null ? <ActiveClearDialog returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onEmptyRosterClosed={claim => {
         if (focusReturnOwnerLive.current) setActiveClearFocusReturn(claim); else claim.release();
@@ -827,13 +851,14 @@ export function PreviewWorkspace() {
         rangeAvailability={figureDialog.kind === "spectrum" ? workspace.spectrumRangeAvailability : "available"}
         onScope={figureDialog.kind === "spectrum" ? workspace.setSpectrumRangeScope : workspace.setChromatogramRangeScope}
         committedDomain={figureDialog.kind === "spectrum" ? workspace.spectrumCommittedDomain : workspace.chromatogramCommittedDomain}
+        rtUnit={runRtUnit}
         onExportData={figureDialog.kind === "spectrum" ? workspace.exportSpectrum : figureDialog.kind === "chromatogram" ? workspace.exportChromatogram : undefined}
         // A linked figure the lane would refuse says why here, beside the
         // actions it refuses, rather than accepting a press that does nothing.
         refusal={figureDialog.kind === "linked" && workspace.linkedFigureUnavailable !== null
           ? describeUnavailable(workspace.linkedFigureUnavailable, t) : null}
         result={figureDialog.kind === "spectrum" ? <><p role="status">{describeSpectrumExport(workspace.spectrumExport, t)}{workspace.spectrumExport.status === "failed" ? <span className="notice-detail">{ownedErrorDetail(workspace.spectrumExport.error, t)}</span> : null}</p>
-          {["saved", "copied", "cancelled", "failed"].includes(workspace.spectrumExport.status) ? <IconButton size="sm" icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={workspace.dismissSpectrumExport} /> : null}</> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} /></div>}
+          {["saved", "copied", "cancelled", "failed"].includes(workspace.spectrumExport.status) ? <IconButton size="sm" icon={<Icon name="close" />} label={t("viewerDismissExport")} onClick={workspace.dismissSpectrumExport} /> : null}</> : figureDialog.kind === "chromatogram" ? <div role="status"><ChromatogramExportResult state={workspace.chromatogramExport} onDismiss={workspace.dismissChromatogramExport} /></div> : <div role="status"><LinkedFigureResult state={workspace.linkedFigureExport} onDismiss={workspace.dismissLinkedFigureExport} rtUnit={runRtUnit} /></div>}
       /> : null}
       {/* One workspace card per surface (spec 1.2): the columns share its
           border and are separated by rules, not gaps. */}
@@ -943,7 +968,20 @@ export function PreviewWorkspace() {
             onScopeChange={workspace.setConversionScope}
             onSortChange={(sort) => workspace.dispatchRoster({ type: "sortChanged", sort })}
             buildRelease={backendView.names?.release ?? null}
+            hidden={runHistoryOpen}
+            onOpenHistory={() => setRunHistoryOpen(true)}
           />
+          {runHistoryOpen ? (
+            <ConversionHistory
+              catalog={workspace.conversionConfiguration.catalog}
+              queueState={workspace.conversion.state.status}
+              onClose={() => {
+                setRunHistoryOpen(false);
+                // The entry is back on screen only once the panel is unhidden.
+                requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-run-history-entry]")?.focus());
+              }}
+            />
+          ) : null}
         </section>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench"}
           inert={drawer !== null || undefined} data-evidence={evidenceState} aria-labelledby="surface-title-workbench">
@@ -977,6 +1015,7 @@ export function PreviewWorkspace() {
                         linkedExportState={workspace.linkedFigureExport}
                         onDismiss={workspace.dismissChromatogramExport}
                         onDismissLinked={workspace.dismissLinkedFigureExport}
+                        rtUnit={runRtUnit}
                       />
                     }
                     exportTools={
@@ -1030,6 +1069,9 @@ export function PreviewWorkspace() {
                       onDismissExport={workspace.dismissSpectrumExport}
                       onExport={workspace.exportSpectrum}
                       onRetry={workspace.retrySpectrum}
+                      onReopen={workspace.previewActiveAgain}
+                      canReopen={canPreview}
+                      reopenReasonId={previewReasonId}
                       onRetryProjection={workspace.retrySpectrumProjection}
                       projectionError={workspace.spectrumProjectionError}
                       readViewport={workspace.readSpectrumViewport}
@@ -1105,8 +1147,10 @@ export function PreviewWorkspace() {
                 </>}
                 // Reading is idempotent, so a retry is offered when the backend
                 // said the failure was retryable -- and it repeats the step that
-                // actually failed.
-                action={preview.error.retryable && workspace.activeDataset !== null ? (
+                // actually failed. A superseded open is not retryable as such,
+                // but where it is the one on screen (two opens can reach Rust
+                // out of order) reading the row again is the way on.
+                action={(preview.error.retryable || preview.error.kind === "selection_superseded") && workspace.activeDataset !== null ? (
                   <Button variant="secondary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
                     {t("retryEvidence")}
                   </Button>
@@ -1321,7 +1365,9 @@ function announce(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMessag
     return t("readingSelected");
   }
   if (preview.status === "failed") {
-    return `${t("readFailed")} ${ownedErrorMessage(preview.error, t)}`;
+    // A superseded open was not a failed read: its own sentence says what happened.
+    return preview.error.kind === "selection_superseded" ? ownedErrorMessage(preview.error, t)
+      : `${t("readFailed")} ${ownedErrorMessage(preview.error, t)}`;
   }
   if (preview.status === "empty") {
     if (rosterLoad.status === "loading") {

@@ -1,3 +1,6 @@
+/// ENV-004's copied environment summary and the recent-error ring it reports
+/// (ADR 0063). Reads session state; writes and sends nothing.
+mod environment_diagnostics;
 /// Reading and replacing one small local document. Shared by the preference
 /// store and the project store so that the same-directory replacement sequence
 /// exists once.
@@ -6,6 +9,10 @@ mod local_document;
 /// purpose: it holds no scientific state, confers no authority and shares no
 /// lane with the conversion, process or roster locks.
 mod preferences;
+/// User-saved conversion presets (ADR 0055), stored beside the UI preferences
+/// under the same binding. Separate from both `preferences`, which holds
+/// nothing scientific, and `preview`, whose locks it never takes.
+mod presets;
 mod preview;
 /// The project record store: what a saved project references, what was run over
 /// it, and the only new write authority in M8.1. Separate from `preview` for
@@ -19,15 +26,21 @@ mod qc_snapshot;
 /// workspace. Separate from both, so the crossing is a named thing rather than
 /// a dependency either of them grew. See the module for what each side decides.
 mod reattachment;
+/// The conversion run history of ADR 0065 (RUN-007): one document per run in
+/// the per-user directory, fed by the queue.
+mod run_history;
 /// The targeted MS1 supervisor: the only place the recipe's worker process is
 /// started, behind the executor boundary the project store runs it through.
 mod targeted_ms1;
 /// The view cache of ADR 0060: where a Thermo RAW file's converted copy is
-/// kept for viewing. Slice 1 is the library alone; slice 2's operation and
-/// commands are its first callers, so until then only its tests use it.
+/// kept for viewing. Slice 2's operation and commands are its callers; what
+/// they do not call yet is reached by its tests alone.
 #[cfg(windows)]
 #[cfg_attr(not(test), allow(dead_code))]
 mod view_cache;
+/// The workspace restore document of ADR 0061 (WSP-010). Its own store beside
+/// the preference store: it records rows, never admits them.
+mod workspace_restore;
 
 use preferences::UiPreferenceStore;
 use preferences::dto::{UiPreferenceReadDto, UiPreferenceSaveDto, UiPreferenceWriteDto};
@@ -78,6 +91,66 @@ async fn save_ui_preferences(
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let preferences = Arc::clone(&preferences);
     off_the_async_runtime(move || preferences.save(&request)).await
+}
+
+/// The session's conversion preset store.
+type SharedPresets = Arc<presets::PresetStore>;
+
+/// Lists the user's saved conversion presets. Reads and never writes; a preset
+/// this build cannot express is listed as unusable, without its intent.
+#[tauri::command]
+async fn list_conversion_presets(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    presets: State<'_, SharedPresets>,
+) -> Result<presets::PresetListDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let presets = Arc::clone(&presets);
+    off_the_async_runtime(move || presets.list()).await
+}
+
+/// Saves one preset: a name and an intent this build can express. A taken name
+/// is refused unless the request confirms replacing it.
+#[tauri::command]
+async fn save_conversion_preset(
+    request: presets::PresetSaveRequest,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    presets: State<'_, SharedPresets>,
+) -> Result<presets::PresetWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let presets = Arc::clone(&presets);
+    off_the_async_runtime(move || presets.save(&request)).await
+}
+
+/// Renames one preset, never onto another's name.
+#[tauri::command]
+async fn rename_conversion_preset(
+    request: presets::PresetRenameRequest,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    presets: State<'_, SharedPresets>,
+) -> Result<presets::PresetWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let presets = Arc::clone(&presets);
+    off_the_async_runtime(move || presets.rename(&request)).await
+}
+
+/// Deletes one preset, usable or not.
+#[tauri::command]
+async fn delete_conversion_preset(
+    request: presets::PresetDeleteRequest,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    presets: State<'_, SharedPresets>,
+) -> Result<presets::PresetWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let presets = Arc::clone(&presets);
+    off_the_async_runtime(move || presets.delete(&request)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +383,9 @@ async fn save_project_as(
 ///
 /// Registering a file records where it is and what it currently contains. It
 /// asserts nothing about the file being a supported acquisition, and it admits
-/// nothing to the workspace roster.
+/// nothing to the workspace roster. Where the object hashed is a row this
+/// session adopted from a conversion not verified by MSCanvas, its label is
+/// recorded with it (ADR 0055; owner decision 2 of 2026-10-29).
 #[tauri::command]
 async fn add_project_input(
     app: tauri::AppHandle,
@@ -321,11 +396,16 @@ async fn add_project_input(
 ) -> Result<Option<project::dto::ProjectStateDto>, PreviewErrorDto> {
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let projects = Arc::clone(&projects);
+    let service = Arc::clone(&service);
     let Some(chosen) = chosen_file(&app, preview::dialog::PROJECT_INPUT_DIALOG).await? else {
         return Ok(None);
     };
     off_the_async_runtime(move || {
-        projects.register_input(&chosen).map_err(project_error)?;
+        projects
+            .register_input_labelled(&chosen, |identity| {
+                service.not_verified_label_of_object(identity)
+            })
+            .map_err(project_error)?;
         Ok(Some(projects.describe()))
     })
     .await?
@@ -1297,6 +1377,10 @@ use preview::dto::{
     WorkspaceRosterDto, diagnostics_picker_unavailable, invalid_conversion_reservation,
     invalid_workspace_drop_subscription, spectrum_picker_unavailable,
 };
+use preview::raw_view::{
+    RawViewBeginRequestDto, RawViewOperationRequestDto, RawViewStateDto, ViewCacheClearOutcomeDto,
+    ViewCacheSummaryDto,
+};
 use preview::{PreviewService, ProteoWizardProvider, normalize_window_drop_event};
 
 #[tauri::command]
@@ -1306,6 +1390,22 @@ fn get_bootstrap_status() -> BootstrapStatus {
         "mzml-preview",
         "ProteoWizard is supplied and licensed separately by you",
     )
+}
+
+/// The redacted environment summary a user copies into a support request
+/// (ENV-004, ADR 0063).
+///
+/// Reads what the session already holds: no backend probe, no process, no
+/// file written and nothing sent. The text comes back to the caller only.
+#[tauri::command]
+async fn read_environment_diagnostics(
+    service: State<'_, SharedService>,
+    preferences: State<'_, SharedPreferences>,
+) -> Result<String, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    let preferences = Arc::clone(&preferences);
+    // The saved language is read from the profile volume, which can be slow.
+    off_the_async_runtime(move || environment_diagnostics::summary(&service, &preferences)).await
 }
 
 /// Reports whether a user-installed ProteoWizard is usable. MSCanvas never
@@ -1719,6 +1819,98 @@ async fn adopt_workspace_conversion_outputs(
     let service = Arc::clone(&service);
     off_the_async_runtime(move || service.adopt_conversion_outputs(&operation_id, document_epoch))
         .await?
+}
+
+/// Adds one finalized mzML output of a terminal queue to the workspace.
+///
+/// The sibling of the queue-wide command above, through the same adoption
+/// (ADR 0052). The output is named by the opaque id its queue item already
+/// carries, and only an output the queue-wide command would offer is accepted:
+/// an output of a partial or incomplete set, of an item that did not finalize,
+/// or an unknown id is refused, and nothing is claimed.
+#[tauri::command]
+async fn adopt_workspace_conversion_output(
+    operation_id: String,
+    output_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<WorkspaceOutputAdoptionResultDto, PreviewErrorDto> {
+    let document_epoch = verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || {
+        service.adopt_conversion_output(&operation_id, &output_id, document_epoch)
+    })
+    .await?
+}
+
+// ---------------------------------------------------------------------------
+// Conversion run history commands (ADR 0065, RUN-007).
+//
+// Bound to the calling document like the restore and preference commands. None
+// names a path in either direction: a run is addressed by the opaque identifier
+// a list gave, and what comes back is names, states, checks and times.
+// ---------------------------------------------------------------------------
+
+/// The session's conversion run history.
+type SharedRunHistory = Arc<run_history::ConversionHistory>;
+
+/// Every recorded conversion run, newest first, without items. Writes only to
+/// keep the store in order: a corrupt run is kept aside, a write this session
+/// still owes is made, and while recording is off what is stored is forgotten.
+#[tauri::command]
+async fn list_conversion_runs(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    history: State<'_, SharedRunHistory>,
+) -> Result<run_history::RunHistoryListDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let history = Arc::clone(&history);
+    off_the_async_runtime(move || history.list()).await
+}
+
+/// One recorded run's items, by the identifier a list gave. Writes only a
+/// write this session still owes.
+#[tauri::command]
+async fn read_conversion_run(
+    run_id: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    history: State<'_, SharedRunHistory>,
+) -> Result<run_history::RunHistoryReadDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let history = Arc::clone(&history);
+    off_the_async_runtime(move || history.read(&run_id)).await
+}
+
+/// Forgets every ended run; a run still being written is kept. No source
+/// acquisition and no output is touched.
+#[tauri::command]
+async fn clear_conversion_runs(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    history: State<'_, SharedRunHistory>,
+) -> Result<run_history::RunHistoryWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let history = Arc::clone(&history);
+    off_the_async_runtime(move || history.clear()).await
+}
+
+/// The off switch, shared by every instance. Off forgets every stored run.
+#[tauri::command]
+async fn set_conversion_run_history_enabled(
+    enabled: bool,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    history: State<'_, SharedRunHistory>,
+) -> Result<run_history::RunHistoryWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let history = Arc::clone(&history);
+    off_the_async_runtime(move || history.set_enabled(enabled)).await
 }
 
 /// Binds one diagnostics export and reserves the right to choose a file.
@@ -2351,6 +2543,129 @@ async fn clear_workspace(
     off_the_async_runtime(move || service.clear_workspace()).await?
 }
 
+// ---------------------------------------------------------------------------
+// Workspace restore commands (ADR 0061, WSP-010).
+//
+// Bound to the calling document like the preference commands. None names a
+// path in either direction: rows are addressed by handle, and what comes back
+// is a display name, a family, a checked state and a re-checked state.
+// ---------------------------------------------------------------------------
+
+/// The session's workspace restore store.
+type SharedRestore = Arc<workspace_restore::WorkspaceRestoreStore>;
+
+/// The start-up read: the rows still waiting to be put back, each
+/// re-checked now by identity and length. Admits nothing and reads no byte of
+/// any acquisition.
+#[tauri::command]
+async fn read_workspace_restore(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestoreReadDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    off_the_async_runtime(move || restore.read()).await
+}
+
+/// Records the session for the next start: Rust's own rows, arranged as the
+/// webview arranges them. An arrangement that does not place every row of this
+/// process exactly once is refused, and so is a save over a document another
+/// MSCanvas process wrote since this one last read or wrote it.
+#[tauri::command]
+async fn save_workspace_restore(
+    arrangement: workspace_restore::WorkspaceArrangementDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestoreWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    let service = Arc::clone(&service);
+    // The registry is read once this save is the one saving, so an older
+    // arrangement never publishes over a newer roster.
+    off_the_async_runtime(move || {
+        restore.save_with(&arrangement, || service.workspace_restore_rows())
+    })
+    .await
+}
+
+/// Forgets every row the document stored, and writes restore off, answering
+/// `turnedOff`, if the document is no longer what this process last saw.
+/// Source acquisitions are not touched; a copy kept aside after a refusal is
+/// not removed.
+#[tauri::command]
+async fn clear_workspace_restore(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestoreWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    off_the_async_runtime(move || restore.clear()).await
+}
+
+/// The off switch. Off forgets every row and path the document stored; a copy
+/// kept aside after a refusal is not removed.
+#[tauri::command]
+async fn set_workspace_restore_enabled(
+    enabled: bool,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestoreWriteDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    off_the_async_runtime(move || restore.set_enabled(enabled)).await
+}
+
+/// Restore workspace: the one explicit action that puts rows back (ADR 0061,
+/// question 1). Every row a read offered and a re-check still finds matching
+/// goes through ordinary admission, which hashes each file as a new baseline.
+/// Previews nothing and starts no conversion.
+#[tauri::command]
+async fn restore_workspace(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<workspace_restore::WorkspaceRestorePutBackDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || restore.put_back(&service)).await?
+}
+
+/// Forgets one restored row a read reported; the next save records it. The
+/// file is not touched.
+#[tauri::command]
+async fn dismiss_restored_row(
+    handle: String,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+    restore: State<'_, SharedRestore>,
+) -> Result<(), PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let restore = Arc::clone(&restore);
+    off_the_async_runtime(move || {
+        if restore.dismiss(&handle) {
+            Ok(())
+        } else {
+            Err(PreviewErrorDto::new(
+                "restored_row_not_offered",
+                "That row is no longer waiting to be restored.",
+                false,
+            ))
+        }
+    })
+    .await?
+}
+
 fn picker_unavailable() -> PreviewErrorDto {
     PreviewErrorDto::new(
         "file_picker_unavailable",
@@ -2481,6 +2796,96 @@ async fn load_selected_spectrum(
     off_the_async_runtime(move || service.load_spectrum(&handle, index)).await?
 }
 
+/// Begins the one-click view of one Thermo RAW row (ADR 0060 decision 12).
+///
+/// The request names the row and nothing else: View converts with the verified
+/// default, which Rust chooses, so no request can carry a picker. The work runs
+/// on a blocking thread and the webview polls `get_raw_view_state`; there is no
+/// event channel.
+#[tauri::command]
+async fn begin_raw_view(
+    request: RawViewBeginRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<RawViewStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let worker = Arc::clone(&service);
+    let service = Arc::clone(&service);
+    let state = off_the_async_runtime(move || service.begin_raw_view(&request)).await??;
+    if let RawViewStateDto::Running { operation, .. } = &state {
+        let operation = *operation;
+        tauri::async_runtime::spawn(async move {
+            let runner = Arc::clone(&worker);
+            if spawn_blocking(move || runner.run_raw_view(operation))
+                .await
+                .is_err()
+            {
+                // A worker that never finished must not hold the slot.
+                worker.abandon_raw_view(operation);
+            }
+        });
+    }
+    Ok(state)
+}
+
+/// The latest view operation, or `idle`. Polled while one runs.
+#[tauri::command]
+async fn get_raw_view_state(
+    service: State<'_, SharedService>,
+) -> Result<RawViewStateDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.raw_view_state()).await
+}
+
+/// Cancels the exact view operation named. A late press answers the state.
+#[tauri::command]
+async fn cancel_raw_view(
+    request: RawViewOperationRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<RawViewStateDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.cancel_raw_view(request)).await
+}
+
+/// Opens a ready view operation's cached copy, once, as the RAW row's preview.
+#[tauri::command]
+async fn open_raw_view(
+    request: RawViewOperationRequestDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<PreviewDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.open_raw_view(request)).await?
+}
+
+/// The view cache's summary for Settings: counts and bytes, never a path.
+#[tauri::command]
+async fn describe_view_cache(
+    service: State<'_, SharedService>,
+) -> Result<ViewCacheSummaryDto, PreviewErrorDto> {
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.describe_view_cache()).await
+}
+
+/// Clear view cache: removes MSCanvas's converted copies that nothing holds.
+/// RAW files and outputs are never candidates.
+#[tauri::command]
+async fn clear_view_cache(
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    service: State<'_, SharedService>,
+) -> Result<ViewCacheClearOutcomeDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let service = Arc::clone(&service);
+    off_the_async_runtime(move || service.clear_view_cache()).await?
+}
+
 /// The preview service, shared so a command can take it onto a blocking thread.
 type SharedService = Arc<PreviewService>;
 
@@ -2549,9 +2954,25 @@ pub fn run() {
             // resolved per-user directory. A binding that cannot be made leaves
             // a store that answers `unavailable`, so the application stays
             // completely usable on defaults rather than failing to start.
-            app.manage(SharedPreferences::new(UiPreferenceStore::bind(
-                app.handle(),
+            let preferences = UiPreferenceStore::bind(app.handle());
+            // Conversion presets live beside the preferences, under the same
+            // binding, so there is one path policy and one QA root.
+            app.manage(SharedPresets::new(presets::PresetStore::over(
+                preferences.sibling_directory(),
             )));
+            // And conversion runs (ADR 0065), under the same binding. Opening
+            // marks the runs of sessions that ended mid-run as interrupted.
+            //
+            // Attached to the queue because the interface offers the list, Clear
+            // and Off: nothing is recorded before it does (ADR 0065 question 6,
+            // answered 2026-10-31).
+            let history = SharedRunHistory::new(run_history::ConversionHistory::open(
+                preferences.sibling_directory(),
+            ));
+            app.state::<SharedService>()
+                .attach_run_history(Arc::clone(&history));
+            app.manage(history);
+            app.manage(SharedPreferences::new(preferences));
             // A ProteoWizard folder an earlier session remembered is where this
             // one's discovery starts. Nothing is launched here: the first
             // backend reading probes it, and searches automatically instead,
@@ -2560,10 +2981,24 @@ pub fn run() {
                 app.state::<SharedService>()
                     .start_on_remembered_folder(folder);
             }
+            // The view cache lives beside the preferences, under the same
+            // binding (ADR 0060 decision 6), so the `e2e` QA root applies to it
+            // too. No binding refuses View. Nothing is created at startup: the
+            // first View, Settings summary or Clear makes the cache's folder.
+            app.state::<SharedService>()
+                .bind_view_cache(app.state::<SharedPreferences>().sibling_directory().ok());
             // The project store starts with no project open and no path bound.
             // It resolves nothing, reads nothing and creates nothing until a
             // user acts, so binding it cannot fail and cannot touch the disk.
             app.manage(SharedProjects::new(project::ProjectStore::new()));
+            // The workspace restore document is read once, here, from beside
+            // the preferences, under the same binding, so one path policy and
+            // one QA root hold for it too (ADR 0061, decision 2).
+            app.manage(SharedRestore::new(
+                workspace_restore::WorkspaceRestoreStore::open(
+                    app.state::<SharedPreferences>().sibling_directory(),
+                ),
+            ));
             // One synthetic spectrum in the ordinary export slot, so a rendered
             // test can reach the real export path on a machine with no
             // ProteoWizard installation and no mzML file. Not a command: there
@@ -2607,8 +3042,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_bootstrap_status,
+            read_environment_diagnostics,
             load_ui_preferences,
             save_ui_preferences,
+            list_conversion_presets,
+            save_conversion_preset,
+            rename_conversion_preset,
+            delete_conversion_preset,
             get_project_state,
             create_project,
             close_project,
@@ -2658,6 +3098,12 @@ pub fn run() {
             open_finalized_output,
             open_mzml_preview,
             load_selected_spectrum,
+            begin_raw_view,
+            get_raw_view_state,
+            cancel_raw_view,
+            open_raw_view,
+            describe_view_cache,
+            clear_view_cache,
             describe_workspace_conversion_queue,
             get_workspace_conversion_state,
             begin_workspace_conversion_queue,
@@ -2667,8 +3113,13 @@ pub fn run() {
             cancel_current_workspace_conversion_item,
             skip_pending_workspace_conversion_item,
             adopt_workspace_conversion_outputs,
+            adopt_workspace_conversion_output,
             begin_workspace_conversion_diagnostics_export,
             save_workspace_conversion_diagnostics,
+            list_conversion_runs,
+            read_conversion_run,
+            clear_conversion_runs,
+            set_conversion_run_history_enabled,
             begin_selected_spectrum_export,
             project_selected_spectrum,
             save_selected_spectrum_export,
@@ -2678,7 +3129,13 @@ pub fn run() {
             save_linked_figure_export,
             save_chromatogram_export,
             copy_chromatogram_plot,
-            copy_selected_spectrum_plot
+            copy_selected_spectrum_plot,
+            read_workspace_restore,
+            save_workspace_restore,
+            clear_workspace_restore,
+            set_workspace_restore_enabled,
+            restore_workspace,
+            dismiss_restored_row
         ])
         .run(tauri::generate_context!())
         .expect("failed to run the MSCanvas desktop application");

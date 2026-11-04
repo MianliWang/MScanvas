@@ -790,10 +790,13 @@ pub fn capture_file_facts(
     Ok(FileFactsV1 { observations })
 }
 
-/// Builds the member records one newly registered input starts with.
+/// Builds the member records one newly registered input starts with, and the
+/// object the primary's bytes were read from, where the volume gives one.
 ///
 /// The baseline is whatever was observed at registration. That is the whole
-/// claim: these were the bytes when the reference was made.
+/// claim: these were the bytes when the reference was made. The identity is
+/// not stored; it is what lets registration ask the session about the object
+/// that was hashed rather than about a name.
 ///
 /// # Errors
 ///
@@ -801,7 +804,7 @@ pub fn capture_file_facts(
 pub fn register_members(
     primary: &Path,
     companions: &[PathBuf],
-) -> Result<Vec<super::record::MemberRecord>, UnavailableReason> {
+) -> Result<(Vec<super::record::MemberRecord>, Option<ObjectIdentity>), UnavailableReason> {
     let mut members = Vec::with_capacity(1 + companions.len());
     // Observed once. Reading the primary a second time to classify a failure
     // would be measuring a different moment than the one that failed.
@@ -809,20 +812,23 @@ pub fn register_members(
     // Registration is not a cancellable operation: it is one read the user
     // just asked for through a dialog, so it carries a flag nobody can set.
     let uncancellable = Cancellation::default();
-    match observe_member(primary, &uncancellable) {
+    let primary_identity = match observe_member(primary, &uncancellable) {
         MemberObservation::Observed {
             byte_length,
             digest,
             // Registration records what a file *contained*. Which object it was
             // is evidence for one operation and is deliberately not stored.
-            identity: _,
-        } => members.push(super::record::MemberRecord {
-            role: MemberRole::Primary,
-            relative_name: String::new(),
-            baseline: ContentBaseline::observed(byte_length, digest),
-        }),
+            identity,
+        } => {
+            members.push(super::record::MemberRecord {
+                role: MemberRole::Primary,
+                relative_name: String::new(),
+                baseline: ContentBaseline::observed(byte_length, digest),
+            });
+            identity
+        }
         MemberObservation::Unavailable(reason) => return Err(reason),
-    }
+    };
     for companion in companions {
         let Some(name) = companion.file_name().and_then(|name| name.to_str()) else {
             return Err(UnavailableReason::UnsafeReference);
@@ -846,7 +852,7 @@ pub fn register_members(
             MemberObservation::Unavailable(reason) => return Err(reason),
         }
     }
-    Ok(members)
+    Ok((members, primary_identity))
 }
 
 /// The locator a newly registered input carries, given where the project is.

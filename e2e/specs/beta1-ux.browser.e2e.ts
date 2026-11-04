@@ -712,7 +712,8 @@ describe("Beta 1 UX changes, rendered", () => {
       await shot(`o4-stop-failed-banner-1366-${locale}`);
       const banners = await browser.execute((surface: string) =>
         [...document.querySelectorAll<HTMLElement>(`${surface} .notice-danger`)].map((banner) => ({
-          role: banner.getAttribute("role"),
+          // The sentences are the live part, not Dismiss.
+          role: banner.querySelector("strong")?.closest("[role]")?.getAttribute("role") ?? null,
           lead: banner.querySelector("strong")?.textContent ?? null,
           text: (banner.textContent ?? "").trim(),
           dismiss: [...banner.querySelectorAll("button")].map((button) => button.getAttribute("aria-label") ?? (button.textContent ?? "").trim()),

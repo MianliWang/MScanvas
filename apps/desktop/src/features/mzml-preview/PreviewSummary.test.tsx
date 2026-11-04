@@ -5,12 +5,15 @@
  * in both, and neither has a `<details>` element.
  */
 
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { createFakePreferencesApi, storedRecord } from "../../test/preferenceFixtures";
 import { buildPreview, buildSpectrum } from "../../test/previewFixtures";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { UI_RESOURCES } from "../preferences/i18n";
+import { PreferencesApiProvider } from "../preferences/preferencesApi";
+import { SessionPreferencesProvider } from "../preferences/SessionPreferencesProvider";
 import { PreviewMetadata, PreviewSummary } from "./PreviewSummary";
 import { initialSpectrumViewportState } from "./viewer/spectrumViewport";
 
@@ -37,6 +40,29 @@ describe("the Details inspector", () => {
     // own facts are the Metadata tab's.
     expect(screen.queryByText("Timing")).toBeNull();
     expect(screen.queryByText(en.summarySpectra)).toBeNull();
+    expect(document.querySelector("[data-not-verified]")).toBeNull();
+  });
+
+  it("labels an output MSCanvas did not verify beside its name, not in it", () => {
+    renderDetails({ file: { ...preview.file, notVerifiedByMscanvas: { unverifiedSettings: true, unverifiedBuildRelease: null } } });
+
+    expect(screen.getByRole("heading", { level: 2 }).textContent).not.toContain(en.m74CnvNotVerified);
+    expect(document.querySelector("[data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
+  });
+
+  it("labels it in zh-CN too, naming the build where the build is why", async () => {
+    const preferences = createFakePreferencesApi({ stored: storedRecord({ appearance: { locale: "zh-CN" } }) });
+    rtlRender(
+      <PreferencesApiProvider value={preferences}>
+        <SessionPreferencesProvider>
+          <PreviewSummary chromatogramScanCount={null} spectrum={null} spectrumViewport={initialSpectrumViewportState}
+            file={{ ...preview.file, notVerifiedByMscanvas: { unverifiedSettings: false, unverifiedBuildRelease: "3.0.26204" } }} />
+        </SessionPreferencesProvider>
+      </PreferencesApiProvider>,
+    );
+
+    await waitFor(() => { expect(document.querySelector("[data-not-verified]")?.textContent).toContain(UI_RESOURCES["zh-CN"].m74CnvNotVerified); });
+    expect(document.querySelector("[data-not-verified]")?.textContent).toContain("3.0.26204");
   });
 
   it("says no spectrum is selected, then shows the selected spectrum's facts", () => {
@@ -50,16 +76,48 @@ describe("the Details inspector", () => {
   });
 
   it("says what each plot is drawn from, only while there is something to say", () => {
-    renderDetails({ chromatogramScanCount: 50, spectrum: { ...buildSpectrum(3, 4), representationKnown: false } });
+    renderDetails({ chromatogramScanCount: 50, spectrum: { ...buildSpectrum(3, 4), representation: "notReported" } });
 
     expect(screen.getByRole("heading", { name: en.detailsChromatogramSource })).toBeVisible();
     expect(screen.getByText(en.viewerScanSource.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "50"))).toBeVisible();
     expect(screen.getByRole("heading", { name: en.detailsSpectrumSource })).toBeVisible();
     expect(screen.getByText(en.plotUnknownRepresentation)).toBeVisible();
   });
+
+  it("states the spectrum's declared terms, and 'Not reported' for what it does not state, never 0 (ADR 0056)", () => {
+    const value = (label: string) => screen.getByText(label).nextElementSibling;
+    renderDetails({ spectrum: { ...buildSpectrum(3, 4), representation: "profile",
+      retentionTime: { value: 1.5, unit: "minute" }, mzLow: null, mzHigh: 301.5,
+      mzUnit: { state: "declared", accession: "MS:1000040" }, intensityUnit: { state: "notReported" },
+      precursors: [{ index: 0, mz: null, intensity: 880 }], totalPrecursorCount: 1 } });
+
+    expect(value(en.viewerRepresentation)).toHaveTextContent(en.viewerRepresentationProfile);
+    expect(value(en.viewerMzUnit)).toHaveTextContent("MS:1000040");
+    expect(value(en.viewerIntensityUnit)).toHaveTextContent(en.viewerNotReported);
+    expect(value(en.scanRetentionTime)).toHaveTextContent("1.5000 min");
+    expect(value(en.rangeMzAxis)).toHaveTextContent(`${en.viewerNotReported} – 301.5000`);
+    // The precursor's unstated m/z is said, not drawn as 0.
+    expect(screen.getByText("880.00").previousElementSibling).toHaveTextContent(en.viewerNotReported);
+  });
 });
 
 describe("the Metadata tab", () => {
+  it("states the run's range in its declared unit, says mixed units, and has no line for no rows", () => {
+    const rangeRow = () => within(screen.getByRole("region", { name: en.summaryRun })).queryByText(en.summaryRetentionTime);
+    const metadata = (retentionTimeRange: typeof preview.runSummary.retentionTimeRange) =>
+      render(<PreviewMetadata file={preview.file} metadata={preview.metadata} runSummary={{ ...preview.runSummary, retentionTimeRange }}
+        spectrumListTotal={preview.spectrumTable.totalRowCount} />);
+
+    const { unmount } = metadata({ state: "reported", minimum: 1, maximum: 3, unit: "minute" });
+    expect(rangeRow()?.nextElementSibling).toHaveTextContent("1.0000 – 3.0000 min");
+    unmount();
+    const mixed = metadata({ state: "mixedUnits" });
+    expect(rangeRow()?.nextElementSibling).toHaveTextContent(en.summaryRetentionMixed);
+    mixed.unmount();
+    metadata({ state: "noRows" });
+    expect(rangeRow()).toBeNull();
+  });
+
   it("lists the run's facts as key and value rows", () => {
     renderMetadata();
 

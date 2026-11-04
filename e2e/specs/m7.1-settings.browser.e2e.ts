@@ -237,7 +237,8 @@ describe("M7.1 localized Settings and real shared consumers", () => {
       // and layout semantics").
       const after = await ipcCalls();
       expect(after.slice(0, calls.length)).toEqual(calls);
-      expect(after.slice(calls.length)).toEqual([
+      // Less the off switch's own read each time Settings opens (ADR 0065).
+      expect(after.slice(calls.length).filter(call => call.command !== "list_conversion_runs")).toEqual([
         { command: "save_ui_preferences", args: { request: { appearance: { locale: "zh-CN", density: "comfortable" } } } },
         { command: "save_ui_preferences", args: { request: { appearance: { locale: "zh-CN", density: "compact" } } } },
         { command: "save_ui_preferences", args: { request: { appearance: { locale: "en", density: "comfortable" } } } },

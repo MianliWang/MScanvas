@@ -119,6 +119,105 @@ The Thermo work the owner selected on 2026-10-30
   labelled not verified, until a public Orbitrap profile-MS2 file is measured
   (*one was, later on 2026-10-30: see the [note under Consequences](#consequences)*)
   ([evidence](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)).
+
+  > **Implemented 2026-10-30** (branch `be/thermo-ms1`, into `be/integrate`).
+  >
+  > - **MS1 and up is the tenth verified row**, `VendorCentroidingFromMs1`:
+  >   mzML, every spectrum, m/z 64-bit and intensity 32-bit with no precision
+  >   flag, zlib, cases `TV1` and `TE1`. It lowers to
+  >   `--mzML --zlib --filter "peakPicking vendor msLevel=1-"`.
+  >   - It is verified only on the evidenced executable. On another build that
+  >     reports its release it converts Thermo RAW labelled "not verified", with
+  >     that release, under ADR 0055's relaxed gate. A build that reports no
+  >     release converts no Thermo RAW.
+  >   - Its source domain is the Thermo RAW family, not the two measured
+  >     instrument models. The owner chose this in decision 6 above, the
+  >     evidence's second option, on CNV-D2's argument that one bundled reader
+  >     picks for every Thermo instrument.
+  >   - Its verified claim on profile MS2 rests on ion-trap data only (`3a`,
+  >     14 spectra). "MS1 and up" also centroids MS2, and Orbitrap (FTMS)
+  >     profile MS2, common on Q Exactive-class methods, was not measured. This
+  >     is the gap that keeps "MS2 and up" advanced. Decision 6 verifies this
+  >     row across the family with the gap open; the public Orbitrap
+  >     profile-MS2 measurement that would lift "MS2 and up" would also close
+  >     it. *2026-10-30, later: that measurement was made (source 3c, cases
+  >     `TQ0` to `TQ2`, [note under Consequences](#consequences)). This row now
+  >     also cites `TQ1`, and "MS2 and up" is verified (the next note). It
+  >     narrows the gap to one Q Exactive data-independent run, and does not
+  >     close it: other Orbitrap models and data-dependent profile MS2 stay
+  >     unmeasured for both rows (the evidence's
+  >     [What it does not support](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md#what-it-does-not-support)).*
+  > - **MS2 and up, and every other vendor scope, is advanced on Thermo RAW,
+  >   labelled not verified.** *2026-10-30, later: MS2 and up no longer is;
+  >   see the next note. Every other scope still is.* Before this change the code refused any vendor
+  >   picker as not checkable. Its output check knew only the default picker's
+  >   request, which refuses a vendor picker as unrequested and wants every
+  >   spectrum centroid, so a correct `msLevel=2-` output would have failed.
+  >   The check now judges a vendor picker on Thermo RAW at its requested scope:
+  >   - the run adds exactly one method naming `Thermo/Xcalibur peak picking`,
+  >     and no other picker. A second vendor method fails as a second,
+  >     contradicting scope record; none leaves the processing unverified;
+  >   - that method's `ms levels` record is what this build writes for the
+  >     scope: none for `1-`, the interval otherwise. It is the only witness
+  >     of a scope the build discarded;
+  >   - every in-scope spectrum declares centroid. Out-of-scope spectra are not
+  >     judged, and the filter string's `p`/`c` is never read.
+  >   - Known limit: under `1-` a spectrum with no MS level is judged in
+  >     scope, although msconvert's `msLevel=1-` probably leaves it unpicked
+  >     (not checked). A file whose spectrum list carried such spectra (a UV
+  >     or PDA controller, not measured) would fail closed as
+  >     `CentroidRepresentationMissing`, never pass wrongly.
+  > - **Unchanged:**
+  >   - the vendor picker stays blocked on mzML sources and anywhere but first;
+  >   - bare `peakPicking` on Thermo RAW stays blocked;
+  >   - on Shimadzu LCD and SCIEX WIFF the vendor picker has no output check,
+  >     because their readers' picker names were never measured, so it is
+  >     refused as not checkable;
+  >   - the shipped default stays "no additional centroiding".
+  > - The capability probe now reads a spectrum-filter declaration that the
+  >   help wraps over up to three lines. The 3.0.26013 help puts `peakPicking`'s
+  >   `[msLevel=<ms_levels>]` on the second line.
+
+  > **Implemented later on 2026-10-30: MS2 and up is verified** (the owner's
+  > decision of that day to follow every recommendation; `be/integrate`, draft
+  > PR #161). Decision 2's condition, "until a public Orbitrap profile-MS2 file
+  > is measured", is met by source 3c of the
+  > [evidence](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md) (PR #173).
+  >
+  > - **MS2 and up is the eleventh verified row**, `VendorCentroidingFromMs2`:
+  >   mzML, every spectrum, m/z 64-bit and intensity 32-bit with no precision
+  >   flag, zlib, cases `TV2`, `TE2` and `TQ2`. It lowers to
+  >   `--mzML --zlib --filter "peakPicking vendor msLevel=2-"`. It is verified
+  >   only on the evidenced executable, as MS1 and up is, and labelled on any
+  >   other build under the same relaxed gate.
+  > - **Its source domain is the Thermo RAW family**, not the three measured
+  >   instrument models (LTQ Velos, Orbitrap Exploris 480, Q Exactive), as for
+  >   MS1 and up. This settles the question the Consequences note left to this
+  >   change, on the same CNV-D2 argument decision 6 accepted for MS1 and up.
+  > - **Its output check is MS1 and up's**, at scope `2-`: exactly one
+  >   `Thermo/Xcalibur peak picking` method and no other picker, that method's
+  >   `ms levels` record exactly `2-`, and every MS2-and-above spectrum
+  >   centroid; MS1 spectra are not judged. A verified row carries no levels of
+  >   its own, so each vendor row is judged at its own scope.
+  > - **What was measured.** Profile MS2 acted on by `msLevel=2-`: on an ion
+  >   trap (source 3a, LTQ Velos, 14 spectra) and on the Orbitrap of one Q
+  >   Exactive data-independent run (source 3c, 23,676 spectra, its 474
+  >   profile MS1 spectra left bit-identical). Source 3b's MS2 was acquired
+  >   centroided, so `TE2` shows MS1 left untouched and no profile MS2.
+  > - **What was not measured:** other Orbitrap models, data-dependent profile
+  >   MS2, and profile MS3 and above; nor the other instruments, controllers
+  >   and builds the evidence lists under
+  >   [What it does not support](../../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md#what-it-does-not-support).
+  >   A profile MS3+ spectrum left in profile would fail closed as
+  >   `CentroidRepresentationMissing`.
+  > - **Known limit:** a spectrum with no MS level (a UV or PDA controller, not
+  >   measured) is not judged under `2-`, and the requested processing is then
+  >   reported unverified rather than verified. Under `1-` the same spectrum
+  >   is judged in scope and fails closed if left in profile (the known limit
+  >   above).
+  > - **Unchanged:** the default conversion stays profile, and nothing
+  >   centroids unless the user picks it; every other vendor scope stays
+  >   advanced and labelled; the blocks above stand.
 - **One-click view RAW.** Selecting a Thermo RAW row to view converts it with
   the verified defaults into an MSCanvas-owned cache, never the user's
   destination and never overwriting, then opens the result. It is to be
@@ -297,7 +396,8 @@ Law:
 ## Consequences
 
 - **No code changes.** The admitted families, conversion and viewing are
-  unchanged.
+  unchanged. *2026-10-30: except decision 2's vendor centroiding, implemented
+  as its note records.*
 - **"Thermo direct preview" changes shape.** The
   [plan](../../development/AFTER_BETA1_PLAN.md#75-evidence-gated-items) gated
   it on "an independent reference that does not pass through the same vendor
@@ -329,3 +429,7 @@ Law:
 > not part of this note. Other Orbitrap models and data-dependent profile MS2
 > remain unmeasured. Whether that row's source domain is the whole Thermo RAW
 > family, as the evidence proposes for both rows, is for that change to settle.
+
+> **2026-10-30, later: the follow-up change is made.** "MS2 and up" is the
+> eleventh verified row, and its source domain is the whole Thermo RAW family,
+> as for "MS1 and up" (decision 2's note "Implemented later on 2026-10-30").
