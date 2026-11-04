@@ -150,6 +150,7 @@ const MESSAGE = {
   targeted_export_format_unknown: "m92ErrorFormatUnknown",
   targeted_table_field_not_representable: "m92ErrorTsvField",
   targeted_table_not_exportable: "m92ErrorTableNotExportable",
+  targeted_table_view_refused: "m92ErrorTableViewRefused",
 } as const;
 
 /** Parameters come from the Rust decision; no translated-string parsing. */

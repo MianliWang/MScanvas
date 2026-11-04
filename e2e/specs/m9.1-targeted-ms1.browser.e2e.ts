@@ -276,6 +276,68 @@ const EVIDENCE = {
   ],
 };
 
+/** A result as large as a plan can be, one outcome in five failed, the rest mixed. */
+const LARGE_TARGETS = Array.from({ length: 200 }, (_, index) => ({
+  targetId: `77777777-9191-4111-8111-000000001${String(index).padStart(3, "0")}`,
+  label: `Target ${String(index + 1).padStart(3, "0")}`,
+  formula: index % 2 === 0 ? "C8H10N4O2" : "C9H9NO4",
+  neutralMass: null,
+  rtS: "120",
+  rtHalfWidthS: "30",
+}));
+const DETECTED_ROW = ROWS.rows[0]!;
+const ABSENT_ROW = ROWS.rows[1]!;
+const LARGE_ROWS = {
+  total: LARGE_TARGETS.length,
+  offset: 0,
+  rows: LARGE_TARGETS.map(({ targetId }, index) => {
+    const kind = index % 5;
+    if (kind === 3) return { ...ABSENT_ROW, targetId };
+    if (kind === 4) {
+      return {
+        ...ABSENT_ROW,
+        targetId,
+        outcome: "FAILED",
+        failureReason: "TARGET_ABSENT_FROM_ENGINE_LIBRARY",
+        ion: null,
+        windows: null,
+        signal: null,
+      };
+    }
+    return {
+      ...DETECTED_ROW,
+      targetId,
+      outcome: kind === 2 ? "SHARED" : "DETECTED",
+      feature: { ...DETECTED_ROW.feature, apexRtS: 60 + index, rawArea: 1000 + ((index * 37) % 200) * 10 },
+    };
+  }),
+};
+const LARGE_PROJECT = (() => {
+  const base = project({ run: "completed" });
+  return {
+    ...base,
+    plans: [{ ...PLAN, targets: LARGE_TARGETS }],
+    artifacts: base.artifacts.map((artifact) => ({
+      ...artifact,
+      targetedMs1: {
+        ...artifact.targetedMs1,
+        result: {
+          ...artifact.targetedMs1.result,
+          summary: {
+            targets: 200,
+            detected: 80,
+            detectedAmbiguous: 0,
+            shared: 40,
+            suppressedByOverlap: 0,
+            notDetected: 40,
+            failed: 40,
+          },
+        },
+      },
+    })),
+  };
+})();
+
 /**
  * A stand-in for the renderer's SVG, and labelled one. The page shows whatever
  * SVG Rust answers as an inert image; this only has to be a well-formed one of
@@ -1284,6 +1346,284 @@ describe("M9.2 a stored targeted MS1 result reused, rendered", () => {
             args: { artifactId: ARTIFACT, format: "spreadsheetCsv" },
           })),
         );
+        const commands = await reuseCommands();
+        for (const command of NEVER_ON_REUSE) expect(commands).not.toContain(command);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+  }
+
+  // S-7.1: a result as large as a plan can be, sorted, filtered and saved by
+  // keyboard. The rows, the file name and the refusals are this table's answers:
+  // no file was written.
+  for (const [width, height] of [[1366, 768], [960, 640]] as const) {
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`sorts, filters and saves the rows shown of 200 at ${String(width)}x${String(height)} in ${locale}`, async () => {
+        const copy = locale === "en" ? en : zh;
+        const counted = (template: string, visible: number) =>
+          template.replace("{{visible, number}}", String(visible)).replace("{{count, number}}", "200");
+        const countLine = (visible: number) => counted(copy.targetedViewCount_other, visible);
+        const saveLabel = (visible: number) => counted(copy.targetedViewSave_other, visible);
+        const view = () =>
+          browser.execute(() => {
+            const save = document.querySelector<HTMLElement>("[data-targeted-view-save-button]");
+            const reason = save?.getAttribute("aria-describedby");
+            const rows = [...document.querySelectorAll<HTMLElement>("[data-targeted-row]")];
+            const panel = document.querySelector("#workbench-project")!.getBoundingClientRect();
+            const clipped = [...document.querySelectorAll<HTMLElement>(
+              "[data-targeted-view] button, [data-targeted-view-save] button, [data-targeted-sort]",
+            )].filter((control) => {
+              if (control.offsetParent === null) return false;
+              const box = control.getBoundingClientRect();
+              return box.left < panel.left - 1 || box.right > panel.right + 1 || control.scrollWidth > control.clientWidth + 1;
+            });
+            return {
+              rows: rows.length,
+              first: rows[0]?.querySelector("th")?.innerText ?? null,
+              lastOutcome: rows.at(-1)?.getAttribute("data-outcome") ?? null,
+              count: document.querySelector<HTMLElement>("[data-targeted-view-count]")?.textContent ?? null,
+              caption: document.querySelector<HTMLElement>(".targeted-rows caption")?.innerText ?? null,
+              save: save === null ? null : { text: save.textContent, refused: save.getAttribute("aria-disabled") },
+              reason: document.getElementById(reason ?? "")?.textContent ?? null,
+              reset: document.querySelector("[data-targeted-view-reset]") !== null,
+              clipped: clipped.map((control) => control.textContent),
+              focus: document.activeElement?.getAttribute("data-targeted-view-outcome")
+                ?? document.activeElement?.getAttribute("data-targeted-sort")
+                ?? document.activeElement?.getAttribute("data-targeted-view-export")
+                ?? (document.activeElement?.hasAttribute("data-targeted-view-text") === true ? "text" : null),
+            };
+          });
+        const shot = async (state: string) => {
+          await browser.execute(() => {
+            document.querySelector("[data-targeted-table-export]")?.scrollIntoView({ block: "start" });
+          });
+          const label = `table-view-${state}-${String(width)}-${locale}`;
+          await capture(label);
+          const seen = await view();
+          evidence.push({ label, view: seen });
+          expect(seen.clipped).toEqual([]);
+          return seen;
+        };
+        const says = (status: string, sentence: string) =>
+          browser.waitUntil(
+            () =>
+              browser.execute(
+                (want: string, text: string) => {
+                  const line = document.querySelector<HTMLElement>("[data-targeted-table-export] [data-targeted-output]");
+                  return line?.getAttribute("data-targeted-output") === want && line.innerText === text;
+                },
+                status,
+                sentence,
+              ),
+            { timeoutMsg: `the output line never said ${status}: ${sentence}` },
+          );
+        const focusOn = (selector: string) =>
+          browser.execute((target: string) => {
+            document.querySelector<HTMLElement>(target)?.focus();
+          }, selector);
+
+        await metrics(width, height);
+        const answers = table(LARGE_PROJECT, locale);
+        answers.read_targeted_ms1_rows = LARGE_ROWS;
+        answers.export_targeted_ms1_table_view = {
+          status: "saved",
+          format: "csv",
+          fileName: "mscanvas-targeted-ms1-eeeeeeee-results-view-10-of-200.csv",
+          rowCount: 10,
+        };
+        await installIpcBoundary(answers);
+        await browser.url("/");
+        await browser.waitUntil(() => browser.execute((lang: string) => document.documentElement.lang === lang, locale));
+        await toProject();
+
+        // Loading: no view is offered before the rows are read.
+        await holdInvoke("read_targeted_ms1_rows");
+        await browser.$(`[data-project-inspect-artifact="${ARTIFACT}"]`).click();
+        await browser.waitUntil(async () => (await heldCallers("read_targeted_ms1_rows")) >= 1);
+        await browser.$("[data-targeted-rows-loading]").waitForDisplayed();
+        expect(await browser.$("[data-targeted-view]").isExisting()).toBe(false);
+        await capture(`table-view-0-loading-${String(width)}-${locale}`);
+        await releaseInvokeHold("read_targeted_ms1_rows");
+        await browser.$("[data-targeted-row]").waitForDisplayed();
+
+        // Idle: every row, in plan order, and nothing to save or reset.
+        const idle = await shot("1-idle");
+        expect([idle.rows, idle.first, idle.save, idle.reset, idle.count]).toEqual([200, "Target 001", null, false, ""]);
+        expect(idle.caption).toBe(copy.targetedRowsCaption);
+
+        // The text box by keyboard, then the outcomes after it in reading order.
+        await focusOn("[data-targeted-view-text]");
+        await browser.keys("Target 01".split(""));
+        await browser.waitUntil(async () => (await view()).rows === 10);
+        const filtered = await shot("2-text-filter");
+        expect(filtered.count).toBe(countLine(10));
+        expect(filtered.save).toEqual({ text: saveLabel(10), refused: null });
+        expect(filtered.focus).toBe("text");
+        await browser.keys("Tab");
+        expect((await view()).focus).toBe("DETECTED");
+        expect(await browser.execute(() => document.activeElement?.textContent)).toContain(`${copy.targetedOutcomeDetected} 4`);
+        await browser.keys("Space");
+        await browser.waitUntil(async () => (await view()).rows === 4);
+        expect(await browser.$('[data-targeted-view-outcome="DETECTED"]').getAttribute("aria-pressed")).toBe("true");
+        const pressed = await shot("3-outcome-filter");
+        expect(pressed.count).toBe(countLine(4));
+        await browser.keys("Space");
+        await browser.waitUntil(async () => (await view()).rows === 10);
+
+        // A head by keyboard: announced, flipped, missing values last each way.
+        const head = await browser.$('th:has([data-targeted-sort="raw_area"])');
+        await focusOn('[data-targeted-sort="raw_area"]');
+        await browser.keys("Enter");
+        await browser.waitUntil(async () => (await head.getAttribute("aria-sort")) === "ascending");
+        const direction = (word: string) =>
+          copy.targetedViewSortAnnouncement
+            .replace("{{column}}", copy.targetedColumnRawArea)
+            .replace("{{direction}}", word);
+        expect((await view()).count).toContain(direction(copy.targetedViewAscending));
+        expect(["NOT_DETECTED", "FAILED"]).toContain((await view()).lastOutcome);
+        await browser.keys("Enter");
+        await browser.waitUntil(async () => (await head.getAttribute("aria-sort")) === "descending");
+        const sorted = await shot("4-sorted");
+        expect(sorted.count).toContain(direction(copy.targetedViewDescending));
+        expect(sorted.caption).toBe(
+          copy.targetedRowsCaptionSorted
+            .replace("{{column}}", copy.targetedColumnRawArea)
+            .replace("{{direction}}", copy.targetedViewDescending),
+        );
+        expect(["NOT_DETECTED", "FAILED"]).toContain(sorted.lastOutcome);
+        expect(sorted.focus).toBe("raw_area");
+
+        // Save by keyboard: the count on the button, the formats under it, the
+        // ids in the order shown. The picker holds the pressed control's focus.
+        await focusOn("[data-targeted-view-save-button]");
+        await browser.keys("Enter");
+        await browser.$("[data-targeted-view-formats]").waitForDisplayed();
+        await browser.keys("Tab");
+        expect((await view()).focus).toBe("csv");
+        await holdInvoke("export_targeted_ms1_table_view");
+        await browser.keys("Enter");
+        await browser.waitUntil(async () => (await heldCallers("export_targeted_ms1_table_view")) >= 1);
+        await says("running", copy.targetedViewChoose);
+        expect((await view()).focus).toBe("csv");
+        await shot("5-saving");
+        await browser.$('[data-targeted-table-export] [data-targeted-export="tsv"]').click();
+        expect(await heldCallers("export_targeted_ms1_table_view")).toBe(1);
+        await releaseInvokeHold("export_targeted_ms1_table_view");
+        await says(
+          "savedTable",
+          counted(copy.targetedViewSaved_other, 10).replace(
+            "{{name}}",
+            "mscanvas-targeted-ms1-eeeeeeee-results-view-10-of-200.csv",
+          ),
+        );
+        await shot("6-saved");
+        const shownIds = await browser.execute(() =>
+          [...document.querySelectorAll("[data-targeted-row]")].map((row) => row.getAttribute("data-targeted-row")),
+        );
+        const saved = (await ipcCalls()).filter((call) => call.command === "export_targeted_ms1_table_view");
+        expect(saved).toEqual([
+          {
+            command: "export_targeted_ms1_table_view",
+            args: {
+              artifactId: ARTIFACT,
+              format: "csv",
+              view: {
+                targetIds: shownIds,
+                outcomes: ["DETECTED", "DETECTED_AMBIGUOUS", "SHARED", "SUPPRESSED_BY_OVERLAP", "NOT_DETECTED", "FAILED"],
+                text: "Target 01",
+                sort: { key: "raw_area", direction: "descending" },
+              },
+            },
+          },
+        ]);
+
+        // Cancelled, and a write Rust refused: each stays, the choice stays offered.
+        await setInvokeResult("export_targeted_ms1_table_view", { status: "cancelled" });
+        await browser.$('[data-targeted-view-export="csv"]').click();
+        await says("cancelled", copy.viewerExportCancelled);
+        await setInvokeRejection("export_targeted_ms1_table_view", {
+          kind: "targeted_table_view_refused",
+          summary: "refused",
+          detail: null,
+          retryable: false,
+        });
+        await browser.$('[data-targeted-view-export="tsv"]').click();
+        await says("failed", copy.m92ErrorTableViewRefused);
+        await shot("7-refused");
+
+        // No rows: a value with Reset beside it, Save refused with its reason.
+        await browser.$("[data-targeted-view-text]").setValue("no such target");
+        await browser.waitUntil(async () => (await view()).rows === 0);
+        const none = await shot("8-no-rows");
+        expect(none.count).toContain(countLine(0));
+        expect(none.reset).toBe(true);
+        expect(none.save).toEqual({ text: saveLabel(0), refused: "true" });
+        expect(none.reason).toBe(copy.targetedViewNoRows);
+        await focusOn("[data-targeted-view-save-button]");
+        await browser.keys("Enter");
+        expect((await ipcCalls()).filter((call) => call.command === "export_targeted_ms1_table_view")).toHaveLength(3);
+
+        // Reset by keyboard: the whole table again, and the keyboard kept near it.
+        await focusOn("[data-targeted-view-reset]");
+        await browser.keys("Enter");
+        await browser.waitUntil(async () => (await view()).rows === 200);
+        const cleared = await shot("9-reset");
+        expect(cleared.focus).toBe("text");
+        expect([cleared.first, cleared.save, cleared.reset, cleared.count]).toEqual(["Target 001", null, false, ""]);
+        expect(cleared.caption).toBe(copy.targetedRowsCaption);
+
+        // The whole table's export is what it was.
+        await setInvokeResult("export_targeted_ms1_table", {
+          status: "saved",
+          format: "csv",
+          fileName: "mscanvas-targeted-ms1-eeeeeeee-results.csv",
+          rowCount: 200,
+        });
+        await browser.$('[data-targeted-table-export] [data-targeted-export="csv"]').click();
+        await browser.waitUntil(async () =>
+          (await ipcCalls()).some((call) => call.command === "export_targeted_ms1_table"),
+        );
+        expect((await ipcCalls()).filter((call) => call.command === "export_targeted_ms1_table")).toEqual([
+          { command: "export_targeted_ms1_table", args: { artifactId: ARTIFACT, format: "csv" } },
+        ]);
+
+        // Both panels beside a sorted view: the narrowest it gets, whole and inside.
+        await browser.$('[data-targeted-sort="outcome"]').click();
+        for (const panel of ["workbench-roster", "workbench-inspector"]) {
+          const toggle = browser.$(`[aria-controls="${panel}"]`);
+          if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+        }
+        await shot("a-panels-open");
+        if (width === 1366) {
+          // A window just wide enough to dock them: the heads wrap, nothing scrolls sideways.
+          await metrics(1060, height);
+          await shot("a-panels-docked-1060");
+        }
+        // In a narrow window Details lies over the report until it is dismissed.
+        await browser.keys("Escape");
+        await browser.waitUntil(() =>
+          browser.execute(() => {
+            const report = document.querySelector("[data-targeted-report]");
+            return report !== null && report.closest("[inert]") === null;
+          }),
+        );
+
+        // A save that finds the result damaged: as every other output, the rows go.
+        await focusOn("[data-targeted-view-save-button]");
+        await browser.keys("Enter");
+        await browser.$("[data-targeted-view-formats]").waitForDisplayed();
+        await setInvokeRejection("export_targeted_ms1_table_view", {
+          kind: "payloadCorrupt",
+          summary: "corrupt",
+          detail: null,
+          retryable: false,
+        });
+        await browser.keys("Tab");
+        await browser.keys("Enter");
+        await browser.$('[data-targeted-unavailable="payloadCorrupt"]').waitForDisplayed();
+        expect(await browser.$("[data-targeted-view]").isExisting()).toBe(false);
+        await capture(`table-view-b-result-corrupt-${String(width)}-${locale}`);
+
         const commands = await reuseCommands();
         for (const command of NEVER_ON_REUSE) expect(commands).not.toContain(command);
         expect(await unexpectedConsole()).toEqual([]);

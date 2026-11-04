@@ -808,6 +808,26 @@ pub enum TargetedTableExportDto {
     },
 }
 
+/// The rows a person is looking at, and what they did to get them (S-7.1).
+/// The ids are in the order shown; `outcomes` names every outcome the view
+/// keeps, so no outcome filter is all of them and never an empty list.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetedTableViewDto {
+    pub target_ids: Vec<String>,
+    pub outcomes: Vec<String>,
+    pub text: String,
+    pub sort: Option<TargetedTableSortDto>,
+}
+
+/// A view's sort: a column of the table, and which way.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TargetedTableSortDto {
+    pub key: String,
+    pub direction: String,
+}
+
 /// Whether this session could start a new targeted run: `available`,
 /// `runtimeUnavailable` or `quarantined`. About new runs only; a stored
 /// result never needs any of it.

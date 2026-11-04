@@ -988,7 +988,17 @@ fn targeted_table_refusal(refusal: project::targeted_output::TableRefusal) -> Pr
             "This result holds a row this table has no columns for, so nothing was written.",
             false,
         ),
+        TableRefusal::ViewNotOfResult => targeted_table_view_refused(),
     }
+}
+
+fn targeted_table_view_refused() -> PreviewErrorDto {
+    PreviewErrorDto::new(
+        "targeted_table_view_refused",
+        "These rows are not the ones this view holds, so nothing was written. Reset the view and \
+         try again.",
+        false,
+    )
 }
 
 fn parsed_target_id(value: &str) -> Result<project::record::TargetId, PreviewErrorDto> {
@@ -1159,33 +1169,80 @@ async fn export_targeted_ms1_table(
     service: State<'_, SharedService>,
     projects: State<'_, SharedProjects>,
 ) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
-    use project::targeted_output::{TableFormat, result_table};
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let artifact = parsed_artifact_id(&artifact_id)?;
-    let table_format =
-        TableFormat::from_wire(&format).ok_or_else(targeted_export_format_unknown)?;
+    save_targeted_table(&app, &projects, artifact, &format, None).await
+}
+
+/// Exports the rows of one view of a stored result, in the order shown (S-7.1).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn export_targeted_ms1_table_view(
+    artifact_id: String,
+    format: String,
+    view: project::dto::TargetedTableViewDto,
+    ipc_request: tauri::ipc::Request<'_>,
+    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
+    service: State<'_, SharedService>,
+    projects: State<'_, SharedProjects>,
+) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
+    verified_document_epoch(&ipc_request, &webview, &service).await?;
+    let artifact = parsed_artifact_id(&artifact_id)?;
+    let view = project::targeted_output::TableView::from_wire(
+        &view.target_ids,
+        &view.outcomes,
+        view.text,
+        view.sort
+            .as_ref()
+            .map(|sort| (sort.key.as_str(), sort.direction.as_str())),
+    )
+    .ok_or_else(targeted_table_view_refused)?;
+    save_targeted_table(&app, &projects, artifact, &format, Some(view)).await
+}
+
+/// One stored result's table through a native dialog, never over a file: every
+/// row, or the rows of a view.
+async fn save_targeted_table(
+    app: &tauri::AppHandle,
+    projects: &SharedProjects,
+    artifact: mscanvas_core::ArtifactId,
+    format: &str,
+    view: Option<project::targeted_output::TableView>,
+) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
+    use project::targeted_output::{TableFormat, result_table, view_table};
+    let table_format = TableFormat::from_wire(format).ok_or_else(targeted_export_format_unknown)?;
     let (facts, variant) = match table_format {
         TableFormat::Csv => (TARGETED_TABLE_CSV, ""),
         TableFormat::Tsv => (TARGETED_TABLE_TSV, ""),
         TableFormat::SpreadsheetCsv => (TARGETED_TABLE_SPREADSHEET_CSV, "-spreadsheet"),
     };
     let lane = projects.begin_output().map_err(project_error)?;
-    let projects = Arc::clone(&projects);
+    let projects = Arc::clone(projects);
     // The whole table before the dialog, so a result that cannot be written
     // refuses without asking where to put it.
-    let (text, row_count) = off_the_async_runtime(move || {
+    let (text, row_count, scope) = off_the_async_runtime(move || {
         let stored = projects
             .stored_targeted_result(artifact)
             .map_err(project_error)?;
-        result_table(&stored, table_format).map_err(targeted_table_refusal)
+        match view {
+            None => result_table(&stored, table_format)
+                .map(|(text, count)| (text, count, String::new())),
+            // A suggested name that cannot pass for the whole table's.
+            Some(view) => view_table(&stored, table_format, &view).map(|(text, count)| {
+                let scope = format!("-view-{count}-of-{}", stored.rows.len());
+                (text, count, scope)
+            }),
+        }
+        .map_err(targeted_table_refusal)
     })
     .await??;
     let suggested = format!(
-        "mscanvas-targeted-ms1-{}-results{variant}.{}",
+        "mscanvas-targeted-ms1-{}-results{scope}{variant}.{}",
         short_id(artifact),
         facts.default_extension
     );
-    let receiver = targeted_destination(&app, facts, suggested)?;
+    let receiver = targeted_destination(app, facts, suggested)?;
     off_the_async_runtime(move || {
         let _lane = lane;
         let Some(destination) = receiver
@@ -3078,6 +3135,7 @@ pub fn run() {
             preview_targeted_ms1_figure,
             export_targeted_ms1_figure,
             export_targeted_ms1_table,
+            export_targeted_ms1_table_view,
             get_targeted_ms1_runtime,
             inspect_backend,
             choose_backend_installation,
