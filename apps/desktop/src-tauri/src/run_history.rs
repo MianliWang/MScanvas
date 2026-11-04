@@ -532,7 +532,7 @@ struct ActiveRun {
     record: RunRecord,
     /// Its latest state has not reached its file. Written by the next
     /// `begin`, `update`, `list` or `read`, so an end a reader held off is
-    /// not lost.
+    /// not lost. While recording is off, its file has yet to go instead.
     unwritten: bool,
     /// Its file has been written. One that is gone since was forgotten -- by
     /// a Clear, an Off or a prune, in any instance -- and is never written
@@ -559,7 +559,8 @@ struct Lane {
     /// run began. Written like `active`'s owed state.
     owed: Vec<ActiveRun>,
     /// Why this session could not record, if it could not. A write still
-    /// owed is `notWritten` until it is made.
+    /// owed is `notWritten` until it is made. While recording is off none is:
+    /// what is owed then is a removal, which Off's own answer said.
     problem: Option<&'static str>,
 }
 
@@ -755,8 +756,9 @@ impl ConversionHistory {
     }
 
     fn settle(&self, directory: &Path, lane: &mut Lane) {
-        lane.problem = lane.owes().then_some("notWritten");
-        if lane.problem.is_none()
+        let owes = lane.owes();
+        lane.problem = (owes && switch_off(directory) != Some(true)).then_some("notWritten");
+        if !owes
             && lane
                 .active
                 .as_ref()
@@ -806,8 +808,11 @@ impl ConversionHistory {
                     None => unreadable += 1,
                 },
                 Err(RecordProblem::Malformed) => {
+                    // One a holder kept under this name too is counted by its link.
+                    if !kept_aside(directory, &name) {
+                        unreadable += 1;
+                    }
                     set_aside(directory, &name);
-                    unreadable += 1;
                 }
             }
         }
@@ -819,7 +824,7 @@ impl ConversionHistory {
             runs.extend(
                 unwritten
                     .filter(|run| !run.written)
-                    .map(|run| RunSummaryDto::of(&run.record)),
+                    .map(|run| RunSummaryDto::of(&as_stored(run.record.clone()))),
             );
         }
         // Names sort oldest first, and an identifier starts with its start.
@@ -852,7 +857,7 @@ impl ConversionHistory {
                     let mut unwritten = lane.active.iter().chain(&lane.owed);
                     unwritten
                         .find(|run| !run.written && run.record.run_id == run_id)
-                        .map(|run| run.record.clone())
+                        .map(|run| as_stored(run.record.clone()))
                 })
             })
             .or_else(|problem| match (problem, self.remembered(run_id)) {
@@ -970,7 +975,8 @@ impl ConversionHistory {
 
     /// The off switch, shared by every instance. Off stops recording and
     /// forgets what is stored, every run in progress included; on starts
-    /// recording again from the next run.
+    /// recording again from the next run. A run Off could not remove goes on
+    /// (ADR 0065 section 7).
     #[must_use]
     pub fn set_enabled(&self, enabled: bool) -> RunHistoryWriteDto {
         let directory = match &self.directory {
@@ -1009,14 +1015,18 @@ impl ConversionHistory {
         self.owner.as_ref().map(|owner| owner.id.as_str())
     }
 
-    /// This session's own copy of a run it is still holding.
+    /// This session's own copy of a run it is still holding, as its file would
+    /// hold it.
     fn remembered(&self, run_id: &str) -> Option<RunRecord> {
-        let lane = self.locked();
-        lane.active
-            .iter()
-            .chain(&lane.owed)
-            .find(|run| run.record.run_id == run_id)
-            .map(|run| run.record.clone())
+        let record = {
+            let lane = self.locked();
+            lane.active
+                .iter()
+                .chain(&lane.owed)
+                .find(|run| run.record.run_id == run_id)
+                .map(|run| run.record.clone())
+        };
+        record.map(as_stored)
     }
 
     /// A stored run as a reader should be told it. Never written.
@@ -1032,22 +1042,8 @@ impl ConversionHistory {
     /// Takes the lane, so never call it holding the lane.
     fn view(&self, directory: &Path, mut record: RunRecord) -> RunRecord {
         let own = Some(record.owner.as_str()) == self.owner_id();
-        if own {
-            let lane = self.locked();
-            if let Some(active) = lane
-                .active
-                .iter()
-                .chain(&lane.owed)
-                .find(|run| run.record.run_id == record.run_id)
-            {
-                let mut current = active.record.clone();
-                // As it is stored: without its items, where they did not fit.
-                if record.omitted.is_some() {
-                    current.omitted = Some(ItemTally::of(&current.items));
-                    current.items.clear();
-                }
-                return current;
-            }
+        if own && let Some(current) = self.remembered(&record.run_id) {
+            return current;
         }
         if record.state == RunState::Running
             && (own || matches!(owner_liveness(directory, &record.owner), Liveness::Dead(_)))
@@ -1188,19 +1184,35 @@ fn write_run(directory: &Path, run: &mut ActiveRun) -> bool {
     true
 }
 
+/// Takes a record's items out, keeping their counts.
+fn omit_items(record: &mut RunRecord) {
+    record.omitted = Some(ItemTally::of(&record.items));
+    record.items.clear();
+}
+
+/// One run's document, its final newline included.
+fn document_of(record: &RunRecord) -> Result<Vec<u8>, &'static str> {
+    let mut bytes = serde_json::to_vec(record).map_err(|_| "notWritten")?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+/// A run in memory as its file would hold it: without its items, where they would
+/// not fit.
+fn as_stored(mut record: RunRecord) -> RunRecord {
+    if document_of(&record).is_ok_and(|bytes| bytes.len() as u64 > MAX_RECORD_BYTES) {
+        omit_items(&mut record);
+    }
+    record
+}
+
 /// Writes one run's document, without its items where they would not fit.
 fn publish(directory: &Path, record: &RunRecord) -> Result<(), &'static str> {
-    let document = |record: &RunRecord| {
-        let mut bytes = serde_json::to_vec(record).map_err(|_| "notWritten")?;
-        bytes.push(b'\n');
-        Ok::<_, &'static str>(bytes)
-    };
-    let mut bytes = document(record)?;
+    let mut bytes = document_of(record)?;
     if bytes.len() as u64 > MAX_RECORD_BYTES {
         let mut reduced = record.clone();
-        reduced.omitted = Some(ItemTally::of(&record.items));
-        reduced.items.clear();
-        bytes = document(&reduced)?;
+        omit_items(&mut reduced);
+        bytes = document_of(&reduced)?;
         if bytes.len() as u64 > MAX_RECORD_BYTES {
             return Err("notWritten");
         }
@@ -1396,8 +1408,24 @@ fn remove(path: &Path) -> io::Result<()> {
 /// exists the bytes are kept whatever happens to the original name. `true`
 /// when the run's own name is gone.
 fn set_aside(directory: &Path, name: &str) -> bool {
+    let original = directory.join(name);
     let aside = directory.join(format!("{SET_ASIDE_PREFIX}{}-{name}", now_ms()));
-    fs::hard_link(directory.join(name), aside).is_ok() && remove(&directory.join(name)).is_ok()
+    (kept_aside(directory, name) || fs::hard_link(&original, aside).is_ok())
+        && remove(&original).is_ok()
+}
+
+/// Whether this very file already has its link: a holder kept its name when the
+/// link was made, so only taking the name off is left. Any other document at that
+/// name gets a link of its own.
+fn kept_aside(directory: &Path, name: &str) -> bool {
+    let Some(identity) = local_document::object_identity(&directory.join(name)) else {
+        return false;
+    };
+    names(directory).unwrap_or_default().iter().any(|other| {
+        is_set_aside(other)
+            && other.ends_with(name)
+            && local_document::object_identity(&directory.join(other)) == Some(identity)
+    })
 }
 
 /// Exactly a name [`set_aside`] gives: the prefix, milliseconds, a dash and a
