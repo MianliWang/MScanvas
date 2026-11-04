@@ -141,7 +141,7 @@ a missing value. A non-finite value refuses the matrix.
 | QC detection rate | QC injections with a value / QC injections |
 | QC RSD | 100 · sd / mean of the observed QC values, raw scale; needs 2 values and a positive mean |
 | Missing fraction | study samples with no value / study samples |
-| PCA | complete, varying features, where varying is sd > n·ε·max\|x\|; a smaller sd is `ZeroVariance`. The bound is the worst-case rounding error of a naively summed mean (cf. Chan, Golub and LeVeque 1983), a conservative heuristic: it also drops a resolvable spread below about n·ε relative, such as [1e15, 1e15, 1e15, 1e15 + 1] (sd 0.5, exact), which QC and Welch treat as varying; mean-centred; scaled by none, auto (sd) or Pareto (√sd); eigen decomposition of the samples × samples Gram matrix; scores = U·√λ; loadings = Xᵀ·u/√λ, of unit length; explained variance = λ/(n − 1); ratio = λ/trace |
+| PCA | complete, varying features, where varying is sd > n·ε·max\|x\|; a smaller sd is `ZeroVariance`. The bound is the worst-case rounding error of a naively summed mean (cf. Chan, Golub and LeVeque 1983), a conservative heuristic: it also drops a resolvable spread below about n·ε relative, such as [1e15, 1e15, 1e15, 1e15 + 1] (sd 0.5, exact). QC treats that example as varying; Welch works on log2 values, where log2(1e15 + 1) rounds to log2(1e15), so for Welch that group is constant (decision 4); mean-centred; scaled by none, auto (sd) or Pareto (√sd); eigen decomposition of the samples × samples Gram matrix; scores = U·√λ; loadings = Xᵀ·u/√λ, of unit length; explained variance = λ/(n − 1); ratio = λ/trace |
 
 A value that cannot be computed for one feature is a typed `Unavailable` reason:
 `TooFewObservations`, `ZeroVariance`, `Missing`, `NonPositiveMean` or `Overflow`.
@@ -180,16 +180,15 @@ The crate forbids `unsafe` code. No input panics it.
   zero and negative ones included. *As built (2026-10-30), not an owner
   decision.* That holds only because the user declares at import how a table
   writes "not detected" (B-6.12, 2026-11-03; `zeroMeansNotDetected` or
-  `zeroIsAValue` in ADR 0067 decision 7, #184, Proposed, at `b3802085`): a zero
+  `zeroIsAValue` in ADR 0067 decision 7, #184, a draft PR, at `e6e8fe61`): a zero
   that means "not detected" is missing by then, and one declared a value stays a
   value.
 - **A non-positive intensity** in either tested group refuses the call, naming
   the feature and the sample (S-2.7 (b)). It has no log2, and flooring it would
   invent a value. One such value hides the whole volcano until the user goes
   back to the import and declares it again. A zero in a feature table may mean
-  "not detected" or may be an export
-  artefact. The user declares which at import, and the import's plan records it
-  (B-6.12, 2026-11-03; built in N-A4).
+  "not detected" or may be a real value. The user declares which at import, and
+  the import's plan records it (B-6.12, 2026-11-03; built in N-A4).
 
 ### 5. Inputs, precision, determinism and bounds
 
@@ -308,21 +307,22 @@ df 2e4, far above a cohort's.
 - values whose squares overflow (1e200) or underflow (1e-170), an overflowing
   trace, a subnormal largest eigenvalue under a normal trace, and a spread
   within rounding, which is `ZeroVariance`;
+- no features with `usize::MAX` samples, which no call allocates for;
 - NIST StRD NumAcc1 (sd exactly 1) and NumAcc4 (mean exact, sd within 1e-8
   relative, the precision of its decimal data as doubles).
 
 ### 8. Which cell states a statistic uses
 
-ADR 0067 decision 7 (#184, still Proposed at 2026-11-04, not on `main`) leaves
-this to this record. As proposed at `b3802085`, its table has six states; B-6.5
-(2026-11-03) makes the engine's discard a seventh, `engineDiscarded`.
+ADR 0067 decision 7 (#184, a draft PR, not on `main`) leaves this to this
+record. At `e6e8fe61` its table has seven states; B-6.5 (2026-11-03) made the
+engine's discard the seventh, `engineDiscarded`.
 
 | State | In a statistic | Basis |
 | --- | --- | --- |
 | `measured`, `imported` | enters | S-2.6 says observed values and no row names the states: a reading, not an owner decision |
 | `reintegrated` | does not enter, for now | CK-3, which asks about tests |
 | `engineImputed` | never | ADR 0067 decision 7, which says a test |
-| `engineDiscarded` | never | B-6.5 makes it a state, a whole fit's failure and not a finding about one feature; that it never enters is a reading, not an owner decision |
+| `engineDiscarded` | never: it has no value | B-6.5 makes it a state, a whole fit's failure and not a finding about one feature; ADR 0067 decision 7 gives it no value |
 | `missing`, `undecided` | have no value | ADR 0067 decision 7 |
 
 CK-3 and ADR 0067 speak of tests. Applying them to PCA and the QC metrics too is
@@ -331,8 +331,9 @@ a reading, not an owner decision.
 Track A tables hold only `imported` and `missing`. The states that do not enter
 (`reintegrated`, `engineImputed`, `engineDiscarded`, `undecided`) are left out
 and counted apart from missing: a reading, not an owner decision. ADR 0067
-decision 7 says only that no statistic counts an `undecided` cell as `missing`.
-Whether `undecided` counts in a QC denominator is [open](#still-open).
+decision 7 says only that no statistic counts an `undecided` or `engineDiscarded`
+cell as `missing`, and leaves what it does with one to this record. Whether
+either counts in a QC denominator is [open](#still-open).
 
 The crate has no cell states: `Matrix` holds a value or `None`, and the caller
 decides what to pass. It cannot yet keep that count apart
@@ -377,8 +378,9 @@ today. Each cost is the decision table's, in the words of #212's section 1d at
     cannot be read from data, only declared by the user; with S-2.6's observed
     values only, imputed values do not help the volcano; the research judged it
     out of the first version.
-  - The decision page's note: the search for a permissive QRILC covers only what
-    was searched, and the licence reading is not a legal opinion.
+  - The decision page's notes (S-4.2, CK-5): the work on kNN, RF and QRILC was
+    not estimated; the search for a permissive QRILC covers only what was
+    searched; and the licence reading is not a legal opinion.
 - **F, value-correcting: diagnostics only (S-4.1).** No correction until a user
   asks. QC median alignment, QC-RLSC/LOESS, QC-RSC and SERRF are not admitted.
   - Cost: drift can be seen but not corrected, so it must be exported to other
@@ -431,6 +433,12 @@ CK-5 are under classes D, E and F above, and S-5 under ANA-002.
 | Not numbered | B-6.12 | The user declares at import how a table writes "not detected" | One more question per import | Not in the crate: the import's (N-A4) |
 | Not numbered | CK-3 `no` | Backfilled cells do not enter tests for now. A-22 measures, then the owner decides. They are still shown and exported, with their state | A feature with many missing values still cannot be tested, and what backfilling does for a test waits for the measurement | Not in the crate: `Matrix` has no cell states. The caller leaves such cells out (decision 8) |
 
+*2026-11-04, a measurement, not an owner decision:* S-2.10's second cost holds
+only while the log2 values still differ. The bound looks at raw values and Welch
+at their log2, where so narrow a spread can round away. Of 66 features PCA called
+zero (six samples, three per group, spreads of 1 to 6 ε at centres from 1.5 to
+1e15), Welch tested 46 and returned `ZeroVariance` for 20.
+
 ### As built, not an owner decision
 
 Dated 2026-10-30. No row above answers these, and they stand until one does:
@@ -453,6 +461,8 @@ Not answered here:
 - S-2.8's 1/5-minimum: the scale it is taken on (raw or log2) and the samples
   the minimum is taken over, for N-A7.
 - S-3.4's source check: the row notes the source's step is not yet checked.
+- S-4.1's note on the page: Dunn 2011 was not opened, QC-RLSC's order and span
+  were not checked, and the record does not compare splines and SERRF.
 - S-5.3's note on the decision page, for N-A9: whether the detection and D-ratio
   thresholds are adjustable; how a feature whose QC RSD is unavailable is
   filtered (v5.11 excludes one with fewer than 2 QC observations); and what the
@@ -465,7 +475,8 @@ Not answered here:
 - Two more notes on the page: how far the near-zero rules differ on a real
   feature table was not measured (S-2.10), and whether MZmine's t test uses
   imputed values was not checked (S-2.6).
-- Whether `undecided` counts in a QC denominator. No Track A table holds one.
+- Whether `undecided` or `engineDiscarded` counts in a QC denominator. No Track A
+  table holds one.
 
 ## Alternatives rejected
 
