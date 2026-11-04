@@ -306,7 +306,7 @@ The parameter sets changed too (`param_keys.py`, second review round). The 17 cl
 that expose default parameters hold 201 keys on 3.5.0. None is removed on 3.6.0, and one default
 changes, `EMGScoring:init_mom` (section 6.2). Boolean values also read as words on 3.5.0 and as
 booleans on 3.6.0, as section 6.1 says for the adapter. Eight keys are new, for the recipe records
-of A-20 and A-21 to pin; the runs of this section had these defaults in effect on 3.6.0:
+of A-20 and A-21 to pin. The 3.6.0 runs of sections 5.2 and 5.3 left them at these defaults:
 
 | Class | New key | Default on 3.6.0 |
 | --- | --- | --- |
@@ -474,9 +474,9 @@ The other six targets keep their outcomes in both seven-target requests: `DETECT
   and its 11 fall inside and the upper edge's 7777 and its 13 fall outside. The extracted baseline
   goes from `24.0` (11 + 13) to `7788.0` (7777 + 11). At all 61 RTs of both traces, in both batch
   sizes, the 3.6.0 point minus the 3.5.0 point is 7,764 within 1e-6 relative, which is that
-  difference. Inside 113 to 127 s that adds 450,312 over 29 points on each of two traces, the
-  narrower bounds take 5,528 from the 3.5.0 sum, and together those are the whole change in
-  `rawArea`. It does not explain the status, which stays `0 (valid)` alone with the same window
+  difference. Inside 113 to 127 s that adds 225,156 over 29 points on each of two traces, 450,312
+  in all. The narrower bounds take 5,528 from the 3.5.0 sum, and together those are the whole
+  change in `rawArea`. It does not explain the status, which stays `0 (valid)` alone with the same window
   and the same `rawArea`. The probes no longer sit on the edges. Whether M9.0's exact-boundary
   check still holds is A-07's, and why the value moved was not investigated.
 - **The cause of the null-mass outcome is not shown.** The evidence points agree by the rule
