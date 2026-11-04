@@ -356,7 +356,7 @@ The scratch copy with these two has SHA-256
 **Outside the adapter, listed and not touched:** `REQUIRED_MODULES`, `ENGINE_VERSION`,
 `ENGINE_REVISION` (`5d5cbff`, where the pin is `c1370fb`) and `RUNTIME_MANIFEST_SHA256`,
 and then what names the pinned runtime, its version or its files. At `origin/main`
-`8f5c5614`, `git grep -c -i -E
+`5f3843f7`, `git grep -c -i -E
 'c1370fb|python313|3\.13\.15|3\.5\.0|qt6core|openms\.dll|openswathalgo|cp313|msvcp140\.dll' --
 apps scripts e2e` gives:
 
@@ -372,7 +372,7 @@ apps scripts e2e` gives:
 | `apps/desktop/src/features/project/TargetedMs1.test.tsx`; line 685 asserts `pyOpenMS 3.5.0` | 1 |
 | `apps/desktop/src/test/projectFixtures.ts` | 6 |
 | `scripts/provision_targeted_ms1_runtime.py`, with `python313._pth` | 9 |
-| `e2e/specs/m9.1-targeted-ms1.browser.e2e.ts`; line 646 asserts `pyOpenMS 3.5.0 · FeatureFinderMetaboIdent · c1370fb` | 7 |
+| `e2e/specs/m9.1-targeted-ms1.browser.e2e.ts`; line 648 asserts `pyOpenMS 3.5.0 · FeatureFinderMetaboIdent · c1370fb` | 7 |
 | `e2e/specs/m9.4-targeted-ms1-batch.browser.e2e.ts` | 6 |
 | `e2e/support/pm9Scenarios.ts` | 5 |
 | `e2e/support/targeted.ts` | 6 |
