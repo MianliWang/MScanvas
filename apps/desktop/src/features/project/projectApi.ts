@@ -363,7 +363,7 @@ export interface TargetedFigure {
 }
 
 export type TargetedFigureFormat = "svg" | "png";
-export type TargetedTableFormat = "csv" | "tsv";
+export type TargetedTableFormat = "csv" | "tsv" | "spreadsheetCsv";
 
 export type TargetedFigureExport =
   | { readonly status: "cancelled" }

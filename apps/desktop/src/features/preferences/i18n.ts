@@ -5,7 +5,7 @@ import { zhCN } from "./locales/zh-CN";
 import type { UiLocale } from "./sessionPreferences";
 
 export const UI_RESOURCES = { en, "zh-CN": zhCN } as const;
-type PluralKey = "restoreOffer" | "restoreAttention" | "restoreExpired" | "restoreWorking" | "restoreLeftovers" | "noticeRestored" | "projectMemberCount" | "projectRunInputs" | "projectArtifactMembers" | "rosterRetainedAnnouncement" | "dragPicked" | "dragCount" | "dropRelease" | "noticeAdded" | "noticeDuplicates" | "noticeUnreadable" | "noticeFull" | "noticeRemoved" | "noticeGone" | "noticeCleared" | "noticeFolderLinked" | "noticeFolderInaccessible" | "noticeDropLinkedRoot" | "noticeDropInaccessibleRoot" | "noticeDropRemoteRoot" | "noticeDropUnsupportedRoot" | "noticeDropLinkedEntry" | "noticeDropInaccessibleEntry";
+type PluralKey = "restoreOffer" | "restoreAttention" | "restoreExpired" | "restoreWorking" | "restoreLeftovers" | "noticeRestored" | "projectMemberCount" | "projectRunInputs" | "projectArtifactMembers" | "rosterRetainedAnnouncement" | "dragPicked" | "dragCount" | "dropRelease" | "noticeAdded" | "noticeDuplicates" | "noticeUnreadable" | "noticeFull" | "noticeRemoved" | "noticeGone" | "noticeCleared" | "noticeFolderLinked" | "noticeFolderInaccessible" | "noticeDropLinkedRoot" | "noticeDropInaccessibleRoot" | "noticeDropRemoteRoot" | "noticeDropUnsupportedRoot" | "noticeDropLinkedEntry" | "noticeDropInaccessibleEntry" | "targetedTableSavedSpreadsheet";
 export type MessageKey = Exclude<keyof typeof en, `${PluralKey}_${string}`> | PluralKey;
 export interface MessageParameters {
   readonly projectMemberCount: { readonly count: number };
@@ -50,6 +50,7 @@ export interface MessageParameters {
   readonly targetedFigureAlt: { readonly name: string; readonly outcome: string; readonly drawn: string };
   readonly m92ErrorDpi: { readonly min: number; readonly max: number };
   readonly targetedTableSaved: { readonly name: string; readonly count: number };
+  readonly targetedTableSavedSpreadsheet: { readonly name: string; readonly count: number };
   readonly targetedSignalSome: { readonly count: number };
   readonly targetedSignalNone: { readonly count: number };
   readonly targetedFailureStage: { readonly stage: string };
@@ -316,7 +317,7 @@ export class ResourceProblem extends Error {
   }
 }
 
-const pluralKeys: readonly PluralKey[] = ["restoreOffer", "restoreAttention", "restoreExpired", "restoreWorking", "restoreLeftovers", "noticeRestored", "projectMemberCount", "projectRunInputs", "projectArtifactMembers", "rosterRetainedAnnouncement", "dragPicked", "dragCount", "dropRelease", "noticeAdded", "noticeDuplicates", "noticeUnreadable", "noticeFull", "noticeRemoved", "noticeGone", "noticeCleared", "noticeFolderLinked", "noticeFolderInaccessible", "noticeDropLinkedRoot", "noticeDropInaccessibleRoot", "noticeDropRemoteRoot", "noticeDropUnsupportedRoot", "noticeDropLinkedEntry", "noticeDropInaccessibleEntry"];
+const pluralKeys: readonly PluralKey[] = ["restoreOffer", "restoreAttention", "restoreExpired", "restoreWorking", "restoreLeftovers", "noticeRestored", "projectMemberCount", "projectRunInputs", "projectArtifactMembers", "rosterRetainedAnnouncement", "dragPicked", "dragCount", "dropRelease", "noticeAdded", "noticeDuplicates", "noticeUnreadable", "noticeFull", "noticeRemoved", "noticeGone", "noticeCleared", "noticeFolderLinked", "noticeFolderInaccessible", "noticeDropLinkedRoot", "noticeDropInaccessibleRoot", "noticeDropRemoteRoot", "noticeDropUnsupportedRoot", "noticeDropLinkedEntry", "noticeDropInaccessibleEntry", "targetedTableSavedSpreadsheet"];
 const simpleKeys = Object.keys(en).filter((key) => !pluralKeys.some(base => key.startsWith(`${base}_`)));
 const parameters = (message: string): string =>
   [...new Set([...message.matchAll(/\{\{\s*(\w+)(?:,\s*number)?\s*\}\}/gu)].map((match) => match[1]))].sort().join(",");
