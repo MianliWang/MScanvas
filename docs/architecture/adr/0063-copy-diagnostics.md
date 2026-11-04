@@ -254,8 +254,8 @@ Two readings of question 7 here are not owner decisions:
   `missing_output`, a view conversion records `output_rejected`.
 
 *As built, 2026-11-04, not an owner decision:* #203's answer to whether **View** can
-be pressed is also a refusal carried in an `Ok` outcome, which the list above does
-not name because it did not exist yet. `get_raw_view_state` is polled, so the answer
+be pressed is also a refusal carried in an `Ok` outcome, which decision 5's list of
+those does not name because it did not exist yet. `get_raw_view_state` is polled, so the answer
 names its code and builds no `PreviewErrorDto`: highlighting a row or watching a view
 run to its end adds no line. An error built and then discarded counts where that is
 a side effect, as in `file_identity`; this is a designed refusal. A **View** press
