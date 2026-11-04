@@ -7,12 +7,15 @@
 ; root must be one Rust would open, with Rust's marker byte for byte, and a tree
 ; with a link or other reparse point anywhere in it is left whole.
 ;
-; RMDir /r is never used here. NSIS 3.11's follows a junction, as the root or
-; inside the tree, and deletes what its target holds (run 2026-11-03).
+; RMDir /r is never used here. In NSIS 3.11 and in 3.13, which Tauri CLI 2.12.4
+; pins, it follows a junction, as the root or inside the tree, and deletes what its
+; target holds (run 2026-11-03).
 ;
 ; It never fails an uninstall and never prompts: what cannot be removed stays.
 ; The marker goes last, and comes back if the root then will not go, so a root
-; that anything keeps is still a root to Rust and to the next uninstall.
+; that this hook keeps is still a root to Rust and to the next uninstall. With the
+; box ticked the template's RMDir /r runs first and takes the marker, so a file it
+; could not remove stays in a root neither of them recognizes (AFTER_BETA1_PLAN 7.2).
 ;
 ; ponytail: the first walk and the second are separate steps and each name is
 ; checked just before it is removed, so a same-user writer racing the check is
@@ -74,6 +77,14 @@ FunctionEnd
 ; a reparse point. Removes as it goes only while Removing is 1. Left becomes 1 at
 ; a reparse point, a name it cannot describe, a folder it cannot list, or anything
 ; that would not go.
+;
+; A plain path does not always mean the name in the listing. Win32 reads a last name
+; without its trailing spaces and dots, and NUL as a device, while a middle name
+; keeps its spaces: a junction named ". " looks like its folder here and is walked
+; through below. So the attributes come through "\\?\", and a name ending so counts
+; as one it cannot describe, which leaves every other path meaning what it says.
+; Only this probe is extended: past MAX_PATH the listing fails, which also keeps
+; every path clear of NSIS's 1023 characters, where a folder lists as its own child.
 Function un.MscanvasViewCacheWalk
   Exch $0
   Push $1
@@ -91,7 +102,13 @@ Function un.MscanvasViewCacheWalk
       ${IfNot} $2 MscanvasSame "."
       ${AndIfNot} $2 MscanvasSame ".."
       ${AndIfNot} $3 MscanvasSame $MscanvasViewCacheMarker
-        System::Call 'kernel32::GetFileAttributesW(w r3) i .r4'
+        StrCpy $4 "\\?\$3"
+        System::Call 'kernel32::GetFileAttributesW(w r4) i .r4'
+        StrCpy $5 $2 1 -1
+        ${If} $5 MscanvasSame "."
+        ${OrIf} $5 MscanvasSame " "
+          StrCpy $4 -1
+        ${EndIf}
         IntOp $5 $4 & ${MSCANVAS_ATTRIBUTE_REPARSE_POINT}
         ${If} $5 <> 0
           StrCpy $MscanvasViewCacheLeft 1

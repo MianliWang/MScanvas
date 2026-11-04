@@ -351,6 +351,17 @@ fn the_uninstall_hook_spells_the_cache_as_this_module_does() {
             "the hook must compare by code unit, not with {comparison}"
         );
     }
+    // Win32 reads a plain path's last name without its trailing spaces and dots, so
+    // a junction named ". " looks like its folder, and the next path goes through it
+    // and empties its target. These are the literal probe and the refused names.
+    for line in [
+        r#"StrCpy $4 "\\?\$3""#,
+        "System::Call 'kernel32::GetFileAttributesW(w r4) i .r4'",
+        r#"${If} $5 MscanvasSame ".""#,
+        r#"${OrIf} $5 MscanvasSame " ""#,
+    ] {
+        assert!(hook.contains(line), "the hook lacks {line}");
+    }
 
     let config: serde_json::Value =
         serde_json::from_str(include_str!("../../tauri.conf.json")).expect("the configuration");
