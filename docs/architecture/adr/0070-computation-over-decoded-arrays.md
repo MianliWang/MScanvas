@@ -49,10 +49,10 @@ of two, and the module comment says "the two computations admitted so far". Each
 line keeps its closing rule. That note's "at head 86f19a56 ... which it calls a
 reading" is superseded: ADR 0068 no longer calls following the list a reading, since
 question 1's answer makes it the minimum; what it still calls a reading is that each
-row of its table answers its item. ADR 0068 is Accepted in the
-[table of records](#records-under-this-decision); "proposed in PR #183" in the
-Related line and "ADR 0068 (Proposed)" under Context speak of 2026-10-30. The map
-library has no caller either.
+row of its table answers its item. ADR 0068 is Accepted, as the dated note under the
+[table of records](#records-under-this-decision) says; "proposed in PR #183" in the
+Related line, "ADR 0068 (Proposed)" under Context and that table's first row speak
+of 2026-10-30. The map library has no caller either.
 
 ## Context
 
@@ -188,10 +188,14 @@ owner's reply and what it leaves open.
 
 | Computation | Record | State |
 | --- | --- | --- |
-| RT × m/z map: the greatest stored intensity per cell of a bounded raster | ADR 0068, PR #183 (`be/map2d`) | Accepted 2026-11-03, as N-14, and MAP-1.1 to MAP-1.9 are answered. It reads one MS1 spectrum at a time through the selected read and keeps the raster, so it fits decision 2 as written |
+| RT × m/z map: the greatest stored intensity per cell of a bounded raster | ADR 0068, PR #183 (`be/map2d`) | Proposed. Its acceptance is N-14, and MAP-1 is open. It reads one MS1 spectrum at a time through the selected read and keeps the raster, so it fits decision 2 as written |
 | XIC: a per-scan sum of stored intensities inside an m/z window | The X0 scope record (N-13) | Not written. X-1 and X-2 decided its scope; this ADR does not restate it |
 | Retention times at 25, 50 and 75% of cumulative base-peak intensity, from the declared base-peak values | A short record, N-B1's last slice (R-1, part 2 (c)) | Not written. Until it is accepted and matched to `msaccess` on a recorded fixture (HR-1), the times stay `msaccess`'s (R-1, part 2 (a)) |
 | Summed spectrum | None | Later (U7) |
+
+*Note, 2026-11-04, a status and not an owner decision:* the first row speaks of
+2026-10-30. ADR 0068 was accepted on 2026-11-03, as N-14, and MAP-1.1 to MAP-1.9
+are answered.
 
 The owner-decisions list says the umbrella decision "is written with N-13
 (X0)". It is written here on its own instead, so that X0 and ADR 0068 both
