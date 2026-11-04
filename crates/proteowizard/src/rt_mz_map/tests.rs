@@ -72,6 +72,16 @@ fn arrays(mz: &[f64], intensity: &[f64]) -> String {
     arrays_with(mz, intensity, (MZ, COUNTS), NO_COMPRESSION)
 }
 
+/// A one-point spectrum's body that states its lowest and highest observed m/z.
+fn observed(low: &str, high: &str) -> String {
+    format!(
+        "{}{}{}",
+        cv("MS:1000528", low, "MS:1000040"),
+        cv("MS:1000527", high, "MS:1000040"),
+        arrays(&[100.0], &[1.0])
+    )
+}
+
 /// One spectrum with the terms every table row requires. An empty
 /// representation states none.
 fn spectrum(
@@ -860,14 +870,6 @@ fn a_bin_narrower_than_four_epsilon_of_its_bound_is_refused() {
 
 #[test]
 fn the_extent_comes_from_the_ms1_rows_alone() {
-    let observed = |low: &str, high: &str| {
-        format!(
-            "{}{}{}",
-            cv("MS:1000528", low, "MS:1000040"),
-            cv("MS:1000527", high, "MS:1000040"),
-            arrays(&[100.0], &[1.0])
-        )
-    };
     let stated = document(&[
         spectrum(0, 1, PROFILE, ("2", MINUTE), 1, &observed("150", "900")),
         spectrum(1, 2, CENTROID, ("0.5", SECOND), 1, &observed("50", "2000")),
@@ -931,4 +933,101 @@ fn the_extent_comes_from_the_ms1_rows_alone() {
     let extents = ms1_extent(&table(&one_map_stated)).expect("has MS1");
     assert_eq!(extents[0].mz(), Some((150.0, 900.0)));
     assert_eq!(extents[1].mz(), None);
+}
+
+#[test]
+fn the_extent_bounds_move_both_ways() {
+    let document = document(&[
+        spectrum(0, 1, PROFILE, ("7", MINUTE), 1, &observed("150", "900")),
+        spectrum(1, 1, PROFILE, ("2", MINUTE), 1, &observed("150", "950")),
+    ]);
+    let extents = ms1_extent(&table(&document)).expect("has MS1");
+    assert_eq!(extents[0].retention_time(), (2.0, 7.0));
+    assert_eq!(extents[0].mz(), Some((150.0, 950.0)));
+}
+
+#[test]
+fn a_stated_mz_range_that_is_empty_or_inverted_has_no_first_view() {
+    for (low, high, stated) in [
+        ("900", "100", (900.0, 100.0)),
+        ("100", "100", (100.0, 100.0)),
+    ] {
+        let document = document(&[spectrum(
+            0,
+            1,
+            PROFILE,
+            ("2", MINUTE),
+            1,
+            &observed(low, high),
+        )]);
+        assert_eq!(
+            ms1_extent(&table(&document)).expect("has MS1")[0].mz(),
+            Some(stated),
+            "reported as stated, not as a range the spectra do not state"
+        );
+        assert_eq!(
+            map(&document, request((0.0, 4.0), 1, stated, 1)),
+            Err(MapError::InvalidBounds)
+        );
+    }
+}
+
+#[test]
+fn a_cell_past_the_mz_axis_is_not_the_next_rows_cell() {
+    let document = document(&[ms1(0, "3", &[100.0], &[1.0])]);
+    let map = map(&document, request((0.0, 4.0), 2, (99.0, 101.0), 1)).expect("maps");
+    assert_eq!(map.cell(1, 0), Some(1.0));
+    assert_eq!(map.cell(0, 1), None, "not the next row's cell");
+}
+
+#[test]
+fn the_result_keeps_the_request_exactly() {
+    let document = document(&[ms1(0, "1", &[100.0], &[1.0])]);
+    let view = request((0.1, 0.7), 3, (99.1, 101.7), 7);
+    assert_eq!(map(&document, view).expect("maps").request(), &view);
+}
+
+#[test]
+fn the_path_entry_refuses_a_directory() {
+    let document = document(&[ms1(0, "1", &[100.0], &[1.0])]);
+    let got = bin_rt_mz_map(
+        &std::env::temp_dir(),
+        &table(&document),
+        request((0.0, 2.0), 1, (99.0, 101.0), 1),
+        &CancellationToken::new(),
+        |_, _| {},
+    );
+    assert_eq!(got.err().map(MapError::stable_id), Some("not_regular_file"));
+}
+
+#[test]
+fn the_stable_ids_decision_5_lists_do_not_change() {
+    let refused = MzmlSpectrumError::Array {
+        role: ArrayRole::Intensity,
+        problem: ArrayProblem::Numpress,
+    };
+    for (error, id) in [
+        (MapError::InvalidBounds, "map_bounds_invalid"),
+        (MapError::InvalidBins, "map_bins_invalid"),
+        (MapError::AllocationRefused, "allocation_refused"),
+        (MapError::NoMs1Spectra, "no_ms1_spectra"),
+        (
+            MapError::MixedRetentionTimeUnits,
+            "mixed_retention_time_units",
+        ),
+        (
+            MapError::MixedArrayUnits(ArrayRole::Mz),
+            "mixed_array_units",
+        ),
+        (MapError::Cancelled, "cancelled"),
+        (
+            MapError::Spectrum {
+                index: 0,
+                error: refused,
+            },
+            "numpress",
+        ),
+    ] {
+        assert_eq!(error.stable_id(), id);
+    }
 }
