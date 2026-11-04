@@ -589,6 +589,7 @@ fn an_oversized_stored_file_is_refused_without_being_parsed() {
 #[test]
 fn the_size_bound_falls_on_the_same_byte_for_either_schema() {
     let root = Root::new("bound");
+    assert_eq!(MAX_RECORD_BYTES, 16 * 1024);
     let bound = usize::try_from(MAX_RECORD_BYTES).expect("the bound fits");
     for record in [
         BETA_ONE_RECORD.as_bytes().to_vec(),
