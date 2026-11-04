@@ -39,9 +39,8 @@ All notable changes will be documented here once versioned releases begin.
   is a day old.** A write that crashed can leave a private file beside the runs,
   holding a whole record with its paths. Either one now removes such a file if it
   has been untouched for over 24 hours at that moment. A file written more recently
-  stays until a later **Clear history…** or **Turn off…**, and nothing counts or
-  shows it. An older one that something is holding open is counted in the answer
-  as a file that could not be removed
+  is left where it is, and nothing counts or shows it. An older one that something
+  is holding open is counted in the answer as a file that could not be removed
   ([ADR 0065](docs/architecture/adr/0065-conversion-run-history.md)).
 - **A saved PNG figure now carries the figure's title and description.** Every
   PNG saved from a spectrum, a chromatogram, the linked figure or a stored

@@ -400,15 +400,19 @@ store now does with such a sibling:
   24 hours: a name in the store's own folder exactly as a write gives it
   (`.mscanvas-run-history-<process>-<attempt>.tmp`), an ordinary file by
   `symlink_metadata`, last written more than 24 hours ago. Nothing is read from it.
+  The owner named `.mscanvas-run-history-*`; requiring the whole of a write's name,
+  so that another name with that prefix stays, is as built on 2026-11-04, not an
+  owner decision.
 - **What stays.** A sibling written in the last 24 hours can still remain, paths
   included, and nothing says so: there is no count, no message and no interface
   change. So do one whose time cannot be read or lies in the future, a directory, a
   junction or a link at such a name, every other name (`.owner-pending-*` included)
   and every other store's siblings.
 - **When.** No start and no list removes one while recording. While Off holds, its
-  sweep runs at each start and list, so one that has aged goes then. Otherwise only
-  the moment of a Clear or an Off judges its age, so one too young at the last of
-  them stays until another comes, and stays for good if none does. The interface
+  sweep runs at each start and list, so one that has aged goes then, which is as
+  built on 2026-11-04 and not an owner decision. Otherwise only the moment of a
+  Clear or an Off judges its age, so one too young at the last of them stays until
+  another comes, and stays for good if none does. The interface
   refuses Clear while there is nothing to clear (section 10), so a sibling with no
   run listed beside it waits for a later run's Clear, or for Off. That includes one
   a holder kept from a Clear: the answer says it remains, and the next read refuses
@@ -416,17 +420,19 @@ store now does with such a sibling:
 - **One that cannot be removed** counts in `notRemoved`, as a file kept aside does.
   The sweep goes on, no run's outcome changes, and one already gone counts as
   removed. The list read after it has no row for a sibling, so only the answer says
-  it remains. As built on 2026-11-04, not an owner decision: answering Done while a
-  file with full paths stays would be untrue.
+  it remains, and that answer does not also say how many runs were kept, as with any
+  file it could not remove. As built on 2026-11-04, not an owner decision: answering
+  Done while a sibling that should have gone stays would be untrue. A younger one
+  stays under Done, as the owner's rule says.
 - **A session suspended for over 24 hours** between creating its sibling and
   publishing it. On Windows its handle shares reading only, so the sibling cannot
   go while the session lives: Clear and Off answer `notRemoved`, and its publish
-  lands when it wakes. A test holds a handle opened the same way and calls the
-  handle-bound rename after the refused removals; the suspension is simulated, and
-  `publish` itself does not run through it. If Off still holds when it wakes, the
-  first corner above applies. Elsewhere, from reading the code and not run: the name
-  goes, the rename fails, `publish` retries through a new sibling, and a write still
-  refused is kept for the next one (`ActiveRun::unwritten`).
+  lands when it wakes. A test holds the handle `create_private_sibling` gives and
+  calls the handle-bound rename after the refused removals; the suspension is
+  simulated, and `publish` itself does not run through it. If Off still holds when
+  it wakes, the first corner above applies. Elsewhere, from reading the code and not
+  run: the name goes, the rename fails, `publish` retries through a new sibling, and
+  a write still refused is kept for the next one (`ActiveRun::unwritten`).
 - **Why this differs from restore workspace:** see Residue under
   [Consequences](#consequences).
 
