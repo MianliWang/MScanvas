@@ -392,7 +392,8 @@ Checked in code and by a scan of a real run's saved documents and stores
   has the same preamble keys and columns as the CSV.*
   *2026-11-04: a saved view (FIG-010) also holds the filter text a person typed,
   and its suggested name adds how many rows of how many, still never a label.
-  As built, not an owner decision.*
+  That it names its filter is the owner's S-7.1 answer; the line's form and the
+  suggested name are as built, not an owner decision.*
 
 ## 10. Dependencies and licences
 
