@@ -391,8 +391,9 @@ under the `e2e` feature it is the same task-owned QA root.
   Owner decision, 2026-11-03 (DEF-2): option (b). Always remove the cache folder on
   uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets and preferences
   stay opt-in behind "Delete the application data".
-  Not an owner decision: no hook is on `main` yet, so until one lands the first sentence
-  of this item still describes an uninstall; see [slice 3 note 9](#slice-3-notes-2026-11-03).
+  As built, 2026-11-03, in `apps/desktop/src-tauri/installer-hooks.nsh`, and what ran
+  and did not: plan section 7.2. The cases where the hook removes nothing are not an
+  owner decision.
 
 **Ownership marker.** The marker, `.mscanvas-view-cache-owner`, holds a
 constant, `mscanvas-view-cache\n`, as the staging marker does: it proves which
