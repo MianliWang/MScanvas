@@ -787,6 +787,11 @@ describe("where the keyboard goes when a restore button leaves", () => {
       await waitFor(() => expect(scrolled).toHaveBeenCalled());
       expect(document.activeElement).toBe(dismiss);
       expect(scrolled.mock.contexts).toContain(dismiss);
+      // A text node changing in place takes height too, with no child or class changed.
+      scrolled.mockClear();
+      const title = actionNotice()!.querySelector("strong")!.firstChild as Text;
+      title.data += " and a longer line";
+      await waitFor(() => expect(scrolled.mock.contexts).toContain(dismiss));
     } finally {
       Element.prototype.scrollIntoView = scrollIntoView;
     }
