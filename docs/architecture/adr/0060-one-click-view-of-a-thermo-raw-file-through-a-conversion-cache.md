@@ -1431,6 +1431,19 @@ unless it carries "Owner decision, 2026-11-03".
      eligible…, and the row stays checked afterwards. Nothing yet converts this file
      alone; N-C3 is that one-item scope.
      Owner decision, 2026-11-03 (P203): accepted, until N-C3, which comes right after.
+   - **N-C3, 2026-11-04: that "until" has ended.** `convertRow` no longer touches the
+     checked set. It holds the page to a third scope, the one file, so the page lists
+     that file, its button reads Convert 1 eligible…, and every check stays as it was,
+     before and after the run. One function, so the vendor rows' Open in Conversion
+     does the same. The scope stays in the webview; Rust revalidates the one handle
+     like any other.
+     As built, not an owner decision: the third button is named for the file, is there
+     only while that scope is current and takes a row of its own under the other two,
+     so that a name is not cut; Checked rows, All workspace rows or the Workbench's
+     Convert… leaves it and forgets the file; a later press replaces the file; a
+     removed row leaves the scope empty with the existing refusal, and the button still
+     names the file. Pressed over a running or finished queue, the page shows that
+     queue first, and the scope is the next conversion's, as it was before.
 7. **Deferred, each with its reason.**
    - **View with…** (`begin_raw_view_with`, `rawViewIntents`) and the **Settings
      row** (`describe_view_cache`, `clear_view_cache`, still awaiting a caller) are
