@@ -663,16 +663,19 @@ writer and Rust's ownership of files.
     directory under a parent that is no reparse point, with the marker byte for
     byte; and, narrower than Rust, with no reparse point anywhere below, every
     folder listable, which a path past `MAX_PATH` is not, no name ending in a
-    space or a dot, which Win32 reads as another name, and a parent not on a UNC
-    path, which its `\\?\` probe cannot read; otherwise nothing. The cases
+    space or a dot, which Win32 reads as another name, and, on a UNC parent,
+    nothing in the root but the marker, since its `\\?\` probe cannot read any
+    other name there; otherwise nothing. The cases
     where it removes nothing are not an owner decision. It never fails the uninstall
     and never prompts. With the box not checked, a locked file stays with the
     marker, and the marker comes back if something holds the root itself, so the
     root is still recognized, and once the lock has gone the next uninstall
-    finishes it. Three kinds of name never go, on this uninstall or a later one, and
-    stay with the marker with nothing said: a file named `NUL`, a file whose name
-    takes its path past `MAX_PATH`, and a folder whose whole name is the lone code
-    unit U+D800 (run against scratch folders with NSIS 3.13, not an owner decision).
+    finishes it. Some names never go, on this uninstall or a later one, and stay with
+    the marker with nothing said, among them `NUL` or `nul` as a file or a folder, a
+    file whose name takes its path past `MAX_PATH`, and a folder whose whole name is
+    combining marks or high surrogates alone, such as U+0301, U+20DD, U+3099, U+FE0F,
+    U+D800, U+DBFF, or two of U+0301 or of U+D800 (run against scratch folders with
+    NSIS 3.13, not an owner decision).
     A hard link is no reparse point: its name goes with the tree, its content stays
     under its other names, and they lose the read-only bit they share (the same run,
     not an owner decision); `view_cache.rs` makes none. A test in
