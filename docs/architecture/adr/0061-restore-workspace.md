@@ -568,13 +568,14 @@ answer is a one-line change.
   they are live. Nothing is lost. `ae14765e` and `main` do the same, so a revert
   does not change this. The order of groups does hold. The owner has not answered
   this.
-- *As built (2026-11-04), not an owner decision:* a row still waiting joins the
-  group at its stored group's place among the groups of its name (decision 4), so
-  a group renamed or dissolved while a duplicate of its name holds waiting rows
-  can shift which group of that name those rows join. Stored `Batch` holding x
-  with m waiting and `Batch` holding y with n waiting: with the first renamed, the
-  save puts m beside y and n in a new group of that name. It needs two groups of
-  one name, marked rows and that edit; nothing is lost.
+- *As built (2026-11-04), not an owner decision:* a row still waiting, in any
+  state, joins the group of its stored name at the same count among the groups of
+  that name, or a new one if there is none (`placeRestored`, `buildArrangement`).
+  A group has no identity beyond that, so renaming a group to or from that name,
+  dissolving, moving or making one can change which group those rows join. Stored
+  `Batch` holding x with m waiting and `Batch` holding y with n waiting: with the
+  second moved up, the save puts m beside y and n beside x; with the first renamed,
+  it puts m beside y and n in a new group of that name. Nothing is lost.
 - The webview must save after every roster answer and organization change; a
   crash between a change and its save restores the previous arrangement. A
   row removed just before a crash can therefore come back as a restored row,
