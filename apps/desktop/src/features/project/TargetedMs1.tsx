@@ -1592,7 +1592,7 @@ const DEFAULT_FIGURE: FigureSettingsDraft = {
   theme: "light",
 };
 
-type Operation = "svg" | "png" | "csv" | "tsv";
+type Operation = "svg" | "png" | TargetedTableFormat;
 
 /** What the figure's text alternative says is drawn, by what the row holds. */
 const DRAWN_KEYS = {
@@ -1620,7 +1620,12 @@ type OutputState =
   | { readonly status: "running"; readonly operation: Operation }
   | { readonly status: "cancelled" }
   | { readonly status: "savedFigure"; readonly fileName: string; readonly figure: ExportedFigure }
-  | { readonly status: "savedTable"; readonly fileName: string; readonly rowCount: number }
+  | {
+      readonly status: "savedTable";
+      readonly format: TargetedTableFormat;
+      readonly fileName: string;
+      readonly rowCount: number;
+    }
   | { readonly status: "failed"; readonly error: PreviewError };
 
 function describeFigure(figure: ExportedFigure, t: UiMessage): string {
@@ -1638,13 +1643,22 @@ function describeOutput(state: OutputState, t: UiMessage, errorText: (error: Pre
     case "idle":
       return "";
     case "running":
-      return t("viewerExportChoose", { name: state.operation.toUpperCase() });
+      // Whole sentences for the spreadsheet CSV (ADR 0054): its name is words,
+      // not a file extension, so the shared "{{name}}" templates would space it.
+      return state.operation === "spreadsheetCsv"
+        ? t("targetedTableSpreadsheetChoose")
+        : t("viewerExportChoose", { name: state.operation.toUpperCase() });
     case "cancelled":
       return t("viewerExportCancelled");
     case "savedFigure":
       return t("viewerExportSaved", { name: state.fileName, details: describeFigure(state.figure, t) });
     case "savedTable":
-      return t("targetedTableSaved", { name: state.fileName, count: state.rowCount });
+      // Rust's word for what it wrote: the picker lets a person type any name
+      // ending in .csv, so the name alone cannot say which document this is.
+      return t(state.format === "spreadsheetCsv" ? "targetedTableSavedSpreadsheet" : "targetedTableSaved", {
+        name: state.fileName,
+        count: state.rowCount,
+      });
     case "failed":
       return errorText(state.error);
   }
@@ -1840,6 +1854,15 @@ export function TargetedMs1Report({
   const validation = validateFigureDraft(draft);
   const figurePrefix = `targeted-${ids}`;
   const running = output.state.status === "running";
+  /**
+   * The line that says what is running, which every refused output points at:
+   * a figure's own while it is on the page, under its own target and open,
+   * else the table's, which is always there and says nothing about a row.
+   */
+  const runningLine =
+    output.region === "figure" && output.target === chosen && shown.status === "ready" && figureExportOpen
+      ? "figure"
+      : "table";
   /** Whether this control started the output that is running. */
   const initiated = (operation: Operation, target: string | null) =>
     output.state.status === "running" && output.state.operation === operation && output.target === target;
@@ -1884,7 +1907,7 @@ export function TargetedMs1Report({
       const answer = await api.exportTargetedMs1Table(artifact.id, format);
       return answer.status === "cancelled"
         ? { status: "cancelled" }
-        : { status: "savedTable", fileName: answer.fileName, rowCount: answer.rowCount };
+        : { status: "savedTable", format: answer.format, fileName: answer.fileName, rowCount: answer.rowCount };
     });
   }
 
@@ -1902,10 +1925,12 @@ export function TargetedMs1Report({
   }
 
   // Each output is said where it was asked for: a figure's only under the
-  // target it was for.
+  // target it was for. One still running is also said on `runningLine`.
   const status = (region: "figure" | "table", target: string | null) => {
     const state =
-      output.region === region && output.target === target ? output.state : ({ status: "idle" } as const);
+      (output.region === region && output.target === target) || (running && runningLine === region)
+        ? output.state
+        : ({ status: "idle" } as const);
     const detail = state.status === "failed" ? ownedErrorDetail(state.error, t) : null;
     return (
       <p className="targeted-output" role="status" data-targeted-output={state.status} id={`${ids}-${region}-output`}>
@@ -2021,7 +2046,7 @@ export function TargetedMs1Report({
           <div className="targeted-table-export" data-targeted-table-export="">
             <span className="targeted-table-export-label">{t("targetedTableExports")}</span>
             <div className="targeted-output-actions">
-              {(["csv", "tsv"] as const).map((format) => (
+              {(["csv", "tsv", "spreadsheetCsv"] as const).map((format) => (
                 <Button
                   key={format}
                   variant="secondary"
@@ -2031,13 +2056,15 @@ export function TargetedMs1Report({
                   // `start` refuses a repeat, keyboard or pointer. Refused, not
                   // native-disabled, and the output line says what is running.
                   refused={running}
-                  reasonId={running ? `${ids}-table-output` : undefined}
+                  reasonId={running ? `${ids}-${runningLine}-output` : undefined}
                   data-targeted-export={format}
                   onClick={() => exportTable(format)}
                 >
-                  {t(initiated(format, null) ? "viewerExporting" : "viewerExportFormat", {
-                    name: format.toUpperCase(),
-                  })}
+                  {format === "spreadsheetCsv"
+                    ? t(initiated(format, null) ? "targetedTableSpreadsheetExporting" : "targetedTableSpreadsheetExport")
+                    : t(initiated(format, null) ? "viewerExporting" : "viewerExportFormat", {
+                        name: format.toUpperCase(),
+                      })}
                 </Button>
               ))}
             </div>
@@ -2197,7 +2224,7 @@ export function TargetedMs1Report({
                               refused={running || problemId !== null}
                               // Refused while another output's picker is out,
                               // pointing at the line that says so.
-                              reasonId={problemId ?? (running ? `${ids}-figure-output` : undefined)}
+                              reasonId={problemId ?? (running ? `${ids}-${runningLine}-output` : undefined)}
                               data-targeted-export={operation}
                               onClick={() => exportFigure(selectedRow.targetId, operation)}
                             >

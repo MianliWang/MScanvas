@@ -30,6 +30,7 @@ import {
   type TargetEvidence,
   type TargetedMs1Plan,
   type TargetedNewRuns,
+  type TargetedTableFormat,
 } from "../features/project/projectApi";
 
 export interface FakeProjectApi extends ProjectApi {
@@ -655,11 +656,14 @@ export function createFakeProjectApi(initial: ProjectState = NO_PROJECT): FakePr
           },
         })),
     ),
-    exportTargetedMs1Table: vi.fn((artifactId: string, format: "csv" | "tsv") =>
+    exportTargetedMs1Table: vi.fn((artifactId: string, format: TargetedTableFormat) =>
       dialog("exportTargetedMs1Table", () => ({
         status: "saved" as const,
         format,
-        fileName: `mscanvas-targeted-ms1-${artifactId.slice(0, 8)}-results.${format}`,
+        // The names Rust suggests (ADR 0054 section 1).
+        fileName: `mscanvas-targeted-ms1-${artifactId.slice(0, 8)}-results${
+          format === "spreadsheetCsv" ? "-spreadsheet.csv" : `.${format}`
+        }`,
         rowCount: targeted.rows.length,
       })),
     ),
