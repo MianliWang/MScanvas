@@ -498,10 +498,11 @@ The worker then stops it with a typed timeout, and the run fails closed.
 ## 7. Recommended per-recipe budgets
 
 **Owner decisions, 2026-11-03.** The owner answered these limits on the
-decision page, version 2026-11-03.2; the ids below are that page's, and the
-labels are its labels in English. None of this is built yet. The rest of this
-section stays as written, as the evidence of what was recommended on 2026-10-30.
-Where the two differ, this note replaces the recommendation.
+decision page, version 2026-11-03.2, and in chat the same day for CK-6 and CK-7.
+The ids below are that page's, and the labels are its labels in English. None of
+this is built yet. The rest of this section stays as written, as the evidence of
+what was recommended on 2026-10-30. Where the two differ, this note replaces the
+recommendation.
 
 - **B-11.4, U1-2.2: "4 GiB, two tiers".** The recommendation stands: a 4 GiB Job
   commit cap, and a typed refusal above 150 M MS1 peaks at noise 1e4 or more and
