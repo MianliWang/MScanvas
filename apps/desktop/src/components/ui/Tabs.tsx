@@ -13,6 +13,8 @@ export type TabsProps<T extends string> = AccessibleName & {
   readonly onChange: (value: T) => void;
   /** The selected tab's content. Only that panel is mounted; keep state that must survive a switch above `Tabs`. */
   readonly children: ReactNode;
+  /** Controls beside the tabs: after them in the Tab order, and before the panel they sit above. */
+  readonly actions?: ReactNode;
   readonly className?: string;
 };
 
@@ -21,7 +23,7 @@ export type TabsProps<T extends string> = AccessibleName & {
  * and Home/End move focus and select. The selected tab is the one Tab stop in
  * the tablist; the panel is the next.
  */
-export function Tabs<T extends string>({ label, labelledBy, value, items, onChange, children, className }: TabsProps<T>) {
+export function Tabs<T extends string>({ label, labelledBy, value, items, onChange, children, actions, className }: TabsProps<T>) {
   const base = useId();
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const selected = Math.max(0, items.findIndex(item => item.value === value));
@@ -50,6 +52,7 @@ export function Tabs<T extends string>({ label, labelledBy, value, items, onChan
         {item.label}
       </button>)}
     </div>
+    {actions}
     <div role="tabpanel" id={panelId} aria-labelledby={`${base}tab${selected}`} tabIndex={0} className="ui-tabpanel">
       <Fragment key={value}>{children}</Fragment>
     </div>

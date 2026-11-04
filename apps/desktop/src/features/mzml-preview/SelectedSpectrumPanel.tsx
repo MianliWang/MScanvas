@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Button, Icon, IconButton, Toolbar } from "../../components/ui";
 import { usePlotRangeEditor } from "./PlotRangeActions";
-import { figureRefusal, QuickFigureActions } from "./QuickFigureActions";
+import { figureRefusal, QuickFigureActions, type ExportWithheld } from "./QuickFigureActions";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { UiMessage } from "../preferences/i18n";
@@ -34,6 +34,8 @@ export interface SelectedSpectrumPanelProps {
   readonly onRetryProjection: () => void;
   readonly exportState: SpectrumExportState;
   readonly scientificExportBusy: boolean;
+  /** Every export refused, with the sentence that says why (a viewed RAW file). */
+  readonly exportWithheld?: ExportWithheld | null;
   readonly onExport: (format: SpectrumExportFormat) => void;
   readonly onCopyPlot: () => void;
   readonly onDismissExport: () => void;
@@ -110,7 +112,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
           <SpectrumZoomControls dispatch={props.dispatchViewport} readState={props.readViewport} state={props.viewport} />
           <span aria-hidden="true" className="plot-tools-divider" />
         </>}
-        <QuickFigureActions busy={props.scientificExportBusy} figureUnavailable={props.figureSettingsValidation.render !== null}
+        <QuickFigureActions busy={props.scientificExportBusy} withheld={props.exportWithheld ?? null} figureUnavailable={props.figureSettingsValidation.render !== null}
           pngUnavailable={props.figureSettingsValidation.dpi !== null} reason={reason}
           leadingItems={spectrum.pointCount === 0 ? [] : [rangeEditor.item]}
           onPreview={props.onOpenFigure} onPng={() => props.onExport("png")} onCopy={props.onCopyPlot}
