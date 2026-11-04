@@ -20,6 +20,7 @@ import type {
   WorkspaceConversionState,
   WorkspaceOutputAdoptionResult,
 } from "./contracts";
+import { rosterActionRefused } from "../../test/rosterActions";
 
 /**
  * Adding a terminal queue's finalized outputs to the workspace, from the
@@ -33,9 +34,6 @@ import type {
  * production structure, the exact user-visible copy, which controls are offered
  * and disabled, selection and focus, and that no read is launched.
  */
-
-const ADOPT_EXPLANATION =
-  "MSCanvas verifies that each output is still the exact finalized file before adding it. Outputs are not previewed automatically.";
 
 function acquisition(index: number): SelectedFile {
   return {
@@ -57,7 +55,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 /** An item that finalized an output of its own. */
@@ -142,21 +140,14 @@ describe("adding converted outputs to the workspace", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     expect(
-      await within(panel).findByText("2 converted mzML outputs are ready to add to this workspace."),
+      await within(panel).findByText("2 mzML outputs ready to add."),
     ).toBeVisible();
     const adopt = within(panel).getByRole("button", {
       name: "Add converted outputs to workspace",
     });
     expect(adopt).not.toHaveAttribute("aria-disabled");
-    expect(adopt).toHaveAccessibleDescription(ADOPT_EXPLANATION);
-    expect(within(panel).getByText(ADOPT_EXPLANATION)).toBeVisible();
-
-    // The honest fallback, said before it is needed rather than after.
-    expect(
-      within(panel).getByText(
-        "Finalized files remain on disk. If this queue is replaced, they can still be added later with Add files….",
-      ),
-    ).toBeVisible();
+    // The action names itself; nothing describes it until it is refused.
+    expect(adopt).not.toHaveAttribute("aria-describedby");
   });
 
   it("says one output in the singular", async () => {
@@ -164,7 +155,7 @@ describe("adding converted outputs to the workspace", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     expect(
-      await within(panel).findByText("1 converted mzML output is ready to add to this workspace."),
+      await within(panel).findByText("1 mzML output ready to add."),
     ).toBeVisible();
     expect(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
@@ -210,10 +201,12 @@ describe("adding converted outputs to the workspace", () => {
     });
     const search = screen.getByRole("searchbox", { name: /search/i });
     fireEvent.change(search, { target: { value: "run" } });
-    const sort = screen.getByRole("combobox", { name: "Execution order" });
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    // The order is the next conversion's, opened under the finished queue.
+    fireEvent.click(within(panel).getByRole("button", { name: "Start another conversion" }));
+    const sort = within(panel).getByRole("combobox", { name: "Execution order" });
     fireEvent.change(sort, { target: { value: "name-asc" } });
 
-    const panel = await screen.findByRole("region", { name: "Convert" });
     fireEvent.click(
       await within(panel).findByRole("button", { name: "Add converted outputs to workspace" }),
     );
@@ -252,9 +245,7 @@ describe("adding converted outputs to the workspace", () => {
     );
 
     expect(
-      await within(panel).findByText(
-        "All finalized outputs from this queue are already in the workspace.",
-      ),
+      await within(panel).findByText("0 added, 1 already in the workspace, 0 not added."),
     ).toBeVisible();
     expect(rows()).toHaveLength(2);
     // Still offered. A duplicate today can be a row the user removes tomorrow,
@@ -306,7 +297,7 @@ describe("adding converted outputs to the workspace", () => {
       await within(panel).findByText("1 added, 0 already in the workspace, 1 not added."),
     ).toBeVisible();
     expect(
-      within(panel).getByText("run-2.mzML was not added: changed since it was converted."),
+      within(panel).getByText("run-2.mzML was not added: it changed since it was converted."),
     ).toBeVisible();
     // No path anywhere. A bare "/" is no longer the test: `m/z` is scientific
     // notation and appears in the settings labels, so what must be absent is a
@@ -337,7 +328,7 @@ describe("adding converted outputs to the workspace", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     // The one finalized output, and only it. A cancelled item produced nothing.
     expect(
-      await within(panel).findByText("1 converted mzML output is ready to add to this workspace."),
+      await within(panel).findByText("1 mzML output ready to add."),
     ).toBeVisible();
     expect(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
@@ -367,7 +358,7 @@ describe("adding converted outputs to the workspace", () => {
     // A quarantined session runs no process, and this one does not need to.
     expect(adopt).not.toHaveAttribute("aria-disabled");
     // Everything that would launch one is still refused.
-    expect(screen.getByRole("button", { name: "Preview focused" })).toBeDisabled();
+    fireEvent.click(within(panel).getByRole("button", { name: "Start another conversion" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     });
@@ -387,11 +378,10 @@ describe("adding converted outputs to the workspace", () => {
     );
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    expect(
-      await within(panel).findByText(
-        "Nothing was converted, so there is nothing to add to the workspace.",
-      ),
-    ).toBeVisible();
+    // Nothing to add, so nothing is offered: each row and the queue's counts
+    // already say why.
+    await waitFor(() => expect(panel.querySelector('[data-item-state="failed"]')).not.toBeNull());
+    expect(panel.querySelector(".conversion-adoption")).toBeNull();
     expect(within(panel).queryByRole("button", { name: /Add converted/ })).toBeNull();
   });
 
@@ -425,7 +415,7 @@ describe("adding converted outputs to the workspace", () => {
 
     const panel = await screen.findByRole("region", { name: "Convert" });
     // Both are offered before either runs.
-    expect(await within(panel).findByRole("button", { name: "Retry 1 failed" })).toBeEnabled();
+    expect(await within(panel).findByRole("button", { name: "Retry 1 failed" })).not.toHaveAttribute("aria-disabled");
     fireEvent.click(
       within(panel).getByRole("button", { name: "Add converted output to workspace" }),
     );
@@ -443,9 +433,9 @@ describe("adding converted outputs to the workspace", () => {
     // And the actions that would fight with it are gone or refused.
     expect(within(panel).queryByRole("button", { name: /^Retry/ })).toBeNull();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Add files…" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Add files…" })).toHaveAttribute("aria-disabled", "true");
     });
-    expect(screen.getByRole("button", { name: "Clear list" })).toBeDisabled();
+    expect(await rosterActionRefused("clearList")).toBe(true);
     // The roster stays readable throughout.
     expect(screen.getByRole("treegrid", { name: "Acquisitions" })).toBeVisible();
     expect(screen.getByRole("searchbox", { name: /search/i })).toBeEnabled();
@@ -515,16 +505,11 @@ describe("adding converted outputs to the workspace", () => {
     expect(
       within(panel).getByText("run-1.mzML was not added: the workspace is full."),
     ).toBeVisible();
-    // Reported and still offered, with copy that says what a second press does.
+    // Reported and still offered.
     const again = within(panel).getByRole("button", {
       name: "Add converted output to workspace",
     });
     expect(again).not.toHaveAttribute("aria-disabled");
-    expect(
-      within(panel).getByText(
-        "You can add them again. Anything already in the workspace is reported rather than added twice.",
-      ),
-    ).toBeVisible();
     fireEvent.click(again);
     await waitFor(() => {
       expect(api.adoptionRequests).toEqual(["1", "1"]);

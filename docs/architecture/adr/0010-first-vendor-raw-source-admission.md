@@ -169,6 +169,14 @@ decline to make, because a vendor family is read by a vendor library whose
 behaviour and availability differ between releases. **Widening support is adding
 a measured row, not relaxing a check.**
 
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** A
+measured row now defines the *verified* tier, not the gate. Thermo RAW converts
+on any build that reports its release; without a measured row the plan, each
+item result and the diagnostics carry an "unverified build" label naming that
+release. A build that cannot report its release still converts nothing. The
+measured build is unchanged. `provider_build_admission` is the gate;
+`provider_build_is_evidenced` remains the measured-row predicate it reads first.
+
 The mzML posture requires no build evidence. Its reader is ProteoWizard's own
 open-format code and this crate's scanner, and the repository has open-format
 evidence across builds.

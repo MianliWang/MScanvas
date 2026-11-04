@@ -7,6 +7,7 @@ import { PreviewApiProvider } from "./api";
 import type { ConversionPlanOutcome, ConversionPlanRequest, SelectedFile, WorkspaceConversionState } from "./contracts";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
+import { chooseRosterAction } from "../../test/rosterActions";
 
 const vendor = (n: number): SelectedFile => ({ handle: `raw-${n}`, fileName: `sample-${n}.raw`, sourceKind: "thermo_raw", byteLength: n, relativeContext: null });
 const open: SelectedFile = { ...vendor(0), handle: "open", fileName: "open.mzML", sourceKind: "mzml" };
@@ -27,7 +28,7 @@ function wrapper(api: ReturnType<typeof createFakePreviewApi>) {
 async function mount(count = 3, conversionPlan = async (request: ConversionPlanRequest) => plan(request)) {
   const api = createFakePreviewApi({ initialDatasets: [...Array.from({ length: count }, (_, index) => vendor(index + 1)), open], availability: availableBackend, conversionPlan });
   render(<App />, { wrapper: wrapper(api) });
-  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
   await waitFor(() => expect(document.querySelector('[data-handle="open"]')).not.toBeNull());
   return api;
 }
@@ -40,11 +41,11 @@ function select(handle: string, additive = false) {
 }
 
 function scopeAll() { fireEvent.click(screen.getByRole("radio", { name: "All workspace rows" })); }
-function button() { return document.querySelector<HTMLButtonElement>(".conversion-plan .primary-button")!; }
+function button() { return document.querySelector<HTMLButtonElement>(".conversion-start")!; }
 async function ready() { await waitFor(() => expect(button()).not.toHaveAttribute("aria-disabled")); }
 
 async function organizeRow(handle: string) {
-  fireEvent.click(screen.getByRole("button", { name: "New group" }));
+  await chooseRosterAction("newGroup");
   fireEvent.change(screen.getByRole("textbox", { name: "Group name" }), { target: { value: "Local browsing" } });
   fireEvent.click(screen.getByRole("button", { name: "Save group" }));
   const row = document.querySelector(`[data-handle="${handle}"]`) as HTMLElement;
@@ -64,16 +65,16 @@ describe("M6.7 through the production conversion surface", () => {
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "open" } });
     fireEvent.click(screen.getByRole("button", { name: "Undo organization" }));
     fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings…" }));
     fireEvent.click(screen.getByRole("radio", { name: "Compact" }));
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     expect(button()).not.toHaveAttribute("aria-disabled");
     expect(api.planRequests()).toEqual(before);
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-3"]);
     expect(reads).not.toHaveBeenCalled(); expect(opens).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "name-desc" } });
+    fireEvent.change(within(document.querySelector<HTMLElement>(".conversion-panel")!).getByRole("combobox", { name: "Execution order" }), { target: { value: "name-desc" } });
     await ready();
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-3", "raw-1"]);
   });
@@ -100,11 +101,13 @@ describe("M6.7 through the production conversion surface", () => {
   for (const count of [1, 5, 6]) it(`reads a Rust-authored capacity of 5 for ${count} eligible plus an excluded row`, async () => {
     const api = await mount(count, async (request) => plan(request, 5));
     scopeAll();
-    await waitFor(() => expect(screen.getByTestId("conversion-capacity")).toHaveTextContent("5"));
-    if (count <= 5) { await ready(); expect(button()).not.toHaveAttribute("aria-disabled"); }
-    else {
+    // The capacity is said only when it refuses; within it, there is nothing to say.
+    if (count <= 5) {
+      await ready(); expect(button()).not.toHaveAttribute("aria-disabled");
+      expect(screen.queryByTestId("conversion-capacity")).toBeNull();
+    } else {
+      await waitFor(() => expect(screen.getByTestId("conversion-capacity")).toHaveTextContent("6 eligible acquisitions exceed the queue capacity of 5"));
       expect(button()).toHaveAttribute("aria-disabled", "true");
-      expect(screen.getByTestId("conversion-capacity")).toHaveTextContent("6 eligible acquisitions exceed the queue capacity of 5");
       fireEvent.click(button());
       expect(api.beginRequests()).toEqual([]);
       expect(api.conversionRequests).toEqual([]);
@@ -161,7 +164,7 @@ describe("M6.7 through the production conversion surface", () => {
     const api = createFakePreviewApi({ initialDatasets: [vendor(1), vendor(2), open], availability: availableBackend,
       conversion: () => drain.promise });
     render(<App />, { wrapper: wrapper(api) });
-  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     await waitFor(() => expect(document.querySelector('[data-handle="raw-1"]')).not.toBeNull());
     select("raw-2"); await ready();
     const start = button();
@@ -170,16 +173,20 @@ describe("M6.7 through the production conversion surface", () => {
     expect(api.beginRequests()[0]?.handles).toEqual(["raw-2"]);
     await organizeRow("raw-2");
     fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Settings…" }));
     fireEvent.click(screen.getByRole("radio", { name: "Compact" }));
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nothing" } });
-    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "size-desc" } });
+    // The order belongs to the next plan's summary, which is not offered while
+    // the bound queue runs, so no order control can reach that queue.
+    expect(screen.queryByRole("combobox", { name: "Execution order" })).toBeNull();
     const queue = queueOf([queueItem("raw-2", "sample-2.raw")]);
     await act(async () => drain.resolve({ status: "terminal", reason: "completed", operationId: "1", queue }));
-    expect(screen.getByTestId("conversion-bound-membership")).toHaveTextContent("Later workspace rows are outside this queue and its retry");
+    // Reordering the next conversion, once opened, leaves the finished queue as it was.
+    fireEvent.click(await screen.findByRole("button", { name: "Start another conversion" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Execution order" }), { target: { value: "size-desc" } });
     expect(api.beginRequests()).toHaveLength(1);
     expect(document.querySelectorAll(".conversion-running .conversion-queue-name")).toHaveLength(1);
   });
@@ -192,8 +199,9 @@ describe("M6.7 through the production conversion surface", () => {
       initialConversion: { status: "terminal", reason: "completed", operationId: "1", queue: bound } });
     const retryCall = vi.spyOn(api, "retryConversions");
     render(<App />, { wrapper: wrapper(api) });
-  fireEvent.click(screen.getByRole("button", { name: /^Conversion & results/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
     await waitFor(() => expect(document.querySelector('[data-handle="raw-3"]')).not.toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: "Start another conversion" }));
     scopeAll(); await ready();
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-2", "raw-3"]);
     const names = () => [...document.querySelectorAll(".conversion-running .conversion-queue-name")].map((node) => node.textContent);
@@ -201,7 +209,7 @@ describe("M6.7 through the production conversion surface", () => {
     await organizeRow("raw-1");
     fireEvent.click(screen.getByRole("button", { name: "Undo organization" }));
     const retry = screen.getByRole("button", { name: "Retry 2 failed" });
-    await waitFor(() => expect(retry).toBeEnabled());
+    await waitFor(() => expect(retry).not.toHaveAttribute("aria-disabled"));
     fireEvent.click(retry);
     // Retry names the existing Rust slot; it carries no new scope or handles.
     await waitFor(() => expect(retryCall).toHaveBeenCalledExactlyOnceWith());

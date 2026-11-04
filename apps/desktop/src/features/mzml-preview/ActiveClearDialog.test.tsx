@@ -7,6 +7,9 @@ import { ActiveClearDialog } from "./ActiveClearDialog";
 import { PreviewApiProvider } from "./api";
 import type { WorkspaceClearOutcome } from "./contracts";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
+import { UI_RESOURCES } from "../preferences/i18n";
+
+const en = UI_RESOURCES.en;
 
 const PLAN = { planId: "clear-17", totalCount: 3, protectedCount: 2, removableCount: 1, active: true } as const;
 
@@ -33,7 +36,9 @@ describe("active clear confirmation", () => {
     expect(close).not.toHaveBeenCalled();
     await act(async () => result.resolve({ status: "refused", reason: "stalePlan" }));
     expect(screen.getByRole("button", { name: "Check current rows" })).toHaveFocus();
-    expect(initiator).toBeDisabled();
+    // Refused with the refusal as its reason, and still focusable.
+    expect(initiator).toHaveAttribute("aria-disabled", "true");
+    expect(initiator).toHaveAccessibleDescription(en.clearStale);
   });
 
   it.each(["unchanged", "removed", "blurred", "returned"])("preserves the %s ownership claim across delayed modal cleanup", async destination => {
@@ -100,10 +105,10 @@ describe("active clear confirmation", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(close).not.toHaveBeenCalled();
     await act(async () => { result.resolve({ status: "refused", reason: "stalePlan" }); });
-    expect(screen.getByText(/rows or conversion changed/)).toBeVisible();
-    expect(remove).toBeDisabled();
+    expect(screen.getByText(en.clearStale)).toBeVisible();
+    expect(remove).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(screen.getByRole("button", { name: "Check current rows" }));
-    await waitFor(() => expect(remove).toBeEnabled());
+    await waitFor(() => expect(remove).not.toHaveAttribute("aria-disabled"));
   });
 
   it("Return and Escape spend no mutation and restore the initiating control", async () => {
@@ -131,10 +136,14 @@ describe("active clear confirmation", () => {
     const execute = vi.fn();
     const api = createFakePreviewApi({ planWorkspaceClear: () => Promise.resolve({ Ok: { ...PLAN, removableCount: 0, protectedCount: 3 } }) });
     render(<PreviewApiProvider value={api}><ActiveClearDialog onEmptyRosterClosed={vi.fn()} returnTo={null} onClose={vi.fn()} onExecute={execute} /></PreviewApiProvider>);
-    await screen.findByText(/Every captured row belongs/);
+    // The counts already say nothing is removable; no second sentence repeats it.
+    await screen.findByText(/0 of 3 rows/);
+    expect(screen.queryByText(en.clearNothing)).toBeNull();
     const remove = screen.getByRole("button", { name: "Remove non-running" });
-    expect(remove).toBeDisabled(); fireEvent.click(remove);
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    expect(remove).toHaveAccessibleDescription(/0 of 3 rows/);
+    fireEvent.click(remove);
     expect(execute).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Cancel and clear" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cancel and clear" })).not.toHaveAttribute("aria-disabled");
   });
 });

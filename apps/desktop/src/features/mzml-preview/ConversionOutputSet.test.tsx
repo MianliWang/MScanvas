@@ -53,7 +53,7 @@ function renderApp(api: FakePreviewApi): void {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 /** Names the visible copy of a sentence rather than its polite mirror. */
@@ -86,11 +86,8 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     fireEvent.click(within(await screen.findByRole("row", { name: /Enolase_repeats\.wiff/ })).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(/One SCIEX WIFF acquisition will be converted to mzML\./),
-      ).toBeVisible();
-    });
+    // The reviewed plan: its one row (C11 keeps no sentence that counts it).
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(1));
 
     // The output column says what will be produced and why it cannot say more.
     // The blank cell this replaces is the defect the whole wire contract exists
@@ -120,13 +117,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     fireEvent.click(within(rows[1]).getByRole("checkbox"));
 
     const panel = await screen.findByRole("region", { name: "Convert" });
-    await waitFor(() => {
-      expect(
-        within(panel).getByText(
-          /2 supported vendor acquisitions will be converted to mzML, one after another, in the order below\. 1 Thermo RAW · 1 SCIEX WIFF\./,
-        ),
-      ).toBeVisible();
-    });
+    await waitFor(() => expect(panel.querySelectorAll(".conversion-plan-list > li")).toHaveLength(2));
 
     // Each row keeps its own family and its own cardinality, in plan order. A
     // one-to-many row is visually distinct from a one-to-one one because it
@@ -203,7 +194,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     // And the limits, still stated.
     expect(
       screen.getAllByText(
-        /Output-only validation\. This does not compare the converted data/,
+        /Output-only validation: not compared with the vendor source\./,
         VISIBLE,
       ).length,
     ).toBeGreaterThan(0);
@@ -226,7 +217,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
 
     // The offer is a count of files, not of items.
     expect(
-      screen.getByText("10 converted mzML outputs are ready to add to this workspace.", VISIBLE),
+      screen.getByText("10 mzML outputs ready to add.", VISIBLE),
     ).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Add converted outputs to workspace" }),
@@ -334,25 +325,21 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     ).toBeVisible();
     // The policy, in the user's terms, and not presented as an ordinary success.
     expect(
-      within(result).getAllByText(/the complete output set was not produced/i).length,
+      within(result).getAllByText(/not this acquisition's complete output set/i).length,
     ).toBeGreaterThan(0);
     expect(within(result).getAllByText(/remain in the destination folder/i).length).toBeGreaterThan(
       0,
     );
     expect(
-      within(result).getAllByText(/added individually later with Add files/i).length,
+      within(result).getAllByText(/add them individually with Add files/i).length,
     ).toBeGreaterThan(0);
     // Not labelled Converted, and not offered a retry.
     expect(within(result).queryByText("Converted")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Retry/ })).toBeNull();
 
-    // The sentence this must never produce, and the one it must.
-    expect(document.body.textContent).not.toContain(
-      "Nothing was converted, so there is nothing to add to the workspace.",
-    );
-    expect(
-      screen.getByText("No complete output set is available to add to this workspace.", VISIBLE),
-    ).toBeVisible();
+    // No offer to add a set that is not complete.
+    expect(document.querySelector(".conversion-adoption")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Add converted/ })).toBeNull();
     // The warning is carried by a note, not by colour alone.
     expect(result.querySelector(".conversion-queue-set-partial")?.getAttribute("role")).toBe(
       "note",
@@ -420,7 +407,7 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     // that is complete, and it is exactly one file.
     await waitFor(() => {
       expect(
-        screen.getByText("1 converted mzML output is ready to add to this workspace.", VISIBLE),
+        screen.getByText("1 mzML output ready to add.", VISIBLE),
       ).toBeVisible();
     });
     expect(screen.getByRole("button", { name: "Add converted output to workspace" })).not.toHaveAttribute("aria-disabled");
@@ -517,10 +504,10 @@ describe("the SCIEX WIFF family in the visible workflow", () => {
     });
 
     expect(result.querySelector(".conversion-queue-status")?.textContent).toBe(
-      "Skipped — files of all its output names were already there",
+      "Skipped — all output files already exist",
     );
     expect(document.body.textContent ?? "").not.toContain(
-      "Skipped — a file of that name was already there",
+      "Skipped — file already exists",
     );
   });
 

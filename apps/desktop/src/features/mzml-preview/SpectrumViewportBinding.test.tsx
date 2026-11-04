@@ -54,7 +54,7 @@ function drawing(low: number, high: number, points: number): SpectrumProjection 
     mz.push(low + ((high - low) * index) / Math.max(1, points - 1));
     intensity.push(100 + index);
   }
-  return { low, high, mz, intensity, sourcePoints: points, reduced: false };
+  return { low, high, mz, intensity, sourcePoints: points, reduced: false, outsideLow: null, outsideHigh: null };
 }
 
 /**

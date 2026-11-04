@@ -1284,7 +1284,12 @@ fn malformed_documents_are_refused_with_typed_errors() {
 
 #[test]
 fn no_truncation_or_byte_flip_panics() {
-    let document = base();
+    // Every metadata section, a polarity and a charge, so the facts and the
+    // metadata are probed with the rest.
+    let document = described(&[
+        ms1_stating(&term(POSITIVE)),
+        ms2_first_ion_stating(&charge("2")),
+    ]);
     let bytes = document.as_bytes();
     for end in 0..bytes.len() {
         let _ = read_spectrum_table_from(Cursor::new(&bytes[..end]), MzmlScanLimits::default());
@@ -1292,7 +1297,7 @@ fn no_truncation_or_byte_flip_panics() {
 
     // Every byte of a one-spectrum document, read both as a new open and as a
     // selected read against the table of the unchanged file.
-    let document = self::document(&[ms1_default(0)]);
+    let document = described(&[ms1_stating(&term(POSITIVE))]);
     let table = table(&document).expect("opens");
     let mut mutated = document.into_bytes();
     for position in 0..mutated.len() {
@@ -1457,4 +1462,706 @@ fn a_unit_with_32_characters_on_each_side_is_an_accession() {
     let spectrum =
         SelectedSpectrumResult::from_native(selected(&document(&[spectrum]), 0).expect("decodes"));
     assert_eq!(spectrum.mz_unit(), &ValueUnitState::Declared(unit));
+}
+
+// ---------------------------------------------------------------------------
+// Polarity, charge, run summary and metadata: read without refusing
+// ---------------------------------------------------------------------------
+
+const POSITIVE: (&str, &str) = ("MS:1000130", "positive scan");
+const NEGATIVE: (&str, &str) = ("MS:1000129", "negative scan");
+
+/// `ms1_default(0)` with `extra` among its own terms.
+fn ms1_stating(extra: &str) -> String {
+    ms1_default(0).replacen("<scanList", &format!("{extra}<scanList"), 1)
+}
+
+/// The first selected ion's m/z term in `ms2`, after which a test adds terms.
+fn first_ion() -> String {
+    cvu("MS:1000744", "selected ion m/z", "445.3", "MS:1000040")
+}
+
+fn charge(value: &str) -> String {
+    cv("MS:1000041", "charge state", value)
+}
+
+/// `ms2(1)` with `extra` on its first precursor's first selected ion.
+fn ms2_first_ion_stating(extra: &str) -> String {
+    ms2(1).replacen(&first_ion(), &format!("{}{extra}", first_ion()), 1)
+}
+
+fn rows(document: &str) -> Vec<MzmlSpectrumRow> {
+    table(document).expect("opens").rows().to_vec()
+}
+
+#[test]
+fn polarity_is_the_spectrum_s_own_or_its_group_s() {
+    let [first, second] = &rows(&base())[..] else {
+        panic!("two rows");
+    };
+    assert_eq!(first.polarity(), MzmlDeclared::NotDeclared);
+    assert_eq!(second.polarity(), MzmlDeclared::NotDeclared);
+
+    let positive = document(&[ms1_stating(&term(POSITIVE))]);
+    assert_eq!(
+        rows(&positive)[0].polarity(),
+        MzmlDeclared::Value(MzmlPolarity::Positive)
+    );
+    // A selected read states what the table states.
+    assert_eq!(
+        selected(&positive, 0).expect("decodes").row(),
+        &rows(&positive)[0]
+    );
+
+    // Through the group only.
+    let negative_group = groups().replace(
+        "</referenceableParamGroup>",
+        &format!("{}</referenceableParamGroup>", term(NEGATIVE)),
+    );
+    let document_with_group = document_with(&negative_group, &[ms1_default(0), ms2(1)]);
+    assert_eq!(
+        rows(&document_with_group)[1].polarity(),
+        MzmlDeclared::Value(MzmlPolarity::Negative)
+    );
+
+    // Restated, even with a different value, is one statement.
+    let restated = document(&[ms1_stating(&format!(
+        "{}{}",
+        term(POSITIVE),
+        cv(POSITIVE.0, POSITIVE.1, "+")
+    ))]);
+    assert_eq!(
+        rows(&restated)[0].polarity(),
+        MzmlDeclared::Value(MzmlPolarity::Positive)
+    );
+
+    // Inside the scan is not the spectrum's.
+    let in_scan = document(&[ms1_default(0).replacen(
+        "<scanWindowList",
+        &format!("{}<scanWindowList", term(POSITIVE)),
+        1,
+    )]);
+    assert_eq!(rows(&in_scan)[0].polarity(), MzmlDeclared::NotDeclared);
+}
+
+#[test]
+fn conflicting_polarity_is_not_reported_and_the_open_stands() {
+    let both = document(&[ms1_stating(&format!(
+        "{}{}",
+        term(POSITIVE),
+        term(NEGATIVE)
+    ))]);
+    let table = table(&both).expect("opens");
+    assert_eq!(table.rows()[0].polarity(), MzmlDeclared::Conflicting);
+    assert_eq!(table.rows()[0].ms_level(), 1);
+    selected(&both, 0).expect("the spectrum still decodes");
+
+    // The spectrum's own term against its group's.
+    let group = groups().replace(
+        "</referenceableParamGroup>",
+        &format!("{}</referenceableParamGroup>", term(NEGATIVE)),
+    );
+    let against_group = document_with(
+        &group,
+        &[
+            ms1_default(0),
+            ms2(1).replacen("<scanList", &format!("{}<scanList", term(POSITIVE)), 1),
+        ],
+    );
+    let rows = rows(&against_group);
+    assert_eq!(rows[1].polarity(), MzmlDeclared::Conflicting);
+    assert_eq!(rows[0].polarity(), MzmlDeclared::NotDeclared);
+}
+
+#[test]
+fn charge_is_the_first_selected_ion_s_as_declared() {
+    let ms2_charge = |document: &str| {
+        rows(document)[1]
+            .first_precursor()
+            .expect("a precursor")
+            .charge()
+    };
+    assert_eq!(ms2_charge(&base()), MzmlDeclared::NotDeclared);
+
+    let declared = document(&[ms1_default(0), ms2_first_ion_stating(&charge("2"))]);
+    assert_eq!(ms2_charge(&declared), MzmlDeclared::Value(2));
+    // Restated with the same value is one statement.
+    let restated = document(&[
+        ms1_default(0),
+        ms2_first_ion_stating(&format!("{}{}", charge("2"), charge(" 2 "))),
+    ]);
+    assert_eq!(ms2_charge(&restated), MzmlDeclared::Value(2));
+
+    // The second selected ion's and the spectrum's own are not the precursor's.
+    let second_ion = cvu("MS:1000744", "selected ion m/z", "999.9", "MS:1000040");
+    let elsewhere = document(&[
+        ms1_default(0),
+        ms2(1)
+            .replacen(&second_ion, &format!("{second_ion}{}", charge("3")), 1)
+            .replacen("<scanList", &format!("{}<scanList", charge("4")), 1),
+    ]);
+    assert_eq!(ms2_charge(&elsewhere), MzmlDeclared::NotDeclared);
+
+    // Each precursor keeps its own; the row keeps the first precursor's.
+    let later_ion = cvu("MS:1000744", "selected ion m/z", "512.25", "MS:1000040");
+    let second_precursor = document(&[
+        ms1_default(0),
+        ms2_first_ion_stating(&charge("2")).replacen(
+            &later_ion,
+            &format!("{later_ion}{}", charge("4")),
+            1,
+        ),
+    ]);
+    let spectrum = selected(&second_precursor, 1).expect("decodes");
+    let charges: Vec<_> = spectrum
+        .precursors()
+        .iter()
+        .map(|precursor| precursor.charge())
+        .collect();
+    assert_eq!(charges, [MzmlDeclared::Value(2), MzmlDeclared::Value(4)]);
+    assert_eq!(spectrum.row(), &rows(&second_precursor)[1]);
+}
+
+#[test]
+fn a_charge_stated_two_ways_or_unreadably_is_not_reported_and_the_open_stands() {
+    let cases = [
+        (
+            format!("{}{}", charge("2"), charge("3")),
+            MzmlDeclared::Conflicting,
+        ),
+        (charge("2.5"), MzmlDeclared::Unreadable),
+        (charge(""), MzmlDeclared::Unreadable),
+        (charge("two"), MzmlDeclared::Unreadable),
+        (
+            format!("{}{}", charge("2"), charge("x")),
+            MzmlDeclared::Unreadable,
+        ),
+        // The reason does not depend on the order of the statements.
+        (
+            format!("{}{}{}", charge("2"), charge("3"), charge("x")),
+            MzmlDeclared::Unreadable,
+        ),
+        (
+            format!("{}{}{}", charge("2"), charge("x"), charge("3")),
+            MzmlDeclared::Unreadable,
+        ),
+    ];
+    for (terms, expected) in cases {
+        let document = document(&[ms1_default(0), ms2_first_ion_stating(&terms)]);
+        let rows = rows(&document);
+        let precursor = rows[1].first_precursor().expect("a precursor");
+        assert_eq!(precursor.charge(), expected, "{terms}");
+        assert_eq!(precursor.selected_ion_mz(), Some(445.3));
+        selected(&document, 1).expect("the spectrum still decodes");
+    }
+}
+
+#[test]
+fn a_fact_inside_an_array_is_not_an_array_term() {
+    // After the payload, an array term refuses the spectrum; a fact does not
+    // reach the array at all.
+    let document =
+        document(&[ms1_default(0).replacen("</binary>", &format!("</binary>{}", charge("2")), 1)]);
+    selected(&document, 0).expect("decodes");
+}
+
+#[test]
+fn the_run_summary_is_the_pass_s_own_reading() {
+    let summary = table(&base()).expect("opens").run_summary();
+    assert_eq!(summary.spectrum_count(), 2);
+    // Counted, never decoded: its payload is not base64.
+    assert_eq!(summary.chromatogram_count(), 1);
+    assert_eq!(
+        summary.counts_by_ms_level(),
+        [
+            MsLevelCount::new(MsLevelBucket::Level(1), 1),
+            MsLevelCount::new(MsLevelBucket::Level(2), 1),
+        ]
+    );
+    // MS1 in minutes, MS2 in seconds.
+    assert_eq!(
+        summary.retention_time_range(),
+        MzmlRetentionTimeRange::MixedUnits
+    );
+
+    // Lowest MS level first, whatever the document order.
+    let ms2_first = document(&[
+        ms2(0),
+        ms1_default(1),
+        ms1_default(2).replace("value=\"5.9\"", "value=\"7.25\""),
+    ]);
+    assert_eq!(
+        table(&ms2_first)
+            .expect("opens")
+            .run_summary()
+            .counts_by_ms_level(),
+        [
+            MsLevelCount::new(MsLevelBucket::Level(1), 2),
+            MsLevelCount::new(MsLevelBucket::Level(2), 1),
+        ]
+    );
+}
+
+#[test]
+fn the_run_s_retention_time_range_keeps_its_one_unit() {
+    let range = |spectra: &[String]| {
+        table(&document(spectra))
+            .expect("opens")
+            .run_summary()
+            .retention_time_range()
+    };
+    let later = ms1_default(1).replace("value=\"5.9\"", "value=\"7.25\"");
+    assert_eq!(
+        range(&[ms1_default(0)]),
+        MzmlRetentionTimeRange::Reported {
+            minimum: 5.9,
+            maximum: 5.9,
+            unit: RetentionTimeUnit::Minute,
+        }
+    );
+    assert_eq!(
+        range(&[ms1_default(0), later.clone()]),
+        MzmlRetentionTimeRange::Reported {
+            minimum: 5.9,
+            maximum: 7.25,
+            unit: RetentionTimeUnit::Minute,
+        }
+    );
+    let undeclared = |spectrum: String| spectrum.replace(" unitAccession=\"UO:0000031\"", "");
+    assert_eq!(
+        range(&[undeclared(ms1_default(0)), undeclared(later.clone())]),
+        MzmlRetentionTimeRange::Reported {
+            minimum: 5.9,
+            maximum: 7.25,
+            unit: RetentionTimeUnit::NotDeclared,
+        }
+    );
+    // Only some declaring one is not one unit.
+    assert_eq!(
+        range(&[ms1_default(0), undeclared(later)]),
+        MzmlRetentionTimeRange::MixedUnits
+    );
+
+    let empty = table(&document(&[])).expect("opens").run_summary();
+    assert_eq!(empty.spectrum_count(), 0);
+    assert!(empty.counts_by_ms_level().is_empty());
+    assert_eq!(
+        empty.retention_time_range(),
+        MzmlRetentionTimeRange::NoSpectra
+    );
+}
+
+#[test]
+fn only_the_run_s_chromatograms_are_counted() {
+    let two = base().replace(
+        "</chromatogramList>",
+        "<chromatogram index=\"1\" id=\"BPC\" defaultArrayLength=\"0\"/></chromatogramList>",
+    );
+    assert_eq!(
+        table(&two)
+            .expect("opens")
+            .run_summary()
+            .chromatogram_count(),
+        2
+    );
+    let misplaced = document(&[ms1_default(0).replacen(
+        "<cvParam",
+        "<scanWindow><chromatogram index=\"0\" id=\"x\"/></scanWindow><cvParam",
+        1,
+    )]);
+    assert_eq!(
+        table(&misplaced)
+            .expect("opens")
+            .run_summary()
+            .chromatogram_count(),
+        1
+    );
+}
+
+/// A document with every run-level metadata section, laid out as `msconvert`
+/// writes one: the instrument's model and serial number in a param group the
+/// configuration references.
+fn described(spectra: &[String]) -> String {
+    let sections = format!(
+        r#"<referenceableParamGroupList count="2"><referenceableParamGroup id="ms2">{}{}</referenceableParamGroup><referenceableParamGroup id="CommonInstrumentParams">{}{}<userParam name="method" value="D:\methods\m.meth" type="xsd:string"/></referenceableParamGroup></referenceableParamGroupList>
+  <sampleList count="1"><sample id="S1" name="sample one">{}</sample></sampleList>
+  <softwareList count="1"><software id="pwiz" version="3.0.26204">{}</software></softwareList>
+  <instrumentConfigurationList count="1"><instrumentConfiguration id="IC1"><referenceableParamGroupRef ref="CommonInstrumentParams"/><componentList count="3"><source order="1">{}</source><analyzer order="2">{}</analyzer><detector order="3">{}</detector></componentList><softwareRef ref="pwiz"/></instrumentConfiguration></instrumentConfigurationList>
+  <dataProcessingList count="1"><dataProcessing id="dp"><processingMethod order="0" softwareRef="pwiz">{}</processingMethod></dataProcessing></dataProcessingList>"#,
+        cv("MS:1000511", "ms level", "2"),
+        cv("MS:1000127", "centroid spectrum", ""),
+        cv("MS:1001911", "Q Exactive", ""),
+        cv("MS:1000529", "instrument serial number", "SN-0001"),
+        cv("MS:1000002", "sample name", "sample one"),
+        cv("MS:1000615", "ProteoWizard software", ""),
+        cv("MS:1000073", "electrospray ionization", ""),
+        cv("MS:1000484", "orbitrap", ""),
+        cv("MS:1000624", "inductive detector", ""),
+        cv("MS:1000544", "Conversion to mzML", ""),
+    );
+    document_with(&sections, spectra)
+        .replacen(
+            "</fileContent></fileDescription>",
+            &format!(
+                r#"</fileContent><sourceFileList count="1"><sourceFile id="RAW1" name="run.raw" location="file:///D:/private">{}{}</sourceFile></sourceFileList><contact>{}</contact></fileDescription>"#,
+                cv("MS:1000563", "Thermo RAW format", ""),
+                cv("MS:1000768", "Thermo nativeID format", ""),
+                cv("MS:1000586", "contact name", "A. Person"),
+            ),
+            1,
+        )
+        .replacen(
+            "<run id=\"R1\">",
+            "<run id=\"R1\" defaultInstrumentConfigurationRef=\"IC1\" sampleRef=\"S1\" startTimeStamp=\"2026-10-30T09:15:00Z\"><userParam name=\"operator\" value=\"A. Person\"/>",
+            1,
+        )
+}
+
+fn metadata(document: &str) -> Vec<MzmlMetadataElement> {
+    match table(document).expect("opens").metadata() {
+        MzmlMetadata::Read(elements) => elements.clone(),
+        MzmlMetadata::OverBound => panic!("over its bound"),
+    }
+}
+
+fn accessions(element: &MzmlMetadataElement) -> Vec<Option<&str>> {
+    element.params().iter().map(MzmlParam::accession).collect()
+}
+
+#[test]
+fn the_table_keeps_every_metadata_section_with_its_groups_resolved() {
+    let document = described(&[ms1_default(0), ms2(1)]);
+    let elements = metadata(&document);
+    let kinds: Vec<_> = elements.iter().map(MzmlMetadataElement::kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            MzmlMetadataKind::FileContent,
+            MzmlMetadataKind::SourceFile,
+            MzmlMetadataKind::Contact,
+            MzmlMetadataKind::Sample,
+            MzmlMetadataKind::Software,
+            MzmlMetadataKind::InstrumentConfiguration,
+            MzmlMetadataKind::Source,
+            MzmlMetadataKind::Analyzer,
+            MzmlMetadataKind::Detector,
+            MzmlMetadataKind::DataProcessing,
+            MzmlMetadataKind::ProcessingMethod,
+            MzmlMetadataKind::Run,
+        ]
+    );
+    let [
+        file_content,
+        source_file,
+        contact,
+        sample,
+        software,
+        configuration,
+        source,
+        analyzer,
+        detector,
+        data_processing,
+        method,
+        run,
+    ] = &elements[..]
+    else {
+        panic!("twelve elements");
+    };
+
+    assert_eq!(
+        accessions(file_content),
+        [Some("MS:1000128"), Some("MS:1000127")]
+    );
+    assert_eq!(
+        source_file.sensitive_attributes(),
+        [
+            ("id".to_owned(), "RAW1".to_owned()),
+            ("name".to_owned(), "run.raw".to_owned()),
+            ("location".to_owned(), "file:///D:/private".to_owned()),
+        ]
+    );
+    assert_eq!(
+        accessions(source_file),
+        [Some("MS:1000563"), Some("MS:1000768")]
+    );
+    assert_eq!(contact.params()[0].sensitive_value(), Some("A. Person"));
+    assert_eq!(sample.sensitive_attribute("name"), Some("sample one"));
+    assert_eq!(software.sensitive_attribute("version"), Some("3.0.26204"));
+    assert_eq!(accessions(software), [Some("MS:1000615")]);
+
+    // The group's parameters in place of its reference, and the softwareRef
+    // child as an attribute.
+    assert_eq!(configuration.sensitive_attribute("id"), Some("IC1"));
+    assert_eq!(
+        configuration.sensitive_attribute("softwareRef"),
+        Some("pwiz")
+    );
+    assert_eq!(
+        accessions(configuration),
+        [Some("MS:1001911"), Some("MS:1000529"), None]
+    );
+    let model = &configuration.params()[0];
+    assert_eq!(model.sensitive_name(), Some("Q Exactive"));
+    // An empty value is not reported.
+    assert_eq!(model.sensitive_value(), None);
+    assert_eq!(configuration.params()[1].sensitive_value(), Some("SN-0001"));
+    let method_param = &configuration.params()[2];
+    assert_eq!(method_param.sensitive_name(), Some("method"));
+    assert_eq!(method_param.sensitive_value(), Some(r"D:\methods\m.meth"));
+
+    for (component, order, accession) in [
+        (source, "1", "MS:1000073"),
+        (analyzer, "2", "MS:1000484"),
+        (detector, "3", "MS:1000624"),
+    ] {
+        assert_eq!(component.sensitive_attribute("order"), Some(order));
+        assert_eq!(accessions(component), [Some(accession)]);
+    }
+    assert_eq!(data_processing.sensitive_attribute("id"), Some("dp"));
+    assert_eq!(method.sensitive_attribute("softwareRef"), Some("pwiz"));
+    assert_eq!(accessions(method), [Some("MS:1000544")]);
+
+    assert_eq!(run.sensitive_attribute("id"), Some("R1"));
+    assert_eq!(
+        run.sensitive_attribute("startTimeStamp"),
+        Some("2026-10-30T09:15:00Z")
+    );
+    assert_eq!(
+        run.sensitive_attribute("defaultInstrumentConfigurationRef"),
+        Some("IC1")
+    );
+    assert_eq!(run.sensitive_attribute("sampleRef"), Some("S1"));
+    // The run's own parameter, not a spectrum's.
+    assert_eq!(run.params().len(), 1);
+    assert_eq!(run.params()[0].sensitive_name(), Some("operator"));
+
+    // The rows and the selected reads are what they are without metadata.
+    assert_eq!(rows(&document), rows(&base()));
+    assert_eq!(
+        selected(&document, 1).expect("decodes").mz().values(),
+        [150.0, 175.5]
+    );
+}
+
+#[test]
+fn conflicting_metadata_parameters_are_kept_as_stated_and_the_open_stands() {
+    // A model stated on the configuration that differs from its group's, and
+    // one term stated twice with different values: metadata parameters are
+    // carried as the document states them, in order, and never judged.
+    let document = described(&[ms1_default(0), ms2(1)])
+        .replacen(
+            "<referenceableParamGroupRef ref=\"CommonInstrumentParams\"/>",
+            &format!(
+                "<referenceableParamGroupRef ref=\"CommonInstrumentParams\"/>{}",
+                cv("MS:1001742", "LTQ Orbitrap Velos", "")
+            ),
+            1,
+        )
+        .replacen(
+            &cv("MS:1000615", "ProteoWizard software", ""),
+            &format!(
+                "{}{}",
+                cv("MS:1000615", "ProteoWizard software", "3.0.1"),
+                cv("MS:1000615", "ProteoWizard software", "3.0.2")
+            ),
+            1,
+        );
+    let table = table(&document).expect("opens");
+    assert_eq!(table.rows(), rows(&base()));
+    let MzmlMetadata::Read(elements) = table.metadata() else {
+        panic!("read");
+    };
+    let of = |kind| {
+        elements
+            .iter()
+            .find(|element| element.kind() == kind)
+            .expect("stated")
+    };
+    let configuration = of(MzmlMetadataKind::InstrumentConfiguration);
+    assert_eq!(
+        accessions(configuration),
+        [
+            Some("MS:1001911"),
+            Some("MS:1000529"),
+            None,
+            Some("MS:1001742")
+        ]
+    );
+    let software = of(MzmlMetadataKind::Software);
+    let versions: Vec<_> = software
+        .params()
+        .iter()
+        .map(MzmlParam::sensitive_value)
+        .collect();
+    assert_eq!(versions, [Some("3.0.1"), Some("3.0.2")]);
+}
+
+#[test]
+fn metadata_the_document_does_not_state_is_not_reported() {
+    let elements = metadata(&base());
+    let kinds: Vec<_> = elements.iter().map(MzmlMetadataElement::kind).collect();
+    assert_eq!(
+        kinds,
+        [MzmlMetadataKind::FileContent, MzmlMetadataKind::Run]
+    );
+    let run = &elements[1];
+    assert_eq!(run.sensitive_attribute("id"), Some("R1"));
+    assert_eq!(run.sensitive_attribute("startTimeStamp"), None);
+    assert!(run.params().is_empty());
+
+    // Out of place, or outside the mzML namespace, is not a metadata element.
+    let misplaced = described(&[ms1_default(0)])
+        .replacen(
+            "<sourceFileList count=\"1\">",
+            "<sourceFile id=\"loose\"/><sourceFileList count=\"1\">",
+            1,
+        )
+        .replacen(
+            "</sampleList>",
+            "<x:sample xmlns:x=\"urn:example\" id=\"foreign\"/></sampleList>",
+            1,
+        );
+    let elements = metadata(&misplaced);
+    assert_eq!(
+        elements
+            .iter()
+            .filter(|element| matches!(
+                element.kind(),
+                MzmlMetadataKind::SourceFile | MzmlMetadataKind::Sample
+            ))
+            .count(),
+        2
+    );
+    assert!(
+        elements
+            .iter()
+            .all(|element| !matches!(element.sensitive_attribute("id"), Some("loose" | "foreign")))
+    );
+}
+
+#[test]
+fn a_metadata_attribute_that_does_not_normalize_is_not_reported() {
+    // The shared attribute capture never reads `location`, so this file opens
+    // today, and still does.
+    let document = described(&[ms1_default(0)])
+        .replace("location=\"file:///D:/private\"", "location=\"a&custom;b\"");
+    let elements = metadata(&document);
+    let source_file = elements
+        .iter()
+        .find(|element| element.kind() == MzmlMetadataKind::SourceFile)
+        .expect("the source file");
+    assert_eq!(source_file.sensitive_attribute("location"), None);
+    assert_eq!(source_file.sensitive_attribute("name"), Some("run.raw"));
+}
+
+#[test]
+fn a_metadata_accession_that_is_not_prefix_id_is_not_reported() {
+    let document = described(&[ms1_default(0), ms2(1)]).replacen(
+        &cv("MS:1000002", "sample name", "sample one"),
+        &cvu("D:/private/x", "sample name", "sample one", "not one"),
+        1,
+    );
+    let table = table(&document).expect("opens");
+    assert_eq!(table.rows(), rows(&base()));
+    let MzmlMetadata::Read(elements) = table.metadata() else {
+        panic!("read");
+    };
+    let of = |kind| {
+        elements
+            .iter()
+            .find(|element| element.kind() == kind)
+            .expect("stated")
+    };
+    let param = &of(MzmlMetadataKind::Sample).params()[0];
+    assert!(param.is_cv_param());
+    assert_eq!(param.accession(), None);
+    assert_eq!(param.unit_accession(), None);
+    assert_eq!(param.sensitive_value(), Some("sample one"));
+
+    // A userParam stays one, and a cvParam keeps its kind with or without an
+    // accession.
+    let kinds: Vec<_> = of(MzmlMetadataKind::InstrumentConfiguration)
+        .params()
+        .iter()
+        .map(MzmlParam::is_cv_param)
+        .collect();
+    assert_eq!(kinds, [true, true, false]);
+}
+
+#[test]
+fn metadata_over_its_bound_is_not_reported_and_the_table_stands() {
+    let long = "v".repeat(60 * 1024);
+    let params: String = (0..80)
+        .map(|_| format!("<userParam name=\"note\" value=\"{long}\"/>"))
+        .collect();
+    let document = described(&[ms1_default(0), ms2(1)]).replacen(
+        "</software>",
+        &format!("{params}</software>"),
+        1,
+    );
+    let table = table(&document).expect("opens");
+    assert_eq!(table.metadata(), &MzmlMetadata::OverBound);
+    assert_eq!(table.rows(), rows(&base()));
+    assert_eq!(table.run_summary().spectrum_count(), 2);
+
+    // The same through a param group the configuration references.
+    let document = described(&[ms1_default(0)]).replacen(
+        "<userParam name=\"method\"",
+        &format!("{params}<userParam name=\"method\""),
+        1,
+    );
+    assert_eq!(
+        self::table(&document).expect("opens").metadata(),
+        &MzmlMetadata::OverBound
+    );
+}
+
+#[test]
+fn metadata_debug_shows_counts_only() {
+    let table = table(&described(&[ms1_default(0), ms2(1)])).expect("opens");
+    let MzmlMetadata::Read(elements) = table.metadata() else {
+        panic!("read");
+    };
+    let debug = format!("{table:?} {elements:?} {:?}", elements[1].params());
+    for sensitive in [
+        "run.raw",
+        "D:/private",
+        "RAW1",
+        "sample one",
+        "SN-0001",
+        "A. Person",
+        "2026-10-30",
+    ] {
+        assert!(!debug.contains(sensitive), "{sensitive}");
+    }
+    assert!(debug.contains("element_count: 12"));
+}
+
+#[test]
+fn every_new_reading_is_the_same_under_a_namespace_prefix() {
+    let document = described(&[
+        ms1_stating(&term(POSITIVE)),
+        ms2_first_ion_stating(&charge("2")),
+    ]);
+    let plain = table(&document).expect("opens");
+    let prefixed = table(&prefixed(&document, "mz")).expect("opens");
+
+    // Not vacuous: each reading states something.
+    assert_eq!(
+        plain.rows()[0].polarity(),
+        MzmlDeclared::Value(MzmlPolarity::Positive)
+    );
+    assert_eq!(
+        plain.rows()[1]
+            .first_precursor()
+            .expect("a precursor")
+            .charge(),
+        MzmlDeclared::Value(2)
+    );
+    assert_eq!(plain.run_summary().chromatogram_count(), 1);
+    assert!(matches!(plain.metadata(), MzmlMetadata::Read(elements) if elements.len() == 12));
+
+    assert_eq!(prefixed.rows(), plain.rows());
+    assert_eq!(prefixed.run_summary(), plain.run_summary());
+    assert_eq!(prefixed.metadata(), plain.metadata());
 }

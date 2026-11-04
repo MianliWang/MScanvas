@@ -98,7 +98,9 @@ the merged code. They are not PM9 tasks, and PM9 does not repair them:
   window is refused at the first run as `payloadStoreUnusable`, and nothing is
   written to it. Owner: the repository owner, as project-store work. Decision
   point: the next change to Save As or store creation, or before a store can
-  be shared with another writer.
+  be shared with another writer. *Fixed 2026-10-30: Save As publishes the
+  store, empty if need be, before the document, so the name is the project's
+  first ([plan section 7.2](../../development/AFTER_BETA1_PLAN.md#72-polish-and-limits)).*
 - *`-ManifestOnly` re-probes the toolchain* (review comment 4110202616): a
   re-derived candidate manifest can name the current toolchain rather than the
   one that built the installer. Owner: the repository owner, as M7.6 release

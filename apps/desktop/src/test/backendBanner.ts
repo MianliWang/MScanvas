@@ -1,23 +1,22 @@
 import { fireEvent, waitFor } from "@testing-library/react";
 
 /**
- * Opens the backend banner where it is folded.
+ * Opens the ProteoWizard details from the status bar's item.
  *
- * With a usable installation and nothing to act on, the banner folds to a
- * phrase in the header (PM9 L10), and its actions and help are reached through
- * that phrase. Waits for the fold, so a check that has not answered yet cannot
- * be mistaken for a banner that needs no opening; a banner already open is left
- * as it is.
+ * ProteoWizard is an icon and a short label at the window's foot (direction
+ * A); its reading, build, every recovery action and the setup help open over
+ * the bar from there, in every state. Waits for the item, and leaves details
+ * already open as they are.
  */
 export async function showBackendBanner(): Promise<void> {
-  const toggle = await waitFor(() => {
-    const found = document.querySelector<HTMLButtonElement>("[data-backend-toggle]");
+  const item = await waitFor(() => {
+    const found = document.querySelector<HTMLButtonElement>("[data-backend-item]");
     if (found === null) {
-      throw new Error("The backend banner is not folded.");
+      throw new Error("The status bar has no ProteoWizard item.");
     }
     return found;
   });
-  if (toggle.getAttribute("aria-expanded") === "false") {
-    fireEvent.click(toggle);
+  if (item.getAttribute("aria-expanded") === "false") {
+    fireEvent.click(item);
   }
 }

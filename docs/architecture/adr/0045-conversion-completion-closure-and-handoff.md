@@ -406,6 +406,12 @@ surface. A declared type with no consumer is not enough.
 | `IntegrityEvidence` | The integrity contract | Validation mode plus the property set, `inapplicable` distinct from `unverified` | `ConversionItemJudgements` |
 | `AdoptionRelation` | Adoption | Which output was adopted, and against which identity check | The adoption surface, and the queue the result is recorded on |
 
+*Amended 2026-10-30 by [ADR 0052](0052-per-output-adoption.md).* The
+`AdoptionRelation` producer is a queue-wide adoption or a per-output one. A
+per-output adoption takes one output the queue-wide action would offer, runs
+the same identity check, and records its answer on that output's item,
+replacing the answer the item held, about its other members too.
+
 **Lifetime, ownership and privacy.** All nine are session-scoped and owned by
 Rust. None is persisted, none is resolved across sessions, and no location, path
 or raw backend text crosses the boundary — the run identity is opaque and is
@@ -511,3 +517,43 @@ combinations without the source qualification the repair introduced. Both are
 condition A matters. No other current-status document reviewed for this closure
 describes a delivered conversion capability as missing or an unimplemented one as
 delivered.
+
+## Amendment, 2026-10-29: mzML as a conversion source
+
+ADR 0055 (msconvert parity, accepted by the owner on 2026-10-29) asks the
+visible workflow to re-filter an mzML as msconvert does. Two statements above
+were true when written and are not now. They are quoted here rather than
+deleted:
+
+- *"`is_convertible` answers `false` for mzML and `item_output_topology`
+  refuses a non-convertible family with `dataset_not_convertible` before a
+  dataset can be queued, so **every conversion the visible product performs is
+  of a vendor acquisition**."* `is_convertible` now answers `true` for mzML.
+  An mzML row is queued, planned and run through the same path as a vendor row.
+- The residual *"A source mzML naming `vendor peak picking` folds to
+  `Unrecognized`"* is no longer unreachable from the visible workflow. It stays
+  fail-safe: the property degrades to unverified and nothing is certified.
+
+What holds the change to the existing rules:
+
+- **Source comparison.** An mzML source is read, so its run is judged under
+  `SourceComparison`, as the private path always did. The plan summary states
+  `source_comparison` only when every item supports it; a mixed queue states
+  the weaker `output_only`.
+- **A name that cannot be the source's.** `conversion_output_file_name` adds
+  `-converted` before the extension when the source already has the output's
+  extension, compared ignoring ASCII case. `run.mzML` converts to
+  `run-converted.mzML`, so a source-sibling destination never names the
+  source. It is one function, used by the plan and by the name the queue
+  shows, so the two cannot disagree. It is not an automatic rename: the name is
+  fixed before anything runs.
+- **No overwrite.** Fail and Skip stay the only conflict policies.
+- **Centroiding rows.** Their evidence covers mzML, so the catalog now offers
+  them (subject to grammar). A vendor row under one is still refused per row
+  with `conversion_settings_not_evidenced_for_source`, at plan and at `BEGIN`.
+  The default intent inserts no picker; the CNV-D2 lock is unchanged.
+
+Left as it was: a folder holding both `a.raw` and `a.mzML` still plans `a.mzML`
+for the raw row, which meets the mzML source on a source-sibling destination.
+Fail refuses it and Skip leaves it alone, so nothing is overwritten. This
+predates the amendment.

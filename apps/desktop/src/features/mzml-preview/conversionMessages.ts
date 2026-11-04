@@ -1,4 +1,4 @@
-import type { UiMessage } from "../preferences/i18n";
+import { joinSentences, type UiMessage } from "../preferences/i18n";
 import { ownedErrorMessage } from "./ownedErrorMessages";
 import type { ConversionQueue, ConversionQueueItem, PreviewError } from "./contracts";
 import { conversionJudgedAnyOutput } from "./contracts";
@@ -20,7 +20,7 @@ const ERROR_MESSAGE = {
   conversion_not_stoppable: "m74CnvErrorConversionNotStoppable",
   conversion_item_not_cancellable: "m74CnvErrorConversionItemNotCancellable",
   conversion_item_not_skippable: "m74CnvErrorConversionItemNotSkippable",
-  backend_quarantined: "m74CnvErrorBackendQuarantined",
+  backend_quarantined: "m74CnvNoticeBackendQuarantined",
   dataset_not_convertible: "m74CnvErrorDatasetNotConvertible",
   conversion_settings_not_evidenced_for_source: "m74CnvErrorConversionSettingsNotEvidencedForSource",
   destination_not_resolvable: "m74CnvErrorDestinationNotResolvable",
@@ -114,11 +114,11 @@ export function announceConversion(conversion: ConversionOperation, t: UiMessage
   const counts = conversionCountParts(queue, state.reason !== "completed", t);
   // Retain the unconfirmed count even at zero for this explicit failed-stop audit.
   if (state.reason === "stopFailed" && queue.cancellationFailedCount === 0) counts.push(t("m74CnvCountUnconfirmed", { count: 0 }));
-  return [
+  return joinSentences(t, [
     prefix,
-    `${counts.join(t("m74CnvListSeparator"))}.`,
+    t("m74CnvAnnounceCounts", { parts: counts.join(t("m74CnvListSeparator")) }),
     state.reason === "stopFailed" && conversion.backendQuarantined ? t("m74CnvRestartBackend").trim() : "",
     queue.items.some(conversionJudgedOutputOnly) ? t("m74CnvAnnounceOutputOnly") : "",
     queue.error === null ? "" : conversionErrorMessage(queue.error, t),
-  ].filter(Boolean).join(" ");
+  ]);
 }

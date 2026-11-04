@@ -176,6 +176,13 @@ the same way the input spelling and the companion requirement are measured
 behaviours of that build. A build whose wording differs is a build with no
 evidence row, and the family is refused before it could get here.
 
+**Amended 2026-10-29 (ADR 0055, owner decision on the build gate).** The
+relaxed gate that lets Thermo RAW and Shimadzu LCD convert, labelled, on an
+unmeasured build does not reach this family: `SciexWiffBundle` stays refused on
+any build without a measured row, because its completeness proof
+([ADR 0024](0024-sciex-sample-completeness.md#bound-to-one-executable)) reads a
+marker this build alone is known to print.
+
 It **fails closed**. A declaration that is absent, truncated, over the
 lifecycle's bound or not UTF-8 refuses the set. A partial declaration compared
 against a whole directory would refuse honest runs and — worse — could be *made*

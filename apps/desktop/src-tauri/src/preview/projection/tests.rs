@@ -235,6 +235,127 @@ fn a_window_holding_no_reported_point_is_a_successful_empty_projection() {
     assert!(projection.intensity().is_empty());
     assert_eq!(projection.source_points(), 0);
     assert!(!projection.reduced(), "an empty window dropped nothing");
+    assert_eq!(
+        projection.outside(),
+        [None, None],
+        "a discrete spectrum has no line to cut"
+    );
+}
+
+/// A declared profile spectrum's projection carries the measured sample beyond
+/// each edge, so the screen can cut its joined line where the export does: a
+/// window that cuts a flank, one between two samples, and one at the source's
+/// own ends. A centroid spectrum carries none.
+#[test]
+fn a_profile_window_carries_the_samples_its_line_crosses_the_edges_from() {
+    use super::super::mzml_fixture::native_spectrum;
+    const PEAK: [(f64, f64); 4] = [(100.0, 0.0), (200.0, 80.0), (300.0, 40.0), (400.0, 0.0)];
+    let profile = native_spectrum("MS:1000128", (None, None), &PEAK);
+    let centroid = native_spectrum("MS:1000127", (None, None), &PEAK);
+    let window = |spectrum, low, high| {
+        project(spectrum, settle_viewport_domain(spectrum), low, high)
+            .expect("a window of the source")
+    };
+
+    let flank = window(&profile, 150.0, 250.0);
+    assert_eq!(flank.mz(), &[200.0]);
+    assert_eq!(
+        flank.source_points(),
+        1,
+        "an outside sample is not in the window"
+    );
+    assert_eq!(flank.outside(), [Some((100.0, 0.0)), Some((300.0, 40.0))]);
+
+    let between = window(&profile, 210.0, 290.0);
+    assert!(between.is_empty());
+    assert_eq!(
+        between.outside(),
+        [Some((200.0, 80.0)), Some((300.0, 40.0))]
+    );
+
+    assert_eq!(window(&profile, 100.0, 400.0).outside(), [None, None]);
+    assert_eq!(window(&centroid, 150.0, 250.0).outside(), [None, None]);
+}
+
+/// A reduced profile window keeps each column's greatest and least value, so
+/// the joined line keeps its valleys; a discrete spectrum keeps the per-sign
+/// rule, under which an all-positive column keeps only its top.
+#[test]
+fn a_reduced_profile_window_keeps_each_column_s_valley() {
+    use super::super::mzml_fixture::native_spectrum;
+    // Twice the budget, alternating 1 and 100: every column holds both.
+    let points: Vec<(f64, f64)> = (0..MAX_PROJECTION_POINTS * 2)
+        .map(|step| {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "test sizes are far below the f64 integer bound"
+            )]
+            let at = step as f64;
+            (100.0 + at, if step % 2 == 0 { 1.0 } else { 100.0 })
+        })
+        .collect();
+    let reduced = |representation| {
+        let spectrum = native_spectrum(representation, (None, None), &points);
+        let (low, high) = admitted(&spectrum);
+        project(&spectrum, settle_viewport_domain(&spectrum), low, high).expect("the whole source")
+    };
+
+    let profile = reduced("MS:1000128");
+    assert!(profile.reduced());
+    assert!(profile.mz().len() <= MAX_PROJECTION_POINTS);
+    assert!(profile.intensity().contains(&1.0), "the valleys survive");
+    assert!(profile.intensity().contains(&100.0));
+    assert!(profile.mz().is_sorted(), "a line is drawn in m/z order");
+
+    let centroid = reduced("MS:1000127");
+    assert!(
+        centroid.intensity().iter().all(|value| *value == 100.0),
+        "sticks keep only each column's top"
+    );
+}
+
+/// A reduced profile window keeps its first and last samples, so the screen's
+/// line crosses each edge from the sample beyond it to the same sample the
+/// export's does, and the edge heights and the value scale agree with it. Here
+/// neither edge sample is its column's extreme.
+#[test]
+fn a_reduced_profile_window_keeps_the_samples_beside_its_edges() {
+    use super::super::mzml_fixture::native_spectrum;
+    // 99.99, 100.01, ... 200.09: the window 100 to 200 holds steps 1 to 5000.
+    let points: Vec<(f64, f64)> = (0..=5005_u32)
+        .map(|step| {
+            let height = match step {
+                0 | 5001 => 5000.0,
+                1 | 5000 => 500.0,
+                2 => 300.0,
+                3 | 4999 => 0.0,
+                4 => 800.0,
+                4998 => 900.0,
+                _ => 100.0,
+            };
+            (99.99 + 0.02 * f64::from(step), height)
+        })
+        .collect();
+    let spectrum = native_spectrum("MS:1000128", (None, None), &points);
+
+    let projection = project(&spectrum, settle_viewport_domain(&spectrum), 100.0, 200.0)
+        .expect("a window inside the source");
+
+    assert!(projection.reduced());
+    assert!(projection.mz().len() <= MAX_PROJECTION_POINTS);
+    assert_eq!(
+        projection.outside(),
+        [Some((points[0].0, 5000.0)), Some((points[5001].0, 5000.0))]
+    );
+    let first = (projection.mz()[0], projection.intensity()[0]);
+    let last = (
+        *projection.mz().last().expect("points"),
+        *projection.intensity().last().expect("points"),
+    );
+    assert_eq!(first, points[1]);
+    assert_eq!(last, points[5000]);
+    assert!(projection.mz().is_sorted());
+    assert!(projection.intensity().contains(&800.0) && projection.intensity().contains(&900.0));
 }
 
 #[test]

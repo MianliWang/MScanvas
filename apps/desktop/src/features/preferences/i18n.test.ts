@@ -11,13 +11,13 @@ vi.mock("i18next", async (importOriginal) => {
 // Compilation must reject invalid keys and missing/wrong interpolation values.
 function messageTypeContract(message: UiMessage, t: TFunction<"ui">): void {
   message("settings");
-  message("rosterRows", { count: 3 });
+  message("rosterRetainedAnnouncement", { count: 3 });
   // @ts-expect-error Invalid semantic message key.
   message("notAResource");
   // @ts-expect-error The count parameter is required.
-  message("rosterRows");
+  message("rosterRetainedAnnouncement");
   // @ts-expect-error A count is numeric, independently of its display locale.
-  message("rosterRows", { count: "3" });
+  message("rosterRetainedAnnouncement", { count: "3" });
   // @ts-expect-error The unknown structured reason remains inspectable by code.
   message("unknownFigureProblem", {});
   // @ts-expect-error The installed string-key API also rejects unknown keys.
@@ -42,17 +42,17 @@ describe("bundled UI resources", () => {
     const { instance } = createUiRuntime();
     const english = bindUiMessages(instance.getFixedT("en", "ui"));
     const chinese = bindUiMessages(instance.getFixedT("zh-CN", "ui"));
-    const expectedEnglish = count === 1 ? UI_RESOURCES.en.rosterRows_one : UI_RESOURCES.en.rosterRows_other;
-    expect(english("rosterRows", { count })).toBe(expectedEnglish.replace("{{count, number}}", String(count)));
-    expect(chinese("rosterRows", { count })).toBe(UI_RESOURCES["zh-CN"].rosterRows_other.replace("{{count, number}}", String(count)));
-    expect(Object.keys(UI_RESOURCES["zh-CN"])).not.toContain("rosterRows_one");
+    const expectedEnglish = count === 1 ? UI_RESOURCES.en.rosterRetainedAnnouncement_one : UI_RESOURCES.en.rosterRetainedAnnouncement_other;
+    expect(english("rosterRetainedAnnouncement", { count })).toBe(expectedEnglish.replace("{{count, number}}", String(count)));
+    expect(chinese("rosterRetainedAnnouncement", { count })).toBe(UI_RESOURCES["zh-CN"].rosterRetainedAnnouncement_other.replace("{{count, number}}", String(count)));
+    expect(Object.keys(UI_RESOURCES["zh-CN"])).not.toContain("rosterRetainedAnnouncement_one");
   });
 
   it("formats display counts with an explicit locale and retains the numeric input", () => {
     const { instance } = createUiRuntime();
     const count = 1234;
     const message = bindUiMessages(instance.getFixedT("zh-CN", "ui"));
-    expect(message("rosterRows", { count })).toContain(new Intl.NumberFormat("zh-CN").format(count));
+    expect(message("rosterRetainedAnnouncement", { count })).toContain(new Intl.NumberFormat("zh-CN").format(count));
     expect(count).toBe(1234);
   });
 
@@ -78,8 +78,8 @@ describe("bundled UI resources", () => {
     expect(() => validateBundle("zh-CN", { ...UI_RESOURCES["zh-CN"], settings: "  " })).toThrow("RESOURCE_EMPTY");
     expect(() => validateBundle("zh-CN", { ...UI_RESOURCES["zh-CN"], unexpected: "Extra" })).toThrow("RESOURCE_KEYS");
     const incomplete: Record<string, unknown> = { ...UI_RESOURCES.en };
-    delete incomplete.rosterRows_one;
-    expect(() => validateBundle("en", incomplete)).toThrow("RESOURCE_MISSING: rosterRows_one");
+    delete incomplete.rosterRetainedAnnouncement_one;
+    expect(() => validateBundle("en", incomplete)).toThrow("RESOURCE_MISSING: rosterRetainedAnnouncement_one");
     expect(() => validateBundle("zh-CN", { ...UI_RESOURCES["zh-CN"], resourceCode: "{{different}}" })).toThrow("RESOURCE_PARAMETERS");
     expect(() => validateBundle("en", { ...UI_RESOURCES.en, resourceCode: "" })).toThrow("RESOURCE_EMPTY");
   });
@@ -94,8 +94,8 @@ describe("bundled UI resources", () => {
   it("detects untyped invalid keys and parameters instead of rendering a key or blank value", () => {
     const message = bindUiMessages(createUiRuntime().instance.getFixedT("en", "ui"));
     expect(() => Reflect.apply(message, null, ["notAResource"])).toThrow("RESOURCE_KEYS");
-    expect(() => Reflect.apply(message, null, ["rosterRows"])).toThrow("RESOURCE_PARAMETERS");
-    expect(() => Reflect.apply(message, null, ["rosterRows", { count: "1" }])).toThrow("RESOURCE_PARAMETERS");
+    expect(() => Reflect.apply(message, null, ["rosterRetainedAnnouncement"])).toThrow("RESOURCE_PARAMETERS");
+    expect(() => Reflect.apply(message, null, ["rosterRetainedAnnouncement", { count: "1" }])).toThrow("RESOURCE_PARAMETERS");
     expect(() => Reflect.apply(message, null, ["resourceCode", { code: "" }])).toThrow("RESOURCE_PARAMETERS");
   });
 

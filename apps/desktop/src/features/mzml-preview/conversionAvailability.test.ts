@@ -247,7 +247,8 @@ describe("the conversion lane's availability decision", () => {
         // and naming it is how a reader learns why two unrelated actions wait
         // for each other.
         const english = conversionNoticeMessage(decision.reason, messages("en"));
-        expect(english).toMatch(/^[A-Z].*\.$/su);
+        // Ended as a sentence, or with an ellipsis while it is still under way.
+        expect(english).toMatch(/^[A-Z].*[.…]$/su);
         expect(english).not.toMatch(/\b(ref|slot|claim|boolean|flag)\b/iu);
         // In Simplified Chinese too, and not by falling back to the English.
         const chinese = conversionNoticeMessage(decision.reason, messages("zh-CN"));

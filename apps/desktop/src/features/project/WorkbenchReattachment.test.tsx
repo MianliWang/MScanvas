@@ -31,6 +31,7 @@ import {
 } from "../../test/previewFixtures";
 import { PreferencesApiProvider } from "../preferences/preferencesApi";
 import { createFakePreferencesApi, storedRecord } from "../../test/preferenceFixtures";
+import { openProjectSurface } from "../../test/projectMenu";
 import { SessionPreferencesProvider } from "../preferences/SessionPreferencesProvider";
 import { UI_RESOURCES } from "../preferences/i18n";
 import {
@@ -202,24 +203,26 @@ describe("adding a project reference to the Workbench", () => {
     expect(addControl(MATCHING).getAttribute("aria-disabled")).toBe(null);
     expect(addControl(MATCHING).getAttribute("data-project-add-unavailable")).toBe(null);
 
-    // Every other state is inert, and each says a different thing -- because
-    // what the reader should do next is different in each.
+    // Every other state is inert, and each has a different reason -- because
+    // what the reader should do next is different in each. Each says it on a
+    // visible line under the row's actions (B4), never in a tooltip.
     const reasons = [UNCHECKED, CHANGED, MISSING, UNREADABLE].map((id) => [
       addControl(id).getAttribute("aria-disabled"),
       addControl(id).getAttribute("data-project-add-unavailable"),
       addControl(id).getAttribute("title"),
+      document.getElementById(`project-layer-reason-${id}`)?.textContent,
     ]);
     expect(reasons).toEqual([
-      ["true", "projectAddNeedsCheck", en.projectAddNeedsCheck],
-      ["true", "projectAddChanged", en.projectAddChanged],
-      ["true", "projectAddMissing", en.projectAddMissing],
-      ["true", "projectAddUnavailable", en.projectAddUnavailable],
+      ["true", "projectAddNeedsCheck", null, en.projectAddNeedsCheck],
+      ["true", "projectAddChanged", null, en.projectAddChanged],
+      ["true", "projectAddMissing", null, en.projectAddMissing],
+      ["true", "projectAddUnavailable", null, en.projectAddUnavailable],
     ]);
-    // The reason is on screen in words as well, and the inert control points
-    // at it rather than hiding it in a tooltip.
-    expect(addControl(UNCHECKED).getAttribute("aria-describedby")).toBe(
-      `project-state-${UNCHECKED}`,
-    );
+    // The reason is on screen in words, and each inert control points at it.
+    for (const id of [UNCHECKED, CHANGED, MISSING, UNREADABLE]) {
+      expect(addControl(id).getAttribute("aria-describedby")).toBe(`project-state-${id} project-layer-reason-${id}`);
+      expect(document.getElementById(`project-state-${id}`)?.textContent).toBeTruthy();
+    }
     expect(document.getElementById(`project-state-${UNCHECKED}`)?.textContent).toBe(
       en.projectStateNotChecked,
     );
@@ -387,7 +390,7 @@ describe("adding a project reference to the Workbench", () => {
     expect(addControl(MATCHING).getAttribute("data-project-add-unavailable")).toBe(
       "projectAddWorkspaceBusy",
     );
-    expect(addControl(MATCHING).getAttribute("title")).toBe(en.projectAddWorkspaceBusy);
+    expect(document.getElementById(`project-layer-reason-${MATCHING}`)?.textContent).toBe(en.projectAddWorkspaceBusy);
 
     await press(addControl(MATCHING));
     expect(api.addProjectInputToWorkspace).not.toHaveBeenCalled();
@@ -457,7 +460,8 @@ describe("adding a project reference to the Workbench", () => {
     expect(addControl(MISSING).getAttribute("data-project-add-unavailable")).toBe(
       "projectAddMissing",
     );
-    expect(addControl(MISSING).getAttribute("title")).toBe(en.projectAddMissing);
+    expect(addControl(MISSING).getAttribute("title")).toBeNull();
+    expect(addControl(MISSING).getAttribute("aria-describedby")).toBe(`project-state-${MISSING} project-layer-reason-${MISSING}`);
     // Only the otherwise-addable reference is the one waiting for the
     // Workbench.
     expect(addControl(MATCHING).getAttribute("data-project-add-unavailable")).toBe(
@@ -497,7 +501,7 @@ describe("adding a project reference to the Workbench", () => {
     await screen.findByText(en.projectReferences);
 
     const inspector = () => document.querySelector<HTMLElement>("#workbench-inspector")!;
-    await press(screen.getByRole("button", { name: "Show what QC_pool_01.mzML is related to" }));
+    await press(screen.getByRole("button", { name: "Details for QC_pool_01.mzML" }));
     const relatedBefore = [...inspector().querySelectorAll("[data-provenance-link]")].map((node) =>
       node.getAttribute("data-provenance-link"),
     );
@@ -596,7 +600,7 @@ describe("the Workbench reattachment in the application shell", () => {
       }),
     );
     projects.setAdmission(addedOne());
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
 
     await press(addControl(MATCHING));
@@ -639,7 +643,7 @@ describe("the Workbench reattachment in the application shell", () => {
         ],
       }),
     );
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     await waitFor(() => expect(getRoster).toHaveBeenCalled());
     const reads = getRoster.mock.calls.length;
@@ -674,7 +678,7 @@ describe("the Workbench reattachment in the application shell", () => {
       }),
     );
     projects.setAdmission(addedOne());
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     projects.set(admittedProject());
     await press(addControl(MATCHING));
@@ -697,7 +701,7 @@ describe("the Workbench reattachment in the application shell", () => {
         document.querySelector(`#workbench-roster [data-handle="${selectedFile.handle}"]`),
       ).toBe(null),
     );
-    await press(screen.getByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
 
     await press(
       await screen.findByRole("button", {
@@ -736,24 +740,21 @@ describe("the Workbench reattachment in the application shell", () => {
     );
     projects.setAdmission(addedOne());
     const release = projects.holdOnce("addProjectInputToWorkspace");
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
 
     await press(addControl(MATCHING));
 
-    // While it is out, the Workbench's own acquisition actions wait.
+    // While it is out, the Workbench's own acquisition actions wait: refused,
+    // still focusable, with the status bar's reason (never native disabled).
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: en.addFiles }).hasAttribute("disabled"),
-      ).toBe(true),
+      expect(screen.getByRole("button", { name: en.addFiles })).toHaveAttribute("aria-disabled", "true"),
     );
     await act(async () => {
       release();
     });
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: en.addFiles }).hasAttribute("disabled"),
-      ).toBe(false),
+      expect(screen.getByRole("button", { name: en.addFiles })).not.toHaveAttribute("aria-disabled"),
     );
   });
 
@@ -770,7 +771,7 @@ describe("the Workbench reattachment in the application shell", () => {
       }),
     );
     projects.setAdmission(addedOne());
-    await press(await screen.findByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
     await screen.findByText(en.projectReferences);
     // Admit it once, then come back to the project surface.
     projects.set(
@@ -791,7 +792,7 @@ describe("the Workbench reattachment in the application shell", () => {
         document.querySelector(`#workbench-roster [data-handle="${selectedFile.handle}"]`),
       ).toBeTruthy(),
     );
-    await press(screen.getByRole("button", { name: en.projectSurface }));
+    await openProjectSurface();
 
     const show = await screen.findByRole("button", {
       name: `Show in Workbench: ${selectedFile.fileName}`,

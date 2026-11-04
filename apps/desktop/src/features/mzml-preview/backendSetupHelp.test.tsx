@@ -41,10 +41,13 @@ function renderWorkspace(api: PreviewApi) {
   );
 }
 
-const help = () => document.querySelector<HTMLDetailsElement>("[data-backend-help]");
+/** The setup help's disclosure button, and the region it shows. */
+const help = () => document.querySelector<HTMLButtonElement>("[data-backend-help]");
+const helpRegion = () => document.getElementById(help()!.getAttribute("aria-controls")!)!;
+const helpOpen = () => help()?.getAttribute("aria-expanded") === "true";
 
 describe("offline setup help", () => {
-  it("is reachable in every backend state, with no dataset and no backend", async () => {
+  it("is one press away in the status bar's details in every state a setup can fix, never in the notice", async () => {
     for (const availability of [
       unavailableBackend,
       chosenFolderWithoutTools,
@@ -54,14 +57,21 @@ describe("offline setup help", () => {
       const view = renderWorkspace(createFakePreviewApi({ availability }));
       await waitFor(() => expect(help()).not.toBeNull());
       const disclosure = help()!;
-      // With nothing to act on the banner is folded, and its help is one
-      // press away in the header (PM9 L10); in every other state it shows.
-      if (availability === availableBackend) {
-        await showBackendBanner();
+      // The notice stays one line (S7): its help is in the details the status
+      // bar's item opens.
+      expect(disclosure).not.toBeVisible();
+      await showBackendBanner();
+      // A quarantine's only way out is a restart: no setup help there.
+      if (availability === quarantinedBackend) {
+        expect(disclosure).not.toBeVisible();
+        view.unmount();
+        continue;
       }
       // Closed to begin with: it is help, not an interruption.
-      expect(disclosure.open).toBe(false);
-      expect(within(disclosure).getByText(en.backendHelpTitle)).toBeVisible();
+      expect(helpOpen()).toBe(false);
+      expect(helpRegion()).not.toBeVisible();
+      expect(disclosure).toHaveAccessibleName(en.backendHelpTitle);
+      expect(disclosure).toBeVisible();
       view.unmount();
     }
   });
@@ -91,21 +101,20 @@ describe("offline setup help", () => {
       expect(node).not.toBeNull();
       return node!;
     });
-    fireEvent.click(within(disclosure).getByText(en.backendHelpTitle));
-    await waitFor(() => expect(disclosure.open).toBe(true));
+    fireEvent.click(disclosure);
+    await waitFor(() => expect(helpOpen()).toBe(true));
 
-    const said = disclosure.textContent ?? "";
+    const said = helpRegion().textContent ?? "";
     // MSCanvas never downloads, installs or bundles a provider.
     expect(said).toContain(en.backendHelpProvider);
-    // The real lifetime of a chosen folder: this session, and no longer.
+    // Which folder to choose. Since #158 Rust remembers a usable choice across
+    // launches, so the help no longer claims a session-only lifetime.
     expect(said).toContain(en.backendHelpSessionScope);
-    // What each existing control does, named as the controls are named.
-    expect(said).toContain(en.backendHelpChoose);
-    expect(said).toContain(en.backendHelpAutomatic);
-    expect(said).toContain(en.backendHelpRecheck);
+    // The controls name themselves; the help does not restate them.
+    expect(helpRegion().querySelector("ul")).toBeNull();
     // The approved support target, stated as a support target.
     expect(said).toContain("Windows 11 25H2 x64");
-    // And that a session without a backend is still a usable workspace.
+    // And what needs a backend at all.
     expect(said).toContain(en.backendHelpWithoutBackend);
   });
 
@@ -119,12 +128,11 @@ describe("offline setup help", () => {
     // No dialog, no overlay, nothing modal: the help is a disclosure beside a
     // workspace that is already usable.
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(add).toBeEnabled();
+    expect(add).not.toHaveAttribute("aria-disabled");
 
-    const disclosure = help()!;
-    fireEvent.click(within(disclosure).getByText(en.backendHelpTitle));
-    await waitFor(() => expect(disclosure.open).toBe(true));
-    expect(add).toBeEnabled();
+    fireEvent.click(help()!);
+    await waitFor(() => expect(helpOpen()).toBe(true));
+    expect(add).not.toHaveAttribute("aria-disabled");
     expect(screen.getByRole("treegrid", { name: en.rosterTitle })).toBeVisible();
     // Reading help is not a request. Nothing was probed and nothing was stored.
     expect(api.calls()).toEqual(calls);
@@ -136,29 +144,21 @@ describe("offline setup help", () => {
     const settings = document.querySelector<HTMLButtonElement>("[data-settings-entry]")!;
     fireEvent.click(settings);
     const dialog = screen.getByRole("dialog");
+    // Applied at once (D4); closing keeps it.
     fireEvent.click(within(dialog).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(dialog).getByRole("button", { name: zh.cancel }));
-    // Cancelled, so the applied locale is still English: the preview is what
-    // was being checked, and it is not the state this assertion needs.
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-
-    const reopened = document.querySelector<HTMLButtonElement>("[data-settings-entry]")!;
-    fireEvent.click(reopened);
-    const again = screen.getByRole("dialog");
-    fireEvent.click(within(again).getByRole("radio", { name: en.simplifiedChinese }));
-    fireEvent.click(within(again).getByRole("button", { name: zh.apply }));
+    fireEvent.click(within(dialog).getByRole("button", { name: zh.close }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     const disclosure = help()!;
-    fireEvent.click(within(disclosure).getByText(zh.backendHelpTitle));
-    await waitFor(() => expect(disclosure.open).toBe(true));
-    const said = disclosure.textContent ?? "";
+    expect(disclosure).toHaveAccessibleName(zh.backendHelpTitle);
+    fireEvent.click(disclosure);
+    await waitFor(() => expect(helpOpen()).toBe(true));
+    const said = helpRegion().textContent ?? "";
     expect(said).toContain(zh.backendHelpProvider);
     expect(said).toContain(zh.backendHelpSessionScope);
     // Product identities and the support target stay original inside the
     // translated sentence.
     expect(said).toContain("Windows 11 25H2 x64");
-    expect(said).toContain("msconvert.exe");
     expect(said).toContain("ProteoWizard");
     // No English fallback left in a translated surface.
     expect(said).not.toContain(en.backendHelpProvider);

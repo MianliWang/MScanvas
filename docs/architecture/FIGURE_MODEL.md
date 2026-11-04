@@ -207,6 +207,7 @@ and the axis changes are the renderer's alone.
 | --- | --- |
 | Ticks | 1-2-5 steps, aiming for five and taking four to six where the span allows; fewer where labels would collide or leave the page, never overlapping ones. Every tick is `k × m × 10^e` parsed from its decimal string, so `0.3` is the `f64` nearest three tenths and no label prints a binary artefact or a negative zero |
 | Tick labels | the step's own decimals (`0.0, 0.5, 1.0`); exponents (`2e6`, `1e-20`) from 10^6 up, below 10^-3, or past twelve characters. Where no exact tick exists -- a zero span, or a span narrow beside its magnitude -- the axis falls back to the end labels it always had |
+| Ticks on screen | the same rule in `plotAxes.ts` `niceTicks`, with both sides held to `fixtures/plot-ticks/nice-ticks.json`, and the same end labels where no tick exists. It has no collision check, so a figure can keep fewer ticks than the screen where its labels would collide or leave the page; on screen, an x label that would leave its frame moves back inside it |
 | Value axis | labels outside the plotting area, right-aligned against outward ticks; light gridlines at the ticks, in the axis colour at 18% opacity; 5% headroom past the data, never across zero. A range that excludes zero labels its floor, so it cannot read as zero-based |
 | Domain axis | labels centred under outward ticks; the data's own ends are not labelled |
 | Axis titles | `label (unit)` for a reported unit, `label (unit not reported)` for an unreported one, the bare label for a dimensionless one. No unit is ever inferred |
@@ -229,12 +230,28 @@ The three golden documents were regenerated for this change: they are the old
 figures with the new axes, titles and text, and their descriptions are
 byte-identical.
 
+## The saved figure — FIG-007, Rust side
+
+A `.msfigure` document is a recipe and a reference, never a `FigureSpec`: the
+figure kind, the resolved range, the traces, the size, the theme, the edited
+titles and the raster DPI, and the source's locator, byte length and SHA-256.
+Reopening refuses the source unless its bytes are the recorded ones,
+regenerates through `export::figure_spec`, `chromatogram::figure_spec` or
+`linked_figure_spec` and then `publication_figure`, and refuses a figure whose
+data digest differs from the saved one. That digest writes the plot kind, unit
+states, roles and scopes as the saved figure's own fixed tokens, not as this
+model's serialized form, so a `FigureSpec` schema bump refuses no saved figure;
+a new variant of one of those types needs a token in `saved_figure.rs` before
+it compiles. No interface reaches it yet. See
+[ADR 0062](adr/0062-saved-figurespec.md).
+
 ## Still open
 
 FIG-001 through FIG-006 cover the selected spectrum, the chromatogram, and the
 linked two-panel figure of the two — the first two over their full source or the
-range their own viewer has committed to. FIG-007 and FIG-008 are unimplemented.
-There is no XIC, no saved specification and no composer. The viewer's screen
+range their own viewer has committed to. FIG-007 has its Rust side and no
+interface; FIG-008 is unimplemented.
+There is no XIC, no saved-figure interface and no composer. The viewer's screen
 renderer still does not consume `FigureSpec` — screen and export agree by both
 being right rather than by sharing a type — except for a stored targeted MS1
 result, whose screen figure *is* the exported SVG (M9.2).

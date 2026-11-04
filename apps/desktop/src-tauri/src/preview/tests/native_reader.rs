@@ -253,6 +253,37 @@ fn the_file_s_own_terms_reach_the_transfer_objects_and_the_exports() {
         centroid["precursors"][0],
         json!({ "index": 0, "mz": null, "intensity": 880.0 })
     );
+
+    // A profile projection carries the measured samples its line crosses each
+    // edge from (P175); a centroid one carries none. Both keys are always on
+    // the wire, nulls included, because the webview reads them unguarded.
+    // One spectrum is retained at a time, so each is projected while current.
+    let window = |token: &str, low: f64, high: f64| {
+        wire(
+            &service
+                .project_selected_spectrum(token, low, high)
+                .expect("a window of the source"),
+        )
+    };
+    let discrete = window(
+        centroid["exportToken"].as_str().expect("a token"),
+        320.0,
+        380.0,
+    );
+    assert_eq!(
+        (&discrete["outsideLow"], &discrete["outsideHigh"]),
+        (&json!(null), &json!(null))
+    );
+    let profile = loaded_spectrum(&service, &handle, 0);
+    let between = window(&profile.export_token, 120.0, 180.0);
+    assert_eq!(between["sourcePoints"], json!(0));
+    assert_eq!(
+        (&between["outsideLow"], &between["outsideHigh"]),
+        (
+            &json!({ "mz": 100.5, "intensity": 10.0 }),
+            &json!({ "mz": 200.25, "intensity": 40.0 })
+        )
+    );
 }
 
 #[test]
