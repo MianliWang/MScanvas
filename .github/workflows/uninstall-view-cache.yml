@@ -67,6 +67,11 @@ jobs:
           $outsideBase = Join-Path $local 'outside-the-cache'
           $script:failed = 0
           $script:caseNumber = 0
+          # NSIS's own string tests go by collation, which ignores this character
+          # altogether, and U+00AD in the same way.
+          $ignorable = [string][char]0x200D
+          # FileRead decodes the marker by this, so it decides what 0xAD becomes.
+          Write-Host "ANSI code page: $(Get-ItemPropertyValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage' ACP)"
 
           function Check([string]$label, [bool]$ok) {
             if ($ok) { Write-Host "  ok    $label" } else { Write-Host "  FAIL  $label"; $script:failed++ }
@@ -252,6 +257,13 @@ jobs:
           Check "exit status 0 ($code)" ($code -eq 0)
           Check-CacheWhole $root
 
+          $null = Start-Case 'a marker with one byte more, 0xAD, is kept'
+          New-Neighbours; New-Cache $root
+          [IO.File]::WriteAllBytes("$root\$marker", [byte[]]([Text.Encoding]::ASCII.GetBytes('mscanvas-view-cache') + 0xAD + 0x0A))
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check-CacheWhole $root
+
           $null = Start-Case 'the name spelled otherwise on disk is kept'
           New-Neighbours; New-Cache "$data\VIEW-CACHE"
           $code = Uninstall-InPlace @('/S')
@@ -295,6 +307,62 @@ jobs:
           Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
           Check 'kept staging' (Test-Path -LiteralPath "$root\staging\$attempt\owner.json")
 
+          foreach ($kind in 'directory', 'file') {
+            $outside = Start-Case "a $kind symbolic link inside the cache leaves its target untouched, and the tree whole"
+            New-Neighbours; New-Cache $root
+            $target = if ($kind -eq 'file') { "$outside\canary.txt" } else { $outside }
+            New-Item -ItemType SymbolicLink -Path "$root\entries\$key\link" -Target $target | Out-Null
+            $code = Uninstall-InPlace @('/S')
+            Check "exit status 0 ($code)" ($code -eq 0)
+            Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
+            Check-CacheWhole $root
+          }
+
+          foreach ($case in @(@('dot', ".$ignorable"), @('marker', "$marker$ignorable"))) {
+            $outside = Start-Case "a junction named like the $($case[0]) but for U+200D leaves its target untouched, and the tree whole"
+            New-Neighbours; New-Cache $root
+            New-Item -ItemType Junction -Path "$root\$($case[1])" -Target $outside | Out-Null
+            $code = Uninstall-InPlace @('/S')
+            Check "exit status 0 ($code)" ($code -eq 0)
+            Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
+            Check-CacheWhole $root
+          }
+
+          $outside = Start-Case 'a junction listed after a file named U+200D leaves its target untouched, and the tree whole'
+          New-Neighbours; New-Cache $root
+          [IO.File]::WriteAllText("$root\entries\$key\$ignorable", 'x')
+          New-Item -ItemType Junction -Path "$root\entries\$key\$([char]0x4E2D)" -Target $outside | Out-Null
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'kept the canary in the target' (Test-Path -LiteralPath "$outside\canary.txt")
+          Check-CacheWhole $root
+
+          $null = Start-Case 'a file named U+200D goes with the rest'
+          New-Neighbours; New-Cache $root
+          [IO.File]::WriteAllText("$root\$ignorable", 'x')
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'removed view-cache' (-not (Test-Path -LiteralPath $root))
+          Check-Neighbours
+
+          $null = Start-Case 'a root something holds keeps its marker, byte for byte, the uninstall still succeeds, and the next one finishes'
+          New-Neighbours; New-Cache $root
+          $holder = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 600' -WorkingDirectory $root -PassThru
+          $code = Uninstall-InPlace @('/S')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'the holder outlived the uninstall' (-not $holder.HasExited)
+          Check 'kept the root' (Test-Path -LiteralPath $root)
+          $read = if (Test-Path -LiteralPath "$root\$marker") { [IO.File]::ReadAllText("$root\$marker", [Text.Encoding]::Latin1) } else { '' }
+          Check 'the marker reads as Rust writes it' ($read -ceq "mscanvas-view-cache`n")
+          $holder.Kill()
+          $holder.WaitForExit()
+          $code = Run-Waited $setup @('/S')
+          Check "installing again exits 0 ($code)" ($code -eq 0)
+          $code = Uninstall-InPlace @('/S')
+          Check "the next uninstall exits 0 ($code)" ($code -eq 0)
+          Check 'the next uninstall removed the root' (-not (Test-Path -LiteralPath $root))
+          Check-Neighbours
+
           $null = Start-Case 'a locked file stays with the marker, the uninstall still succeeds, and the next one finishes'
           New-Neighbours; New-Cache $root
           $lock = [IO.File]::Open("$root\entries\$key\view.mzML", 'Open', 'Read', 'None')
@@ -322,6 +390,26 @@ jobs:
           $code = Uninstall-InPlace @('/S')
           Check "exit status 0 ($code)" ($code -eq 0)
           Check 'made no folder' (-not (Test-Path -LiteralPath $data))
+
+          # Not owner decisions, records of what the template does (AFTER_BETA1_PLAN
+          # 7.2): a passive install skips the page, so no first choice is selected.
+          $null = Start-Case 'a passive install over the same version runs the uninstaller and removes a recognized cache'
+          New-Neighbours; New-Cache $root
+          Set-RecordedLanguage
+          $code = Run-Waited $setup @('/P')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check 'removed view-cache' (-not (Test-Path -LiteralPath $root))
+          Check-Neighbours
+          Check 'installed again' (Test-Path -LiteralPath $uninstaller)
+
+          $null = Start-Case 'a passive install over an older version runs no uninstaller and removes nothing'
+          New-Neighbours; New-Cache $root
+          Set-RecordedLanguage
+          Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MSCanvas' 'DisplayVersion' '0.0.1'
+          $code = Run-Waited $setup @('/P')
+          Check "exit status 0 ($code)" ($code -eq 0)
+          Check-CacheWhole $root
+          Check-Neighbours
 
           # Last: the installer's finish page starts the application. Not an owner
           # decision, a record of what the template does (AFTER_BETA1_PLAN 7.2).
