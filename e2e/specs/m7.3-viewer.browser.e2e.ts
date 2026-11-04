@@ -47,7 +47,7 @@ async function preferences(language: "en" | "zh-CN", density: "comfortable" | "c
   await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
-function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" | "minutes" = "complete") {
+function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" | "minutes" | "narrow" = "complete") {
   const table: Record<string, unknown> = ipcTable({ emptySpectrum: kind === "empty", refusedViewport: kind === "refused", oneMzViewport: kind === "one" });
   const preview = buildPreview(8);
   preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, {
@@ -76,6 +76,12 @@ function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "la
     // Every scan declares minutes, as most native mzML does (ADR 0056).
     preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, { retentionTime: { value: index, unit: "minute" } }));
     Object.assign(preview.runSummary, { retentionTimeRange: { state: "reported", minimum: 0, maximum: 7, unit: "minute" } });
+  }
+  if (kind === "narrow") {
+    // Narrow beside its value: every x label is long, and the last is at the plot's right end.
+    preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, {
+      retentionTime: { value: index === 7 ? 1000.12025 : 1000.12 + index * 0.00003, unit: "notReported" } }));
+    Object.assign(preview.runSummary, { retentionTimeRange: { state: "reported", minimum: 1000.12, maximum: 1000.12025, unit: "notReported" } });
   }
   table.open_mzml_preview = preview;
   table.get_workspace_roster = { capacity: 1024, datasets: [selectedFile] };
@@ -124,7 +130,7 @@ async function open(kind: Parameters<typeof answers>[0] = "complete", options = 
   await browser.url("/");
   await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').waitForExist();
   if (count !== undefined) await seedARunOf(count);
-  if (kind === "complete" || kind === "prefix") await sourceBoundary(count === undefined ? 1 : .0125, declared);
+  if (kind === "complete" || kind === "prefix" || kind === "narrow") await sourceBoundary(count === undefined ? 1 : .0125, declared);
   const rosterToggle = browser.$('[aria-controls="workbench-roster"]');
   await revealRosterRow(selectedFile.handle);
   await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').click();
@@ -277,6 +283,29 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
       expect(label.x + label.width).toBeLessThanOrEqual(plot.x + plot.width + 1);
       expect(label.font).toBe("12px");
     }
+  });
+  it("keeps an x label at a plot's right end whole, at any window and zoom", async () => {
+    // Cut by the panel's edge, 1000.12025 would read as 1000.1202: another number.
+    const xLabels = (plot: string) => browser.execute((css: string) => [...document.querySelectorAll(css + " .plot-x-ticks .plot-tick")].map(label => label.textContent), plot);
+    const outsideTheFrame = () => browser.execute(() => [...document.querySelectorAll(".plot-frame .plot-x-ticks .plot-tick")].flatMap(label => {
+      const box = label.getBoundingClientRect(), frame = label.closest(".plot-frame")!.getBoundingClientRect();
+      return box.left < frame.left || box.right > frame.right ? [label.textContent + " " + box.left + ".." + box.right + " outside " + frame.left + ".." + frame.right] : [];
+    }));
+    const mz = [1000.12, 1000.12005, 1000.1201, 1000.12015, 1000.1202, 1000.12025];
+    await open("narrow", { width: 1366, height: 768, dpr: 1 }, undefined, { mz, intensity: [10, 40, 20, 80, 30, 60], mzLow: mz[0], mzHigh: mz[5],
+      basePeakMz: mz[3], basePeakIntensity: 80, viewportDomain: { state: "admitted", low: mz[0], high: mz[5] } });
+    await clickPlot(RT, .4);
+    await browser.$(MZ).waitForDisplayed();
+    for (const plot of [".chromatogram-plot", ".spectrum-frame"]) expect((await xLabels(plot)).at(-1)).toBe("1000.12025");
+    expect(await outsideTheFrame()).toEqual([]);
+    // A resize paints nothing: the labels hold by themselves.
+    await metrics(960, 640, 1);
+    expect(await outsideTheFrame()).toEqual([]);
+    await browser.execute((css: string) => document.querySelector<SVGSVGElement>(css)?.focus(), MZ);
+    await browser.keys("+");
+    await browser.waitUntil(async () => (await xLabels(".spectrum-frame")).at(-1) === "1000.12020");
+    expect(await outsideTheFrame()).toEqual([]);
+    expect(await consoleEntries()).toEqual([]);
   });
   it("windows the 100000 loaded rows, reaches End without a read and keeps the compact headers over their values", async () => {
     await open("complete", { width: 1200, height: 800, dpr: 1.25 }, 100000);

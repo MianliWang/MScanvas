@@ -293,15 +293,19 @@
 .plot-axis-title-y { grid-column: 1 / -1; grid-row: 1; justify-self: start; max-width: 100%; padding-left: 2px; }
 .plot-axis-title-x { flex: none; max-width: 50%; }
 .plot-x-ticks, .plot-y-ticks { position: relative; min-width: 0; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none; }
-.plot-x-ticks { grid-column: 2; grid-row: 3; }
-/* A fixed width, wide enough for the longest label the ticks write ("-1.5e+6"):
+.plot-x-ticks { container-type: inline-size; grid-column: 2; grid-row: 3; }
+/* A fixed width, wide enough for the longest ordinary label the ticks write ("-800000"):
    sized from the labels, the drawing would move when a gesture redraws them,
    and a plot whose box moves abandons the gesture. */
 .plot-y-ticks { grid-column: 1; grid-row: 2; width: calc(7ch + 8px); }
 /* The chromatogram's value labels sit in its drawing's own left gutter. */
 .chromatogram-y-ticks { grid-column: 2; justify-self: start; width: 6.4%; }
 .plot-tick { position: absolute; color: var(--color-text-secondary); line-height: 14px; white-space: nowrap; }
-.plot-x-ticks .plot-tick { top: 0; transform: translateX(-50%); }
+/* Centred on its place, unless that would pass the frame's right edge: cut there,
+   "1000.12025" reads as "1000.1202", another number. --tick-at is the place along
+   this row, which paintTicks writes on each label, and 1cqw a hundredth of its
+   width, so a resize needs no repaint; 14px is the frame's right padding less two. */
+.plot-x-ticks .plot-tick { --tick-at: 50; top: 0; transform: translateX(min(-50%, calc((100 - var(--tick-at)) * 1cqw + 14px - 100%))); }
 .plot-y-ticks .plot-tick { right: 5px; transform: translateY(-50%); }
 .plot-gridlines line { stroke: var(--color-chart-grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .plot-baseline { stroke: var(--color-border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
