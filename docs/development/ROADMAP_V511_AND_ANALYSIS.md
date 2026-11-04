@@ -754,7 +754,7 @@ The 119 rows the gap table counts as missing (every status except implemented on
 | VW-26 | RT from/to filter on the scan list, with validation | not-planned | N-V3 |
 | VW-28 | 定位编号: jump to scan N, clearing filters that hide it | partial | N-V3 |
 | VW-31 | Big scan list (120,000 synthetic rows) | in-open-PR | N-05 |
-| VW-33 | Scan #1 selected and drawn at entry | refused-or-deferred | N-V3 |
+| VW-33 | Scan #1 selected and drawn at entry | refused-or-deferred. *2026-11-04:* no longer refused: V-1 (2026-11-03) selects the MS1 at the TIC apex, and V-1-NOMS1 selects nothing where a file has no MS1 | N-V3 |
 | VW-35 | Each scan keeps its own zoom (12 most recent) | not-planned | N-V3 |
 | VW-37 | 扫描浏览 (Scans) tab with the scan browser alone | decorative-in-v511 | N-05 |
 | VW-38 | RT × m/z feature map (二维特征分布) and its SVG | decorative-in-v511 | N-X3; extended by N-X4 |
