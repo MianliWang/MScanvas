@@ -6287,6 +6287,13 @@ fn a_view_table_names_what_it_keeps_and_how_many_of_how_many() {
     assert_eq!(preamble_value(&table, "view_text"), "c8h10");
     assert_eq!(preamble_value(&table, "view_sort_key"), "");
     assert_eq!(preamble_value(&table, "view_sort_direction"), "");
+
+    // A formula as a person writes it finds the rows the page shows, and the
+    // file says what was typed.
+    let view = golden_view(&[1, 4], &EVERY_OUTCOME, "C8H10", None);
+    let (table, count) = view_table(&stored, TableFormat::Csv, &view).expect("a table");
+    assert_eq!(count, 2);
+    assert_eq!(preamble_value(&table, "view_text"), "C8H10");
 }
 
 /// The same view writes the same line, whatever order its outcomes came in.
@@ -6387,6 +6394,14 @@ fn a_view_table_refuses_rows_that_are_not_the_views() {
         ),
         ("no rows", golden_view(&[], &EVERY_OUTCOME, "", None)),
         (
+            "no rows under a filter that keeps none",
+            golden_view(&[], &EVERY_OUTCOME, "no such target", None),
+        ),
+        (
+            "a row of an outcome the text would keep but the view does not",
+            golden_view(&[2, 4], &["FAILED"], "=", None),
+        ),
+        (
             "a row twice",
             golden_view(
                 &[1, 1, 2, 3, 4, 5],
@@ -6467,6 +6482,61 @@ fn a_view_of_words_the_contract_does_not_have_is_refused() {
     assert!(view(&target, &every, &format!("{longest}a"), None).is_none());
     assert!(view(&target, &every, "", Some(("adduct", "ascending"))).is_none());
     assert!(view(&target, &every, "", Some(("label", "up"))).is_none());
+}
+
+/// A refused view reaches the webview under its own code, whichever check said so,
+/// never as an unknown format.
+#[test]
+fn a_refused_view_says_so_in_its_own_code() {
+    use crate::project::dto::TargetedTableViewDto;
+    assert_eq!(
+        crate::targeted_table_refusal(TableRefusal::ViewNotOfResult).kind,
+        "targeted_table_view_refused"
+    );
+    let unknown_word = serde_json::from_value::<TargetedTableViewDto>(serde_json::json!({
+        "targetIds": [golden_target(1).to_string()],
+        "outcomes": ["SHARED"],
+        "text": "",
+        "sort": { "key": "adduct", "direction": "ascending" },
+    }))
+    .expect("the wire's shape");
+    assert_eq!(
+        crate::read_table_view(unknown_word).unwrap_err().kind,
+        "targeted_table_view_refused"
+    );
+}
+
+/// The name a file is offered under is one of the things that keeps part of a
+/// table from passing for all of it. The whole table's names do not move.
+#[test]
+fn a_saved_table_is_offered_under_a_name_that_says_how_much_it_holds() {
+    let stored = golden_stored();
+    let view = pinned_view();
+    let artifact = ArtifactId::new();
+    let short: String = artifact.to_string().chars().take(8).collect();
+    let name = |format, view| {
+        crate::targeted_table_document(&stored, artifact, format, view)
+            .expect("a table")
+            .2
+    };
+    for (format, whole, part) in [
+        (TableFormat::Csv, "results.csv", "results-view-2-of-6.csv"),
+        (TableFormat::Tsv, "results.tsv", "results-view-2-of-6.tsv"),
+        (
+            TableFormat::SpreadsheetCsv,
+            "results-spreadsheet.csv",
+            "results-view-2-of-6-spreadsheet.csv",
+        ),
+    ] {
+        assert_eq!(
+            name(format, None),
+            format!("mscanvas-targeted-ms1-{short}-{whole}")
+        );
+        assert_eq!(
+            name(format, Some(&view)),
+            format!("mscanvas-targeted-ms1-{short}-{part}")
+        );
+    }
 }
 
 /// The exact shape `projectApi.ts` sends, with a sort and without, through the

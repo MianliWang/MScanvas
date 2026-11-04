@@ -1189,8 +1189,59 @@ async fn export_targeted_ms1_table_view(
 ) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let artifact = parsed_artifact_id(&artifact_id)?;
-    let view = view.view().ok_or_else(targeted_table_view_refused)?;
+    let view = read_table_view(view)?;
     save_targeted_table(&app, &projects, artifact, &format, Some(view)).await
+}
+
+/// A view as the table writer reads it, or the refusal of a word it does not have.
+fn read_table_view(
+    view: project::dto::TargetedTableViewDto,
+) -> Result<project::targeted_output::TableView, PreviewErrorDto> {
+    view.view().ok_or_else(targeted_table_view_refused)
+}
+
+const fn targeted_table_facts(
+    format: project::targeted_output::TableFormat,
+) -> preview::dialog::SaveDialogFacts {
+    use project::targeted_output::TableFormat;
+    match format {
+        TableFormat::Csv => TARGETED_TABLE_CSV,
+        TableFormat::Tsv => TARGETED_TABLE_TSV,
+        TableFormat::SpreadsheetCsv => TARGETED_TABLE_SPREADSHEET_CSV,
+    }
+}
+
+/// One stored result's table, its row count and the name it is offered under:
+/// every row, or the rows of a view, whose name cannot pass for the whole table's.
+fn targeted_table_document(
+    stored: &project::targeted_output::StoredResult,
+    artifact: mscanvas_core::ArtifactId,
+    format: project::targeted_output::TableFormat,
+    view: Option<&project::targeted_output::TableView>,
+) -> Result<(String, usize, String), project::targeted_output::TableRefusal> {
+    use project::targeted_output::{TableFormat, result_table, view_table};
+    let (text, count, scope) = match view {
+        None => {
+            let (text, count) = result_table(stored, format)?;
+            (text, count, String::new())
+        }
+        Some(view) => {
+            let (text, count) = view_table(stored, format, view)?;
+            let scope = format!("-view-{count}-of-{}", stored.rows.len());
+            (text, count, scope)
+        }
+    };
+    let variant = if format == TableFormat::SpreadsheetCsv {
+        "-spreadsheet"
+    } else {
+        ""
+    };
+    let name = format!(
+        "mscanvas-targeted-ms1-{}-results{scope}{variant}.{}",
+        short_id(artifact),
+        targeted_table_facts(format).default_extension
+    );
+    Ok((text, count, name))
 }
 
 /// One stored result's table through a native dialog, never over a file: every
@@ -1202,38 +1253,21 @@ async fn save_targeted_table(
     format: &str,
     view: Option<project::targeted_output::TableView>,
 ) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
-    use project::targeted_output::{TableFormat, result_table, view_table};
+    use project::targeted_output::TableFormat;
     let table_format = TableFormat::from_wire(format).ok_or_else(targeted_export_format_unknown)?;
-    let (facts, variant) = match table_format {
-        TableFormat::Csv => (TARGETED_TABLE_CSV, ""),
-        TableFormat::Tsv => (TARGETED_TABLE_TSV, ""),
-        TableFormat::SpreadsheetCsv => (TARGETED_TABLE_SPREADSHEET_CSV, "-spreadsheet"),
-    };
+    let facts = targeted_table_facts(table_format);
     let lane = projects.begin_output().map_err(project_error)?;
     let projects = Arc::clone(projects);
     // The whole table before the dialog, so a result that cannot be written
     // refuses without asking where to put it.
-    let (text, row_count, scope) = off_the_async_runtime(move || {
+    let (text, row_count, suggested) = off_the_async_runtime(move || {
         let stored = projects
             .stored_targeted_result(artifact)
             .map_err(project_error)?;
-        match view {
-            None => result_table(&stored, table_format)
-                .map(|(text, count)| (text, count, String::new())),
-            // A suggested name that cannot pass for the whole table's.
-            Some(view) => view_table(&stored, table_format, &view).map(|(text, count)| {
-                let scope = format!("-view-{count}-of-{}", stored.rows.len());
-                (text, count, scope)
-            }),
-        }
-        .map_err(targeted_table_refusal)
+        targeted_table_document(&stored, artifact, table_format, view.as_ref())
+            .map_err(targeted_table_refusal)
     })
     .await??;
-    let suggested = format!(
-        "mscanvas-targeted-ms1-{}-results{scope}{variant}.{}",
-        short_id(artifact),
-        facts.default_extension
-    );
     let receiver = targeted_destination(app, facts, suggested)?;
     off_the_async_runtime(move || {
         let _lane = lane;
