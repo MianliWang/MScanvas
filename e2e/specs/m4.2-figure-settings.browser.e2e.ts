@@ -22,19 +22,21 @@ import {
 } from "../support/harness";
 import { COMPLETE_POINT_COUNT } from "../support/fixtures";
 import { openTheSpectrum } from "../support/viewer";
+import { FIGURE_DIALOG, answerFigurePreviews, openFigureDialog, waitForFigurePreview } from "../support/figure";
 
 /**
- * Everything below is looked up inside the spectrum panel. Since M7.4 the
- * chromatogram's header carries figure actions of its own, a visible "Copy
- * plot" among them, earlier in the document (`PreviewWorkspace.tsx:950`), so a
- * document-wide lookup by label can land on the other plot's control.
+ * Everything below is looked up inside the Export figure dialog, which holds a
+ * spectrum's figure settings and every export of it since the rebuild (spec
+ * 3.4, 6). It is portaled to the body, so a lookup by label there cannot land
+ * on either plot head's own Copy.
  */
-const PANEL = "section.spectrum-panel";
-const EXPORT_BLOCK = `${PANEL} .spectrum-export`;
-const STATUS = `${PANEL} > .spectrum-export-status`;
-const DARK = `${PANEL} input[type='radio'][value='dark']`;
-const PROBLEM = "#spectrum-figure-problem";
-const DPI_PROBLEM = "#spectrum-figure-dpi-problem";
+const PANEL = FIGURE_DIALOG;
+const STATUS = `${PANEL} .figure-export-result [role="status"]`;
+// The theme is a segmented control: Light, then Dark.
+const DARK = `${PANEL} .spectrum-figure-field-theme [role='radio']:last-child`;
+// The dialog's ids come from `useId`, so its problem lines are found by suffix.
+const PROBLEM = `${PANEL} [id$="-figure-problem"]`;
+const DPI_PROBLEM = `${PANEL} [id$="-figure-dpi-problem"]`;
 
 interface FigureSettings {
   readonly widthPx: number;
@@ -44,24 +46,21 @@ interface FigureSettings {
 }
 
 /**
- * A viewer with one spectrum selected and its export open.
+ * A viewer with one spectrum selected and its Export figure dialog open.
  *
- * Through the shared opener: the roster has been `.grouped-roster` rows since
- * M7.2, and the `li.dataset-row` double-click this was written against no
- * longer exists (PM9 baseline §2, family b). Then the export disclosure, which
- * every viewer opens closed (`SelectedSpectrumPanel.tsx:45,58`; M7.3), opened
- * as PM9.3's `openSpectrumExport` opens it. The window size is passed through
+ * Through the shared opener, then the spectrum head's Export…. The dialog's
+ * Copy, SVG and PNG wait for a drawn preview, which is answered here with a
+ * labelled mock (`answerFigurePreviews`): the arguments these tests watch are
+ * the export commands', never the preview's. The window size is passed through
  * because the opener sets it.
  */
 async function open(
   size: { readonly width?: number; readonly height?: number } = {},
 ): Promise<void> {
   await openTheSpectrum(size);
-  const disclosure = browser.$(`${PANEL} .spectrum-export-disclosure`);
-  if ((await disclosure.getAttribute("open")) === null) {
-    await browser.$(`${PANEL} .spectrum-export-disclosure > summary`).click();
-  }
-  await browser.$(EXPORT_BLOCK).waitForDisplayed();
+  await answerFigurePreviews();
+  await openFigureDialog("section.spectrum-panel");
+  await waitForFigurePreview();
 }
 
 /**
@@ -100,22 +99,41 @@ async function fieldOf(label: string): Promise<WebdriverIO.Element> {
   if (id === "") {
     throw new Error(`no figure field labelled ${label}`);
   }
-  return browser.$(`#${id}`).getElement();
+  // By attribute: a `useId` id is not a valid `#` selector.
+  return browser.$(`[id="${id}"]`).getElement();
 }
 
-/** One of the spectrum panel's actions, by its label, as m4.3's `control`. */
+/** One of the dialog's actions, by its label, as m4.3's `control`. */
 function control(label: string) {
   return browser.$(PANEL).$(`button=${label}`);
 }
 
+/**
+ * Whether an action is offered: neither disabled nor refused. A refused action
+ * is `aria-disabled` and keeps its Tab stop, so `isEnabled` alone says nothing.
+ */
+async function offered(label: string): Promise<boolean> {
+  const button = control(label);
+  return (await button.isEnabled()) && (await button.getAttribute("aria-disabled")) !== "true";
+}
+
+/**
+ * Presses an action once it is offered. A changed setting asks for a new
+ * preview, and the figure actions are refused until it is drawn -- so a press
+ * straight after a change would be refused, which is the product working.
+ */
 async function press(label: string): Promise<void> {
+  await browser.waitUntil(() => offered(label), {
+    timeout: 15_000,
+    timeoutMsg: `${label} was never offered`,
+  });
   await control(label).click();
 }
 
 /**
- * One element's text, read from the document rather than through `getText`, as
- * m4.3's `exportStatus` is and for its reason: the status line sits below the
- * open export, in a column that scrolls.
+ * One element's text, read from the document rather than through `getText`,
+ * which answers only for what is on screen: the problem lines sit in the
+ * dialog's options column, which scrolls on its own at a small window.
  */
 async function textOf(selector: string): Promise<string> {
   return browser.execute(
@@ -287,14 +305,19 @@ describe("M4.2 figure settings, in the rendered interface", () => {
       it(`refuses every figure action while ${field} is "${value}"`, async () => {
         await open();
         await setField(field, value);
+        await browser.waitUntil(async () => (await textOf(PROBLEM)).length > 0, {
+          timeout: 15_000,
+          timeoutMsg: "the field's problem was never said",
+        });
 
+        // Refused rather than disabled: each keeps its Tab stop and its reason.
         for (const action of ["Export SVG…", "Export PNG…", "Copy plot"]) {
-          expect(await control(action).isEnabled()).toBe(false);
+          expect(await offered(action)).toBe(false);
         }
         // The data actions stay live: a width nobody could draw at says nothing
         // about a list of numbers.
         for (const action of ["Export CSV…", "Export TSV…"]) {
-          expect(await control(action).isEnabled()).toBe(true);
+          expect(await offered(action)).toBe(true);
         }
 
         // Said in words, and attached to the field rather than only placed near
@@ -303,7 +326,7 @@ describe("M4.2 figure settings, in the rendered interface", () => {
         const input = await fieldOf(field);
         expect(await input.getAttribute("aria-invalid")).toBe("true");
         const described = await input.getAttribute("aria-describedby");
-        expect(described).toBe("spectrum-figure-problem");
+        expect(described).toBe(await browser.$(PROBLEM).getAttribute("id"));
 
         // Nothing was asked of the backend for a *figure*, because this side
         // already knew there was none to draw.
@@ -348,10 +371,15 @@ describe("M4.2 figure settings, in the rendered interface", () => {
       // question is what crosses the boundary.
       await open();
       await setField("PNG DPI", "12.5");
+      // Once the preview for this draft is drawn, which is what offers the rest.
+      await browser.waitUntil(() => offered("Export SVG…"), {
+        timeout: 15_000,
+        timeoutMsg: "the preview for the draft was never drawn",
+      });
 
-      expect(await control("Export PNG…").isEnabled()).toBe(false);
+      expect(await offered("Export PNG…")).toBe(false);
       for (const action of ["Export SVG…", "Copy plot", "Export CSV…", "Export TSV…"]) {
-        expect(await control(action).isEnabled()).toBe(true);
+        expect(await offered(action)).toBe(true);
       }
 
       // The reason is on the field it belongs to, and the size fields beside it
@@ -359,7 +387,13 @@ describe("M4.2 figure settings, in the rendered interface", () => {
       expect(await textOf(DPI_PROBLEM)).toContain("PNG DPI must be a whole number");
       const dpiField = await fieldOf("PNG DPI");
       expect(await dpiField.getAttribute("aria-invalid")).toBe("true");
-      expect(await dpiField.getAttribute("aria-describedby")).toBe("spectrum-figure-dpi-problem");
+      expect(await dpiField.getAttribute("aria-describedby")).toBe(
+        await browser.$(DPI_PROBLEM).getAttribute("id"),
+      );
+      // And the refused PNG points at that same sentence.
+      expect(await control("Export PNG…").getAttribute("aria-describedby")).toContain(
+        await browser.$(DPI_PROBLEM).getAttribute("id"),
+      );
       expect(await textOf(PROBLEM)).toBe("");
       const widthField = await fieldOf("Width");
       expect(await widthField.getAttribute("aria-invalid")).toBe(null);
@@ -381,7 +415,8 @@ describe("M4.2 figure settings, in the rendered interface", () => {
       });
 
       // And so does the copy.
-      await control("Dismiss export message").click();
+      // An icon button: its name is its label, not its text.
+      await browser.$(PANEL).$('button[aria-label="Dismiss export message"]').click();
       await press("Copy plot");
       await browser.waitUntil(async () => (await statusText()).startsWith("Copied"), {
         timeout: 15_000,
@@ -409,7 +444,7 @@ describe("M4.2 figure settings, in the rendered interface", () => {
       await open();
       await setField("PNG DPI", "50");
 
-      expect(await control("Export PNG…").isEnabled()).toBe(true);
+      // Offered once the preview for the new number is drawn; `press` waits.
       await press("Export PNG…");
       await browser.waitUntil(async () => (await statusText()).startsWith("Saved"), {
         timeout: 15_000,
@@ -428,11 +463,16 @@ describe("M4.2 figure settings, in the rendered interface", () => {
     it("offers the figure actions again once the settings describe one", async () => {
       await open();
       await setField("Width", "0");
-      expect(await control("Export PNG…").isEnabled()).toBe(false);
+      await browser.waitUntil(async () => (await textOf(PROBLEM)).length > 0, { timeout: 15_000 });
+      expect(await offered("Export PNG…")).toBe(false);
 
       await setField("Width", "900");
 
-      expect(await control("Export PNG…").isEnabled()).toBe(true);
+      // Offered again once the figure the new width describes is drawn.
+      await browser.waitUntil(() => offered("Export PNG…"), {
+        timeout: 15_000,
+        timeoutMsg: "a drawable width never offered PNG again",
+      });
       expect(await textOf(PROBLEM)).toBe("");
     });
   });
@@ -459,7 +499,7 @@ describe("M4.2 figure settings, in the rendered interface", () => {
       expect(await statusText()).toContain("Export SVG to retain text");
       // A raster capability this machine lacks does not take the vector export
       // away, which is the whole point of saying so.
-      expect(await control("Export SVG…").isEnabled()).toBe(true);
+      await browser.waitUntil(() => offered("Export SVG…"), { timeout: 15_000 });
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -477,7 +517,7 @@ describe("M4.2 figure settings, in the rendered interface", () => {
 
       expect(await statusText()).toContain("Nothing was copied.");
       expect(await statusText()).not.toContain("Copied the plot");
-      expect(await control("Copy plot").isEnabled()).toBe(true);
+      await browser.waitUntil(() => offered("Copy plot"), { timeout: 15_000 });
     });
   });
 
@@ -489,26 +529,26 @@ describe("M4.2 figure settings, in the rendered interface", () => {
     ] as const) {
       it(`offers every figure control at ${viewport.name}`, async () => {
         await open({ width: viewport.width, height: viewport.height });
-        // The range scopes are counted below, and are drawn only once the m/z
-        // viewport is ready (`usePreviewWorkspace.ts:3138`).
-        await browser.$(`${PANEL} input[name="spectrum-range-scope"]`).waitForExist();
+        // The range scopes are counted below; the dialog draws them as a
+        // segmented group of its own.
+        await browser.$(`${PANEL} .figure-export-range [role='radio']`).waitForExist();
 
-        // Every control has area and is inside the panel horizontally. The
-        // panel scrolls vertically by design at the narrow viewport, which is
-        // reach rather than clipping.
-        const facts = await browser.execute(() => {
-          const panel = document.querySelector("section.spectrum-panel");
+        // Every control has area and is inside the dialog horizontally. The
+        // dialog's options column scrolls vertically by design at the narrow
+        // viewport, which is reach rather than clipping.
+        const facts = await browser.execute((dialog: string) => {
+          const panel = document.querySelector(dialog);
           if (panel === null) {
             return null;
           }
           const bounds = panel.getBoundingClientRect();
           const nodes = [
             // The three text fields, by their own class inside the figure
-            // fieldset: the theme radios share the field class, and the m/z
-            // range editor's closed inputs share the input class.
+            // fieldset: the theme choices share the field class.
             ...panel.querySelectorAll(".spectrum-figure-settings .spectrum-figure-input"),
-            ...panel.querySelectorAll("input[type='radio']"),
-            ...panel.querySelectorAll(".spectrum-export-actions button"),
+            ...panel.querySelectorAll("input[type='radio'], [role='radio']"),
+            // The data actions beside the fields, then the foot's figure actions.
+            ...panel.querySelectorAll(".figure-export-data-actions button, .figure-export-actions button"),
           ];
           return {
             count: nodes.length,
@@ -529,7 +569,7 @@ describe("M4.2 figure settings, in the rendered interface", () => {
               })
               .filter((offender) => offender !== null),
           };
-        });
+        }, PANEL);
 
         expect(facts).not.toBeNull();
         // Three fields, two range scopes, two theme choices, five actions. The
@@ -549,8 +589,8 @@ describe("M4.2 figure settings, in the rendered interface", () => {
       await browser.setWindowSize(1366, 768);
       await open();
 
-      // From the last figure field, Tab walks the theme group and then every
-      // action in document order.
+      // From the last figure field, Tab walks the theme group and then the
+      // dialog's actions in document order, the data actions first.
       await browser.execute((panel: string) => {
         const inputs = [
           ...document.querySelectorAll(`${panel} .spectrum-figure-settings .spectrum-figure-input`),
@@ -559,23 +599,25 @@ describe("M4.2 figure settings, in the rendered interface", () => {
       }, PANEL);
       await browser.keys(["Tab"]);
       expect(
-        await browser.execute(() => (document.activeElement as HTMLInputElement | null)?.value),
-      ).toBe("light");
+        await browser.execute(() => (document.activeElement?.textContent ?? "").trim()),
+      ).toBe("Light");
 
       // A radio group is one tab stop; the arrow keys move within it, which is
       // the platform's own semantics rather than something invented here.
       await browser.keys(["ArrowDown"]);
       expect(
-        await browser.execute(() => (document.activeElement as HTMLInputElement | null)?.value),
-      ).toBe("dark");
+        await browser.execute(() => (document.activeElement?.textContent ?? "").trim()),
+      ).toBe("Dark");
 
       await browser.keys(["Tab"]);
       expect(
         await browser.execute(() => (document.activeElement?.textContent ?? "").trim()),
-      ).toBe("Export SVG…");
+      ).toBe("Export CSV…");
 
       // And Enter runs the focused action, carrying the theme the arrow key
-      // chose.
+      // chose -- once the preview of that theme is drawn, which is what offers
+      // Copy.
+      await browser.waitUntil(() => offered("Copy plot"), { timeout: 15_000 });
       await browser.execute((panel: string) => {
         const copy = [...document.querySelectorAll<HTMLButtonElement>(`${panel} button`)].find(
           (candidate) => (candidate.textContent ?? "").trim() === "Copy plot",

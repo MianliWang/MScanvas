@@ -759,13 +759,20 @@ impl PreviewProvider for ProteoWizardProvider {
     }
 }
 
-/// Every operation this boundary will ever ask an installation to perform.
+/// Every operation availability is judged against.
 ///
-/// Availability is judged against exactly this list, so a backend reported as
-/// available can serve both an open action and a spectrum selection.
+/// More than the open asks for. Since ADR 0056 the spectrum table and the
+/// selected spectrum are read natively, but its decision 3 admits a native read
+/// exactly when an `msaccess` read was admitted before it: dropping the two
+/// operations here would change which installations count as usable, which is
+/// the admission change that decision leaves to a follow-up.
 fn required_operations() -> Vec<PreviewOperation> {
     let mut operations = open_operations();
-    operations.push(selected_spectrum_operation(0));
+    operations.push(PreviewOperation::SpectrumTable);
+    operations.push(PreviewOperation::SpectrumByIndex {
+        index: 0,
+        precision: 8,
+    });
     operations
 }
 
@@ -1138,23 +1145,10 @@ pub fn reporting_redactor(source: &Path) -> Redactor {
     redactor
 }
 
-/// The preview operations one explicit open action performs, in display order.
+/// The `msaccess` operations one explicit open action performs, in display
+/// order. The spectrum table is read natively beside them (ADR 0056), and a
+/// selected spectrum is never an `msaccess` read.
 #[must_use]
 pub fn open_operations() -> Vec<PreviewOperation> {
-    vec![
-        PreviewOperation::Metadata,
-        PreviewOperation::RunSummary,
-        PreviewOperation::SpectrumTable,
-    ]
-}
-
-/// The fixed formatter precision MSCanvas requests for a selected spectrum.
-pub const SELECTED_SPECTRUM_PRECISION: u8 = 8;
-
-#[must_use]
-pub fn selected_spectrum_operation(index: u64) -> PreviewOperation {
-    PreviewOperation::SpectrumByIndex {
-        index,
-        precision: SELECTED_SPECTRUM_PRECISION,
-    }
+    vec![PreviewOperation::Metadata, PreviewOperation::RunSummary]
 }

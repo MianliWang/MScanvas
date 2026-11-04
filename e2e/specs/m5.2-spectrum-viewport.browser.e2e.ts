@@ -63,6 +63,7 @@ import {
   spectrumStatus,
   viewerReads,
 } from "../support/viewer";
+import { cdp, metrics } from "../support/cdp";
 
 const VIEWPORTS = [
   { name: "1366x768", width: 1_366, height: 768 },
@@ -71,9 +72,9 @@ const VIEWPORTS = [
 ] as const;
 
 /** The three controls the panel draws, by the words a person reads on them. */
-const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Reset m/z range"] as const;
+const CONTROLS = ["Zoom in m/z", "Zoom out m/z", "Fit all, m/z"] as const;
 
-const RETRY = "Draw this m/z range again";
+const RETRY = "Redraw";
 
 /**
  * The window one press of `Zoom in m/z` reaches from the whole spectrum.
@@ -272,18 +273,24 @@ async function keyTheSpectrum(key: string): Promise<boolean> {
  * browser does with it, which is the actual claim: that a keyboard user moving
  * through this panel is never parked on a picture nothing can be done to.
  *
- * Start at the panel's real export disclosure and stop at its final source
- * disclosure. A fixed walk from body can end in the roster before reaching the
- * viewer; the retained M7.3 failure records that false-negative precondition.
+ * Start at the panel head's toolbar (one Tab stop) and stop once focus leaves
+ * the panel: after the toolbar, the drawing is the panel's only other stop
+ * (direction A puts Set range… in the ⋯ menu). A fixed walk from body can end
+ * in the roster before reaching the viewer; the retained M7.3 failure records
+ * that false-negative precondition.
  */
 async function tabTrail(): Promise<string[]> {
   expect(await browser.execute(() => {
-    const entry = document.querySelector<HTMLElement>(".spectrum-export-disclosure > summary");
+    const entry = document.querySelector<HTMLElement>('.spectrum-panel .plot-tools [tabindex="0"]');
     entry?.focus(); return entry !== null && document.activeElement === entry;
   })).toBe(true);
   const trail: string[] = [];
   for (let step = 0; step < 20; step += 1) {
     await browser.keys(["Tab"]);
+    if (await browser.execute(() => document.activeElement?.closest(".spectrum-panel") === null)) {
+      console.log("M5.2 real Tab trail inside the spectrum panel: " + JSON.stringify(trail));
+      return trail;
+    }
     trail.push(
       await browser.execute(() => {
         const active = document.activeElement;
@@ -294,22 +301,18 @@ async function tabTrail(): Promise<string[]> {
         return classes === "" ? active.tagName.toLowerCase() : `${active.tagName.toLowerCase()}.${classes}`;
       }),
     );
-    if (await browser.execute(() => document.activeElement?.matches(".spectrum-source-details > summary"))) {
-      console.log("M7.3 refreshed M5.2 real Tab trail: " + JSON.stringify(trail));
-      return trail;
-    }
   }
-  throw Error("Real Tab did not reach the panel's final source disclosure.");
+  throw Error("Real Tab never left the spectrum panel.");
 }
 
-/** Which of the three controls would do something, by their own `disabled`. */
+/** Which of the three controls would do something: named icon buttons, refused rather than disabled. */
 async function controlStates(): Promise<Record<string, boolean>> {
   return browser.execute((labels: readonly string[]) => {
     const buttons = [...document.querySelectorAll("button")];
     const state: Record<string, boolean> = {};
     for (const label of labels) {
-      const found = buttons.find((button) => (button.textContent ?? "").trim() === label);
-      state[label] = found !== undefined && !found.disabled;
+      const found = buttons.find((button) => button.getAttribute("aria-label") === label);
+      state[label] = found !== undefined && !found.disabled && found.getAttribute("aria-disabled") !== "true";
     }
     return state;
   }, CONTROLS) as Promise<Record<string, boolean>>;
@@ -331,11 +334,12 @@ async function whatIsDrawn(): Promise<{
   return browser.execute((css: string) => {
     const svg = document.querySelector(css);
     const path = svg?.querySelector("path.spectrum-sticks");
-    const labels = Array.from(svg?.querySelectorAll("text.axis-label") ?? []);
+    // The axis ticks are rounded, so the drawing carries the window it is
+    // drawn over, at the axis precision.
     return {
       sticks: ((path?.getAttribute("d") ?? "").match(/M/gu) ?? []).length,
-      axisLow: labels[0]?.textContent ?? "",
-      axisHigh: labels[1]?.textContent ?? "",
+      axisLow: svg?.getAttribute("data-mz-low") ?? "",
+      axisHigh: svg?.getAttribute("data-mz-high") ?? "",
       caption: (svg?.closest("figure")?.querySelector("figcaption")?.textContent ?? "").trim(),
     };
   }, SPECTRUM_PLOT) as Promise<{
@@ -391,7 +395,9 @@ async function projectionsAskedFor(): Promise<readonly { low: number; high: numb
 /** Presses one of the panel's controls, where a reader can actually see it. */
 async function press(label: string): Promise<void> {
   await revealTheSpectrum();
-  await browser.$(`button=${label}`).click();
+  // An icon button is named by its label; a text button by its text.
+  const icon = browser.$(`button[aria-label="${label}"]`);
+  await (await icon.isExisting() ? icon : browser.$(`button=${label}`)).click();
 }
 
 /**
@@ -406,7 +412,7 @@ async function press(label: string): Promise<void> {
 async function whatIsAt(label: string): Promise<string> {
   return browser.execute((name: string) => {
     const node = [...document.querySelectorAll("button")].find(
-      (candidate) => (candidate.textContent ?? "").trim() === name,
+      (candidate) => (candidate.textContent ?? "").trim() === name || candidate.getAttribute("aria-label") === name,
     );
     if (node === undefined) {
       return "no such button";
@@ -475,9 +481,7 @@ describe("the visible m/z viewport", () => {
       await waitForTheAxis("300.0000", "302.5000");
       const drawn = await whatIsDrawn();
       expect(drawn.sticks).toBe(6);
-      expect(drawn.caption).toContain(
-        "Drawn as 6 sticks of the 6 observations this spectrum has between m/z 300.0000 and 302.5000",
-      );
+      expect(drawn.caption).toContain("6 sticks · 6 source observations in this range");
 
       // The window Rust was asked for is the spectrum's own domain, and it was
       // asked once. Read from the ledger rather than from what came back: a
@@ -500,7 +504,7 @@ describe("the visible m/z viewport", () => {
       expect(await controlStates()).toEqual({
         "Zoom in m/z": true,
         "Zoom out m/z": false,
-        "Reset m/z range": false,
+        "Fit all, m/z": false,
       });
       expect(await browser.$(`button=${RETRY}`).isExisting()).toBe(false);
       expect(await unexpectedConsole()).toEqual([]);
@@ -522,7 +526,7 @@ describe("the visible m/z viewport", () => {
       expect(await controlStates()).toEqual({
         "Zoom in m/z": true,
         "Zoom out m/z": true,
-        "Reset m/z range": true,
+        "Fit all, m/z": true,
       });
       // The axis the drawing is under is the window that was committed, and not
       // the range the answer happened to describe.
@@ -553,7 +557,7 @@ describe("the visible m/z viewport", () => {
       expect(await unexpectedConsole()).toEqual([]);
     });
 
-    it("returns the whole spectrum on Reset m/z range", async () => {
+    it("returns the whole spectrum on Fit all, m/z", async () => {
       await openTheSpectrum();
       await waitForTheDrawing();
       await press("Zoom in m/z");
@@ -563,13 +567,13 @@ describe("the visible m/z viewport", () => {
         timeoutMsg: "two zooms did not narrow the range",
       });
 
-      await press("Reset m/z range");
+      await press("Fit all, m/z");
 
       await browser.waitUntil(async () => (await spectrumRangeCaption()).includes("full range"), {
         timeout: 15_000,
-        timeoutMsg: "Reset m/z range did not return the whole spectrum",
+        timeoutMsg: "Fit all, m/z did not return the whole spectrum",
       });
-      expect((await controlStates())["Reset m/z range"]).toBe(false);
+      expect((await controlStates())["Fit all, m/z"]).toBe(false);
       expect(await unexpectedConsole()).toEqual([]);
     });
 
@@ -588,7 +592,7 @@ describe("the visible m/z viewport", () => {
       expect(states["Zoom in m/z"]).toBe(false);
       // And the two ways back out are still open.
       expect(states["Zoom out m/z"]).toBe(true);
-      expect(states["Reset m/z range"]).toBe(true);
+      expect(states["Fit all, m/z"]).toBe(true);
       expect(await unexpectedConsole()).toEqual([]);
     });
   });
@@ -746,17 +750,54 @@ describe("the visible m/z viewport", () => {
      * that cancelled everything and moved correctly would pass one of them.
      */
 
-    it("has a column with somewhere to scroll to at 1366x768", async () => {
-      // The reason the claim matters. On the laptop window this product is
-      // measured against, the three panels do not all fit, and the wheel is how
-      // a reader reaches the spectrum at the bottom of the column.
+    it("fits the whole spectrum in a column that still scrolls itself at 1366x768", async () => {
+      // The rebuild (spec 3.1, 12) sizes the plots to the card: on the laptop
+      // window the spectrum is wholly on screen with the column unscrolled.
+      // The column keeps its own scrolling for taller content, so a wheel the
+      // panel cancels and then does not use is still a scroll taken away.
       await openTheSpectrum({ width: 1_366, height: 768 });
+      await waitForTheDrawing();
+      // The window size the opener sets leaves a smaller page; the claim is
+      // about a 1366x768 page, so the page is sized exactly, then restored.
+      await metrics(1_366, 768);
+      try {
+        await measureTheColumn();
+      } finally {
+        await cdp("Emulation.clearDeviceMetricsOverride", {});
+      }
+    });
 
+    async function measureTheColumn(): Promise<void> {
       const stack = await stackOverflow();
       expect(stack.overflowY).toBe("auto");
       expect(stack.clientHeight).toBeGreaterThan(0);
-      expect(stack.scrollHeight).toBeGreaterThan(stack.clientHeight);
-    });
+      // Both plots on screen with the column unscrolled, and each one the
+      // element a pointer at its centre reaches: a plot drawn under another
+      // panel is not on screen however its box measures.
+      const plots = await browser.execute((spectrum: string, chromatogram: string) => {
+        const measure = (css: string) => {
+          const element = document.querySelector(css);
+          const box = element?.getBoundingClientRect();
+          if (element === null || box === undefined) return null;
+          const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return { top: box.top, bottom: box.bottom, height: box.height, unobstructed: at !== null && element.contains(at) };
+        };
+        return {
+          spectrum: measure(spectrum),
+          chromatogram: measure(chromatogram),
+          innerHeight,
+          scrolled: document.querySelector("#workbench-evidence")?.scrollTop ?? -1,
+        };
+      }, SPECTRUM_PLOT, "svg.chromatogram-svg");
+      expect(plots.scrolled).toBe(0);
+      for (const plot of [plots.spectrum, plots.chromatogram]) {
+        expect(plot).not.toBeNull();
+        expect(plot!.height).toBeGreaterThan(0);
+        expect(plot!.top).toBeGreaterThanOrEqual(0);
+        expect(plot!.bottom).toBeLessThanOrEqual(plots.innerHeight);
+        expect(plot!.unobstructed).toBe(true);
+      }
+    }
 
     it("claims a wheel that narrows the range, and moves the range with it", async () => {
       await openTheSpectrum({ width: 1_366, height: 768 });
@@ -1026,7 +1067,7 @@ describe("the visible m/z viewport", () => {
       await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: IN }).perform();
       await press("Zoom in m/z");
       await press("Zoom out m/z");
-      await press("Reset m/z range");
+      await press("Fit all, m/z");
       await keyTheSpectrum("+");
       await keyTheSpectrum("ArrowRight");
       await keyTheSpectrum("Home");
@@ -1125,7 +1166,7 @@ describe("the visible m/z viewport", () => {
       expect(await controlStates()).toEqual({
         "Zoom in m/z": false,
         "Zoom out m/z": false,
-        "Reset m/z range": false,
+        "Fit all, m/z": false,
       });
       // Not a tab stop either: a keyboard user's time is not spent reaching a
       // picture nothing can be done to.
@@ -1173,14 +1214,14 @@ describe("the visible m/z viewport", () => {
         expect(await controlStates()).toEqual({
           "Zoom in m/z": false,
           "Zoom out m/z": false,
-          "Reset m/z range": false,
+          "Fit all, m/z": false,
         });
 
-        // Real traversal through this panel skips only its inert plot.
+        // Real traversal through this panel skips its inert plot: from the
+        // head's toolbar the next Tab leaves the panel.
         const trail = await tabTrail();
         expect(trail.some((stop) => stop.includes("spectrum-plot"))).toBe(false);
-        // The real source disclosure is reached, so the traversal is not inert.
-        expect(trail.some((stop) => stop.startsWith("summary"))).toBe(true);
+        expect(trail).toEqual([]);
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
@@ -1248,6 +1289,8 @@ describe("the visible m/z viewport", () => {
         intensity: [120_000, 4_200_000, 900_000, 310_000],
         sourcePoints: RETAINED_OBSERVATIONS,
         reduced: true,
+        outsideLow: null,
+        outsideHigh: null,
       });
 
       await press("Zoom in m/z");
@@ -1266,9 +1309,7 @@ describe("the visible m/z viewport", () => {
       expect(drawn.sticks).toBe(4);
       // The count is Rust's about the retained source, not this document's about
       // its prefix: 372,118 observations in a region the transfer never reached.
-      expect(drawn.caption).toContain(
-        "Drawn as 4 sticks of the 372,118 observations this spectrum has between m/z 420.0000 and 780.0000.",
-      );
+      expect(drawn.caption).toContain("4 sticks · 372,118 source observations in this range");
       expect(await spectrumStatus()).toBe("");
       expect(await unexpectedConsole()).toEqual([]);
     });
@@ -1320,20 +1361,22 @@ describe("the visible m/z viewport", () => {
         // "the drawing gets the room" at every window rather than a number that
         // happens to hold at one of them.
         expect(plot.width).toBeGreaterThan(panel.width * 0.6);
-        expect(plot.height).toBeGreaterThanOrEqual(200);
+        // The plot fills its box down to the rebuild's 160 px floor (spec 3.1).
+        expect(plot.height).toBeGreaterThanOrEqual(160);
         expect(plot.left).toBeGreaterThanOrEqual(panel.left - 0.5);
         expect(plot.right).toBeLessThanOrEqual(panel.right + 0.5);
 
         // Stacked, not overlapping: controls above the drawing, the range line
-        // below it. Two of them sharing pixels would put a control over the
-        // spectrum, which is the failure a screenshot would show and a unit test
-        // could not.
+        // below it (on the line under the ticks, direction A). Two of them
+        // sharing pixels would put a control over the spectrum, which is the
+        // failure a screenshot would show and a unit test could not.
         const actions = await boxOf(SPECTRUM_ACTIONS);
         const surface = await boxOf(SPECTRUM_SURFACE);
         const range = await boxOf(SPECTRUM_RANGE);
         expect(actions.height).toBeGreaterThan(0);
         expect(actions.bottom).toBeLessThanOrEqual(surface.top + 0.5);
-        expect(surface.bottom).toBeLessThanOrEqual(range.top + 0.5);
+        expect(plot.bottom).toBeLessThanOrEqual(range.top + 0.5);
+        expect(range.bottom).toBeLessThanOrEqual(surface.bottom + 0.5);
         expect(range.left).toBeGreaterThanOrEqual(panel.left - 0.5);
         expect(range.right).toBeLessThanOrEqual(panel.right + 0.5);
 
@@ -1423,7 +1466,7 @@ describe("the visible m/z viewport", () => {
       await keyTheSpectrum("ArrowLeft");
       await keyTheSpectrum("ArrowRight");
       await wheelStream(middle.x, -1, 40);
-      await press("Reset m/z range");
+      await press("Fit all, m/z");
       await waitForTheDrawing();
 
       expect(await unexpectedConsole()).toEqual([]);

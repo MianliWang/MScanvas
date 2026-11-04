@@ -45,7 +45,7 @@ async function openSettings() {
   await browser.$(DIALOG).waitForDisplayed();
 }
 async function choose(value: string) {
-  await browser.$(`${DIALOG} input[value="${value}"]`).click();
+  await browser.$(`${DIALOG} [role="radio"]:has([data-setting-value="${value}"])`).click();
 }
 async function press(name: string) {
   await browser.$(DIALOG).$(`button=${name}`).click();
@@ -127,11 +127,17 @@ async function capture(label: string, expectedDpr?: number) {
       backendCollapsed: document.querySelector("[data-backend-collapsed]") !== null,
       backendToggle: box(document.querySelector("[data-backend-toggle]")),
       backendActions: named("[data-backend-action]"),
-      helpOpen: document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open ?? null,
-      help: box(document.querySelector("[data-backend-help]")),
-      // The help's scroll owner. The notices area is a bounded scrollport by
-      // design, so "the details element is not clipped" says nothing about
-      // whether the reader can see what they opened.
+      helpOpen: (() => {
+        const button = document.querySelector("[data-backend-help]");
+        return button === null ? null : button.getAttribute("aria-expanded") === "true";
+      })(),
+      // The region the help button opens. On the one-line notice its wrapper
+      // lays out as its children (display: contents) and has no box of its own.
+      help: box(document.querySelector(".backend-setup-help-body")),
+      // The help's scroll owner: the notices area, a bounded scrollport by
+      // design, or the ProteoWizard details over the status bar, which scroll
+      // themselves. "Not clipped" says nothing about whether the reader can see
+      // what they opened.
       //
       // Two different questions, because they have different answers at
       // different heights. Whether it fits is the one that matters where there
@@ -140,8 +146,8 @@ async function capture(label: string, expectedDpr?: number) {
       // scrolling reaches the end of it, which is measured by actually
       // scrolling to the bottom and looking, then putting the scroll back.
       helpScrollport: (() => {
-        const help = document.querySelector("[data-backend-help]");
-        const port = help?.closest(".shell-notices") ?? null;
+        const help = document.querySelector(".backend-setup-help-body");
+        const port = help?.closest('#backend-status[data-backend-mode="popover"]') ?? help?.closest(".shell-notices") ?? null;
         if (help === null || port === null) return null;
         const outer = port.getBoundingClientRect();
         const inner = help.getBoundingClientRect();
@@ -172,7 +178,8 @@ async function capture(label: string, expectedDpr?: number) {
         ...box(dialog),
         scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth,
         scrollHeight: dialog.scrollHeight, clientHeight: dialog.clientHeight,
-        primary: box(dialog.querySelector(".settings-dialog-actions .primary-button")),
+        // The one Close (GOALS D4): Settings apply immediately.
+        close: box(dialog.querySelector("[data-settings-close]")),
       },
       // Everything on screen, for the one check that is only meaningful over
       // the whole document: whether a Chinese session is reading English.
@@ -202,7 +209,10 @@ async function capture(label: string, expectedDpr?: number) {
   } else if (state.backendReading !== null) {
     // Reported as one object per control, so a failure names which one rather
     // than needing an assertion message the pinned matcher does not take.
+    // Only the actions shown: the one-line notice offers its one fix and keeps
+    // the rest, hidden, for the details over the status bar.
     const clipped = Object.entries(state.backendActions)
+      .filter(([, action]) => action !== null && action.width > 0)
       .filter(([, action]) => action?.clipped === true || (action?.height ?? 0) < 24)
       .map(([id]) => `${label}:${id}`);
     expect(clipped).toEqual([]);
@@ -215,7 +225,7 @@ async function capture(label: string, expectedDpr?: number) {
     expect(state.dialog.bottom).toBeLessThanOrEqual(state.cssViewport.height + 1);
     // The dialog itself scrolls; its footer action must be reachable.
     expect(state.dialog.scrollWidth).toBeLessThanOrEqual(state.dialog.clientWidth + 1);
-    expect(state.dialog.primary?.clipped).toBe(false);
+    expect(state.dialog.close?.clipped).toBe(false);
   }
   return state;
 }
@@ -287,7 +297,7 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       expect(state.rosterOpen).toBe("true");
       await openSettings();
       await capture(`02-restored-settings-${label}`, dpr);
-      await press(zh.cancel);
+      await press(zh.close);
       await returned();
     }
     await metrics(1920, 1080, 1);
@@ -301,16 +311,24 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     let calls = await ipcCalls();
     expect(calls.filter(call => call.command === "save_ui_preferences")).toEqual([]);
 
-    await openSettings();
-    await choose("zh-CN");
-    await choose("compact");
-    await capture("03-settings-preview-zh-compact");
+    // Each choice applies and saves at once (GOALS D4); the store confirms
+    // each record it was sent.
     await setInvokeResult("save_ui_preferences", {
       outcome: "saved",
       revision: 1,
+      preferences: record({ locale: "zh-CN", density: "comfortable" }),
+    });
+    await openSettings();
+    await choose("zh-CN");
+    await browser.waitUntil(async () => (await ipcCalls()).filter(call => call.command === "save_ui_preferences").length === 1);
+    await setInvokeResult("save_ui_preferences", {
+      outcome: "saved",
+      revision: 2,
       preferences: record({ locale: "zh-CN", density: "compact" }),
     });
-    await press(zh.apply);
+    await choose("compact");
+    await capture("03-settings-applied-zh-compact");
+    await press(zh.close);
     await returned();
     const applied = await capture("04-applied-zh-compact");
     expect(applied.locale).toBe("zh-CN");
@@ -318,9 +336,9 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     expect(applied.preferenceRegion).toBe(zh.applied);
     calls = await ipcCalls();
     const saved = calls.filter(call => call.command === "save_ui_preferences");
-    expect(saved).toHaveLength(1);
+    expect(saved).toHaveLength(2);
     // Only the group Settings owns, and nothing that locates or names anything.
-    expect(saved[0]?.args).toEqual({ request: { appearance: { locale: "zh-CN", density: "compact" } } });
+    expect(saved[1]?.args).toEqual({ request: { appearance: { locale: "zh-CN", density: "compact" } } });
 
     // A write that fails keeps the choices on screen and never claims they are
     // saved -- the footer and the alert have to agree.
@@ -329,7 +347,6 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     });
     await openSettings();
     await choose("en");
-    await press(en.apply);
     await browser.$("[data-save='failed']").waitForDisplayed();
     const failed = await capture("05-save-failed-retry-and-session-only");
     expect(failed.saveFailure?.text).toContain(en.writeNotPublished);
@@ -337,13 +354,14 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     expect(failed.saveFailure?.clipped).toBe(false);
     // The named session-only action, which claims no write.
     await press(en.saveSessionOnly);
+    await press(en.close);
     await returned();
     const sessionOnly = await capture("06-session-only-applied");
     expect(sessionOnly.locale).toBe("en");
     expect(sessionOnly.preferenceRegion).toBe(en.sessionOnlyApplied);
     await openSettings();
     expect((await capture("07-session-only-note")).storageNote?.text).toBe(en.sessionOnlyNote);
-    await press(en.cancel);
+    await press(en.close);
     await returned();
   });
 
@@ -361,12 +379,11 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     expect(unusable.storedRecordAlert?.clipped).toBe(false);
     expect(unusable.storageNote?.text).toBe(en.storageNotSaving);
 
-    // An ordinary apply is refused and says so about that press.
+    // An ordinary choice is refused and says so about that choice.
     await setInvokeResult("save_ui_preferences", {
       outcome: "storedRecordUnusable", problem: "unsupportedVersion", revision: 0,
     });
     await choose("zh-CN");
-    await press(zh.apply);
     await browser.$("[data-save='refused']").waitForDisplayed();
     const refused = await capture("09-apply-refused-by-stored-record");
     expect(refused.saveRefused?.text).toContain(zh.saveRefusedTitle);
@@ -376,6 +393,8 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       outcome: "saved", revision: 1, preferences: record({ locale: "zh-CN", density: "comfortable" }),
     });
     await press(zh.storedReplace);
+    await browser.$("[data-stored-record='unusable']").waitForExist({ reverse: true });
+    await press(zh.close);
     await returned();
     const replaced = await capture("10-stored-record-replaced");
     expect(replaced.preferenceRegion).toBe(zh.storedReplaced);
@@ -392,26 +411,36 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await browser.$("[data-settings-entry]").waitForDisplayed();
 
     // Gated: no default is written and no editor is enabled before the read
-    // resolves. Every refused control says why.
+    // resolves. Every refused control says why. Reset layout is Settings'
+    // since the rebuild (spec 8), so it is read there.
+    await openSettings();
     const loading = await capture("11-startup-gated");
     expect(loading.layoutReset?.refused).toBe(true);
     expect(loading.layoutReset?.focusable).toBe(true);
+    await browser.keys("Escape");
+    await returned();
     const toggles = await browser.execute(() => [...document.querySelectorAll(".workbench-global-actions button")]
       .map(control => ({ text: (control.textContent ?? "").trim(), disabled: (control as HTMLButtonElement).disabled,
-        refused: control.getAttribute("aria-disabled") === "true", title: control.getAttribute("title") })));
+        refused: control.getAttribute("aria-disabled") === "true",
+        // The reason the button points at, shown beside it on hover and focus.
+        reason: (control.getAttribute("aria-describedby") ?? "").split(" ")
+          .map(id => document.getElementById(id)?.textContent ?? "").join(" ").trim() })));
     evidence.push({ kind: "startup gating", toggles });
     // Every refused control says why, and can be reached to be told: a
     // `disabled` button is not in the tab order, so a tooltip on one is a
     // reason only a pointer user can read.
     expect(toggles.filter(control => control.refused).length).toBeGreaterThan(0);
-    expect(toggles.filter(control => control.refused).every(control => control.title === en.panelsLoading && !control.disabled)).toBe(true);
+    expect(toggles.filter(control => control.refused).every(control => control.reason === en.panelsLoading && !control.disabled)).toBe(true);
     expect((await ipcCalls()).filter(call => call.command === "save_ui_preferences")).toEqual([]);
 
     await releaseInvokeHold("load_ui_preferences");
     await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
+    await openSettings();
     const settled = await capture("12-startup-settled");
     expect(settled.density).toBe("compact");
     expect(settled.layoutReset?.refused).toBe(true);
+    await browser.keys("Escape");
+    await returned();
   });
 
   it("commits a panel arrangement, reports one that would not survive, and resets it", async () => {
@@ -422,8 +451,12 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     });
     await browser.$(`button=${en.rosterToggle}`).click();
     await browser.waitUntil(() => browser.execute(() => document.querySelector(".workbench-shell")?.getAttribute("data-roster-open") === "false"));
+    // Reset layout lives in Settings → Layout (rebuild spec 8).
+    await openSettings();
     const committed = await capture("13-roster-hidden-committed");
     expect(committed.layoutReset?.refused).toBe(false);
+    await browser.keys("Escape");
+    await returned();
     const layoutCalls = (await ipcCalls()).filter(call => call.command === "save_ui_preferences");
     expect(layoutCalls.at(-1)?.args).toEqual({ request: { layout: { roster: "hidden", details: "automatic" } } });
 
@@ -443,14 +476,18 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await setInvokeResult("save_ui_preferences", {
       outcome: "saved", revision: 2, preferences: record({ locale: "en", density: "comfortable" }),
     });
+    await openSettings();
     await browser.$("[data-layout-reset]").click();
     // With nothing left to reset the control is refused but reachable:
-    // `aria-disabled`, never `disabled` (WorkbenchHeader.tsx, the reset's
+    // `aria-disabled`, never `disabled` (SettingsDialog.tsx, the reset's
     // `aria-disabled`; docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
     // "Acceptance"; the native case in m7.5-preferences.native.e2e.ts).
     await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-layout-reset]")?.getAttribute("aria-disabled") === "true"));
     const reset = await capture("15-layout-reset");
     expect(reset.layoutRegion).toBe(en.layoutResetDone);
+    // The header's region is behind the modal, so the dialog says it too.
+    expect(await browser.execute(() => (document.querySelector("[data-live-region='settings-layout']")?.textContent ?? "").trim()))
+      .toBe(en.layoutResetDone);
     expect(reset.layoutReset?.insideViewport).toBe(true);
     expect(reset.layoutReset?.focusable).toBe(true);
     // The control stays in the document and keeps the keyboard. The earlier
@@ -474,19 +511,27 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
       await browser.url("/");
       await browser.$("[data-backend-status]").waitForExist();
       await browser.waitUntil(() => browser.execute(want => document.querySelector("[data-backend-status]")?.getAttribute("data-backend-status") === want, expected));
-      // A usable installation folds the banner; its actions and help are one
-      // press away (PM9.2 L10).
+      // Every state's actions and help are in the details, which the status
+      // bar's ProteoWizard item opens.
       await showBackendBanner();
       const state = await capture(`16-backend-${label}-en`);
       expect(state.backendStatus).toBe(expected);
-      // Every state offers a way to ask again, and the help is beside it.
+      // Every state a check could change offers a way to ask again. A
+      // quarantined session offers none: only a restart fixes it, and no
+      // control here restarts (rendered review, issue 3), and no setup help
+      // either: setting up does not end a quarantine (S7).
+      if (expected === "quarantined") {
+        expect(state.backendActions).toEqual({});
+        expect(await browser.$("[data-backend-help]").isDisplayed()).toBe(false);
+        continue;
+      }
       expect(Object.keys(state.backendActions)).toContain("recheck");
       expect(state.help).not.toBeNull();
       expect(state.helpOpen).toBe(false);
 
       // Opened, read, and unclipped.
-      await browser.$("[data-backend-help] summary").click();
-      await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === true));
+      await browser.$("[data-backend-help]").click();
+      await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "true"));
       const opened = await capture(`17-backend-${label}-help-en`);
       expect(opened.help?.clipped).toBe(false);
       // What the reader opened is visible without having to discover that the
@@ -506,13 +551,18 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await browser.url("/");
     await browser.$("[data-backend-status]").waitForDisplayed();
     await browser.waitUntil(() => browser.execute(() => document.documentElement.lang === "zh-CN"));
-    await browser.$("[data-backend-help] summary").click();
-    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === true));
+    // The help is in the details the status bar's item opens (S7).
+    await showBackendBanner();
+    await browser.$("[data-backend-help]").click();
+    await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "true"));
     const chinese = await capture("18-backend-missing-help-zh");
     expect(chinese.backendReading?.text).toContain(zh.backendMissing);
     expect(chinese.backendReading?.text).toContain(zh.backendNotFound);
     expect(chinese.help?.text).toContain(zh.backendHelpProvider);
-    expect(chinese.help?.text).toContain("msconvert.exe");
+    // The help no longer walks through the buttons, so the identifiers it keeps
+    // untranslated are the product name and the support target.
+    expect(chinese.help?.text).toContain(zh.backendHelpSessionScope);
+    expect(chinese.help?.text).toContain("ProteoWizard");
     expect(chinese.help?.text).toContain("Windows 11 25H2 x64");
     expect(chinese.help?.text).not.toContain(en.backendHelpProvider);
   });
@@ -525,20 +575,27 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     await browser.url("/");
     await browser.$(ROW).waitForDisplayed();
     await browser.$(ROW).click();
-    await browser.$(`button=${zh.previewFocused}`).waitForEnabled();
-    await browser.$(`button=${zh.previewFocused}`).click();
     await browser.$(".inspector-panel").waitForDisplayed();
     const state = await capture("19-inspector-zh");
     expect(state.detailsOpen).toBe("true");
+    // Details names the open file and what each plot is drawn from; the run
+    // and its MS levels are the file's Metadata tab (direction A).
     const inspector = state.inspector?.text ?? "";
-    expect(inspector).toContain(zh.summaryRun);
-    expect(inspector).toContain(zh.summarySpectra);
-    expect(inspector).toContain(zh.summaryTiming);
+    expect(inspector).toContain(zh.viewerSpectrum);
+    expect(inspector).toContain(zh.detailsChromatogramSource);
     // The unreported state stays the unreported state.
     expect(inspector).not.toContain("(unit not reported)");
     expect(inspector).not.toContain(en.summaryRetentionTime);
     // Nothing clipped, and the panel owns its own scroll.
     expect(state.inspector?.insideViewport).toBe(true);
+    await browser.$(`//*[@role="tab"][normalize-space()="${zh.viewerTabMetadata}"]`).click();
+    await browser.$(".preview-metadata").waitForDisplayed();
+    const metadata = await browser.$(".preview-metadata").getText();
+    expect(metadata).toContain(zh.summaryRun);
+    expect(metadata).toContain(zh.summarySpectra);
+    expect(metadata).toContain(zh.summaryMsLevels);
+    expect(metadata).not.toContain("(unit not reported)");
+    expect(metadata).not.toContain(en.summaryRetentionTime);
 
     // And nothing anywhere in this session is reading English where a Chinese
     // value exists. Named sentences rather than a heuristic: each is a value
@@ -550,7 +607,7 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     // where one is on screen.
     const english = [
       en.backendMissing, en.backendNotFound, en.backendHelpProvider,
-      en.summaryRun, en.summaryRetentionTime, en.summaryTiming, en.summaryNotMeasured,
+      en.summaryRun, en.summaryRetentionTime, en.summaryMsLevels,
       en.rosterToggle, en.layoutReset, en.settings, en.viewerData,
       "(unit not reported)",
     ].filter(sentence => (state.bodyText ?? "").includes(sentence));
@@ -577,16 +634,17 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     // The help, at the shortest viewport this milestone supports. A 640px
     // window cannot show eight paragraphs at once whatever the bound is, so
     // the requirement here is that the end of what the reader opened can be
-    // reached -- not that it all fits.
-    await browser.$("[data-backend-help] summary").click();
-    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === true));
+    // reached -- not that it all fits. It is in the status bar's details (S7).
+    await showBackendBanner();
+    await browser.$("[data-backend-help]").click();
+    await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "true"));
     const narrowHelp = await capture("20b-narrow-help-open");
     expect(narrowHelp.helpOpen).toBe(true);
     expect(narrowHelp.help?.clipped).toBe(false);
     expect(narrowHelp.helpScrollport?.endReachable).toBe(true);
     expect(narrowHelp.help?.text).toContain(en.backendHelpSessionScope);
-    await browser.$("[data-backend-help] summary").click();
-    await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLDetailsElement>("[data-backend-help]")?.open === false));
+    await browser.$("[data-backend-help]").click();
+    await browser.waitUntil(() => browser.execute(() => document.querySelector("[data-backend-help]")?.getAttribute("aria-expanded") === "false"));
     expect(advisories.length).toBeGreaterThan(0);
     // Nothing animates into place at this setting.
     expect(narrow.rosterOpen).toBe("false");
@@ -595,11 +653,11 @@ describe("M7.5 durable preferences, first-run recovery and bilingual coverage", 
     const dialog = await capture("21-narrow-settings-unusable");
     expect(dialog.reducedMotion).toBe(true);
     expect(dialog.dialogAnimation === null || dialog.dialogAnimation === "none").toBe(true);
-    // Both the recovery block and the footer fit, and the Apply action is
-    // reachable without a horizontal scroll.
+    // Both the recovery block and the footer fit, and Close is reachable
+    // without a horizontal scroll.
     expect(dialog.storedRecordAlert?.clipped).toBe(false);
-    expect(dialog.dialog?.primary?.insideViewport).toBe(true);
-    await press(en.cancel);
+    expect(dialog.dialog?.close?.insideViewport).toBe(true);
+    await press(en.close);
     await returned();
     await reducedMotion(false);
 

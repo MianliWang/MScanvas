@@ -143,6 +143,54 @@ fn never_minted() -> ProjectJobId {
 // Identity through a roundtrip
 // ---------------------------------------------------------------------------
 
+/// ADR 0055, owner decision 2 of 2026-10-29: the label the session holds for
+/// the object whose bytes were hashed is recorded, and survives a save and a
+/// reopen. The session is asked about that object, never about a name.
+#[test]
+fn a_registered_reference_records_the_label_the_session_holds_for_its_object() {
+    let scratch = Scratch::new("label");
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    let labelled = scratch.write("converted.mzML", b"converted bytes");
+    let plain = scratch.write("plain.mzML", b"other bytes");
+    let label = record::NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    let mut asked = None;
+    store
+        .register_input_labelled(&labelled, |identity| {
+            asked = Some(identity);
+            label.clone()
+        })
+        .expect("register");
+    assert!(asked.is_some(), "asked about the hashed object");
+    store
+        .register_input_labelled(&plain, |_| None)
+        .expect("register");
+    let described = store.describe();
+    assert_eq!(described.inputs[0].not_verified_by_mscanvas, label);
+    assert_eq!(described.inputs[1].not_verified_by_mscanvas, None);
+
+    let project_document = scratch.join("project.mscanvas");
+    store.save_as(&project_document).expect("save as");
+    let reopened = ProjectStore::new();
+    reopened
+        .open_document(&project_document, false)
+        .expect("open");
+    let after = reopened.describe();
+    assert_eq!(after.inputs[0].not_verified_by_mscanvas, label);
+    assert_eq!(after.inputs[1].not_verified_by_mscanvas, None);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(&project_document).expect("read")).expect("json");
+    assert_eq!(
+        saved["inputs"][0]["notVerifiedByMscanvas"],
+        serde_json::json!({ "unverifiedSettings": true, "unverifiedBuildRelease": "3.0.26204" })
+    );
+    // An explicit `null`, never an omission, where nothing is recorded.
+    assert_eq!(
+        saved["inputs"][1].get("notVerifiedByMscanvas"),
+        Some(&serde_json::Value::Null)
+    );
+}
+
 #[test]
 fn every_identifier_survives_a_save_and_reopen_unchanged() {
     let scratch = Scratch::new("identity");
@@ -932,6 +980,7 @@ fn valid_document() -> ProjectDocument {
                 sha256: "A".repeat(64),
             },
         }],
+        not_verified_by_mscanvas: None,
     });
     document.runs.push(RunRecord {
         id: RunId::new(),
@@ -1405,17 +1454,127 @@ fn a_save_as_with_no_stored_result_refuses_whatever_occupies_the_result_store_na
 }
 
 #[test]
-fn a_save_as_with_no_stored_result_to_a_free_name_publishes_and_makes_no_store() {
+fn a_save_as_with_no_stored_result_reserves_the_result_store_name_before_the_document() {
     let scratch = Scratch::new("store-name-free");
     let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
     let destination = scratch.join("project.mscanvas");
+    let name = scratch.join("project.mscanvas.payloads");
+    let own = document_of(&store).project_id;
+    let another = record::ProjectId::new();
+    // A second writer reaching for the name while the document is published.
+    let found = std::sync::Mutex::new(None);
+    let seams = super::SaveAsSeams {
+        copy_file: &super::payload::plain_copy,
+        before_document: &|| {
+            *found.lock().expect("found") = Some(super::payload::ensure_store(&name, another));
+            Ok(())
+        },
+    };
+
+    store.save_as_with(&destination, &seams).expect("save as");
+
+    assert_eq!(
+        found.into_inner().expect("found"),
+        Some(Err(super::payload::StoreRefusal::NotOwned)),
+        "the name is this project's before its document is published"
+    );
+    assert!(destination.exists());
+    // And it stays this project's: its first run finds its own store.
+    assert_eq!(super::payload::ensure_store(&name, own), Ok(()));
+    assert_eq!(
+        super::payload::ensure_store(&name, another),
+        Err(super::payload::StoreRefusal::NotOwned)
+    );
+    assert!(!store.describe().dirty);
+    store.save().expect("and it saves again where it was bound");
+}
+
+/// The cost of the reservation: a document publish that fails after it
+/// leaves the empty store, as one with results leaves its whole store, and
+/// the name stays this project's until someone removes the folder.
+#[test]
+fn a_save_as_with_no_stored_result_whose_document_fails_keeps_the_reserved_store() {
+    let scratch = Scratch::new("store-name-kept");
+    let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
+    let destination = scratch.join("project.mscanvas");
+    let name = scratch.join("project.mscanvas.payloads");
+    let seams = super::SaveAsSeams {
+        copy_file: &super::payload::plain_copy,
+        before_document: &|| Err(ProjectError::NotPublished),
+    };
+
+    assert_eq!(
+        store.save_as_with(&destination, &seams),
+        Err(ProjectError::NotPublished)
+    );
+
+    assert!(!destination.exists(), "no document");
+    // Asked of another project first: asked of this one, `ensure_store` would
+    // make the store it is checking for.
+    assert_eq!(
+        super::payload::ensure_store(&name, record::ProjectId::new()),
+        Err(super::payload::StoreRefusal::NotOwned),
+        "the reserved store stayed"
+    );
+    assert_eq!(
+        super::payload::ensure_store(&name, document_of(&store).project_id),
+        Ok(())
+    );
+    // Nothing changed in the session: still unsaved, still unpublished.
+    assert!(store.describe().dirty);
+    assert_eq!(store.save(), Err(ProjectError::NotYetPublished));
+    // The same name is refused rather than merged; another name publishes.
+    assert_eq!(
+        store.save_as(&destination),
+        Err(ProjectError::DestinationStoreExists)
+    );
+    store
+        .save_as(&scratch.join("other.mscanvas"))
+        .expect("another name");
+}
+
+/// A 246-character document name, whose store name is 255 characters: all a
+/// path component allows. A Save As and a first run each assemble the store
+/// under a pending name of its own length; one built from the store's name
+/// would be past that limit, and the store would be refused.
+///
+/// Under a verbatim root, so the whole path may pass 260 characters, as the
+/// platform's long-path form allows.
+#[test]
+fn a_document_name_whose_store_name_fills_a_path_component_saves_and_runs() {
+    let scratch = Scratch::new("store-name-long");
+    let root = fs::canonicalize(scratch.directory()).expect("root");
+    let store = ProjectStore::new();
+    store.create("Test project".to_owned(), false).expect("new");
+    let own = document_of(&store).project_id;
+    let another = record::ProjectId::new();
+    let document = |stem: &str| root.join(format!("{}.mscanvas", stem.repeat(237)));
+    let destination = document("a");
+    let reserved = super::payload::store_of(&destination).expect("a store name");
+    assert_eq!(reserved.file_name().expect("name").len(), 255);
 
     store.save_as(&destination).expect("save as");
 
     assert!(destination.exists());
-    assert!(!scratch.join("project.mscanvas.payloads").exists());
-    assert!(!store.describe().dirty);
-    store.save().expect("and it saves again where it was bound");
+    assert_eq!(
+        super::payload::ensure_store(&reserved, another),
+        Err(super::payload::StoreRefusal::NotOwned),
+        "Save As reserved the store"
+    );
+    // A first run, for a document with no store yet, makes one the same way.
+    let first_run = super::payload::store_of(&document("b")).expect("a store name");
+    assert_eq!(super::payload::ensure_store(&first_run, own), Ok(()));
+    assert_eq!(
+        super::payload::ensure_store(&first_run, another),
+        Err(super::payload::StoreRefusal::NotOwned)
+    );
+    let residue: Vec<String> = fs::read_dir(&root)
+        .expect("dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".pending"))
+        .collect();
+    assert!(residue.is_empty(), "{residue:?}");
 }
 
 #[test]
@@ -1424,8 +1583,11 @@ fn a_save_as_over_the_bound_document_is_not_refused_for_the_store_beside_it() {
     let (store, _) = store_with_reference(&scratch, "sample.txt", b"bytes");
     let document = scratch.join("project.mscanvas");
     store.save_as(&document).expect("save as");
-    // The store beside the bound document is its own, whatever it holds.
-    fs::create_dir(scratch.join("project.mscanvas.payloads")).expect("dir");
+    // The store beside the bound document is its own, whatever it holds: here
+    // the one Save As reserved, replaced by an empty directory.
+    let beside = scratch.join("project.mscanvas.payloads");
+    fs::remove_dir_all(&beside).expect("the reserved store");
+    fs::create_dir(&beside).expect("dir");
 
     store
         .save_as(&document)
@@ -2849,7 +3011,7 @@ fn live(_handle: &str) -> bool {
 }
 
 /// The open document, exactly as the store holds it.
-fn document_of(store: &ProjectStore) -> ProjectDocument {
+pub(crate) fn document_of(store: &ProjectStore) -> ProjectDocument {
     let session = store
         .session
         .lock()
@@ -3479,22 +3641,64 @@ fn a_document_with_a_remembered_row_and_a_layer_serializes_no_session_fact() {
 }
 
 #[test]
-fn the_development_only_earlier_schemas_are_refused_rather_than_migrated() {
-    assert_eq!(record::SCHEMA_VERSION, 4);
-    assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 4);
+fn the_unpublished_and_later_schemas_are_refused_and_schema_four_is_read() {
+    assert_eq!(record::SCHEMA_VERSION, 5);
+    assert_eq!(record::PUBLISHED_SCHEMA_VERSION, 4);
+    assert_eq!(ProjectDocument::new("Fixture".to_owned()).schema_version, 5);
 
-    // Schema 3 is M8's, and it was never published either: M9.1 refuses it
-    // exactly as M8.5 refused schema 2, rather than carrying a migration for
-    // a format no user holds.
-    for earlier in [1, 2, 3] {
+    // Schema 3 is M8's, and it was never published: M9.1 refuses it exactly as
+    // M8.5 refused schema 2. A later schema belongs to the build that wrote it.
+    for other in [0, 1, 2, 3, 6, 7, u32::MAX] {
         let mut document = valid_document();
-        document.schema_version = earlier;
+        document.schema_version = other;
         assert_eq!(
             refused(&document),
             DocumentProblem::UnsupportedVersion,
-            "schema {earlier}"
+            "schema {other}"
         );
     }
+
+    // Schema 4 was published in beta 1. It is read, and held as schema 5 with
+    // no label on any input.
+    let document = valid_document();
+    let read = record::parse(&schema_four_bytes(&document)).expect("schema 4 is read");
+    assert_eq!(read, document);
+}
+
+/// `document` as beta 1 would have written it: schema 4, with no label field
+/// on any input.
+fn schema_four_bytes(document: &ProjectDocument) -> Vec<u8> {
+    let mut value = serde_json::to_value(document).expect("json");
+    value["schemaVersion"] = record::PUBLISHED_SCHEMA_VERSION.into();
+    for input in value["inputs"].as_array_mut().expect("inputs") {
+        input
+            .as_object_mut()
+            .expect("an input")
+            .remove("notVerifiedByMscanvas");
+    }
+    serde_json::to_vec(&value).expect("bytes")
+}
+
+/// A schema-4 value as this build writes it back: schema 5, with a `null`
+/// label on every input, and nothing else changed.
+fn as_schema_five(value: &mut serde_json::Value) {
+    value["schemaVersion"] = record::SCHEMA_VERSION.into();
+    for input in value["inputs"].as_array_mut().expect("inputs") {
+        input["notVerifiedByMscanvas"] = serde_json::Value::Null;
+    }
+}
+
+#[test]
+fn a_document_without_a_version_is_malformed() {
+    let mut value = serde_json::to_value(valid_document()).expect("json");
+    value
+        .as_object_mut()
+        .expect("an object")
+        .remove("schemaVersion");
+    assert_eq!(
+        record::parse(&serde_json::to_vec(&value).expect("bytes")),
+        Err(DocumentProblem::Malformed)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4322,7 +4526,7 @@ fn a_schema_two_document_is_refused_as_unsupported_and_not_migrated() {
 /// With a record whose observations are only padding: a capture measures bytes
 /// rather than validating what it did not write. Answers how to take the
 /// padding back out.
-fn fill_to_just_short(store: &ProjectStore, slack: u64) -> impl Fn(&ProjectStore) {
+pub(crate) fn fill_to_just_short(store: &ProjectStore, slack: u64) -> impl Fn(&ProjectStore) {
     let size = |store: &ProjectStore| {
         record::serialize(&document_of(store))
             .expect("serializable")
@@ -4481,10 +4685,12 @@ fn the_size_measure_keeps_room_for_the_widest_revision() {
 }
 
 // ---------------------------------------------------------------------------
-// The canonical schema-4 document
+// The canonical schema-5 document, and beta 1's schema 4 read
 // ---------------------------------------------------------------------------
 
-/// Schema 4 as this build writes it, frozen at the M9 closure.
+/// Schema 5 as this build writes it: schema 4 as frozen at the M9 closure,
+/// with two inputs carrying the "not verified by MSCanvas" label in both of
+/// its shapes.
 ///
 /// Every other document test builds its document from these types and so moves
 /// with them. This one is a file holding every word schema 4 can store: each
@@ -4501,16 +4707,755 @@ fn the_size_measure_keeps_room_for_the_widest_revision() {
 /// same JSON value (key order aside). A word added to a vocabulary cannot fail
 /// here; adding one is a schema decision, recorded with the schema.
 ///
-/// Schema 4 is unpublished: this pins the current meaning, and no promise to
-/// documents written by earlier M9 development builds. Change it only with the
-/// schema, and say so where the schema's disposition is recorded.
+/// This pins the current meaning. Change it only with the schema, and say so
+/// where the schema's disposition is recorded.
 #[test]
-fn the_canonical_schema_four_document_reads_and_writes_back_unchanged() {
-    const CANONICAL: &str = include_str!("schema_4_canonical.json");
+fn the_canonical_schema_five_document_reads_and_writes_back_unchanged() {
+    const CANONICAL: &str = include_str!("schema_5_canonical.json");
     let document = record::parse(CANONICAL.as_bytes()).expect("the canonical document is read");
     let expected: serde_json::Value = serde_json::from_str(CANONICAL).expect("json");
     let written: serde_json::Value =
         serde_json::from_slice(&record::serialize(&document).expect("written")).expect("json");
     assert_eq!(written, expected);
     assert_eq!(document.schema_version, record::SCHEMA_VERSION);
+    assert_eq!(
+        document.inputs[0].not_verified_by_mscanvas,
+        Some(record::NotVerifiedByMscanvas {
+            unverified_settings: true,
+            unverified_build_release: None,
+        })
+    );
+    assert_eq!(document.inputs[1].not_verified_by_mscanvas, None);
+}
+
+/// Beta 1's schema-4 document, as frozen at the M9 closure and unchanged since.
+const SCHEMA_FOUR: &str = include_str!("schema_4_canonical.json");
+
+/// The canonical schema-4 value with one edit, the way a later write would
+/// make it.
+fn schema_four_after(edit: impl FnOnce(&mut serde_json::Value)) -> serde_json::Value {
+    let mut value: serde_json::Value = serde_json::from_str(SCHEMA_FOUR).expect("json");
+    edit(&mut value);
+    value
+}
+
+/// Beta 1 published schema 4, which began its compatibility promise (M9
+/// closure, section 4). This build reads every word of it and holds it as
+/// schema 5 with no label on any input: nothing is dropped, and nothing is
+/// rewritten but the version and a `null` label on each input. (A digest is
+/// also written in upper case; beta 1 wrote no other.)
+#[test]
+fn the_canonical_schema_four_document_is_read_as_schema_five_with_no_label() {
+    let document = record::parse(SCHEMA_FOUR.as_bytes()).expect("schema 4 is read");
+    assert_eq!(document.schema_version, record::SCHEMA_VERSION);
+    assert!(
+        document
+            .inputs
+            .iter()
+            .all(|input| input.not_verified_by_mscanvas.is_none())
+    );
+    let written: serde_json::Value =
+        serde_json::from_slice(&record::serialize(&document).expect("written")).expect("json");
+    assert_eq!(written, schema_four_after(as_schema_five));
+}
+
+/// Every schema-4 rule applies on its path, with the same answer schema 5
+/// gives: an unknown field anywhere is malformed, a dangling or duplicate
+/// identifier is refused for that reason, and a digest is read in the one
+/// spelling this build writes.
+#[test]
+fn a_schema_four_document_keeps_every_rule_and_one_digest_spelling() {
+    type Edit = fn(&mut serde_json::Value);
+    let unknown: [(&str, Edit); 3] = [
+        ("at the top level", |value| {
+            value["comment"] = "a hand edit".into();
+        }),
+        ("inside a run", |value| {
+            value["runs"][0]["workerId"] = 7.into();
+        }),
+        ("inside an artifact", |value| {
+            value["artifacts"][0]["path"] = "C:/results".into();
+        }),
+    ];
+    for (what, edit) in unknown {
+        assert_eq!(
+            refused_value(&schema_four_after(edit)),
+            DocumentProblem::Malformed,
+            "{what}"
+        );
+    }
+
+    let broken: [(&str, Edit, DocumentProblem); 2] = [
+        (
+            "a layer sourced from no input",
+            |value| {
+                value["layers"][0]["source"]["inputId"] =
+                    "7e0b2c41-9d7a-4f0e-8a51-3c6d2e9b1aff".into();
+            },
+            DocumentProblem::DanglingReference,
+        ),
+        (
+            "two layers with one identifier",
+            |value| {
+                value["layers"][1]["id"] = value["layers"][0]["id"].clone();
+            },
+            DocumentProblem::DuplicateIdentifier,
+        ),
+    ];
+    for (what, edit, problem) in broken {
+        let value = schema_four_after(edit);
+        assert_eq!(refused_value(&value), problem, "{what}");
+        let mut five = value;
+        as_schema_five(&mut five);
+        assert_eq!(refused_value(&five), problem, "{what}, as schema 5");
+    }
+
+    let lowered = schema_four_after(|value| {
+        value["inputs"][0]["members"][0]["baseline"]["sha256"] = "a".repeat(64).into();
+    });
+    let document = record::parse(&serde_json::to_vec(&lowered).expect("bytes"))
+        .expect("a lower-case digest is the same digest");
+    assert_eq!(
+        document.inputs[0].members[0].baseline.sha256,
+        "A".repeat(64)
+    );
+}
+
+/// Leaves the open project with an unsaved change and the content it had.
+fn change_and_undo(store: &ProjectStore, scratch: &Scratch) {
+    let file = scratch.write("unsaved.txt", b"bytes");
+    let id = store.register_input(&file).expect("registered");
+    store.remove_input(id).expect("removed");
+    assert!(store.describe().dirty);
+}
+
+/// Opening writes nothing and leaves nothing unsaved, and a Save with nothing
+/// unsaved writes nothing either, so a beta-1 project that is only looked at
+/// stays readable by beta 1. The first Save after a change writes schema 5,
+/// which beta 1 refuses, and changes nothing else but the revision and a
+/// `null` label on each input.
+#[test]
+fn opening_a_schema_four_document_writes_nothing_and_its_save_writes_schema_five() {
+    let scratch = Scratch::new("schema-four");
+    let path = scratch.write("project.mscanvas", SCHEMA_FOUR.as_bytes());
+    let store = ProjectStore::new();
+    store.open_document(&path, false).expect("schema 4 opens");
+    assert_eq!(fs::read(&path).expect("read"), SCHEMA_FOUR.as_bytes());
+    assert_eq!(
+        fs::read_dir(scratch.directory()).expect("list").count(),
+        1,
+        "nothing written beside it"
+    );
+    let described = store.describe();
+    assert!(!described.dirty);
+    // What the interface warns before the first write from.
+    assert!(described.saving_upgrades_schema);
+    assert!(
+        described
+            .inputs
+            .iter()
+            .all(|input| input.not_verified_by_mscanvas.is_none())
+    );
+
+    store.save().expect("a Save with nothing unsaved");
+    assert_eq!(
+        fs::read(&path).expect("read"),
+        SCHEMA_FOUR.as_bytes(),
+        "a Save with nothing unsaved leaves beta 1's document as it was"
+    );
+    assert_eq!(fs::read_dir(scratch.directory()).expect("list").count(), 1);
+    assert!(!store.describe().dirty);
+    assert!(store.describe().saving_upgrades_schema);
+
+    change_and_undo(&store, &scratch);
+    store.save().expect("the first Save after a change");
+    // Written as schema 5: the next Save upgrades nothing.
+    assert!(!store.describe().saving_upgrades_schema);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("read")).expect("json");
+    let expected = schema_four_after(|value| {
+        as_schema_five(value);
+        let revision = value["revision"].as_u64().expect("a revision");
+        value["revision"] = (revision + 1).into();
+    });
+    assert_eq!(saved, expected);
+    let reread = record::parse(&fs::read(&path).expect("read")).expect("schema 5 is read");
+    assert_eq!(reread.schema_version, 5);
+}
+
+/// Save As replaces a schema-4 document only where it is the one this session
+/// is bound to, chosen again. A copy anywhere else is something
+/// beta 1 wrote and can still read, so it is refused and left as it is -- even
+/// a copy of this project at this revision, which the same-project rule alone
+/// would replace.
+#[test]
+fn save_as_replaces_no_schema_four_document_but_the_bound_one() {
+    let scratch = Scratch::new("schema-four-save-as");
+    let bound = scratch.write("project.mscanvas", SCHEMA_FOUR.as_bytes());
+    let store = ProjectStore::new();
+    store.open_document(&bound, false).expect("schema 4 opens");
+
+    let copies = [
+        ("this project at this revision", schema_four_after(|_| {})),
+        (
+            "this project at another revision",
+            schema_four_after(|value| value["revision"] = 8.into()),
+        ),
+        (
+            "another project",
+            schema_four_after(|value| {
+                value["projectId"] = "3f6c2d9e-5b1a-4c8e-9f2d-7a1b0c4e5dff".into();
+            }),
+        ),
+    ];
+    for (index, (what, copy)) in copies.iter().enumerate() {
+        let bytes = serde_json::to_vec(copy).expect("bytes");
+        let destination = scratch.write(&format!("copy-{index}.mscanvas"), &bytes);
+        assert_eq!(
+            store.save_as(&destination),
+            Err(ProjectError::DestinationNotAProject),
+            "{what}"
+        );
+        assert_eq!(
+            fs::read(&destination).expect("read"),
+            bytes,
+            "{what} is exactly as it was"
+        );
+    }
+
+    store
+        .save_as(&bound)
+        .expect("Save As onto the bound document is its Save");
+    let saved = record::parse(&fs::read(&bound).expect("read")).expect("schema 5 is read");
+    assert_eq!(saved.schema_version, 5);
+    assert_eq!(saved.revision, 8);
+}
+
+/// The bound document found in another schema than it was bound in was
+/// written by someone else, even at this project and this revision. Save and
+/// Save As onto it are refused and it is left as it is, in both directions.
+#[test]
+fn the_bound_document_in_another_schema_is_another_writers() {
+    let scratch = Scratch::new("schema-four-stale");
+    let path = scratch.write("project.mscanvas", SCHEMA_FOUR.as_bytes());
+    let store = ProjectStore::new();
+    store.open_document(&path, false).expect("schema 4 opens");
+    let refused = |bytes: &[u8], what: &str| {
+        fs::write(&path, bytes).expect("write");
+        assert_eq!(
+            store.save(),
+            Err(ProjectError::StaleDocument),
+            "Save, {what}"
+        );
+        assert_eq!(
+            store.save_as(&path),
+            Err(ProjectError::StaleDocument),
+            "Save As, {what}"
+        );
+        assert_eq!(fs::read(&path).expect("read"), bytes, "{what}");
+    };
+
+    let five = serde_json::to_vec(&schema_four_after(as_schema_five)).expect("bytes");
+    refused(&five, "bound at schema 4, found at schema 5");
+
+    fs::write(&path, SCHEMA_FOUR).expect("write");
+    change_and_undo(&store, &scratch);
+    store.save().expect("schema 5 at revision 8");
+    let four = schema_four_after(|value| value["revision"] = 8.into());
+    refused(
+        &serde_json::to_vec(&four).expect("bytes"),
+        "bound at schema 5, found at schema 4",
+    );
+}
+
+/// Beta 1 published documents up to the size bound, and reading one gives
+/// every input a `null` label 37 bytes long when written. A document closer to
+/// the bound than that opens, and nothing this build does can write it: every
+/// Save and Save As is refused as oversized, and the file stays as beta 1 wrote
+/// it.
+#[test]
+fn a_schema_four_document_without_room_for_its_labels_opens_and_is_never_written() {
+    // As beta 1 wrote it: pretty-printed, with a final newline.
+    let published = |document: &ProjectDocument| {
+        let value: serde_json::Value =
+            serde_json::from_slice(&schema_four_bytes(document)).expect("json");
+        let mut bytes = serde_json::to_vec_pretty(&value).expect("bytes");
+        bytes.push(b'\n');
+        bytes
+    };
+    let mut document = record::parse(SCHEMA_FOUR.as_bytes()).expect("schema 4");
+    // Inputs enough that their labels outgrow one padding record, and room
+    // for one more to be registered.
+    let template = document.inputs[0].clone();
+    while document.inputs.len() < record::MAX_INPUTS - 1 {
+        document.inputs.push(record::InputRecord {
+            id: InputId::new(),
+            ..template.clone()
+        });
+    }
+    let observed: Vec<InputId> = document
+        .inputs
+        .iter()
+        .take(32)
+        .map(|input| input.id)
+        .collect();
+    let padding = || record::ArtifactRecord {
+        id: mscanvas_core::ArtifactId::new(),
+        label: "padding".to_owned(),
+        payload: record::ArtifactPayload::FileFactsV1(record::FileFactsV1 {
+            observations: observed
+                .iter()
+                .map(|&input_id| record::ObservedInput {
+                    input_id,
+                    members: vec![record::ObservedMember {
+                        role: MemberRole::Primary,
+                        relative_name: String::new(),
+                        byte_length: 1,
+                        sha256: "A".repeat(64),
+                    }],
+                })
+                .collect(),
+        }),
+    };
+    document.artifacts.push(padding());
+    let one = published(&document).len() as u64;
+    document.artifacts.push(padding());
+    let each = published(&document).len() as u64 - one;
+    let room = record::MAX_DOCUMENT_BYTES - one - each;
+    document
+        .artifacts
+        .extend((0..room / each).map(|_| padding()));
+    let bytes = published(&document);
+    assert!(
+        bytes.len() as u64 <= record::MAX_DOCUMENT_BYTES,
+        "beta 1 could publish it"
+    );
+    let read = record::parse(&bytes).expect("it is read");
+    assert!(
+        record::serialize(&read).expect("serialized").len() as u64 > record::MAX_DOCUMENT_BYTES,
+        "its labels take it past the bound"
+    );
+
+    let scratch = Scratch::new("schema-four-full");
+    let path = scratch.write("project.mscanvas", &bytes);
+    let elsewhere = scratch.directory().join("elsewhere.mscanvas");
+    let store = ProjectStore::new();
+    store.open_document(&path, false).expect("it opens");
+    store
+        .save()
+        .expect("a Save with nothing unsaved writes nothing");
+    assert_eq!(store.save_as(&path), Err(ProjectError::Oversized));
+    assert_eq!(store.save_as(&elsewhere), Err(ProjectError::Oversized));
+    change_and_undo(&store, &scratch);
+    assert_eq!(store.save(), Err(ProjectError::Oversized));
+    assert_eq!(fs::read(&path).expect("read"), bytes);
+    assert!(!elsewhere.exists(), "nothing published elsewhere");
+    assert!(store.describe().dirty, "nothing was published");
+}
+
+/// A schema-4 document is schema 4 exactly: a schema-5 field in one is refused
+/// as malformed, not read as a label beta 1 never wrote. `null` included,
+/// which is schema 5's own spelling of no label.
+#[test]
+fn a_schema_four_document_carrying_a_schema_five_field_is_refused_as_malformed() {
+    for label in [
+        serde_json::json!({ "unverifiedSettings": true, "unverifiedBuildRelease": null }),
+        serde_json::Value::Null,
+    ] {
+        let value = schema_four_after(|value| {
+            value["inputs"][0]["notVerifiedByMscanvas"] = label.clone();
+        });
+        assert_eq!(
+            record::parse(&serde_json::to_vec(&value).expect("bytes")),
+            Err(DocumentProblem::Malformed)
+        );
+        // Positive control: the same label is schema 5's.
+        let mut value = schema_four_after(as_schema_five);
+        value["inputs"][0]["notVerifiedByMscanvas"] = label;
+        record::parse(&serde_json::to_vec(&value).expect("bytes")).expect("schema 5");
+    }
+
+    let mut document = valid_document();
+    document.schema_version = 4;
+    document.inputs[0].not_verified_by_mscanvas = record::NotVerifiedByMscanvas::of(true, None);
+    assert_eq!(refused(&document), DocumentProblem::Malformed);
+}
+
+/// In schema 5 a label and its release are explicit `null` where there is
+/// nothing to say, like every optional value in the document. An omitted one
+/// is refused, never read as nothing recorded or as a measured build.
+#[test]
+fn a_schema_five_label_or_release_that_is_omitted_is_malformed() {
+    let mut document = valid_document();
+    document.inputs[0].not_verified_by_mscanvas = record::NotVerifiedByMscanvas::of(true, None);
+    let value = serde_json::to_value(&document).expect("json");
+
+    let mut no_release = value.clone();
+    no_release["inputs"][0]["notVerifiedByMscanvas"]
+        .as_object_mut()
+        .expect("a label")
+        .remove("unverifiedBuildRelease");
+    assert_eq!(
+        refused_value(&no_release),
+        DocumentProblem::Malformed,
+        "an omitted release"
+    );
+    let mut no_label = value.clone();
+    no_label["inputs"][0]
+        .as_object_mut()
+        .expect("an input")
+        .remove("notVerifiedByMscanvas");
+    assert_eq!(
+        refused_value(&no_label),
+        DocumentProblem::Malformed,
+        "an omitted label"
+    );
+
+    // Positive control: both written out, and the `null` label.
+    let bytes = serde_json::to_vec(&value).expect("bytes");
+    assert_eq!(record::parse(&bytes).expect("a label"), document);
+    let bytes = record::serialize(&valid_document()).expect("serialize");
+    record::parse(&bytes).expect("a null label");
+}
+
+/// Schema 4 is frozen at beta 1's words and fields, and its reader shares every
+/// record type below the top level and the input with schema 5
+/// (`record::PUBLISHED_SCHEMA_VERSION`). Each of them is listed here with no
+/// wildcard and no `..`, so a word or a field added to one does not compile
+/// until it is added here -- and whoever adds it must also refuse it on the
+/// schema-4 read path, with a test, or keep it out of the shared types.
+///
+/// The check is the compiler's; running it asserts nothing more. It cannot see
+/// a serde attribute changed on an existing word or field (`alias`, `other`,
+/// `rename`, `default`, `skip`), which can admit a spelling beta 1 never wrote
+/// and is left to review. Not listed:
+/// the identifier newtypes and `DecimalValue`, transparent wrappers of one
+/// private field, and `mscanvas_core::ArtifactId`, another crate's identifier.
+#[test]
+fn schema_four_shares_only_beta_one_words_and_fields() {
+    use super::record::{
+        AcquisitionQcSnapshotV1, ArtifactPayload, ArtifactRecord, AttemptFacts, EngineReport,
+        FailureCode, FailureStage, FileFactsV1, LoadedModule, MsLevelCountRecord, ObservedInput,
+        ObservedMember, OutcomeSummary, PayloadFile, PayloadFileName, PayloadReference,
+        PreviewProducer, ProducerTool, RecipeBinding, RecipeId, RecordedRetentionTime,
+        RecordedUnit, ReportedCount, RetentionTimeSummary, RunFailure, SourceView, StopFacts,
+        StopReason, TargetDefinition, TargetedMs1Execution, TargetedMs1Parameters, TargetedMs1Plan,
+        TargetedMs1ResultV1,
+    };
+
+    // Closed vocabularies.
+    let _ = |word: &Locator| match word {
+        Locator::ProjectRelative { path: _ } | Locator::LocalAbsolute { path: _ } => {}
+    };
+    let _ = |word: MemberRole| match word {
+        MemberRole::Primary | MemberRole::RequiredCompanion => {}
+    };
+    let _ = |word: &ArtifactPayload| match word {
+        ArtifactPayload::FileFactsV1(_)
+        | ArtifactPayload::AcquisitionQcSnapshotV1(_)
+        | ArtifactPayload::TargetedMs1ResultV1(_) => {}
+    };
+    let _ = |word: RecordedUnit| match word {
+        RecordedUnit::NotEmitted => {}
+    };
+    let _ = |word: &RetentionTimeSummary| match word {
+        RetentionTimeSummary::Reported {
+            minimum: _,
+            at_25_percent_base_peak_intensity: _,
+            at_50_percent_base_peak_intensity: _,
+            at_75_percent_base_peak_intensity: _,
+            maximum: _,
+        }
+        | RetentionTimeSummary::NotReported {} => {}
+    };
+    let _ = |word: ReportedCount| match word {
+        ReportedCount::Reported { count: _ } | ReportedCount::NotReported {} => {}
+    };
+    let _ = |word: MsLevelCountRecord| match word {
+        MsLevelCountRecord::Level {
+            ms_level: _,
+            spectrum_count: _,
+        }
+        | MsLevelCountRecord::Other { spectrum_count: _ } => {}
+    };
+    let _ = |word: ProducerTool| match word {
+        ProducerTool::Msaccess => {}
+    };
+    let _ = |word: RecordedOperation| match word {
+        RecordedOperation::CaptureFileFactsV1
+        | RecordedOperation::CaptureAcquisitionQcSnapshotV1
+        | RecordedOperation::TargetedMs1V1 => {}
+    };
+    let _ = |word: RunInput| match word {
+        RunInput::Input { input_id: _ } | RunInput::Layer { layer_id: _ } => {}
+    };
+    let _ = |word: TerminalOutcome| match word {
+        TerminalOutcome::Completed | TerminalOutcome::Failed | TerminalOutcome::Cancelled => {}
+    };
+    let _ = |word: RecipeId| match word {
+        RecipeId::TargetedMs1 => {}
+    };
+    let _ = |word: FailureStage| match word {
+        FailureStage::Source
+        | FailureStage::Runtime
+        | FailureStage::Request
+        | FailureStage::Engine
+        | FailureStage::Result
+        | FailureStage::Publish => {}
+    };
+    let _ = |word: FailureCode| match word {
+        FailureCode::SourceUnavailable
+        | FailureCode::SourceChanged
+        | FailureCode::SourceChangedDuringRead
+        | FailureCode::SourceUnreadable
+        | FailureCode::SourceReadIncomplete
+        | FailureCode::SourceNoMs1
+        | FailureCode::SourceNotCentroid
+        | FailureCode::SourceMixedPolarity
+        | FailureCode::SourcePolarityUnsupported
+        | FailureCode::SourceRtUndeclaredOrNonmonotonic
+        | FailureCode::SourceRtNotStrictlyIncreasing
+        | FailureCode::SourceIonMobilityUnsupported
+        | FailureCode::SourceUnsortedMz
+        | FailureCode::SourceNonfinite
+        | FailureCode::ExecutionViewUnavailable
+        | FailureCode::InsufficientWorkAreaSpace
+        | FailureCode::RuntimeUnverified
+        | FailureCode::RuntimeModuleMismatch
+        | FailureCode::WorkerLaunchFailed
+        | FailureCode::WorkerNotAccountedFor
+        | FailureCode::RequestRefused
+        | FailureCode::TargetInvalid
+        | FailureCode::EngineError
+        | FailureCode::EngineNoCandidates
+        | FailureCode::EvidenceMappingMismatch
+        | FailureCode::WorkerTimeout
+        | FailureCode::WorkerExitedAbnormally
+        | FailureCode::WorkerInternal
+        | FailureCode::ResultInvalid
+        | FailureCode::PayloadNotPublished => {}
+    };
+    let _ = |word: StopReason| match word {
+        StopReason::CancelRequested | StopReason::TimeBudgetExceeded => {}
+    };
+    let _ = |word: SourceView| match word {
+        SourceView::HardLinkInWorkArea | SourceView::VerifiedSnapshotInWorkArea => {}
+    };
+    let _ = |word: PayloadFileName| match word {
+        PayloadFileName::Rows | PayloadFileName::Evidence | PayloadFileName::EvidenceIndex => {}
+    };
+    let _ = |word: LayerSource| match word {
+        LayerSource::Input { input_id: _ } => {}
+    };
+
+    // Records.
+    let _ = |fields: &MemberRecord| {
+        let MemberRecord {
+            role: _,
+            relative_name: _,
+            baseline: _,
+        } = fields;
+    };
+    let _ = |fields: &ContentBaseline| {
+        let ContentBaseline {
+            byte_length: _,
+            sha256: _,
+        } = fields;
+    };
+    let _ = |fields: &ObservedMember| {
+        let ObservedMember {
+            role: _,
+            relative_name: _,
+            byte_length: _,
+            sha256: _,
+        } = fields;
+    };
+    let _ = |fields: &ObservedInput| {
+        let ObservedInput {
+            input_id: _,
+            members: _,
+        } = fields;
+    };
+    let _ = |fields: &FileFactsV1| {
+        let FileFactsV1 { observations: _ } = fields;
+    };
+    let _ = |fields: &RecordedRetentionTime| {
+        let RecordedRetentionTime { value: _, unit: _ } = fields;
+    };
+    let _ = |fields: &PreviewProducer| {
+        let PreviewProducer {
+            tool: _,
+            executable_sha256: _,
+            release: _,
+            build_date: _,
+            source_revision: _,
+        } = fields;
+    };
+    let _ = |fields: &AcquisitionQcSnapshotV1| {
+        let AcquisitionQcSnapshotV1 {
+            total_spectrum_count: _,
+            ms_level_counts: _,
+            chromatogram_count: _,
+            retention_time: _,
+            producer: _,
+        } = fields;
+    };
+    let _ = |fields: &ArtifactRecord| {
+        let ArtifactRecord {
+            id: _,
+            label: _,
+            payload: _,
+        } = fields;
+    };
+    let _ = |fields: &RunRecord| {
+        let RunRecord {
+            id: _,
+            operation: _,
+            inputs: _,
+            output_artifact_ids: _,
+            outcome: _,
+            application_version: _,
+            started_at: _,
+            finished_at: _,
+            targeted_ms1: _,
+        } = fields;
+    };
+    let _ = |fields: &RecipeBinding| {
+        let RecipeBinding {
+            recipe: _,
+            recipe_version: _,
+            adapter_sha256: _,
+            engine_profile_sha256: _,
+            runtime_manifest_sha256: _,
+        } = fields;
+    };
+    let _ = |fields: &TargetedMs1Parameters| {
+        let TargetedMs1Parameters {
+            mz_half_width_ppm: _,
+            expected_peak_width_s: _,
+        } = fields;
+    };
+    let _ = |fields: &TargetDefinition| {
+        let TargetDefinition {
+            target_id: _,
+            label: _,
+            formula: _,
+            neutral_mass: _,
+            rt_s: _,
+            rt_half_width_s: _,
+        } = fields;
+    };
+    let _ = |fields: &TargetedMs1Plan| {
+        let TargetedMs1Plan {
+            plan_sha256: _,
+            recipe: _,
+            layer_id: _,
+            input_id: _,
+            expected_content: _,
+            parameters: _,
+            target_list_sha256: _,
+            targets: _,
+        } = fields;
+    };
+    let _ = |fields: &RunFailure| {
+        let RunFailure { code: _, stage: _ } = fields;
+    };
+    let _ = |fields: &StopFacts| {
+        let StopFacts {
+            reason: _,
+            worker_terminated: _,
+            exit_observed: _,
+        } = fields;
+    };
+    let _ = |fields: &EngineReport| {
+        let EngineReport {
+            python: _,
+            pyopenms: _,
+            openms: _,
+            openms_revision: _,
+            openms_build_time: _,
+        } = fields;
+    };
+    let _ = |fields: &LoadedModule| {
+        let LoadedModule { name: _, sha256: _ } = fields;
+    };
+    let _ = |fields: &AttemptFacts| {
+        let AttemptFacts {
+            adapter_sha256: _,
+            runtime_manifest_sha256: _,
+            interpreter_sha256: _,
+            source_view: _,
+            engine_report: _,
+            loaded_modules: _,
+        } = fields;
+    };
+    let _ = |fields: &TargetedMs1Execution| {
+        let TargetedMs1Execution {
+            plan_sha256: _,
+            consumed_content: _,
+            attempt: _,
+            failure: _,
+            stop: _,
+        } = fields;
+    };
+    let _ = |fields: &OutcomeSummary| {
+        let OutcomeSummary {
+            targets: _,
+            detected: _,
+            detected_ambiguous: _,
+            shared: _,
+            suppressed_by_overlap: _,
+            not_detected: _,
+            failed: _,
+        } = fields;
+    };
+    let _ = |fields: &PayloadFile| {
+        let PayloadFile {
+            name: _,
+            byte_length: _,
+            sha256: _,
+        } = fields;
+    };
+    let _ = |fields: &PayloadReference| {
+        let PayloadReference {
+            manifest_sha256: _,
+            files: _,
+        } = fields;
+    };
+    let _ = |fields: &TargetedMs1ResultV1| {
+        let TargetedMs1ResultV1 {
+            summary: _,
+            no_candidate_recovery: _,
+            payload: _,
+        } = fields;
+    };
+    let _ = |fields: &LayerRecord| {
+        let LayerRecord { id: _, source: _ } = fields;
+    };
+}
+
+#[test]
+fn a_label_that_says_nothing_or_holds_an_unbounded_release_is_refused() {
+    let mut document = valid_document();
+    document.inputs[0].not_verified_by_mscanvas = Some(record::NotVerifiedByMscanvas {
+        unverified_settings: false,
+        unverified_build_release: None,
+    });
+    assert_eq!(refused(&document), DocumentProblem::InconsistentRecord);
+    for release in [
+        String::new(),
+        "3.0\n26204".to_owned(),
+        "9".repeat(record::MAX_LABEL_CHARS + 1),
+    ] {
+        document.inputs[0].not_verified_by_mscanvas = Some(record::NotVerifiedByMscanvas {
+            unverified_settings: false,
+            unverified_build_release: Some(release),
+        });
+        assert_eq!(refused(&document), DocumentProblem::Malformed);
+    }
+    // Positive control: either half alone is a label.
+    document.inputs[0].not_verified_by_mscanvas =
+        record::NotVerifiedByMscanvas::of(false, Some("3.0.26204".to_owned()));
+    let bytes = record::serialize(&document).expect("serialize");
+    assert_eq!(record::parse(&bytes).expect("a label"), document);
 }

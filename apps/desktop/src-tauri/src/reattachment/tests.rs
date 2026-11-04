@@ -19,7 +19,7 @@ use crate::preview::PreviewService;
 use crate::preview::dto::{WorkspaceAddOutcomeDto, WorkspaceAddResultDto};
 use crate::preview::idle_provider::NoProcess;
 use crate::project::observe::{Cancellation, UnavailableReason};
-use crate::project::record::{InputId, LayerId};
+use crate::project::record::{InputId, LayerId, NotVerifiedByMscanvas};
 use crate::project::tests::Scratch;
 use crate::project::{ProjectError, ProjectStore};
 
@@ -342,6 +342,48 @@ fn an_ordinary_import_of_the_same_object_converges_on_one_row() {
         "one filesystem object is one row, whichever route reached it"
     );
     assert_eq!(result.roster.datasets.len(), 1);
+}
+
+/// A reference the project recorded as not verified by MSCanvas brings that
+/// label to its row, as a new row and onto a row the user already had
+/// (ADR 0055; owner decision 2 of 2026-10-29).
+#[test]
+fn a_labelled_reference_brings_its_label_to_the_row_it_is_admitted_as() {
+    let label = NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    for already_added in [false, true] {
+        let scratch = Scratch::new(if already_added {
+            "reattach-labelled-existing"
+        } else {
+            "reattach-labelled-new"
+        });
+        let projects = ProjectStore::new();
+        projects
+            .create("Labelled".to_owned(), false)
+            .expect("a new project");
+        let path = scratch.write("converted.mzML", b"<mzML/>");
+        let id = projects
+            .register_input_labelled(&path, |_| label.clone())
+            .expect("register the labelled reference");
+        let service = workspace();
+        if already_added {
+            service
+                .add_files(std::slice::from_ref(&path))
+                .expect("the ordinary import");
+            assert_eq!(service.roster().datasets[0].not_verified_by_mscanvas, None);
+        }
+
+        let result = add(&projects, &service, id).expect("admitted");
+
+        let dataset = match result.outcomes.as_slice() {
+            [WorkspaceAddOutcomeDto::Added { dataset }] if !already_added => dataset,
+            [WorkspaceAddOutcomeDto::Duplicate { existing }] if already_added => existing,
+            other => panic!("unexpected outcome: {other:?}"),
+        };
+        assert_eq!(dataset.not_verified_by_mscanvas, label, "{already_added}");
+        assert_eq!(result.roster.datasets.len(), 1);
+        assert_eq!(result.roster.datasets[0].not_verified_by_mscanvas, label);
+        assert_eq!(service.roster().datasets[0].not_verified_by_mscanvas, label);
+    }
 }
 
 // ---------------------------------------------------------------------------

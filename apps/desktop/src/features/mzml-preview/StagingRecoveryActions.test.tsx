@@ -4,6 +4,7 @@ import { renderWithPreferences as render } from "../../test/renderWithPreference
 import { deferred } from "../../test/previewFixtures";
 import type { StagingReclaimOutcome } from "./contracts";
 import { StagingRecoveryActions } from "./StagingRecoveryActions";
+import { UI_RESOURCES } from "../preferences/i18n";
 
 const recovery = { recoveryId: "staging-7", attempt: 2, status: "recoverable" } as const;
 
@@ -30,7 +31,7 @@ describe("live staging recovery", () => {
     expect(review).not.toHaveBeenCalled();
     await act(async () => pending.resolve({ status: "cleaned" }));
     expect(review).not.toHaveBeenCalled();
-    expect(screen.getByRole("status")).toHaveTextContent("Owned temporary output has been cleaned");
+    expect(screen.getByRole("status")).toHaveTextContent(UI_RESOURCES.en.stagingRecoveryCleaned);
     expect(screen.getByRole("button", { name: "Review a new plan" })).toHaveFocus();
     fireEvent.click(screen.getByRole("button", { name: "Review a new plan" }));
     expect(review).toHaveBeenCalledTimes(1);

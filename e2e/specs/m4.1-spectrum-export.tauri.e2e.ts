@@ -29,10 +29,12 @@
  */
 
 import { ipcTable } from "../support/fixtures";
-import { TAURI_VIEWER_PREFERENCES, selectFirstSpectrum } from "../support/tauriPanel";
+import { TAURI_VIEWER_PREFERENCES, openSpectrumFigureDialog, selectFirstSpectrum } from "../support/tauriPanel";
 
 const PANEL = "section.spectrum-panel";
-const EXPORT_BLOCK = ".spectrum-export";
+// The figure dialog since the rebuild (spec 3.4): Copy, SVG and PNG in its
+// footer, CSV and TSV in its Data group.
+const EXPORT_BLOCK = ".figure-export-dialog";
 const FORMATS = ["SVG", "CSV", "TSV"] as const;
 
 interface IpcCall {
@@ -150,6 +152,7 @@ describe("M4.1 on the real Tauri WebView, with a spectrum loaded", () => {
   before(async () => {
     await loadWith(tauriTable());
     await selectFirstSpectrum();
+    await openSpectrumFigureDialog();
   });
 
   it("renders the export controls", async () => {

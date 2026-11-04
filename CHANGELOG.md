@@ -4,8 +4,37 @@ All notable changes will be documented here once versioned releases begin.
 
 ## Unreleased
 
+### Added
+
+- **Restore workspace.** MSCanvas remembers the Workbench's files, groups, order
+  and checked rows for the next start, in one document in its own per-user folder.
+  At the next start nothing comes back by itself: a notice says how many files can
+  be added again and lists any that changed, went missing or cannot be reached,
+  with the reason. **Restore workspace** puts them back as adding them would,
+  hashing each file, previews nothing and says they were added again, not verified
+  against the last session. **Start fresh** forgets them, one marked file can be
+  dismissed, and Settings turns restore off, saying that kept-aside copies remain.
+  A file not taken is offered at the next start only; a marked file waits
+  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md)).
+- **Spreadsheet CSV on a stored targeted result's table.** The results table has
+  a third export, spreadsheet CSV / 电子表格 CSV, beside CSV and TSV. It is a
+  document of its own, `mscanvas_targeted_ms1_results_spreadsheet` schema 1, that
+  starts with a UTF-8 byte-order mark and adds one apostrophe before a formula
+  trigger in a declared text field; numbers, `formula` and code-owned fields are
+  not altered. The CSV and TSV files do not change. The check of how Excel,
+  LibreOffice and WPS open it is pending
+  ([ADR 0054](docs/architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)).
+
 ### Changed
 
+- **Conversion runs are now remembered, and you can see and forget them.**
+  Conversion → **Conversion history** lists every run with when it started and
+  ended, or that it was cut short, and reads one run's files, outputs and checks
+  after a restart. The record stays on this computer, holds each source's path
+  and is never uploaded; the screen shows names and no path. **Clear history…**
+  forgets ended runs and **Turn off…** in Settings forgets every run and records
+  none; neither touches an acquisition or a converted file
+  ([ADR 0065](docs/architecture/adr/0065-conversion-run-history.md)).
 - **A saved PNG figure now carries the figure's title and description.** Every
   PNG saved from a spectrum, a chromatogram, the linked figure or a stored
   targeted result holds two uncompressed `iTXt` text chunks, `Title` and
@@ -16,6 +45,46 @@ All notable changes will be documented here once versioned releases begin.
   identifiers, as its SVG already does. No path, no handle and
   no other key is written; the pixels and Copy plot are unchanged
   ([ADR 0053](docs/architecture/adr/0053-png-text-metadata.md)).
+- **Spectrum and chromatogram CSV/TSV files carry new schema versions**
+  (spectrum 3 full source and 4 range, chromatogram 2), because their
+  representation and unit fields now state what the mzML file declares and
+  retention times stay in the file's own unit
+  ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
+- **The viewer shows what the mzML file declares.** A spectrum the file
+  declares profile is drawn as one joined line, on screen as in export; a
+  centroid or undeclared one stays sticks. Retention times carry the file's
+  `s` or `min`, never converted, including in the range editor, the figure
+  dialog and the linked figure's result, and scans in mixed units give no
+  chromatogram. Each axis names a declared unit by its accession. A spectrum
+  whose preview is gone, or whose file changed, offers **Open the file again**
+  ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
+- **A plot's axes now tick and read as its exported figure does.** The screen
+  uses the figure's rule for the same range: a label keeps its step's decimals
+  (`0.00, 0.02`), exponents read `5e6` rather than `5.0e+6`, and of two steps
+  equally near five ticks the coarser is taken. A single value reads as the
+  figure writes it (`12.500000`). A figure can still show fewer ticks, where its
+  labels would collide or leave the page. A long label at a plot's right end now
+  stays whole, where the panel's edge used to cut it into another number.
+- **Beta-1 projects open, and are upgraded when you save a change.** A project
+  saved by beta 1 opens as it is. Opening it writes nothing, and Save with
+  nothing unsaved writes nothing. The first Save after a change writes the new
+  project format (schema 5), and so does Save As onto the project's own file.
+  Beta 1 cannot open a project in the new format, and reinstalling beta 1 does
+  not undo that
+  ([ADR 0055](docs/architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+  risks).
+
+  **To be able to go back to beta 1, keep a copy of the `.mscanvas` file
+  before you save it in this version.** Beta 1's roll back reinstalls the
+  program; it does not convert a project back.
+
+### Known limitations
+
+- **A beta-1 project close to the 4 MiB size limit opens but cannot be
+  saved.** The new format adds 37 bytes per referenced file, so a beta-1
+  project whose size plus 37 bytes per file exceeds 4 MiB is refused as too
+  large on every Save after a change and on every Save As. The original file
+  is left untouched, and nothing in it is lost.
 
 ## 0.1.0-beta.1 — 2026-10-28 (prerelease)
 

@@ -5,7 +5,7 @@ import { adjacentDisplayedScan, indexScanTable, INITIAL_SCAN_TABLE_OPTIONS, proj
 const rows = buildRows(5).map((row, position) => ({ ...row,
   index: [70, 20, 90, 30, 40][position]!, identifier: ["z9", "a10", "a2", "a2", "中文"][position]!,
   scanNumber: [11, null, 2, 2, null][position]!, msLevel: position % 2 + 1,
-  retentionTime: { value: [10, 2, 2, 1, 5][position]!, unitKnown: false } }));
+  retentionTime: { value: [10, 2, 2, 1, 5][position]!, unit: "notReported" as const } }));
 const index = indexScanTable(rows);
 const ids = (options = INITIAL_SCAN_TABLE_OPTIONS) => projectScanTable(index, options).rows.map(row => row.index);
 
@@ -15,6 +15,15 @@ describe("loaded scan-table projection", () => {
     expect(ids(toggleScanSort(INITIAL_SCAN_TABLE_OPTIONS, "retentionTime"))).toEqual([30, 20, 90, 40, 70]);
     expect(ids(toggleScanSort(INITIAL_SCAN_TABLE_OPTIONS, "index"))).toEqual([20, 30, 40, 70, 90]);
     expect(rows.map(row => row.index)).toEqual([70, 20, 90, 30, 40]);
+  });
+  it("sorts rows in mixed retention-time units as one group per unit, never interleaved", () => {
+    const mixed = indexScanTable(buildRows(4).map((row, position) => ({ ...row,
+      retentionTime: { value: [2, 30, 0.5, 1][position]!, unit: (["minute", "second", "minute", "second"] as const)[position]! } })));
+    const sorted = (options: typeof INITIAL_SCAN_TABLE_OPTIONS) => projectScanTable(mixed, options).rows.map(row => row.index);
+    const ascending = toggleScanSort(INITIAL_SCAN_TABLE_OPTIONS, "retentionTime");
+    // 1 s, 30 s, then 0.5 min, 2 min -- not 0.5, 1, 2, 30 as if one scale ([2, 3, 0, 1]).
+    expect(sorted(ascending)).toEqual([3, 1, 2, 0]);
+    expect(sorted(toggleScanSort(ascending, "retentionTime"))).toEqual([0, 2, 1, 3]);
   });
   it("keeps missing values last in both directions and equal keys in source order", () => {
     const ascending = toggleScanSort(INITIAL_SCAN_TABLE_OPTIONS, "scanNumber");

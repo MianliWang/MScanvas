@@ -1,4 +1,5 @@
 import { wholeCount, validateFigureDraft, describeFigureProblem, type FigureSettingsValidation } from "./figureSettingsValidation";
+import { formatCount } from "./format";
 
 import {
   useCallback,
@@ -78,6 +79,7 @@ import {
   describeAddResult,
   describeClear,
   describeRemoveResult,
+  describeRestoreResult,
   initialRosterState,
   rosterReducer,
   rowStateForError,
@@ -112,17 +114,28 @@ import { useViewerInteraction } from "./viewer/useViewerInteraction";
  * Every typed failure that means the backend is not the one that read what is
  * on screen.
  *
- * `installation_changed_since_preview` is the service noticing before it
- * launches; `backend_changed_after_check` is the crate noticing between the
- * check and the spawn; `backend_not_found_at_launch` is the executable being
- * gone by the time it was run. Three routes, one meaning to a reader -- what is
- * on screen was read by something that is no longer there -- and all three are
- * non-retryable, so all three get the same recovery.
+ * `backend_changed_after_check` is the crate noticing between the check and the
+ * spawn; `backend_not_found_at_launch` is the executable being gone by the time
+ * it was run. Two routes, one meaning to a reader -- what is on screen was read
+ * by something that is no longer there -- and both are non-retryable, so both
+ * get the same recovery.
  */
 const BACKEND_CHANGED_KINDS = new Set([
-  "installation_changed_since_preview",
   "backend_changed_after_check",
   "backend_not_found_at_launch",
+]);
+
+/**
+ * The project-owned reader's refusals of one spectrum (ADR 0056). A selected
+ * spectrum is read natively, with no process, so these say something about the
+ * file and nothing about the installation: no backend check follows them.
+ */
+const READER_SPECTRUM_REFUSALS = new Set([
+  "preview_not_open",
+  "spectrum_not_as_recorded",
+  "spectrum_value_not_exact",
+  "spectrum_encoding_unsupported",
+  "spectrum_refused",
 ]);
 
 export type BackendState =
@@ -721,6 +734,8 @@ export interface PreviewWorkspace {
    * the workspace admitted nothing.
    */
   readonly admitProjectInput: (result: WorkspaceAddResult) => string | null;
+  /** Restore workspace; the argument is the read's stored group names, in order. */
+  readonly restoreWorkspace: (groups: readonly (string | null)[]) => Promise<boolean>;
   /**
    * Recovers the authoritative list after a workspace mutation rejected.
    *
@@ -2343,6 +2358,54 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     showWorkspaceNotice,
   ]);
 
+  /**
+   * Restore workspace (ADR 0061, question 1): one workspace change like an add,
+   * on the same gates, and deliberately without what follows a picker's add: no
+   * preview starts, for any row, into any workspace. Resolves once the roster is
+   * settled, `false` where another change holds the workspace and nothing ran.
+   */
+  const restoreWorkspace = useCallback((groups: readonly (string | null)[]): Promise<boolean> => {
+    if (
+      pickerBusyRef.current ||
+      folderBusyRef.current ||
+      dropBusyRef.current ||
+      workspaceBusyRef.current ||
+      folderReservationPendingRef.current
+    ) {
+      return Promise.resolve(false);
+    }
+    workspaceBusyRef.current = true;
+    workspaceMutations.current += 1;
+    rosterToken.current += 1;
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    return api
+      .restoreWorkspace()
+      .then((result) => {
+        if (mounted.current) {
+          workspaceReconcileOwed.current = false;
+          dispatchRoster({ type: "workspaceRestored", result, groups });
+          rosterSettled();
+          showWorkspaceNotice(describeRestoreResult(result));
+        }
+        return true;
+      })
+      .catch((cause: unknown) => {
+        if (mounted.current) {
+          setWorkspaceError(toPreviewError(cause));
+          reconcileAfterFailedWorkspaceMutation();
+        }
+        return true;
+      })
+      .finally(() => {
+        workspaceBusyRef.current = false;
+        if (mounted.current) {
+          setWorkspaceBusy(false);
+          drainWorkspaceReconciliation();
+        }
+      });
+  }, [api, drainWorkspaceReconciliation, reconcileAfterFailedWorkspaceMutation, rosterSettled, showWorkspaceNotice]);
+
   const removeSelected = useCallback(() => {
     const handles = [...rosterRef.current.selected];
     // `pickerBusyRef` as well, and for the same reason `addFiles` reads this
@@ -2641,9 +2704,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
             // backend is still what the banner says. A replacement that keeps a
             // file's metadata but no longer answers its help probe fails inside
             // the provider's own resolution, so it never reaches the comparison
-            // that would name it a change.
+            // that would name it a change. The native reader's own refusals are
+            // about the file, not the installation, and are not such a reason.
             const definitelyChanged = BACKEND_CHANGED_KINDS.has(failure.kind);
-            if (definitelyChanged || !failure.retryable) {
+            if (definitelyChanged || (!failure.retryable && !READER_SPECTRUM_REFUSALS.has(failure.kind))) {
               if (definitelyChanged) {
                 discardBackendDerivedState();
               }
@@ -2717,7 +2781,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         // A resource key and its parameters rather than a sentence. This hook
         // has no message binding -- and should not: the tooltip is rendered in
         // the inspector, which does.
-        { key: "measureOpenDetail", rows: formatRows(openPending.rowCount) },
+        { key: "measureOpenDetail", rows: formatCount(openPending.rowCount) },
       );
     }
     const spectrumPending = pendingSpectrumRender.current;
@@ -4329,6 +4393,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     dispatchRoster,
     addFiles,
     admitProjectInput,
+    restoreWorkspace,
     reconcileAfterFailedWorkspaceMutation,
     addFolder,
     removeSelected,
@@ -4382,8 +4447,4 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     conversionScope,
     setConversionScope,
   };
-}
-
-function formatRows(count: number): string {
-  return count === 1 ? "1 spectrum row" : `${String(count)} spectrum rows`;
 }

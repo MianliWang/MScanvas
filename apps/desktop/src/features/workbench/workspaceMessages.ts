@@ -1,4 +1,4 @@
-import type { MessageArguments, MessageKey, UiMessage } from "../preferences/i18n";
+import { joinSentences, type MessageArguments, type MessageKey, type UiMessage } from "../preferences/i18n";
 import type { PreviewError } from "../mzml-preview/contracts";
 import { ownedErrorMessage } from "../mzml-preview/ownedErrorMessages";
 import type { WorkspaceNotice } from "../mzml-preview/rosterSelection";
@@ -43,5 +43,5 @@ function renderPart(part: WorkspaceNoticePart, t: UiMessage): string {
 }
 
 export function formatWorkspaceNotice(notice: WorkspaceNotice, t: UiMessage) {
-  return { ...notice, message: notice.message.map(part => renderPart(part, t)).join(" "), details: notice.details.map(part => renderPart(part, t)) };
+  return { ...notice, message: joinSentences(t, notice.message.map(part => renderPart(part, t))), details: notice.details.map(part => renderPart(part, t)) };
 }

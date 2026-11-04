@@ -1,6 +1,6 @@
-import { ChoiceField } from "../../components/fields/ChoiceField";
 import { RawTextField } from "../../components/fields/RawTextField";
 import { SettingField } from "../../components/fields/SettingField";
+import { SegmentedControl } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { FigureTheme } from "./contracts";
 import { figureProblemMessageKey, type FigureSettingProblem, type FigureSettingsValidation } from "./figureSettingsValidation";
@@ -23,10 +23,11 @@ export function FigureSettingsFields({ idPrefix, settings, validation, onFigureS
   const message = useUiMessages();
   const problemIds = { render: renderProblemId(idPrefix), dpi: dpiProblemId(idPrefix) };
   const themeLabelId = `${idPrefix}-figure-theme-label`;
+  // The unit is part of a size's name; the DPI field's own label says which format it reaches.
   const fields = [
-    { field: "widthPx", label: "width", hint: "pixels", problem: "render" },
-    { field: "heightPx", label: "height", hint: "pixels", problem: "render" },
-    { field: "pngDpi", label: "pngDpi", hint: "dpiHelp", problem: "dpi" },
+    { field: "widthPx", label: "width", unit: "pixels", problem: "render" },
+    { field: "heightPx", label: "height", unit: "pixels", problem: "render" },
+    { field: "pngDpi", label: "pngDpi", unit: undefined, problem: "dpi" },
   ] as const;
 
   function describe(problem: FigureSettingProblem | null): string {
@@ -37,18 +38,19 @@ export function FigureSettingsFields({ idPrefix, settings, validation, onFigureS
 
   return <fieldset className="spectrum-figure-settings">
     <legend>{message("figure")}</legend>
-    {fields.map(({ field, label, hint, problem }) => {
+    {fields.map(({ field, label, unit, problem }) => {
       const issue = validation[problem];
       const invalid = issue?.fields.includes(field) === true;
       const labelId = `${idPrefix}-${field}-label`;
-      return <SettingField key={field} labelId={labelId} htmlFor={`${idPrefix}-${field}`} label={message(label)} help={message(hint)} className="spectrum-figure-field">
-        <RawTextField id={`${idPrefix}-${field}`} labelledBy={`${labelId} ${labelId}-help`}
+      return <SettingField key={field} labelId={labelId} htmlFor={`${idPrefix}-${field}`} label={message(label)}
+        help={unit === undefined ? undefined : message(unit)} className={`spectrum-figure-field spectrum-figure-field-${field}`}>
+        <RawTextField id={`${idPrefix}-${field}`} labelledBy={unit === undefined ? labelId : `${labelId} ${labelId}-help`}
           describedBy={invalid ? problemIds[problem] : undefined}
           invalid={invalid} value={settings[field]} onChange={(value) => onFigureSetting(field, value)} />
       </SettingField>;
     })}
-    <SettingField labelId={themeLabelId} label={message("theme")} className="spectrum-figure-field">
-      <ChoiceField labelledBy={themeLabelId} value={settings.theme}
+    <SettingField labelId={themeLabelId} label={message("theme")} className="spectrum-figure-field spectrum-figure-field-theme">
+      <SegmentedControl labelledBy={themeLabelId} value={settings.theme}
         options={[{ value: "light", label: message("light") }, { value: "dark", label: message("dark") }]}
         onChange={onFigureTheme} />
     </SettingField>

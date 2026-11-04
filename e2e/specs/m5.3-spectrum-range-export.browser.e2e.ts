@@ -4,10 +4,16 @@
  * The unit suites pin the range arithmetic, the two data schemas and the visible
  * value window. What only a browser can answer is whether the chooser is
  * reachable at the windows people use, whether opening it costs the measured
- * three-panel layout anything, and — the claim this milestone stands on —
- * whether what the shipped bundle actually sends across the boundary is the
+ * viewer layout anything, and — the claim this milestone stands on — whether
+ * what the shipped bundle actually sends across the boundary is the
  * **committed** m/z window rather than the range a gesture is holding or the
  * arrays the screen was drawn from.
+ *
+ * Since the rebuild (spec 3.4, 6) the chooser is the Range group of the Export
+ * figure dialog, opened from the spectrum head's Export…: "Current range"
+ * names the committed m/z window it covers, and the data exports sit beside the
+ * figure settings. The dialog is modal, so the viewport is moved before it is
+ * opened, and the scope a reader chose is the workspace's, so it outlives it.
  *
  * The Tauri backend is mocked at `invoke` and nothing else is, so every claim
  * below about which command was called with which range is a claim about the
@@ -45,6 +51,13 @@ import {
   spectrumRangeCaption,
   spectrumSpan,
 } from "../support/viewer";
+import {
+  FIGURE_DIALOG,
+  answerFigurePreviews,
+  closeFigureDialog,
+  figureActions,
+  openFigureDialog,
+} from "../support/figure";
 
 const VIEWPORTS = [
   { name: "1920x1080", width: 1_920, height: 1_080 },
@@ -52,14 +65,18 @@ const VIEWPORTS = [
   { name: "960x640", width: 960, height: 640 },
 ] as const;
 
-/** The chooser, and the two labels a reader actually sees on it. */
-const RANGE_GROUP = "fieldset.spectrum-export-range";
-const RANGE_NOTE = `${RANGE_GROUP} p`;
+/** The chooser, its two options, and the line under it when it is frozen. */
+const RANGE_GROUP = `${FIGURE_DIALOG} .figure-export-range`;
+const CURRENT_OPTION = `${RANGE_GROUP} [role="radio"]:first-child`;
+const FULL_OPTION = `${RANGE_GROUP} [role="radio"]:last-child`;
+const RANGE_NOTE = `${FIGURE_DIALOG} .figure-export-note`;
 const FULL_SCOPE = "Full spectrum";
 const CURRENT_SCOPE = "Current range";
+/** The committed window "Current range" names, at four decimals. */
+const MZ_WINDOW = /m\/z (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)/u;
 
 /** The viewer column, which is one of the two scroll owners in play. */
-const VIEWER_STACK = ".viewer-stack";
+const VIEWER_STACK = ".viewer-view";
 
 async function unexpectedConsole(): Promise<string[]> {
   return (await consoleEntries())
@@ -68,68 +85,95 @@ async function unexpectedConsole(): Promise<string[]> {
 }
 
 /**
- * One of the spectrum panel's controls, found by the text on it.
+ * One of the dialog's controls, found by the text on it.
  *
  * Chained rather than written as one selector string: WebdriverIO's text
  * pseudo-selector is not CSS and cannot be combined with a CSS prefix.
  */
 function control(label: string) {
-  return browser.$(SPECTRUM).$(`button=${label}`);
+  return browser.$(FIGURE_DIALOG).$(`button=${label}`);
+}
+
+/** Offered: neither disabled nor refused (`aria-disabled`, which keeps a Tab stop). */
+async function offered(label: string): Promise<boolean> {
+  const button = control(label);
+  return (await button.isEnabled()) && (await button.getAttribute("aria-disabled")) !== "true";
+}
+
+/** Presses a dialog action once it is offered: Copy waits for a drawn preview. */
+async function press(label: string): Promise<void> {
+  await browser.waitUntil(() => offered(label), {
+    timeout: 15_000,
+    timeoutMsg: `${label} was never offered`,
+  });
+  await control(label).click();
 }
 
 /**
- * A selected spectrum with its export surface open.
- *
- * Since M7.3 the chooser, the range note and the data actions sit inside the
- * panel's "Export spectrum" disclosure, which every spectrum opens closed
- * ("existing export/help/source sections are reachable disclosures",
- * docs/ux/M7_3_VIEWER_SCANS_COMMITTED_GESTURES.md). Opened by its summary, as
- * a reader would (PM9.7; slice-03 §5 family (b)).
+ * A selected spectrum, the dialog's preview answered (a labelled mock), and
+ * the viewport narrowed first when the case needs a committed window.
  */
-async function openTheChooser(options: OpenViewerOptions): Promise<void> {
+async function openTheSpectrumFor(options: OpenViewerOptions, narrowed = false): Promise<void> {
   await openTheSpectrum(options);
-  await browser.$(`${SPECTRUM} .spectrum-export-disclosure > summary`).click();
-  await browser.$(`${SPECTRUM} .spectrum-data-actions`).waitForDisplayed({ timeout: 10_000 });
+  await answerFigurePreviews();
+  if (narrowed) await narrowTheViewport();
 }
 
-/** Chooses a scope by clicking the label a reader would click. */
+/** Opens the chooser: the spectrum head's Export…, the figure dialog. */
+async function openTheChooser(): Promise<void> {
+  await openFigureDialog(SPECTRUM);
+}
+
+/** Chooses a scope by clicking the option a reader would click. */
 async function chooseScope(label: string): Promise<void> {
-  const option = await browser.$(SPECTRUM).$(`label*=${label}`);
-  await option.scrollIntoView({ block: "center" });
-  await option.click();
+  await browser.$(FIGURE_DIALOG).$(`button*=${label}`).click();
 }
 
 /**
- * What the chooser says the current range is.
+ * What the chooser offers as the current range: the option's own words, with
+ * the committed window when one narrower than the spectrum is committed.
  *
  * Read from the document rather than through `getText`, which answers only for
- * text inside the viewport (m4.3's helpers say the same): once the plot is
- * revealed the note is scrolled away, and while a new spectrum loads it is not
- * rendered at all.
+ * text inside the viewport, and the dialog's options column scrolls.
  */
 async function rangeNote(): Promise<string> {
+  return textOf(CURRENT_OPTION);
+}
+
+async function textOf(selector: string): Promise<string> {
   return browser.execute(
     (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
-    RANGE_NOTE,
+    selector,
   );
 }
 
-/** What the panel's own status region says, verbatim, read the same way. */
+/** Waits until the chooser names a committed window. */
+async function committedWindowOffered(): Promise<void> {
+  await browser.waitUntil(async () => MZ_WINDOW.test(await rangeNote()), {
+    timeout: 10_000,
+    timeoutMsg: "the committed window never reached the chooser",
+  });
+}
+
+/**
+ * What the spectrum's own status line says, verbatim. It is the plot's, so it
+ * is there whether the dialog is open or not.
+ */
 async function exportStatus(): Promise<string> {
-  return browser.execute(
-    (css: string) => document.querySelector(css)?.textContent?.trim() ?? "",
-    `${SPECTRUM} .spectrum-export-status`,
+  return textOf(`${SPECTRUM} .spectrum-export-status`);
+}
+
+/** The arguments of the most recent selected-spectrum export. */
+async function lastExport(): Promise<Record<string, unknown> | null> {
+  const begun = (await ipcCalls()).filter(
+    (call) => call.command === "begin_selected_spectrum_export",
   );
+  return (begun[begun.length - 1]?.args as Record<string, unknown> | undefined) ?? null;
 }
 
 /** The range the most recent selected-spectrum export carried. */
 async function lastExportRange(): Promise<Record<string, unknown> | null> {
-  const calls = await ipcCalls();
-  const begun = calls.filter((call) => call.command === "begin_selected_spectrum_export");
-  const last = begun[begun.length - 1];
-  return last === undefined
-    ? null
-    : ((last.args as Record<string, unknown>)["range"] as Record<string, unknown>);
+  return ((await lastExport())?.["range"] as Record<string, unknown> | undefined) ?? null;
 }
 
 /** The range the most recent `Copy plot` carried. */
@@ -147,7 +191,7 @@ async function exportAndWait(label: string): Promise<void> {
   const before = (await ipcCalls()).filter(
     (call) => call.command === "begin_selected_spectrum_export",
   ).length;
-  await control(label).click();
+  await press(label);
   await browser.waitUntil(
     async () =>
       (await ipcCalls()).filter((call) => call.command === "begin_selected_spectrum_export")
@@ -156,7 +200,7 @@ async function exportAndWait(label: string): Promise<void> {
   );
 }
 
-/** Narrows the viewport with the wheel, and waits for the commit to land. */
+/** Narrows the viewport with the wheel, and waits for the drawing to follow. */
 async function narrowTheViewport(): Promise<void> {
   await revealTheSpectrum();
   const at = await spectrumPointAt(0.5);
@@ -166,37 +210,42 @@ async function narrowTheViewport(): Promise<void> {
     timeout: 10_000,
     timeoutMsg: "the wheel never narrowed the m/z range",
   });
-  await browser.waitUntil(async () => /Current range is m\/z [\d.]/u.test(await rangeNote()), {
-    timeout: 10_000,
-    timeoutMsg: "the committed window never reached the range note",
-  });
 }
 
 describe("the selected spectrum's range chooser", () => {
   for (const viewport of VIEWPORTS) {
     it(`is reachable and does not clip the panel at ${viewport.name}`, async () => {
-      await openTheChooser({
+      await openTheSpectrumFor({
         width: viewport.width,
         height: viewport.height,
         answers: ipcTable(),
       });
+      await openTheChooser();
       await chooseScope(CURRENT_SCOPE);
 
-      // Both options, drawn where a person can press them.
+      // Both options, drawn where a person can press them, inside the dialog.
+      const dialog = await boxOf(FIGURE_DIALOG);
       for (const label of [FULL_SCOPE, CURRENT_SCOPE]) {
-        const option = await browser.$(SPECTRUM).$(`label*=${label}`);
+        const option = browser.$(FIGURE_DIALOG).$(`button*=${label}`);
         await expect(option).toBeDisplayed();
         const box = await option.getSize();
+        const at = await option.getLocation();
         expect(box.height).toBeGreaterThan(0);
         expect(box.width).toBeGreaterThan(0);
+        expect(at.x).toBeGreaterThanOrEqual(dialog.left - 0.5);
+        expect(at.x + box.width).toBeLessThanOrEqual(dialog.right + 0.5);
       }
+      // And the actions the chooser governs still are: a range control that
+      // pushed them off the surface would be a control bought with the surface
+      // it exists to serve.
+      await expect(control("Export CSV…")).toBeDisplayed();
 
-      // The plot is still reachable, and the actions below the chooser still
-      // are: a range control that pushed either off its own panel would be a
-      // control bought with the surface it exists to serve.
+      // Back in the viewer, the plot is still reachable, and so is its way back
+      // into the dialog.
+      await closeFigureDialog();
       await revealTheSpectrum();
       await expect(browser.$(SPECTRUM_PLOT)).toBeDisplayed();
-      await expect(control("Export CSV…")).toBeDisplayed();
+      await expect(browser.$(`${figureActions(SPECTRUM)} > button:first-child`)).toBeDisplayed();
 
       // And the column still owns its scroll rather than the page: nothing
       // here widened the document sideways.
@@ -209,7 +258,8 @@ describe("the selected spectrum's range chooser", () => {
   }
 
   it("exports the full source until a range is chosen", async () => {
-    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheSpectrumFor({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser();
 
     await exportAndWait("Export CSV…");
 
@@ -220,13 +270,14 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("says the current range is the whole spectrum until the viewport moves", async () => {
-    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheSpectrumFor({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheChooser();
     await chooseScope(CURRENT_SCOPE);
 
-    // M7.3's sentence (en.ts `viewerExportFullHelp`, c12f45d: only a confirmed
-    // range is committed); the copy this first expected predates it. Also pinned
-    // by SelectedSpectrumExport.test.tsx (PM9.7).
-    expect(await rangeNote()).toContain("whole spectrum until a range is committed");
+    // Chosen, and naming no window: only a confirmed range is committed, and
+    // nothing narrower than the spectrum is.
+    expect(await browser.$(CURRENT_OPTION).getAttribute("aria-checked")).toBe("true");
+    expect(await rangeNote()).toBe(CURRENT_SCOPE);
 
     await exportAndWait("Export CSV…");
 
@@ -236,17 +287,17 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("sends the committed window once the viewport has been narrowed", async () => {
-    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheSpectrumFor({ width: 1_366, height: 768, answers: ipcTable() }, true);
+    await openTheChooser();
     await chooseScope(CURRENT_SCOPE);
-    await narrowTheViewport();
+    await committedWindowOffered();
 
     await exportAndWait("Export CSV…");
 
     const range = (await lastExportRange()) as Record<string, number | null>;
-    // Compared against what the panel *offered*, which is the promise this
-    // surface made, rather than against the axis caption beside it.
-    const [, low, high] =
-      /Current range is m\/z (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)/u.exec(await rangeNote()) ?? [];
+    // Compared against what the chooser *offered*, which is the promise this
+    // surface made, rather than against the axis caption beside the plot.
+    const [, low, high] = MZ_WINDOW.exec(await rangeNote()) ?? [];
     expect(range["scope"]).toBe("current");
     expect(Number(range["low"])).toBeCloseTo(Number(low), 3);
     expect(Number(range["high"])).toBeCloseTo(Number(high), 3);
@@ -257,40 +308,43 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("copies the same committed window a save would write", async () => {
-    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheSpectrumFor({ width: 1_366, height: 768, answers: ipcTable() }, true);
+    await openTheChooser();
     await chooseScope(CURRENT_SCOPE);
-    await narrowTheViewport();
-    const offered = await rangeNote();
+    await committedWindowOffered();
+    const offeredWindow = await rangeNote();
 
-    await control("Copy plot").click();
+    await press("Copy plot");
     await browser.waitUntil(async () => (await lastCopyRange()) !== null, {
       timeout: 10_000,
       timeoutMsg: "the copy never reached the boundary",
     });
 
     const range = (await lastCopyRange()) as Record<string, number | null>;
-    const [, low] =
-      /Current range is m\/z (\d+(?:\.\d+)?) to (\d+(?:\.\d+)?)/u.exec(offered) ?? [];
+    const [, low] = MZ_WINDOW.exec(offeredWindow) ?? [];
     expect(range["scope"]).toBe("current");
     expect(Number(range["low"])).toBeCloseTo(Number(low), 3);
   });
 
   it("offers no current range for a spectrum with no m/z viewport", async () => {
-    await openTheChooser({
+    await openTheSpectrumFor({
       width: 1_366,
       height: 768,
       answers: ipcTable({ refusedViewport: true }),
     });
+    await openTheChooser();
 
-    // Absent rather than inert. A disabled radio a reader cannot explain is
-    // worse than a section that says the choice is unavailable.
-    await expect(browser.$(SPECTRUM).$(`label*=${CURRENT_SCOPE}`)).not.toBeExisting();
-    expect(await rangeNote()).toContain("no m/z viewport");
+    // Not choosable, and said. The option is refused, not disabled (B4): it
+    // stays reachable, the group stays on the full source, and the line under
+    // it says why.
+    expect(await browser.$(CURRENT_OPTION).getAttribute("aria-disabled")).toBe("true");
+    expect(await browser.$(FULL_OPTION).getAttribute("aria-checked")).toBe("true");
+    expect(await textOf(RANGE_NOTE)).toContain("No m/z range");
 
     // And every full-source export is exactly as available as ever: a viewport
     // refusal is a fact about drawability, never about the source.
     for (const label of ["Export CSV…", "Export TSV…"]) {
-      await expect(control(label)).toBeEnabled();
+      expect(await offered(label)).toBe(true);
     }
     await exportAndWait("Export CSV…");
     expect(await lastExportRange()).toEqual({ scope: "full", low: null, high: null });
@@ -298,10 +352,12 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("keeps the current range available while a drawing has failed", async () => {
-    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheSpectrumFor({ width: 1_366, height: 768, answers: ipcTable() }, true);
+    await openTheChooser();
     await chooseScope(CURRENT_SCOPE);
-    await narrowTheViewport();
+    await committedWindowOffered();
     const committed = await rangeNote();
+    await closeFigureDialog();
 
     // The screen stops being able to draw. The science does not move.
     await setInvokeResult("project_selected_spectrum", {
@@ -310,20 +366,23 @@ describe("the selected spectrum's range chooser", () => {
     await revealTheSpectrum();
     const at = await spectrumPointAt(0.5);
     await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -500 }).perform();
+
+    await openTheChooser();
     await browser.waitUntil(async () => (await rangeNote()) !== committed, {
       timeout: 10_000,
-      timeoutMsg: "the second commit never reached the range note",
+      timeoutMsg: "the second commit never reached the chooser",
     });
 
     // Still offered, still chosen, and it still exports.
-    await expect(browser.$(SPECTRUM).$(`label*=${CURRENT_SCOPE}`)).toBeExisting();
+    expect(await browser.$(CURRENT_OPTION).isEnabled()).toBe(true);
+    expect(await browser.$(CURRENT_OPTION).getAttribute("aria-checked")).toBe("true");
     await exportAndWait("Export CSV…");
     expect((await lastExportRange())?.["scope"]).toBe("current");
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("reports the range an export began on, after the viewport has moved", async () => {
-    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheSpectrumFor({ width: 1_366, height: 768, answers: ipcTable() }, true);
     await setInvokeResult("save_selected_spectrum_export", {
       status: "saved",
       format: "csv",
@@ -335,8 +394,9 @@ describe("the selected spectrum's range chooser", () => {
       sourcePointCount: COMPLETE_POINT_COUNT,
       exportedPointCount: 2_500,
     });
+    await openTheChooser();
     await chooseScope(CURRENT_SCOPE);
-    await narrowTheViewport();
+    await committedWindowOffered();
 
     await exportAndWait("Export CSV…");
     await browser.waitUntil(async () => (await exportStatus()).startsWith("Saved"), {
@@ -349,15 +409,17 @@ describe("the selected spectrum's range chooser", () => {
     // The exact bounds, unformatted, since M7.3 (en.ts `viewerExportPointRange`,
     // c12f45d; SelectedSpectrumExport.test.tsx "names the file, both counts and
     // the exact bounds it was taken over"; baseline UI-31 keeps exact values in
-    // the export notes). This first expected the four-decimal form (PM9.7).
+    // the export notes).
     expect(reported).toContain("m/z 301.5 to 303.5");
 
     // The reader now moves somewhere else entirely. The result stands, because
     // it describes a file rather than a viewport.
+    await closeFigureDialog();
+    const before = await spectrumRangeCaption();
     await revealTheSpectrum();
     const at = await spectrumPointAt(0.5);
     await browser.action("wheel").scroll({ x: at.x, y: at.y, deltaY: -500 }).perform();
-    await browser.waitUntil(async () => (await rangeNote()).includes("Current range is m/z"), {
+    await browser.waitUntil(async () => (await spectrumRangeCaption()) !== before, {
       timeout: 10_000,
     });
     expect(await exportStatus()).toBe(reported);
@@ -365,7 +427,7 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("reports an empty range as a successful export", async () => {
-    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheSpectrumFor({ width: 1_366, height: 768, answers: ipcTable() });
     await setInvokeResult("save_selected_spectrum_export", {
       status: "saved",
       format: "tsv",
@@ -377,6 +439,7 @@ describe("the selected spectrum's range chooser", () => {
       sourcePointCount: COMPLETE_POINT_COUNT,
       exportedPointCount: 0,
     });
+    await openTheChooser();
     await chooseScope(CURRENT_SCOPE);
 
     await exportAndWait("Export TSV…");
@@ -393,46 +456,55 @@ describe("the selected spectrum's range chooser", () => {
   });
 
   it("starts a newly selected spectrum at the full source", async () => {
-    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheSpectrumFor({ width: 1_366, height: 768, answers: ipcTable() }, true);
+    await openTheChooser();
     await chooseScope(CURRENT_SCOPE);
-    await narrowTheViewport();
+    await committedWindowOffered();
+    await closeFigureDialog();
 
     // Another spectrum, and therefore another export context. The token is
     // what makes it one: the mocked boundary answers every selection from one
     // table, so a second row alone would be a redelivery of the same spectrum
     // -- which correctly resets nothing.
+    const next = secondSpectrum();
     await setInvokeResult("load_selected_spectrum", {
       authority: SETTLED_AUTHORITY,
-      outcome: { outcome: "spectrum", spectrum: secondSpectrum() },
+      outcome: { outcome: "spectrum", spectrum: next },
     });
     await browser.execute(() => {
       document
         .querySelector('div.spectrum-table-row[data-row-position="1"]')
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
+
+    await openTheChooser();
     await browser.waitUntil(
-      // M7.3's sentence, as in the case above (PM9.7).
-      async () => (await rangeNote()).includes("whole spectrum until a range is committed"),
+      async () => (await browser.$(FULL_OPTION).getAttribute("aria-checked")) === "true",
       { timeout: 10_000, timeoutMsg: "the new spectrum kept the old scope" },
     );
+    expect(await rangeNote()).toBe(CURRENT_SCOPE);
 
-    await expect(browser.$(SPECTRUM).$(`label*=${FULL_SCOPE}`)).toBeExisting();
     await exportAndWait("Export CSV…");
     expect(await lastExportRange()).toEqual({ scope: "full", low: null, high: null });
+    // And it is the new spectrum's export.
+    expect((await lastExport())?.["exportToken"]).toBe(next.exportToken);
     expect(await unexpectedConsole()).toEqual([]);
   });
 
   it("does not let a spectrum range reach the linked figure", async () => {
-    await openTheChooser({ width: 1_366, height: 768, answers: ipcTable() });
+    await openTheSpectrumFor({ width: 1_366, height: 768, answers: ipcTable() }, true);
+    await openTheChooser();
     await chooseScope(CURRENT_SCOPE);
-    await narrowTheViewport();
+    await committedWindowOffered();
+    await closeFigureDialog();
     const committed = await spectrumRangeCaption();
 
-    await browser.$("button#chromatogram-export-toggle").click();
-    await browser.$("#chromatogram-export-panel").waitForDisplayed({ timeout: 10_000 });
-    const linked = await browser.$("#chromatogram-export-panel").$("button=Export linked SVG…");
-    await linked.scrollIntoView({ block: "center" });
-    await linked.click();
+    // The linked figure: the chromatogram head's ⋯ menu, then its dialog.
+    const chromatogram = "section.chromatogram-panel";
+    await browser.$(`${figureActions(chromatogram)} button[aria-haspopup="menu"]`).click();
+    await browser.$('//*[@role="menuitem"][starts-with(normalize-space(), "Linked figure")]').click();
+    await browser.$(FIGURE_DIALOG).waitForDisplayed();
+    await press("Export SVG…");
 
     await browser.waitUntil(
       async () => (await ipcCalls()).some((call) => call.command === "begin_linked_figure_export"),
@@ -446,6 +518,7 @@ describe("the selected spectrum's range chooser", () => {
     // this figure carries is the chromatogram's, and no m/z number is in it.
     expect(args["range"]).toEqual({ scope: "full", low: null, high: null });
     const [, low] = /Showing m\/z ([\d.]+) to ([\d.]+)/u.exec(committed) ?? [];
+    expect(low).toBeDefined();
     expect(JSON.stringify(args)).not.toContain(String(low));
     expect(await unexpectedConsole()).toEqual([]);
   });

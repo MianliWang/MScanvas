@@ -21,6 +21,7 @@ prove the parts browser mode has to assume.
 |---|---|
 | `pnpm e2e:typecheck` | Types the harness. |
 | `pnpm e2e:browser` | The browser-mode suite. Starts and stops its own Vite. |
+| `pnpm e2e:copy-tour` | Screenshots of every main state in en and zh-CN for copy review; not part of `e2e:browser`. |
 | `pnpm qa:m4.1` | The gate: typecheck, then browser mode. |
 | `pnpm e2e:build` | Builds the frontend and the `--features e2e` binary. |
 | `pnpm e2e:tauri` | The real-WebView suite. Needs `e2e:build` and `tauri-driver` first. |

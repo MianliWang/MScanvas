@@ -29,7 +29,8 @@ export const AXIS_CAPTION = ".chromatogram-axis-caption";
  */
 export const SPECTRUM_PLOT = "svg.spectrum-plot";
 export const SPECTRUM_SURFACE = "div.spectrum-viewport-plot";
-export const SPECTRUM_ACTIONS = ".spectrum-viewport-actions";
+/** The spectrum plot head's toolbar: the m/z range controls, then the figure. */
+export const SPECTRUM_ACTIONS = ".spectrum-panel .plot-tools";
 export const SPECTRUM_RANGE = "#spectrum-viewport-range";
 export const SPECTRUM_STATUS = "#spectrum-viewport-status";
 
@@ -82,7 +83,7 @@ export async function seedARunOf(rowCount: number): Promise<void> {
           identifier: `controllerType=0 controllerNumber=1 scan=${String(index + 1)}`,
           scanNumber: index + 1,
           msLevel: index % 4 === 0 ? 1 : 2,
-          retentionTime: { value: index * 0.0125, unitKnown: false },
+          retentionTime: { value: index * 0.0125, unit: "notReported" },
           basePeakMz: 400 + (index % 500),
           // Deterministic and shaped, so a reduction that dropped an extreme
           // would be dropping something a test can name.
@@ -93,10 +94,8 @@ export async function seedARunOf(rowCount: number): Promise<void> {
       }
       preview.spectrumTable = { rows, totalRowCount: count, truncated: false };
       preview.runSummary.totalSpectrumCount = count;
-      preview.runSummary.retentionTimeRange = {
-        minimum: { value: 0, unitKnown: false },
-        maximum: { value: (count - 1) * 0.0125, unitKnown: false },
-      };
+      preview.runSummary.retentionTimeRange = count === 0 ? { state: "noRows" }
+        : { state: "reported", minimum: 0, maximum: (count - 1) * 0.0125, unit: "notReported" };
     },
     IPC_TABLE_KEY,
     rowCount,
@@ -354,7 +353,9 @@ export async function readout(): Promise<string> {
 }
 
 export async function rangeCaption(): Promise<string> {
-  return (await browser.$(RANGE).getText()).trim();
+  // The text, not what is drawn of it: in the plot head it may end in an
+  // ellipsis at a narrow width, with the whole of it in its title.
+  return String(await browser.$(RANGE).getProperty("textContent")).trim();
 }
 
 /** What the range caption says is on screen, as numbers. */

@@ -1,14 +1,18 @@
+import * as Menu from "@radix-ui/react-dropdown-menu";
 import { GroupedRosterList } from "../workbench/GroupedRosterList";
 import { memo, useCallback, useEffect, useRef } from "react";
 import { useSessionPreferences, useUiMessages } from "../preferences/SessionPreferencesProvider";
-import type { ChangeEvent, KeyboardEvent, MouseEvent } from "react";
+import type { ChangeEvent, FocusEvent as ReactFocusEvent, KeyboardEvent, MouseEvent } from "react";
+import { Button, Icon, IconButton } from "../../components/ui";
 
-import { isConvertibleSourceKind } from "./contracts";
+import { formatCount } from "./format";
 import type { RosterAction, RosterState } from "./rosterSelection";
-import { isSortMode, SORT_MODES, type RosterProjection } from "./rosterView";
+import type { RosterProjection } from "./rosterView";
 import type { RosterLoadState } from "./usePreviewWorkspace";
 import type { ActiveClearFocusReturn } from "./activeClearFocusReturn";
 import { ownedErrorMessage } from "./ownedErrorMessages";
+import { STATUS_BUSY_ID } from "../workbench/StatusBar";
+import { UNGROUPED } from "../workbench/organization";
 
 export interface DatasetRosterProps {
   readonly activeClearFocusReturn?: ActiveClearFocusReturn | null;
@@ -23,16 +27,31 @@ export interface DatasetRosterProps {
   readonly dispatch: (action: RosterAction) => void;
   readonly onAddFiles: () => void;
   /**
-   * Whether another surface's next step holds the filled accent on screen
-   * beside this one: the evidence pane offering to read the retained
-   * acquisition again. `Add files…` stays offered, as a secondary action (PM9
-   * UI-19).
+   * Whether `Add files…` is the surface's one primary: the first run, while the
+   * evidence leaves its own Add actions to the roster on screen.
    */
-  readonly addFilesQuiet?: boolean;
+  readonly addFilesPrimary?: boolean;
+  /**
+   * Whether the footer's `Convert…` is the surface's one filled primary. It
+   * yields (secondary) while the evidence beside it has its own (B2).
+   */
+  readonly convertPrimary?: boolean;
+  /** Why adding waits, shown under the Add buttons while they are refused (C13). */
+  readonly acquireReason?: string | null;
   readonly onAddFolder: () => void;
+  /**
+   * Converts the checked rows: scope "selected", then the Conversion surface.
+   * Absent where that surface's own Convert is the next step, so the footer
+   * offers no second one.
+   */
+  readonly onConvertChecked?: () => void;
   readonly onRemoveSelected: () => void;
-  /** Starts Clear and reports whether this activation acquired the mutation gate. */
-  readonly onClearList: () => boolean;
+  /**
+   * Starts Clear and reports whether this activation acquired the mutation
+   * gate. `returnTo` is where a confirmation gives the keyboard back; without
+   * one it is the control that holds the keyboard.
+   */
+  readonly onClearList: (returnTo?: HTMLElement | null) => boolean;
   readonly onActivate: (handle: string) => void;
   /**
    * A row another surface has asked to reveal, with the activation that asked.
@@ -65,6 +84,8 @@ export interface DatasetRosterProps {
   readonly folderBusy: boolean;
   /** Whether a native Explorer drop is still being inspected. */
   readonly dropBusy: boolean;
+  /** Whether files can be dropped onto the window, so the empty list may say so. */
+  readonly dropAvailable?: boolean;
   /** Whether an explicit preview may be started right now. */
   readonly canPreview: boolean;
   /**
@@ -114,6 +135,14 @@ export interface DatasetRosterProps {
   readonly restoreAddFolderFocusToken: number;
 }
 
+/**
+ * Whether a control cannot act right now. The acquisition actions and `Clear
+ * list` are refused (`aria-disabled`) rather than natively disabled, so they
+ * keep the keyboard while they wait; every focus debt below waits on this.
+ */
+const unusable = (control: HTMLButtonElement) =>
+  control.disabled || control.getAttribute("aria-disabled") === "true";
+
 // The family labels live in the wire vocabulary module now: the queue plan
 // names families too, and one record is what keeps the surfaces from calling
 // one family two things. They stay words rather than a colour or a glyph,
@@ -124,7 +153,7 @@ export interface DatasetRosterProps {
  * The session's workspace: every file it holds, and the actions that curate it.
  *
  * One accessible list, one roving tab stop, and no route by which moving around
- * it reads a file. Reading one is `Preview focused` or Enter, and nothing else.
+ * it reads a file. Reading one is a plain row click or Enter, and nothing else.
  */
 /**
  * The session's workspace, memoized.
@@ -142,8 +171,11 @@ export const DatasetRoster = memo(function DatasetRoster({
   onReloadRoster,
   dispatch,
   onAddFiles,
-  addFilesQuiet = false,
+  addFilesPrimary = false,
+  convertPrimary = true,
+  acquireReason = null,
   onAddFolder,
+  onConvertChecked,
   onRemoveSelected,
   onClearList,
   onActivate,
@@ -152,6 +184,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   canAddFolder,
   folderBusy,
   dropBusy,
+  dropAvailable = false,
   canPreview,
   canMutate,
   canRemove,
@@ -166,8 +199,12 @@ export const DatasetRoster = memo(function DatasetRoster({
   const listRef = useRef<HTMLDivElement | null>(null);
   const addFilesRef = useRef<HTMLButtonElement | null>(null);
   const addFolderRef = useRef<HTMLButtonElement | null>(null);
-  const removeSelectedRef = useRef<HTMLButtonElement | null>(null);
+  /**
+   * `Clear list`'s keyboard home: the standalone escape over an empty list, or
+   * the footer's list menu, which the keyboard returns to from its items.
+   */
   const clearListRef = useRef<HTMLButtonElement | null>(null);
+  const listMenuRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const searchComposing = useRef(false);
   /** Advances whenever a real control becomes the keyboard's newer destination. */
@@ -206,21 +243,6 @@ export const DatasetRoster = memo(function DatasetRoster({
    */
   const pendingPickerRestore = useRef<HTMLButtonElement | null>(null);
   const pickerRestoreOutstanding = useRef(false);
-  /**
-   * A focused `Remove selected` action that the request disabled.
-   *
-   * Successful removal returns to the row the reducer chose beside the gap;
-   * an answer that removed none of the requested handles returns to the action
-   * itself. The requested handles distinguish those outcomes without asking
-   * this view to infer a backend result. The debt is armed only after the
-   * disabled commit is seen, so an activation that started no request cannot
-   * move the keyboard later.
-   */
-  const removeFocusDebt = useRef<{
-    readonly requestedHandles: readonly string[];
-    readonly rosterSettlementToken: number;
-    sawDisabled: boolean;
-  } | null>(null);
   /**
    * A focused `Clear list` action whose failed request still owes a roster read.
    *
@@ -390,61 +412,6 @@ export const DatasetRoster = memo(function DatasetRoster({
   });
 
   /**
-   * Pays the focus debt created when removal disables its own focused action.
-   *
-   * WebView2 moves focus from a disabled button to `body`. When rows changed,
-   * the reducer has already reconciled `state.focused` against the exact
-   * projection the user was looking at, so its row is the durable destination.
-   * If Rust changed nothing, the re-enabled action is the destination instead.
-   * A destination the user chose while the request was running always wins.
-   * Empty-workspace restoration remains the existing `Add files…` debt.
-   */
-  useEffect(() => {
-    const debt = removeFocusDebt.current;
-    if (debt === null) {
-      return;
-    }
-    if (!canMutate) {
-      debt.sawDisabled = true;
-      return;
-    }
-    if (!debt.sawDisabled) {
-      return;
-    }
-    if (rosterSettlementToken === debt.rosterSettlementToken) {
-      return;
-    }
-    removeFocusDebt.current = null;
-    const active = document.activeElement;
-    if (active !== null && active !== document.body) {
-      return;
-    }
-    const live = new Set(state.datasets.map((dataset) => dataset.handle));
-    const removed = debt.requestedHandles.some((handle) => !live.has(handle));
-    if (!removed) {
-      const control = removeSelectedRef.current;
-      if (control !== null && !control.disabled) {
-        control.focus({ preventScroll: true });
-      }
-      return;
-    }
-    if (state.datasets.length === 0) {
-      return;
-    }
-    const row =
-      state.focused === null
-        ? null
-        : (listRef.current?.querySelector<HTMLElement>(
-            `[data-handle="${state.focused}"]`,
-          ) ?? null);
-    if (row !== null) {
-      row.focus({ preventScroll: true });
-      return;
-    }
-    searchRef.current?.focus({ preventScroll: true });
-  });
-
-  /**
    * Gives the keyboard back to `Add files…` when the last row goes.
    *
    * Keyed on a counter rather than on the roster being empty, so it fires for
@@ -464,9 +431,9 @@ export const DatasetRoster = memo(function DatasetRoster({
       return;
     }
     const control = addFilesRef.current;
-    if (control === null || control.disabled) {
-      // Still owed. Focusing a disabled control does nothing, so the debt is
-      // held rather than paid into nowhere.
+    if (control === null || unusable(control)) {
+      // Still owed until the control can act again, so the keyboard lands on
+      // an action it can take rather than on one that waits.
       return;
     }
     // Never over a control the user has since chosen for themselves. The row
@@ -482,7 +449,7 @@ export const DatasetRoster = memo(function DatasetRoster({
   useEffect(() => {
     if (activeClearFocusReturn === null || !activeClearFocusReturn.isCurrent()) return;
     const control = addFilesRef.current;
-    if (control === null || control.disabled) return;
+    if (control === null || unusable(control)) return;
     activeClearFocusReturn.release();
     if (document.activeElement === document.body) control.focus({ preventScroll: true });
   }, [activeClearFocusReturn, canAddFiles]);
@@ -498,7 +465,7 @@ export const DatasetRoster = memo(function DatasetRoster({
         return;
       }
       const control = addFilesRef.current;
-      if (control === null || control.disabled) {
+      if (control === null || unusable(control)) {
         // Keep both the debt and its ownership token until the destination can
         // actually receive focus. A newer destination can still cancel it.
         return;
@@ -597,7 +564,7 @@ export const DatasetRoster = memo(function DatasetRoster({
       return;
     }
     const control = clearListRef.current;
-    if (control !== null && control.isConnected && !control.disabled) {
+    if (control !== null && control.isConnected && !unusable(control)) {
       control.focus({ preventScroll: true });
       return;
     }
@@ -656,8 +623,7 @@ export const DatasetRoster = memo(function DatasetRoster({
     if (ownsKeyboard) {
       // This picker is a later destination chosen while an older mutation may
       // still be waiting for reconciliation. Its own disabled lifetime can
-      // move focus to `body`, but that must not revive either older action.
-      removeFocusDebt.current = null;
+      // move focus to `body`, but that must not revive the older action.
       clearFocusDebt.current = null;
       keyboardOnClearList.current = false;
     }
@@ -710,7 +676,7 @@ export const DatasetRoster = memo(function DatasetRoster({
     if (control === null) {
       return;
     }
-    if (control.disabled) {
+    if (unusable(control)) {
       // Outstanding, so nothing is restored yet -- and having seen it is what
       // tells the end of this request from an effect queued before it began.
       pickerRestoreOutstanding.current = true;
@@ -804,21 +770,10 @@ export const DatasetRoster = memo(function DatasetRoster({
     searchRef.current?.focus({ preventScroll: true });
   };
 
-  const handleSort = (event: ChangeEvent<HTMLSelectElement>) => {
-    const chosen = event.target.value;
-    if (isSortMode(chosen)) {
-      dispatch({ type: "sortChanged", sort: chosen });
-    }
-  };
-
   const rowCount = state.datasets.length;
   const visible = projection.datasets;
-  // Read from the roster Rust gave us rather than from the visible projection:
-  // a focused row pinned outside a search is still the focused row, and the
-  // reason `Preview focused` is unavailable does not change with a query.
-  const focusedIsConvertible = state.datasets.some(
-    (dataset) => dataset.handle === state.focused && isConvertibleSourceKind(dataset.sourceKind),
-  );
+  const checkedCount = state.conversionMembership.size;
+  const hiddenCount = [...state.selected].filter((handle) => !projection.handles.has(handle)).length;
   // Measured against what the search matched, never against what is on screen:
   // a query that matched three of four files narrowed the view whether or not
   // a fourth row is being kept visible for another reason. The same sentence
@@ -826,7 +781,209 @@ export const DatasetRoster = memo(function DatasetRoster({
   const searching = projection.searching && projection.matchCount !== rowCount;
   const headline = state.capacity === 0 ? null :
     t("rosterContext", { visible: visible.length, total: rowCount, capacity: state.capacity });
+  // The visible tag is the bare count; the capacity joins it only near the cap,
+  // where it is the fact that decides whether the next addition fits.
+  const countTag = state.capacity === 0 ? null : rowCount >= state.capacity * 0.9
+    ? `${formatCount(rowCount)} / ${formatCount(state.capacity)}` : formatCount(rowCount);
+  // The footer says "N checked" always, because it is the reason Convert is
+  // refused at zero. The highlight and its hidden part head the list menu,
+  // whose actions they are about, only while they exist.
+  const highlightContext = [
+    state.selected.size === 0 ? null : t("rosterHighlightedCount", { total: state.selected.size }),
+    hiddenCount === 0 ? null : t("rosterHiddenCount", { hidden: hiddenCount }),
+  ].filter((part): part is string => part !== null).join(" · ");
 
+  /**
+   * The keyboard record `Clear list` keeps about itself. Shared by the
+   * standalone escape and the list menu, because the keyboard comes back to the
+   * menu's trigger from its items and leaves with it when the last row goes.
+   */
+  const clearKeyboard = {
+    onBlur: (event: ReactFocusEvent<HTMLButtonElement>) => {
+      if (event.relatedTarget instanceof Node) {
+        keyboardOnClearList.current = false;
+        clearFocusDebt.current = null;
+      }
+    },
+    onFocus: () => {
+      keyboardOnClearList.current = true;
+    },
+  };
+  const clearDescriptions = [
+    folderBusy ? "clear-during-folder-import-description" : null,
+    dropBusy ? "clear-during-drop-import-description" : null,
+  ].filter((value): value is string => value !== null).join(" ") || undefined;
+  const startClear = (returnTo: HTMLElement | null, ownsKeyboard: boolean) => {
+    const started = onClearList(returnTo);
+    clearFocusDebt.current = ownsKeyboard && started
+      ? {
+          focusOwnershipToken: focusOwnershipToken.current,
+          rosterSettlementToken,
+        }
+      : null;
+  };
+  // Over an empty list `Clear list` stands alone: it is the escape from an
+  // unresolved import, and the first-run `Add files…` is then the one primary.
+  const clearButton = clearListOffered ? (
+    <Button
+      aria-describedby={clearDescriptions}
+      refused={!canMutate}
+      reasonId={STATUS_BUSY_ID}
+      {...clearKeyboard}
+      onClick={(event) => {
+        startClear(null, document.activeElement === event.currentTarget);
+      }}
+      data-roster-clear=""
+      ref={clearListRef}
+      size="sm"
+    >
+      {t("clearList")}
+    </Button>
+  ) : null;
+  const importDescriptions = (
+    <>
+      {folderBusy ? (
+        <span className="visually-hidden" id="clear-during-folder-import-description">
+          {t("clearImportHelp")}
+        </span>
+      ) : null}
+      {dropBusy ? (
+        <span className="visually-hidden" id="clear-during-drop-import-description">
+          {t("clearImportHelp")}
+        </span>
+      ) : null}
+    </>
+  );
+  const acquireReasonShown = (!canAddFiles || !canAddFolder) && acquireReason !== null && load.status === "ready";
+  const acquireReasonId = acquireReasonShown ? "roster-acquire-reason" : STATUS_BUSY_ID;
+  const removeRefused = !canRemove || state.selected.size === 0;
+  // Moving needs a highlighted row to move; the focused one leads when it is
+  // among them, so the payload is what the reader is looking at.
+  const moveSource = state.focused !== null && state.selected.has(state.focused)
+    ? state.focused : state.selected.values().next().value ?? null;
+  /**
+   * One footer row at every width and in both languages (direction A 2.1):
+   * the checked count, Undo, the list menu, then Convert. The highlight and
+   * its hidden part are the menu's business, said at its top. The menu's
+   * refused items stay reachable and say why (spec 1.4).
+   */
+  const footer = (
+    newGroup: (returnTo: HTMLElement | null) => void,
+    moveTo: (source: string, groupId: string) => void,
+  ) => rowCount === 0 ? (
+    clearListOffered ? <div className="roster-foot">{clearButton}{importDescriptions}</div> : null
+  ) : (
+    <div className="roster-foot">
+      <p aria-live="polite" className="roster-selection-context" id="roster-selection-count"
+        title={t("rosterCheckedCount", { checked: checkedCount })}>{t("rosterCheckedCount", { checked: checkedCount })}</p>
+      <div className="roster-foot-actions">
+        {state.organization.history.length ? (
+          <IconButton
+            icon={<Icon name="undo" />}
+            label={t("undoOrganization")}
+            onClick={() => dispatch({ type: "organization", action: { type: "undo" } })}
+            size="sm"
+          />
+        ) : null}
+        <Menu.Root>
+          <Menu.Trigger asChild>
+            <IconButton
+              data-roster-list-menu=""
+              icon={<Icon name="more" />}
+              label={t("rosterListActions")}
+              ref={(node: HTMLButtonElement | null) => {
+                listMenuRef.current = node;
+                clearListRef.current = node;
+              }}
+              size="sm"
+              variant="secondary"
+              {...clearKeyboard}
+            />
+          </Menu.Trigger>
+          <Menu.Portal>
+            <Menu.Content
+              align="start"
+              className="roster-menu"
+              // A dialog an item opened -- New group, or Clear's confirmation
+              // during a conversion -- keeps the keyboard it took.
+              onCloseAutoFocus={(event) => {
+                if (document.querySelector('[role="dialog"]') !== null) event.preventDefault();
+              }}
+              side="top"
+              sideOffset={4}
+            >
+              {highlightContext === "" ? null : <Menu.Label className="roster-menu-context">{highlightContext}</Menu.Label>}
+              <Menu.Item
+                aria-describedby={removeRefused ? "roster-remove-reason" : undefined}
+                aria-disabled={removeRefused || undefined}
+                data-roster-remove=""
+                onSelect={(event) => {
+                  if (removeRefused) { event.preventDefault(); return; }
+                  onRemoveSelected();
+                }}
+              >
+                {t("removeHighlighted")}
+                {removeRefused ? <span aria-hidden="true" className="plot-menu-reason" id="roster-remove-reason">
+                  {t(state.selected.size === 0 ? "rosterNothingHighlighted" : "rosterActionWaits")}
+                </span> : null}
+              </Menu.Item>
+              {/* The menu route for a drag (I4): the highlighted rows, into a
+                  group picked from the submenu. Refused, not hidden, while
+                  nothing is highlighted. */}
+              {moveSource === null ? (
+                <Menu.Item aria-describedby="roster-move-reason" aria-disabled data-roster-move=""
+                  onSelect={(event) => { event.preventDefault(); }}>
+                  {t("moveToGroupMenu")}
+                  <span aria-hidden="true" className="plot-menu-reason" id="roster-move-reason">{t("rosterNothingHighlighted")}</span>
+                </Menu.Item>
+              ) : (
+                <Menu.Sub>
+                  <Menu.SubTrigger data-roster-move="">{t("moveToGroupMenu")}</Menu.SubTrigger>
+                  <Menu.Portal>
+                    <Menu.SubContent className="roster-menu" sideOffset={4}>
+                      {state.organization.groups.map((group) => (
+                        <Menu.Item key={group.id} onSelect={() => moveTo(moveSource, group.id)}>
+                          {group.id === UNGROUPED ? t("ungrouped") : group.name}
+                        </Menu.Item>
+                      ))}
+                    </Menu.SubContent>
+                  </Menu.Portal>
+                </Menu.Sub>
+              )}
+              <Menu.Item
+                aria-describedby={[canMutate ? null : "roster-clear-reason", clearDescriptions].filter(Boolean).join(" ") || undefined}
+                aria-disabled={!canMutate || undefined}
+                data-roster-clear=""
+                onSelect={(event) => {
+                  if (!canMutate) { event.preventDefault(); return; }
+                  // The keyboard is in the menu, which gives it back to the trigger.
+                  startClear(listMenuRef.current, true);
+                }}
+              >
+                {t("clearList")}
+                {canMutate ? null : <span aria-hidden="true" className="plot-menu-reason" id="roster-clear-reason">{t("rosterActionWaits")}</span>}
+              </Menu.Item>
+              <Menu.Separator />
+              <Menu.Item data-roster-new-group="" onSelect={() => newGroup(listMenuRef.current)}>{t("newGroup")}</Menu.Item>
+            </Menu.Content>
+          </Menu.Portal>
+        </Menu.Root>
+        {onConvertChecked === undefined ? null : (
+          <Button
+            className="roster-convert"
+            onClick={onConvertChecked}
+            reasonId="roster-selection-count"
+            refused={checkedCount === 0}
+            size="sm"
+            variant={convertPrimary ? "primary" : "secondary"}
+          >
+            {t("rosterConvert")}
+          </Button>
+        )}
+      </div>
+      {importDescriptions}
+    </div>
+  );
 
   return (
     // Marked busy for the whole import, because this is the region the import
@@ -835,238 +992,98 @@ export const DatasetRoster = memo(function DatasetRoster({
     <section
       aria-busy={folderBusy || dropBusy}
       aria-labelledby="dataset-roster-heading"
-      className="panel dataset-roster-panel"
+      className="dataset-roster-panel"
       data-density={preferences.effective.density}
     >
-      <header className="panel-header compact">
-        <div>
+      <div className="roster-head">
+        <div className="roster-title">
           <h2 id="dataset-roster-heading">{t("rosterTitle")}</h2>
-          {/* The line the panel already had, which already truncates with an
-              ellipsis and already carries the whole sentence in its `title`.
-              The search summary belongs here rather than in a line of its own:
-              a row of its own costs height in the one panel that is counting
-              it, and at the widths where the roster's actions wrap it was the
-              list that paid. */}
-          {headline === null ? null : <p
-            className={searching ? "dataset-roster-matches" : undefined}
-            id="dataset-roster-matches"
-            title={headline}
-          >
-            {headline}
-          </p>}
+          {/* The tag is what the eye reads; the whole sentence, which the
+              search box points at while a query narrows the list, is read by
+              a screen reader in its place. */}
+          {countTag === null ? null : <span aria-hidden="true" className="roster-count-tag" title={headline ?? undefined}>{countTag}</span>}
+          {headline === null ? null : <p className="visually-hidden" id="dataset-roster-matches">{headline}</p>}
         </div>
-      </header>
+        {/* The name never changes. An action's accessible identity is how a
+            user finds it again; what is running is said once, by the shell.
+            The folder action says what it takes -- mzML files -- because a
+            folder of a vendor acquisition is not something this version can
+            read. */}
+        {/* Refused rather than disabled while something else holds the
+            workspace: each keeps the keyboard and says why on the line under
+            them (C13, B4). Before the list has been read, its own empty state
+            says what is happening, so they point at the status bar instead. */}
+        <div className="roster-acquire">
+          <Button
+            data-add-files=""
+            onClick={(event) => {
+              startPicking(event, onAddFiles);
+            }}
+            reasonId={acquireReasonId}
+            ref={addFilesRef}
+            refused={!canAddFiles}
+            size="sm"
+            variant={addFilesPrimary ? "primary" : "secondary"}
+          >
+            {t("addFiles")}
+          </Button>
+          <Button
+            aria-busy={folderBusy}
+            onClick={(event) => {
+              startPicking(event, onAddFolder);
+            }}
+            reasonId={acquireReasonId}
+            ref={addFolderRef}
+            refused={!canAddFolder}
+            size="sm"
+          >
+            {t("addFolder")}
+          </Button>
+        </div>
+        {acquireReasonShown ? <p className="roster-acquire-reason" id="roster-acquire-reason">{acquireReason}</p> : null}
+      </div>
 
-      {/* Only over a list there is something to narrow. Offered against an
-          empty workspace they would be two controls that cannot do anything,
-          taking the height the empty state needs to explain itself. */}
+      {/* Only over a list there is something to narrow. */}
       {rowCount === 0 ? null : (
-        <div className="dataset-roster-filters">
-          {/* A group rather than a wrapping label: a `<label>` names exactly
-              one control, and putting the clear action inside one made it part
-              of the search box's own name. Associated by `for` instead, which
-              says the same thing without the ambiguity. */}
-          <div className="roster-field">
-            <label htmlFor="dataset-roster-search">{t("searchFiles")}</label>
-            <input
-              aria-describedby={searching ? "dataset-roster-matches" : undefined}
-              id="dataset-roster-search"
-              onChange={handleSearch}
-              onKeyDown={handleSearchKeys}
-              onCompositionStart={() => { searchComposing.current = true; }}
-              onCompositionEnd={() => { searchComposing.current = false; }}
-              ref={searchRef}
-              type="search"
-              value={state.query}
-            />
-            {/* In the field's own group, so this row stays two items wide and
-                one line tall whatever it holds. Not offered while the no-match
-                state is showing: that state offers the same action, and two
-                controls of one name are two answers to "which one clears the
-                search". */}
-            {state.query === "" || visible.length === 0 ? null : (
-              <button className="link-button" onClick={clearSearch} type="button">
-                {t("clearSearch")}
-              </button>
-            )}
-          </div>
-          <div className="roster-field">
-            <label htmlFor="dataset-roster-sort">{t("executionSort")}</label>
-            <select aria-describedby="execution-order-help" id="dataset-roster-sort" onChange={handleSort} value={state.sort}>
-              {SORT_MODES.map((mode) => (
-                <option key={mode} value={mode}>
-                  {t(({ added: "sortAdded", "name-asc": "sortNameAsc", "name-desc": "sortNameDesc", "size-asc": "sortSizeAsc", "size-desc": "sortSizeDesc" } as const)[mode])}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="roster-search">
+          <label className="visually-hidden" htmlFor="dataset-roster-search">{t("searchFiles")}</label>
+          <Icon name="search" size={15} />
+          <input
+            aria-describedby={searching ? "dataset-roster-matches" : undefined}
+            id="dataset-roster-search"
+            onChange={handleSearch}
+            onKeyDown={handleSearchKeys}
+            onCompositionStart={() => { searchComposing.current = true; }}
+            onCompositionEnd={() => { searchComposing.current = false; }}
+            placeholder={t("searchFiles")}
+            ref={searchRef}
+            type="search"
+            value={state.query}
+          />
+          {/* Not offered while the no-match state is showing: that state
+              offers the same action, and two controls of one name are two
+              answers to "which one clears the search". */}
+          {state.query === "" || visible.length === 0 ? null : (
+            <IconButton icon={<Icon name="close" />} label={t("clearSearch")} onClick={clearSearch} size="sm" />
+          )}
         </div>
       )}
 
-      <p className="visually-hidden" id="execution-order-help">{t("executionOrderHelp")}</p>
-      <details className="roster-help"><summary>{t("rosterHelp")}</summary><p>{t("rosterLifetime")}</p><p>{t("rosterKeyboardHelp")}</p></details>
-      <div className="dataset-roster-actions">
-        <button
-          className={addFilesQuiet ? "secondary-button" : "primary-button"}
-          data-add-files=""
-          disabled={!canAddFiles}
-          onClick={(event) => {
-            startPicking(event, onAddFiles);
-          }}
-          ref={addFilesRef}
-          type="button"
-        >
-          {t("addFiles")}
-        </button>
-        {/* Beside `Add files…` rather than anywhere else, because it answers
-            the same question with a different unit of choice: this file, or
-            everything under this folder. Its label says what it takes -- mzML
-            files -- because a folder of a vendor acquisition is not something
-            this version can read, and an action called "Add folder" would
-            promise otherwise. */}
-        {/* The name never changes. An action's accessible identity is how a
-            user finds it again, and `Scanning folder…` was both a different
-            identity and a false one: the flag is set before the native dialog
-            opens, so for as long as the user spends navigating it -- or if they
-            cancel -- nothing was being scanned at all. What is running is said
-            once, by the shell, in words true of both phases. */}
-        <button
-          aria-busy={folderBusy}
-          className="secondary-button"
-          disabled={!canAddFolder}
-          onClick={(event) => {
-            startPicking(event, onAddFolder);
-          }}
-          ref={addFolderRef}
-          type="button"
-        >
-          {t("addFolder")}
-        </button>
-        <button
-          aria-describedby={
-            focusedIsConvertible ? "preview-needs-conversion-description" : undefined
-          }
-          className="secondary-button"
-          data-contextual=""
-          disabled={!canPreview || state.focused === null || focusedIsConvertible}
-          onClick={() => {
-            if (state.focused !== null && !focusedIsConvertible) {
-              onActivate(state.focused);
-            }
-          }}
-          type="button"
-        >
-          {t("previewFocused")}
-        </button>
-        {/* Mounted only while the reason holds, and said in words the moment it
-            does. A vendor acquisition is not something this product reads, and
-            an action that was merely disabled would leave the user guessing
-            which of several conditions had turned it off. */}
-        {focusedIsConvertible ? (
-          <span className="visually-hidden" id="preview-needs-conversion-description">
-            {t("needsConversion")}
-          </span>
-        ) : null}
-        {/* Preview focused and Remove highlighted act on a row the reader has
-            picked, so they stand out only while one is picked (PM9 L9): quiet
-            while disabled, ordinary buttons otherwise, and never moved -- their
-            place, name and focus handling stay as they are. */}
-        <button
-          className="secondary-button"
-          data-contextual=""
-          disabled={!canRemove || state.selected.size === 0}
-          onClick={(event) => {
-            const control = event.currentTarget;
-            const ownsKeyboard = document.activeElement === control;
-            removeFocusDebt.current =
-              ownsKeyboard
-                ? {
-                    requestedHandles: [...state.selected],
-                    rosterSettlementToken,
-                    sawDisabled: false,
-                  }
-                : null;
-            if (ownsKeyboard) {
-              clearFocusDebt.current = null;
-              keyboardOnClearList.current = false;
-            }
-            onRemoveSelected();
-          }}
-          ref={removeSelectedRef}
-          type="button"
-        >
-          {t("removeHighlighted")}
-        </button>
-        {clearListOffered ? (
-          <button
-            aria-describedby={
-              [
-                folderBusy ? "clear-during-folder-import-description" : null,
-                dropBusy ? "clear-during-drop-import-description" : null,
-              ]
-                .filter((value): value is string => value !== null)
-                .join(" ") || undefined
-            }
-            className="secondary-button"
-            // Presentation only: the block's list-wide action, kept quieter
-            // than the rest (PM9 L9).
-            data-list-wide=""
-            disabled={!canMutate}
-            onBlur={(event) => {
-              if (event.relatedTarget instanceof Node) {
-                keyboardOnClearList.current = false;
-                clearFocusDebt.current = null;
-              }
-            }}
-            onFocus={() => {
-              keyboardOnClearList.current = true;
-            }}
-            onClick={(event) => {
-              const ownsKeyboard = document.activeElement === event.currentTarget;
-              const started = onClearList();
-              clearFocusDebt.current = ownsKeyboard && started
-                ? {
-                    focusOwnershipToken: focusOwnershipToken.current,
-                    rosterSettlementToken,
-                  }
-                : null;
-              if (ownsKeyboard && started) {
-                removeFocusDebt.current = null;
-              }
-            }}
-            ref={clearListRef}
-            type="button"
-          >
-            {t("clearList")}
-          </button>
-        ) : null}
-        {folderBusy ? (
-          <span className="visually-hidden" id="clear-during-folder-import-description">
-            {t("clearImportHelp")}
-          </span>
-        ) : null}
-        {dropBusy ? (
-          <span className="visually-hidden" id="clear-during-drop-import-description">
-            {t("clearImportHelp")}
-          </span>
-        ) : null}
-      </div>
-
       <GroupedRosterList state={state} projection={projection} dispatch={dispatch} listRef={listRef}
-        onRowPress={handleRowPress} onKeyDown={handleKeyDown}
+        onRowPress={handleRowPress} onKeyDown={handleKeyDown} footer={footer}
         onBlur={event => { if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) keyboardOn.current = null; }}
         onFocus={event => {
           keyboardOn.current = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-handle]")?.dataset.handle ?? null : null;
           if (keyboardOn.current !== null) dispatch({ type: "focusChanged", handle: keyboardOn.current });
         }}
         empty={rowCount > 0 && visible.length === 0 ? <div className="empty-state roster-empty">
-          <strong>{t("rosterNoMatches")}</strong><span>{t("rosterNoMatchesHelp")}</span>
-          {state.query ? <button className="secondary-button" onClick={clearSearch} type="button">{t("clearSearch")}</button> : null}
+          <strong>{t("rosterNoMatches")}</strong>
+          {state.query ? <Button onClick={clearSearch} size="sm">{t("clearSearch")}</Button> : null}
         </div> : rowCount === 0 ? <div className="empty-state roster-empty">
           {load.status === "failed" ? <><strong>{t("rosterFailed")}</strong><span>{ownedErrorMessage(load.error, t)}</span>
-            <button className="secondary-button" disabled={!canReloadRoster} onClick={onReloadRoster} type="button">{t("rosterRetry")}</button></> :
-            load.status === "loading" ? <><strong>{t("rosterLoading")}</strong><span>{t("rosterLoadingHelp")}</span></> :
-              <><strong>{t("rosterEmpty")}</strong><span>{t("rosterEmptyHelp")}</span></>}
+            <Button refused={!canReloadRoster} reasonId={STATUS_BUSY_ID} onClick={onReloadRoster} size="sm">{t("rosterRetry")}</Button></> :
+            load.status === "loading" ? <strong>{t("rosterLoading")}</strong> :
+              <><strong>{t("rosterEmpty")}</strong>{dropAvailable ? <span>{t("rosterEmptyHelp")}</span> : null}</>}
         </div> : null} />
 
     </section>

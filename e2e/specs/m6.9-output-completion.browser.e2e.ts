@@ -1,4 +1,5 @@
 /** M6.9 browser evidence: production React, mocked Tauri boundary only. */
+import { metrics } from "../support/cdp";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeResult } from "../support/harness";
@@ -170,9 +171,9 @@ function terminal(items: readonly ConversionQueueItem[], sequence: number, adopt
 const VIEWPORTS: readonly (readonly [number, number])[] = [[1920, 1080], [1366, 768], [1200, 800], [960, 640]];
 
 async function viewport(width: number, height: number) {
-  await browser.setWindowSize(width, height);
-  const frame = await browser.execute(() => ({ width: outerWidth - innerWidth, height: outerHeight - innerHeight }));
-  await browser.setWindowSize(width + frame.width, height + frame.height);
+  // Emulated rather than a resized OS window: a CI runner's display can be
+  // smaller than the window asked for, which left M6.7 at 1350x617 (2026-10-30).
+  await metrics(width, height);
   expect(await browser.execute(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width, height });
   console.log("M6.9 measured inner viewport", { width, height });
 }
@@ -191,14 +192,17 @@ async function capture(name: string, selector: string) {
 }
 async function requests(command: string) { return (await ipcCalls()).filter((call) => call.command === command).map((call) => call.args); }
 
+/** One row's Details disclosure button (rebuild spec 1.5 rule 3; it replaced `<details>`). */
+const toggleOf = (index: number) => `${LIST} > li:nth-child(${index}) button.conversion-item-toggle`;
+
 /** The detail text of one row, with its disclosure opened. */
 async function details(index: number): Promise<string> {
-  const summary = `${LIST} > li:nth-child(${index}) details > summary`;
-  await reveal(summary);
-  if (!(await browser.$(`${LIST} > li:nth-child(${index}) details`).getAttribute("open"))) {
-    await browser.$(summary).click();
+  const toggle = toggleOf(index);
+  await reveal(toggle);
+  if ((await browser.$(toggle).getAttribute("aria-expanded")) !== "true") {
+    await browser.$(toggle).click();
   }
-  return browser.$(`${LIST} > li:nth-child(${index}) details`).getText();
+  return browser.$(`${LIST} > li:nth-child(${index}) .conversion-item-detail`).getText();
 }
 
 async function start(first: WorkspaceConversionUpdate, datasets: readonly SelectedFile[] = [row(1), row(2), row(3)]) {
@@ -240,7 +244,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     for (const text of [withContent, withoutContent]) {
       expect(text).toContain("The converter ran to its own end, exit code 3.");
       expect(text).toContain("No output obtained a final name.");
-      expect(text).toContain("Nothing was checked, because nothing was validated.");
+      expect(text).toContain("Nothing was checked.");
     }
     expect(withContent).toContain(
       "The temporary working folder held 1 entry when the attempt to run a converter returned, at least one of them a file with content.");
@@ -310,8 +314,8 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     expect(named).toEqual(["Enolase_S1.mzML", "Enolase_S2.mzML", "Enolase_S3.mzML"]);
     // The observation was taken after publication, and says so.
     expect(text).toContain("after publication finished");
-    // The existing refusal is unchanged.
-    expect(await browser.$(PANEL).getText()).toContain("No complete output set is available to add to this workspace.");
+    // And nothing offers to add a set that is not complete.
+    expect(await browser.$(`${PANEL} .conversion-adoption`).isExisting()).toBe(false);
     await capture("partial-set-details", LIST);
   });
 
@@ -320,7 +324,7 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
 
     // Nothing is adopted because a queue finished.
     expect(await requests(ADOPT)).toEqual([]);
-    expect(await details(1)).toContain("Not added yet. Adding outputs to the workspace is something you ask for.");
+    expect(await details(1)).toContain("Not added yet.");
 
     const adopted = [
       { ...converted(1), adoption: { kind: "settled", added: 1, alreadyInWorkspace: 0, refused: 0, refusals: [] } } as ConversionQueueItem,
@@ -359,25 +363,26 @@ describe("M6.9 output completion, the five judgements and adoption", () => {
     await start(terminal([converted(2), pending], 1, 1), [row(1), row(2)]);
 
     const disclosures = await browser.execute((list: string) =>
-      [...document.querySelectorAll(`${list} > li`)].map((node) => node.querySelector("details") !== null), LIST);
+      [...document.querySelectorAll(`${list} > li`)].map((node) => node.querySelector("button.conversion-item-toggle") !== null), LIST);
     expect(disclosures).toEqual([true, false]);
   });
 
   it("reaches every judgement by keyboard, announces once, and never scrolls sideways", async () => {
     await start(terminal([failed(1, true), converted(2)], 1, 1), [row(1), row(2)]);
 
-    // Keyboard: the summary is focusable and Enter opens it.
-    const summary = `${LIST} > li:nth-child(1) details > summary`;
+    // Keyboard: the disclosure button is focusable and Enter opens it.
+    const summary = toggleOf(1);
     await reveal(summary);
     await browser.execute((target: string) => { (document.querySelector(target) as HTMLElement).focus(); }, summary);
     expect(await browser.execute((target: string) => document.activeElement === document.querySelector(target), summary)).toBe(true);
     await browser.keys("Enter");
-    expect(await browser.$(`${LIST} > li:nth-child(1) details`).getAttribute("open")).not.toBeNull();
+    expect(await browser.$(summary).getAttribute("aria-expanded")).toBe("true");
+    expect(await browser.$(`${LIST} > li:nth-child(1) .conversion-item-detail`).isDisplayed()).toBe(true);
 
     // The accessible name says which row it is about, so a list of identical
     // "Details" is not a list of unlabelled controls.
     const names = await browser.execute((list: string) =>
-      [...document.querySelectorAll(`${list} details > summary`)].map((node) => node.textContent), LIST);
+      [...document.querySelectorAll(`${list} button.conversion-item-toggle`)].map((node) => node.getAttribute("aria-label")), LIST);
     expect(names.every((name) => (name ?? "").includes("Details for "))).toBe(true);
 
     // One live region for the adoption result, not two.

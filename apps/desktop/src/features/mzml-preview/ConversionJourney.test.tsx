@@ -41,7 +41,7 @@ function renderApp(api: FakePreviewApi) {
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
 }
 
 async function check(name: RegExp) {
@@ -65,7 +65,7 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
     const convert = await within(panel).findByRole("button", { name: "Convert 0 eligible…" });
     expect(convert).toHaveAttribute("aria-disabled", "true");
     expect(convert).not.toBeDisabled();
-    expect(convert).toHaveAccessibleDescription(/To convert, this scope needs supported vendor acquisitions/);
+    expect(convert).toHaveAccessibleDescription(/No supported vendor acquisitions in this scope/);
     // A refused press reaches nothing.
     convert.focus();
     expect(document.activeElement).toBe(convert);
@@ -102,7 +102,7 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
     held.resolve(availableBackend);
   });
 
-  it("puts the scope, settings, destination and conflict above the review, and the review directly above Convert (R4, R5)", async () => {
+  it("puts the settings, destination, conflict and scope before the review, and the review directly above Convert (R4, R5)", async () => {
     const api = createFakePreviewApi({ initialDatasets: [first], availability: availableBackend });
     renderApp(api);
     await check(/run-1\.raw/);
@@ -112,8 +112,10 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
       expect(node).not.toBeNull();
       return node!;
     });
-    const plan = panel.querySelector(".conversion-plan")!;
-    const parts = [".conversion-scope", ".conversion-settings", ".conversion-destination", ".conversion-conflict"].map((css) => plan.querySelector(css));
+    // The form column, then the summary column: settings, destination and
+    // conflict, then which rows, then the review and Convert.
+    const plan = panel;
+    const parts = [".conversion-settings", ".conversion-destination", ".conversion-conflict", ".conversion-scope"].map((css) => plan.querySelector(css));
     const convert = within(panel).getByRole("button", { name: "Convert 1 eligible…" });
     for (const [index, node] of parts.entries()) {
       expect(node, `part ${String(index)}`).not.toBeNull();
@@ -123,9 +125,9 @@ describe("PM9.4: what will be converted, and the action that converts it", () =>
     expect(follows(summary, convert)).toBe(true);
     // Nothing the summary depends on sits between it and the action.
     expect([...plan.querySelectorAll("fieldset")].filter((fieldset) => follows(summary, fieldset))).toEqual([]);
-    // Compression in words, like the other axes.
+    // The shipped compression is not repeated in the short summary (C11).
     const term = [...plan.querySelectorAll(".metadata-list dt")].find((node) => node.textContent === "Compression");
-    expect(term?.nextElementSibling?.textContent).toBe("zlib compressed");
+    expect(term).toBeUndefined();
   });
 });
 
@@ -143,6 +145,9 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
     await within(panel).findByText("Converting item 1 of 2…");
+    // The bar counts what has settled, not the item still running (review 13).
+    expect(panel.querySelector<HTMLElement>(".conversion-progress-bar > span")?.style.width).toBe("0%");
+    expect(panel.querySelector(".conversion-progress-bar")).toHaveAttribute("aria-hidden", "true");
     expect(panel.querySelector(".conversion-settings")).toBeNull();
     expect(panel.querySelector(".conversion-plan")).toBeNull();
   });
@@ -166,9 +171,10 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
     renderApp(api);
     const panel = await screen.findByRole("region", { name: "Convert" });
     expect(await within(panel).findByText("Rerunning earlier failures: converting item 2 of 2…")).toHaveAttribute("id", "conversion-queue-status");
+    expect(panel.querySelector<HTMLElement>(".conversion-progress-bar > span")?.style.width).toBe("50%");
   });
 
-  it("heads the next conversion under a finished queue, says which failures Retry reruns, and keeps one filled primary (R5, R7, R8)", async () => {
+  it("opens the next conversion under a finished queue on request, says which failures Retry reruns, and keeps one filled primary (R5, R7, R8)", async () => {
     const api = createFakePreviewApi({
       initialDatasets: [first, second, third],
       availability: availableBackend,
@@ -186,23 +192,57 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
     renderApp(api);
     await check(/run-3\.raw/);
     const panel = await screen.findByRole("region", { name: "Convert" });
+    const primaries = () => panel.querySelectorAll(".ui-button--primary");
 
-    expect(await within(panel).findByRole("heading", { name: "Next conversion" })).toBeVisible();
+    // The results first: the next conversion's form, its scope warning and
+    // its Convert stay away until the reader asks for them (review 6).
+    const another = await within(panel).findByRole("button", { name: "Start another conversion" });
+    expect(within(panel).queryByRole("heading", { name: "Next conversion" })).toBeNull();
+    expect(within(panel).queryByRole("button", { name: /^Convert/ })).toBeNull();
+    expect(panel.querySelector(".conversion-settings")).toBeNull();
+    expect(another).toHaveClass("ui-button--secondary");
+    expect(within(panel).getByRole("button", { name: "Add converted output to workspace" })).toHaveClass("ui-button--primary");
+    expect(primaries()).toHaveLength(1);
     const failed = [...panel.querySelectorAll('li[data-item-state="failed"]')];
     expect(failed.map((row) => row.querySelector(".conversion-queue-retry")?.textContent)).toEqual([
-      "Rerun by Retry",
-      "Not rerun: another attempt would not change it",
+      "Retryable",
+      "Not retryable: the same settings would fail again.",
     ]);
     const scope = panel.querySelector("#conversion-retry-scope");
     expect(scope).not.toBeNull();
     expect(scope!.closest(".visually-hidden")).toBeNull();
-    expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAccessibleDescription(/Reruns only the failures/);
+    expect(within(panel).getByRole("button", { name: "Retry 1 failed" })).toHaveAccessibleDescription(/original folder, conflict setting and order/);
 
-    // The outputs are the primary; the next conversion's start is not.
+    // Asked for, the next conversion takes the keyboard and the one primary;
+    // adding the outputs stays offered beside it, as a secondary.
+    another.focus();
+    fireEvent.click(another);
+    expect(await within(panel).findByRole("heading", { name: "Next conversion" })).toBeVisible();
+    expect(document.activeElement).toBe(panel.querySelector(".conversion-plan"));
+    expect(within(panel).queryByRole("button", { name: "Start another conversion" })).toBeNull();
     const convert = await within(panel).findByRole("button", { name: "Convert 1 eligible…" });
-    expect(convert).toHaveClass("secondary-button");
-    expect(convert).not.toHaveClass("primary-button");
-    expect(within(panel).getByRole("button", { name: "Add converted output to workspace" })).toHaveClass("primary-button");
+    expect(convert).toHaveClass("ui-button--primary");
+    expect(within(panel).getByRole("button", { name: "Add converted output to workspace" })).toHaveClass("ui-button--secondary");
+    expect(primaries()).toHaveLength(1);
+  });
+
+  it("makes Start another conversion the one primary when there is nothing to add (review 6)", async () => {
+    const api = createFakePreviewApi({
+      initialDatasets: [first],
+      availability: availableBackend,
+      initialConversion: {
+        status: "terminal",
+        reason: "completed",
+        operationId: "1",
+        queue: queueOf([queueItem("file-1", "run-1.raw", { state: "failed", attempts: 1, retryable: false })]),
+      },
+    });
+    renderApp(api);
+    const panel = await screen.findByRole("region", { name: "Convert" });
+    expect(await within(panel).findByRole("button", { name: "Start another conversion" })).toHaveClass("ui-button--primary");
+    expect(panel.querySelectorAll(".ui-button--primary")).toHaveLength(1);
+    // No warning about an empty scope after a queue: nothing on screen starts one.
+    expect(panel.querySelector(".conversion-availability")?.textContent).toBe("");
   });
 
   it("tells a stopped queue's reader how to convert what did not finish (R9)", async () => {
@@ -223,7 +263,7 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
     const panel = await screen.findByRole("region", { name: "Convert" });
     await within(panel).findByText("Queue stopped");
     expect(panel.querySelector(".conversion-convert-again")?.textContent).toBe(
-      "Rows that were cancelled, not run or skipped by you are not rerun in place. To convert them, check only those rows in the list and review the next conversion below.",
+      "To convert rows that were cancelled, not run or skipped by you, check only those rows and start another conversion.",
     );
     expect(within(panel).queryByRole("button", { name: /^Retry/ })).toBeNull();
   });
@@ -247,6 +287,7 @@ describe("PM9.4: a queue on screen, and the conversion after it", () => {
     renderApp(api);
     await check(/run-2\.raw/);
     const panel = await screen.findByRole("region", { name: "Convert" });
+    fireEvent.click(await within(panel).findByRole("button", { name: "Start another conversion" }));
     const convert = await within(panel).findByRole("button", { name: "Convert 1 eligible…" });
     await waitFor(() => {
       expect(convert).not.toHaveAttribute("aria-disabled");

@@ -309,11 +309,15 @@ describe("the PR #95 blocker families, and what now prevents each", () => {
     // can do: wait, press something, or change something above.
     const failed = startOn({}, "failed");
     expect(failed.status === "unavailable" && failed.reason).toBe("plan-failed");
-    expect(
-      failed.status === "unavailable" && conversionNoticeMessage(failed.reason, messages("en")),
-    ).toContain("Try describing it again");
+    const failedSaid =
+      failed.status === "unavailable" && conversionNoticeMessage(failed.reason, messages("en"));
+    expect(failedSaid).toBe("This conversion could not be described.");
     const reading = startOn({}, "reading");
     expect(reading.status === "unavailable" && reading.reason).toBe("plan-reading");
+    // Not the sentence for a plan still being described.
+    expect(failedSaid).not.toBe(
+      reading.status === "unavailable" && conversionNoticeMessage(reading.reason, messages("en")),
+    );
     const unknown = startOn({}, "settingsUnknown");
     expect(unknown.status === "unavailable" && unknown.reason).toBe("plan-settings-unknown");
     const unrunnable = startOn({}, "selectionUnavailable");
@@ -416,9 +420,9 @@ describe("the PR #95 blocker families, and what now prevents each", () => {
   });
 
   it("20. the admitted graph is a lookup, and cannot be widened from here (ledger row 1)", () => {
-    // Nine rows, and no code path that composes a tenth. Every choice is a row
-    // of the catalog or a refusal.
-    expect(admittedIntents).toHaveLength(9);
+    // Eleven rows, and no code path that composes a twelfth. Every choice is a
+    // row of the catalog or a refusal.
+    expect(admittedIntents).toHaveLength(11);
     expect(catalogRow(completeCatalog, "mzml+something+else+entirely+here")).toBeNull();
     expect(reselect(completeCatalog, shippedIntent.id, "mzml+invented+row+here+now")).toBe(
       shippedIntent.id,

@@ -71,7 +71,7 @@ async function mount(options: FakePreviewApiOptions = {}): Promise<FakePreviewAp
       </PreviewApiProvider>
     </WorkspaceDropTransportProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+  fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
   fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
   return api;
 }
@@ -506,7 +506,7 @@ describe("the plan the panel is showing", () => {
   });
 
   it("withdraws the re-ask when the failure stops being about the question asked", async () => {
-    // A control offered beside "Working out what this conversion would do…"
+    // A control offered beside "Describing this conversion…"
     // would be offering a reader a re-ask of a question they have left --
     // and pressing it would ask for exactly the thing they moved away from.
     const plans = controlledPlans();
@@ -551,9 +551,13 @@ describe("the plan the panel is showing", () => {
     await mount({ conversionPlan: plans.conversionPlan });
     const panel = await screen.findByRole("region", { name: "Convert" });
 
+    // Said once, in the notice Convert points at.
     await waitFor(() => {
-      expect(within(panel).getByText(/Working out what this conversion would do/)).toBeVisible();
+      expect(within(panel).getByText("Describing this conversion…")).toBeVisible();
     });
+    expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveAccessibleDescription(
+      expect.stringContaining("Describing this conversion…"),
+    );
     expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).queryByRole("button", { name: "Describe again" })).toBeNull();
 
@@ -570,10 +574,10 @@ describe("the plan the panel is showing", () => {
     });
     // A refused plan reads as failed, not as one being reread -- and it offers
     // the reader the one control that changes it.
-    expect(within(panel).queryByText(/Working out what this conversion would do/)).toBeNull();
+    expect(within(panel).queryByText("Describing this conversion…")).toBeNull();
     expect(within(panel).getByRole("button", { name: "Describe again" })).toBeEnabled();
     expect(within(panel).getByRole("button", { name: /^Convert/ })).toHaveAccessibleDescription(
-      expect.stringContaining("could not work out what this conversion would do"),
+      expect.stringContaining("This conversion could not be described."),
     );
   });
 
@@ -589,21 +593,18 @@ describe("the plan the panel is showing", () => {
         </PreviewApiProvider>
       </WorkspaceDropTransportProvider>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Conversion & results" }));
+    fireEvent.click(screen.getByRole("button", { name: "Conversion" }));
     fireEvent.click(within(await screen.findByRole("row", { name: /run-1\.raw/ })).getByRole("checkbox"));
     const panel = await screen.findByRole("region", { name: "Convert" });
     await waitFor(() => {
       expect(panel.querySelector(".conversion-queue-list")).not.toBeNull();
     });
 
-    // Every axis of the combination the plan was computed under, said before a
-    // folder is chosen.
-    const summary = within(panel);
-    expect(summary.getByText("Peaks").nextElementSibling?.textContent).toContain(
-      "No additional centroiding",
-    );
-    expect(summary.getByText("Spectra")).toBeVisible();
-    expect(summary.getByText("Stored precision")).toBeVisible();
+    // The plan computed under the shipped combination: the rail names no axis
+    // (C11 lists only what differs), then its own destination and policy,
+    // said before a folder is chosen.
+    const summary = within(panel.querySelector<HTMLElement>("#conversion-plan-summary")!);
+    expect(panel.querySelectorAll("#conversion-plan-summary [data-plan-changed]")).toHaveLength(0);
     expect(summary.getAllByText("If an output name is taken").length).toBeGreaterThan(0);
     expect(summary.getByText("Requested destination").nextElementSibling?.textContent).toBe(
       "One local folder, chosen after Convert",
@@ -886,7 +887,7 @@ describe("starting the conversion the plan describes", () => {
     expect(reads).toBe(1);
     // And the plan is still the plan: a refusal is not a reason to re-describe
     // a conversion nothing has changed about.
-    expect(within(panel).getByText(/will be converted to mzML/)).toBeVisible();
+    expect(panel.querySelector("#conversion-plan-summary")).not.toBeNull();
     expect(within(panel).getByRole("button", { name: /^Convert/ })).not.toHaveAttribute("aria-disabled");
   });
 

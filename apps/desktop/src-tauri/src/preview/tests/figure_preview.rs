@@ -122,10 +122,8 @@ fn figure_preview_empty_source_and_empty_committed_window_remain_honest_figures_
             .ends_with("mz,intensity\n")
     );
 
-    let file = TestFile::new("m74-empty-spectrum");
-    let service = PreviewService::new(Box::new(FakeProvider::available(vec![Response::File(
-        selected_spectrum_output(0, &[]),
-    )])));
+    let file = TestFile::with_points("m74-empty-spectrum", 0, &[]);
+    let service = PreviewService::new(Box::new(FakeProvider::available(open_responses())));
     let selected = service.accept_file(&file.path).expect("source");
     let token = loaded_export_token(&service, &selected.handle, 0);
     let (svg, empty) = render(

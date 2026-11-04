@@ -2114,6 +2114,7 @@ dependencies = [
  "base64 0.22.1",
  "flate2",
  "quick-xml 0.41.0",
+ "serde",
  "thiserror 2.0.20",
 ]
 

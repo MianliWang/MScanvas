@@ -42,6 +42,20 @@ The route-only claims and earlier not-started statements below and in prior
 amendments describe their original stages; this dated outcome supersedes their
 status, preserving the route rules and history rather than rewriting them.
 
+Amended: **2026-10-30 by [ADR 0071](0071-xic-re-entry-and-its-first-version.md)**
+(accepted, owner decisions X-1 and X-2). XIC re-enters through ADR 0071, the new
+scope record §6 requires, with a new candidate: a project-owned pass over
+ADR 0056's mzML reader. **Still holding:** §1's query semantics, the eight
+states and their precedence, XIC-S2 to XIC-S4, the unit rules, §3's evidence
+rules and §4's boundary; PX.4's `XIC_PROVIDER_REFUSED` for B; A viable, not
+prototyped and not rejected. **Changed by ADR 0071:** four departures from §1
+(ppm input, and the whole-query refusal of mixed polarity, mixed FAIMS
+compensation voltage or mixed representation among in-scope scans), and
+XIC-S1's decision owner is now the owner, who offers the profile point sum
+(ADR 0071 decision 5). **Still open:** XIC-D5 and §5's export routing, under the
+owner's decision X-3. PX.5 and PX.6 stay not entered; ADR 0071's slices X4 and
+X5 carry their obligations.
+
 **This record locks the route for the Post-M6 XIC Provider / Runtime Interlude
 and does nothing else.** It admits no provider, selects no runtime, implements no
 XIC, and reports no performance or scientific-correctness result. A route lock is

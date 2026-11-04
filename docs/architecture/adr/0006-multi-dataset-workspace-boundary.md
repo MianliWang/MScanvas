@@ -9,6 +9,14 @@
   bundle. Duplicate identity is correspondingly the whole acquisition's
   identity rather than a single object's; for every family described here that
   is the same value it always was.
+- Amended: 2026-11-03 ([ADR 0061](0061-restore-workspace.md), question 7) — a
+  restored row may say which folders it sat in, on a name collision only. The
+  roster is no longer session-only without exception: ADR 0061 is the durable
+  storage *Persistence exclusion* asked for. See *Amended by ADR 0061* below.
+- Amended: 2026-10-30 ([ADR 0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
+  slice 2) — a Thermo RAW row's preview state can be backed by a pinned
+  view-cache entry. The row keeps its lease, its handle and its identity, and
+  removing it releases the pin and deletes neither the RAW nor the entry.
 - Amended: 2026-10-20 (post-PM9, documentation only) — distinguish the original
   544px stacked-layout budget from the current folded workbench. The owner
   assigned this correction after PM9 in
@@ -514,6 +522,24 @@ below the folder the user chose — under all of these conditions:
 - display only: never searched, never a sort key, never part of identity, never
   persisted, and its tooltip says exactly what the row already shows.
 
+**Amended by ADR 0061 (question 7): collision-only parent folders for restored
+rows.** A restored row waiting to be put back ([ADR 0061](0061-restore-workspace.md))
+has no folder the user chose below which it could be described, and two
+`QC_01.raw` rows from different folders are two acquisitions the user cannot
+choose between. It may therefore carry a `context`, under all of these conditions:
+
+- only when another row the same read shows has its exact final filename, decided
+  at every read, so it goes when that row leaves;
+- only `Normal` path components, directly above the file: never a drive, never a
+  UNC server or share, never a root, never `..`;
+- at most three folders, as few as tell that name's rows apart, bounded to 128
+  characters, truncated from the shallow end as the live context is;
+- the row's own place (`#N`) added where those folders still read alike, which
+  names no location;
+- display only: never searched, never a sort key, never part of identity, and
+  computed from the stored path at each read rather than persisted. A row put back
+  is a live row, and the live rule above is the one it then follows.
+
 The same label identifies an acquisition wherever the frontend offers or shows
 the active dataset: the roster row, the Run summary header and the retained
 one-action Preview affordance. The service still stores no active dataset. The
@@ -611,7 +637,9 @@ their own evidence and their own decision.
 The registry is session-only. Saved workspaces, recent files, identifiers that
 outlive the process and session restoration are all outside this decision, and
 `ARCHITECTURE.md` already requires durable storage to arrive with its own schema
-and ADR.
+and ADR. [ADR 0061](0061-restore-workspace.md) is that decision for session
+restoration: the registry stays session-only, and a separate document records its
+rows for the next start, where they wait until the user puts them back.
 
 ## Concurrency
 
