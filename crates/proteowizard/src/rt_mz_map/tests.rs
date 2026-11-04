@@ -17,6 +17,20 @@ const NO_COMPRESSION: &str = "MS:1000576";
 const NUMPRESS: &str = "MS:1002312";
 const COUNTS: &str = "MS:1000131";
 const MZ: &str = "MS:1000040";
+const POSITIVE: &str = "MS:1000130";
+const NEGATIVE: &str = "MS:1000129";
+
+/// The map of `ms1`'s spectra: profile, stating no polarity.
+const UNSTATED_PROFILE: MapKind = kind(None, MzmlRepresentation::Profile);
+const POSITIVE_PROFILE: MapKind = kind(Some(MzmlPolarity::Positive), MzmlRepresentation::Profile);
+const NEGATIVE_PROFILE: MapKind = kind(Some(MzmlPolarity::Negative), MzmlRepresentation::Profile);
+
+const fn kind(polarity: Option<MzmlPolarity>, representation: MzmlRepresentation) -> MapKind {
+    MapKind {
+        polarity,
+        representation,
+    }
+}
 
 /// A term; an empty unit is no unit.
 fn cv(accession: &str, value: &str, unit: &str) -> String {
@@ -95,6 +109,26 @@ fn ms1(index: usize, minutes: &str, mz: &[f64], intensity: &[f64]) -> String {
     )
 }
 
+/// An MS1 spectrum at a retention time in minutes, with these terms on the
+/// spectrum itself: the reader takes a polarity from there, not from its scan.
+fn stating(
+    index: usize,
+    minutes: &str,
+    representation: &str,
+    terms: &[&str],
+    body: &str,
+) -> String {
+    let terms: String = terms.iter().map(|term| cv(term, "", "")).collect();
+    spectrum(
+        index,
+        1,
+        representation,
+        (minutes, MINUTE),
+        1,
+        &format!("{terms}{body}"),
+    )
+}
+
 fn document(spectra: &[String]) -> Vec<u8> {
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -112,6 +146,7 @@ fn table(document: &[u8]) -> MzmlSpectrumTable {
 
 fn request(retention_time: (f64, f64), time_bins: u32, mz: (f64, f64), mz_bins: u32) -> MapRequest {
     MapRequest {
+        kind: UNSTATED_PROFILE,
         retention_time,
         mz,
         retention_time_bins: time_bins,
@@ -156,7 +191,7 @@ fn a_cell_keeps_the_greatest_intensity_and_empty_is_not_zero() {
     assert_eq!(map.cell(2, 0), None, "outside the raster");
     assert_eq!(map.points_binned(), 6);
     assert_eq!(map.points_outside_mz(), 0);
-    assert_eq!(map.spectra(MzmlRepresentation::Profile), 2);
+    assert_eq!(map.spectra(), 2);
     assert_eq!(map.retention_time_unit(), RetentionTimeUnit::Minute);
     assert_eq!(map.mz_unit(), &ArrayUnit::Declared(MZ.into()));
     assert_eq!(map.intensity_unit(), &ArrayUnit::Declared(COUNTS.into()));
@@ -193,11 +228,7 @@ fn bins_are_half_open_and_the_upper_bound_falls_in_the_last_bin() {
         Some(7.0),
         "the upper bound is in the last bin"
     );
-    assert_eq!(
-        map.spectra(MzmlRepresentation::Profile),
-        3,
-        "8.5 min is outside the window"
-    );
+    assert_eq!(map.spectra(), 3, "8.5 min is outside the window");
     assert_eq!(map.mz_edges(3), Some((3.0, 4.0)));
     assert_eq!(map.retention_time_edges(7), Some((7.0, 8.0)));
     assert_eq!(map.mz_edges(8), None, "outside the raster");
@@ -259,18 +290,259 @@ fn only_ms1_spectra_inside_the_window_are_read() {
 }
 
 #[test]
-fn profile_and_centroid_spectra_are_binned_alike_and_counted() {
+fn both_polarities_map_apart_and_neither_reads_the_other() {
+    let one_point = arrays(&[100.0], &[5.0]);
+    let numpress = arrays_with(&[100.0], &[9.0], (MZ, COUNTS), NUMPRESS);
+    let document = document(&[
+        stating(0, "1", PROFILE, &[POSITIVE], &one_point),
+        stating(1, "2", PROFILE, &[NEGATIVE], &numpress),
+        stating(2, "3", PROFILE, &[POSITIVE], &arrays(&[100.0], &[7.0])),
+    ]);
+
+    let extents = ms1_extent(&table(&document)).expect("has MS1");
+    assert_eq!(extents.len(), 2);
+    assert_eq!(extents[0].kind(), POSITIVE_PROFILE);
+    assert_eq!(extents[0].spectra(), 2);
+    assert_eq!(extents[0].retention_time(), (1.0, 3.0));
+    assert_eq!(extents[1].kind(), NEGATIVE_PROFILE);
+    assert_eq!(extents[1].spectra(), 1);
+    assert_eq!(extents[1].retention_time(), (2.0, 2.0));
+
+    let view = request((0.0, 4.0), 4, (99.0, 101.0), 1);
+    // The negative spectrum would refuse if it were read, so the positive map
+    // does not read it, and its progress does not count it.
+    let mut heard = Vec::new();
+    let positive = bin_rt_mz_map_from(
+        Cursor::new(&document),
+        &table(&document),
+        MapRequest {
+            kind: POSITIVE_PROFILE,
+            ..view
+        },
+        &CancellationToken::new(),
+        |done, total| heard.push((done, total)),
+    )
+    .expect("maps");
+    assert_eq!(heard, [(1, 2), (2, 2)]);
+    assert_eq!(positive.request().kind, POSITIVE_PROFILE);
+    assert_eq!(positive.spectra(), 2);
+    assert_eq!(positive.cell(1, 0), Some(5.0));
+    assert_eq!(positive.cell(2, 0), None, "the negative spectrum's bin");
+    assert_eq!(positive.cell(3, 0), Some(7.0));
+
+    assert_eq!(
+        map(
+            &document,
+            MapRequest {
+                kind: NEGATIVE_PROFILE,
+                ..view
+            }
+        ),
+        Err(MapError::Spectrum {
+            index: 1,
+            error: MzmlSpectrumError::Array {
+                role: ArrayRole::Intensity,
+                problem: ArrayProblem::Numpress,
+            },
+        })
+    );
+}
+
+#[test]
+fn a_partly_declared_polarity_is_refused_whichever_map_is_asked_for() {
+    let body = arrays(&[100.0], &[1.0]);
+    let declared = stating(0, "1", PROFILE, &[POSITIVE], &body);
+    let undeclared = stating(1, "2", PROFILE, &[], &body);
+    let stated_two_ways = stating(1, "2", PROFILE, &[POSITIVE, NEGATIVE], &body);
+    let later_undeclared = stating(0, "1", PROFILE, &[], &body);
+    let later_declared = stating(1, "2", PROFILE, &[NEGATIVE], &body);
+
+    for spectra in [
+        [declared.clone(), undeclared],
+        [declared, stated_two_ways],
+        [later_undeclared, later_declared],
+    ] {
+        let document = document(&spectra);
+        assert_eq!(
+            ms1_extent(&table(&document)),
+            Err(MapError::PartlyDeclaredPolarity)
+        );
+        for kind in [POSITIVE_PROFILE, NEGATIVE_PROFILE, UNSTATED_PROFILE] {
+            let view = MapRequest {
+                kind,
+                ..request((0.0, 4.0), 1, (99.0, 101.0), 1)
+            };
+            assert_eq!(map(&document, view), Err(MapError::PartlyDeclaredPolarity));
+        }
+    }
+    assert_eq!(
+        MapError::PartlyDeclaredPolarity.stable_id(),
+        "partly_declared_polarity"
+    );
+
+    // Only MS1 spectra count: an MS2 spectrum stating none leaves the map alone.
+    let with_ms2 = document(&[
+        stating(0, "1", PROFILE, &[POSITIVE], &body),
+        spectrum(1, 2, PROFILE, ("2", MINUTE), 1, &body),
+    ]);
+    let extents = ms1_extent(&table(&with_ms2)).expect("has MS1");
+    assert_eq!(extents.len(), 1);
+    assert_eq!(extents[0].kind(), POSITIVE_PROFILE);
+}
+
+#[test]
+fn no_polarity_declared_is_one_map_stating_not_reported() {
+    let body = arrays(&[100.0], &[3.0]);
+    // A polarity stated two ways is not reported, as the reader says.
+    let document = document(&[
+        stating(0, "1", PROFILE, &[], &body),
+        stating(1, "2", PROFILE, &[POSITIVE, NEGATIVE], &body),
+    ]);
+    let rows = table(&document);
+    assert_eq!(rows.rows()[0].polarity(), MzmlDeclared::NotDeclared);
+    assert_eq!(rows.rows()[1].polarity(), MzmlDeclared::Conflicting);
+
+    let extents = ms1_extent(&rows).expect("has MS1");
+    assert_eq!(extents.len(), 1);
+    assert_eq!(extents[0].kind(), UNSTATED_PROFILE);
+    assert_eq!(extents[0].spectra(), 2);
+
+    let map = map(&document, request((0.0, 4.0), 1, (99.0, 101.0), 1)).expect("maps");
+    assert_eq!(map.request().kind.polarity, None);
+    assert_eq!(map.spectra(), 2);
+}
+
+#[test]
+fn both_representations_map_apart() {
     let document = document(&[
         ms1(0, "1", &[100.0, 100.2], &[3.0, 8.0]),
         spectrum(1, 1, CENTROID, ("2", MINUTE), 1, &arrays(&[100.1], &[5.0])),
-        spectrum(2, 1, "", ("3", MINUTE), 1, &arrays(&[100.3], &[6.0])),
+        ms1(2, "3", &[100.3], &[6.0]),
     ]);
-    let map = map(&document, request((0.0, 4.0), 1, (99.0, 101.0), 1)).expect("maps");
+    let centroid = kind(None, MzmlRepresentation::Centroid);
 
-    assert_eq!(map.cell(0, 0), Some(8.0));
-    assert_eq!(map.spectra(MzmlRepresentation::Profile), 1);
-    assert_eq!(map.spectra(MzmlRepresentation::Centroid), 1);
-    assert_eq!(map.spectra(MzmlRepresentation::NotDeclared), 1);
+    let extents = ms1_extent(&table(&document)).expect("has MS1");
+    assert_eq!(extents.len(), 2);
+    assert_eq!(extents[0].kind(), UNSTATED_PROFILE);
+    assert_eq!(extents[0].spectra(), 2);
+    assert_eq!(extents[0].retention_time(), (1.0, 3.0));
+    assert_eq!(extents[1].kind(), centroid);
+    assert_eq!(extents[1].spectra(), 1);
+
+    // One bin over the whole window: a centroid value never shares a cell with
+    // a profile value.
+    let view = request((0.0, 4.0), 1, (99.0, 101.0), 1);
+    let profile = map(&document, view).expect("maps");
+    assert_eq!(profile.cell(0, 0), Some(8.0));
+    assert_eq!((profile.spectra(), profile.points_binned()), (2, 3));
+
+    let centroided = map(
+        &document,
+        MapRequest {
+            kind: centroid,
+            ..view
+        },
+    )
+    .expect("maps");
+    assert_eq!(centroided.cell(0, 0), Some(5.0));
+    assert_eq!((centroided.spectra(), centroided.points_binned()), (1, 1));
+}
+
+#[test]
+fn a_partly_declared_representation_is_refused_whichever_map_is_asked_for() {
+    let declared = ms1(0, "1", &[100.0], &[1.0]);
+    let undeclared = spectrum(1, 1, "", ("2", MINUTE), 1, &arrays(&[100.0], &[1.0]));
+    let centroid = spectrum(1, 1, CENTROID, ("2", MINUTE), 1, &arrays(&[100.0], &[1.0]));
+    let first_undeclared = spectrum(0, 1, "", ("1", MINUTE), 1, &arrays(&[100.0], &[1.0]));
+
+    for spectra in [[declared, undeclared], [first_undeclared, centroid]] {
+        let document = document(&spectra);
+        assert_eq!(
+            ms1_extent(&table(&document)),
+            Err(MapError::PartlyDeclaredRepresentation)
+        );
+        for representation in [
+            MzmlRepresentation::Profile,
+            MzmlRepresentation::Centroid,
+            MzmlRepresentation::NotDeclared,
+        ] {
+            let view = MapRequest {
+                kind: kind(None, representation),
+                ..request((0.0, 4.0), 1, (99.0, 101.0), 1)
+            };
+            assert_eq!(
+                map(&document, view),
+                Err(MapError::PartlyDeclaredRepresentation)
+            );
+        }
+    }
+    assert_eq!(
+        MapError::PartlyDeclaredRepresentation.stable_id(),
+        "partly_declared_representation"
+    );
+}
+
+#[test]
+fn no_representation_declared_is_one_map_stating_not_reported() {
+    let document = document(&[
+        spectrum(0, 1, "", ("1", MINUTE), 1, &arrays(&[100.0], &[3.0])),
+        spectrum(1, 1, "", ("2", MINUTE), 1, &arrays(&[100.0], &[4.0])),
+    ]);
+    let undeclared = kind(None, MzmlRepresentation::NotDeclared);
+
+    let extents = ms1_extent(&table(&document)).expect("has MS1");
+    assert_eq!(extents.len(), 1);
+    assert_eq!(extents[0].kind(), undeclared);
+
+    let map = map(
+        &document,
+        MapRequest {
+            kind: undeclared,
+            ..request((0.0, 4.0), 1, (99.0, 101.0), 1)
+        },
+    )
+    .expect("maps");
+    assert_eq!(
+        map.request().kind.representation,
+        MzmlRepresentation::NotDeclared
+    );
+    assert_eq!(map.cell(0, 0), Some(4.0));
+}
+
+#[test]
+fn the_maps_are_the_kinds_present_and_any_other_is_refused_before_a_read() {
+    // Would refuse if read, so reaching the read shows as this refusal.
+    let numpress = arrays_with(&[100.0], &[1.0], (MZ, COUNTS), NUMPRESS);
+    let document = document(&[
+        stating(0, "1", PROFILE, &[POSITIVE], &numpress),
+        stating(1, "2", CENTROID, &[NEGATIVE], &numpress),
+    ]);
+    let negative_centroid = kind(Some(MzmlPolarity::Negative), MzmlRepresentation::Centroid);
+    let extents = ms1_extent(&table(&document)).expect("has MS1");
+    assert_eq!(
+        extents.iter().map(Ms1Extent::kind).collect::<Vec<_>>(),
+        [POSITIVE_PROFILE, negative_centroid],
+        "two of the four combinations, not all four"
+    );
+
+    let view = request((0.0, 4.0), 1, (99.0, 101.0), 1);
+    let ask = |kind| map(&document, MapRequest { kind, ..view });
+    for absent in [
+        kind(Some(MzmlPolarity::Positive), MzmlRepresentation::Centroid),
+        NEGATIVE_PROFILE,
+        UNSTATED_PROFILE,
+        kind(None, MzmlRepresentation::NotDeclared),
+    ] {
+        assert_eq!(ask(absent), Err(MapError::MapNotInTable), "{absent:?}");
+    }
+    assert_eq!(MapError::MapNotInTable.stable_id(), "map_not_in_table");
+    assert!(
+        matches!(
+            ask(POSITIVE_PROFILE),
+            Err(MapError::Spectrum { index: 0, .. })
+        ),
+        "a map the table has reaches the read"
+    );
 }
 
 #[test]
@@ -296,7 +568,7 @@ fn a_table_without_ms1_is_refused_and_an_empty_ms1_spectrum_bins_nothing() {
         ms1(1, "2", &[100.0], &[3.0]),
     ]);
     let map = map(&with_empty, request((0.0, 4.0), 1, (99.0, 101.0), 1)).expect("maps");
-    assert_eq!(map.spectra(MzmlRepresentation::Profile), 2);
+    assert_eq!(map.spectra(), 2);
     assert_eq!(map.points_binned(), 1);
     assert_eq!(map.intensity_unit(), &ArrayUnit::Declared(COUNTS.into()));
 }
@@ -497,15 +769,26 @@ fn the_extent_comes_from_the_ms1_rows_alone() {
         spectrum(1, 2, CENTROID, ("0.5", SECOND), 1, &observed("50", "2000")),
         spectrum(2, 1, PROFILE, ("7", MINUTE), 1, &observed("120", "880")),
     ]);
-    let extent = ms1_extent(&table(&stated)).expect("has MS1");
-    assert_eq!(extent.retention_time(), (2.0, 7.0));
-    assert_eq!(extent.retention_time_unit(), RetentionTimeUnit::Minute);
-    assert_eq!(extent.mz(), Some((120.0, 900.0)));
-    assert_eq!(extent.spectra(), 2);
+    let extents = ms1_extent(&table(&stated)).expect("has MS1");
+    assert_eq!(extents.len(), 1);
+    assert_eq!(extents[0].retention_time(), (2.0, 7.0));
+    assert_eq!(extents[0].retention_time_unit(), RetentionTimeUnit::Minute);
+    assert_eq!(extents[0].mz(), Some((120.0, 900.0)));
+    assert_eq!(extents[0].spectra(), 2);
 
     let partly = document(&[
         spectrum(0, 1, PROFILE, ("2", MINUTE), 1, &observed("150", "900")),
         ms1(1, "7", &[100.0], &[1.0]),
     ]);
-    assert_eq!(ms1_extent(&table(&partly)).expect("has MS1").mz(), None);
+    assert_eq!(ms1_extent(&table(&partly)).expect("has MS1")[0].mz(), None);
+
+    // Each map's range is its own: a map whose spectra state theirs keeps it
+    // beside one whose spectra do not.
+    let one_map_stated = document(&[
+        spectrum(0, 1, PROFILE, ("2", MINUTE), 1, &observed("150", "900")),
+        spectrum(1, 1, CENTROID, ("3", MINUTE), 1, &arrays(&[100.0], &[1.0])),
+    ]);
+    let extents = ms1_extent(&table(&one_map_stated)).expect("has MS1");
+    assert_eq!(extents[0].mz(), Some((150.0, 900.0)));
+    assert_eq!(extents[1].mz(), None);
 }

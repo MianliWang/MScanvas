@@ -1,16 +1,17 @@
-//! The RT × m/z map (ADR 0068, proposed): MS1 intensities binned into a raster
-//! of bounded size.
+//! The RT × m/z map (ADR 0068): MS1 intensities binned into a raster of bounded
+//! size.
 //!
-//! One forward pass over the MS1 spectra a spectrum table recorded, through one
-//! file handle. Each spectrum is read by the viewing reader's selected read
-//! (ADR 0056), so it is checked against the table and decoded under the same
-//! caps and typed refusals, and this module decodes nothing itself. Spectra
-//! outside the requested retention-time window are never read.
+//! A map is of one polarity and one representation. One forward pass over that
+//! map's MS1 spectra in a spectrum table, through one file handle. Each spectrum
+//! is read by the viewing reader's selected read (ADR 0056), so it is checked
+//! against the table and decoded under the same caps and typed refusals, and
+//! this module decodes nothing itself. Spectra of another map, or outside the
+//! requested retention-time window, are never read.
 //!
-//! Each cell holds the greatest stored intensity of the points that fall in it,
-//! whatever the spectrum's representation; a cell no point fell in holds no
-//! value, which is not zero. Nothing is smoothed, interpolated or centroided,
-//! and a refused spectrum refuses the whole map rather than leaving a gap.
+//! Each cell holds the greatest stored intensity of the points that fall in it;
+//! a cell no point fell in holds no value, which is not zero. Nothing is
+//! smoothed, interpolated or centroided, and a refused spectrum refuses the
+//! whole map rather than leaving a gap.
 
 use std::io::{BufRead, BufReader, Seek};
 use std::path::Path;
@@ -20,8 +21,8 @@ use thiserror::Error;
 use crate::fs_guard;
 use crate::mzml::MzmlScanError;
 use crate::mzml_reader::{
-    ArrayRole, ArrayUnit, MzmlRepresentation, MzmlSpectrumError, MzmlSpectrumRow,
-    MzmlSpectrumTable, RetentionTimeUnit, read_selected_spectrum_from,
+    ArrayRole, ArrayUnit, MzmlDeclared, MzmlPolarity, MzmlRepresentation, MzmlSpectrumError,
+    MzmlSpectrumRow, MzmlSpectrumTable, RetentionTimeUnit, read_selected_spectrum_from,
 };
 use crate::process::CancellationToken;
 
@@ -29,10 +30,34 @@ use crate::process::CancellationToken;
 /// megapixels, 16 MiB of `f64`.
 pub const MAX_MAP_CELLS: u64 = 1 << 21;
 
-/// One view of the map: two closed ranges and the bins across each. Retention
+/// Which MS1 spectra one map is of. A table whose MS1 spectra declare no
+/// polarity, or no representation, has one map that states it as not reported:
+/// `polarity: None`, or [`MzmlRepresentation::NotDeclared`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapKind {
+    pub polarity: Option<MzmlPolarity>,
+    pub representation: MzmlRepresentation,
+}
+
+impl MapKind {
+    /// A polarity stated two ways or unreadably is not reported, as the reader
+    /// says, so only a stated value is declared.
+    fn of(row: &MzmlSpectrumRow) -> Self {
+        Self {
+            polarity: match row.polarity() {
+                MzmlDeclared::Value(polarity) => Some(polarity),
+                _ => None,
+            },
+            representation: row.representation(),
+        }
+    }
+}
+
+/// One view of one map: two closed ranges and the bins across each. Retention
 /// time is in the unit the MS1 spectra declare, and nothing converts it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MapRequest {
+    pub kind: MapKind,
     pub retention_time: (f64, f64),
     pub mz: (f64, f64),
     pub retention_time_bins: u32,
@@ -55,6 +80,12 @@ pub enum MapError {
     NoMs1Spectra,
     #[error("the MS1 spectra state different retention-time units, or only some state one")]
     MixedRetentionTimeUnits,
+    #[error("only some MS1 spectra declare a polarity")]
+    PartlyDeclaredPolarity,
+    #[error("only some MS1 spectra declare a representation")]
+    PartlyDeclaredRepresentation,
+    #[error("the spectrum table has no such map")]
+    MapNotInTable,
     #[error("the binned spectra state different {} units, or only some state one", .0.stable_id())]
     MixedArrayUnits(ArrayRole),
     #[error("the file could not be opened: {0}")]
@@ -77,6 +108,9 @@ impl MapError {
             Self::AllocationRefused => "allocation_refused",
             Self::NoMs1Spectra => "no_ms1_spectra",
             Self::MixedRetentionTimeUnits => "mixed_retention_time_units",
+            Self::PartlyDeclaredPolarity => "partly_declared_polarity",
+            Self::PartlyDeclaredRepresentation => "partly_declared_representation",
+            Self::MapNotInTable => "map_not_in_table",
             Self::MixedArrayUnits(_) => "mixed_array_units",
             Self::Unreadable(error) => error.stable_id(),
             Self::Spectrum { error, .. } => error.stable_id(),
@@ -85,10 +119,11 @@ impl MapError {
     }
 }
 
-/// What the table says about its MS1 spectra before any array is read: the
-/// first view's ranges and the retention-time unit every map of it carries.
+/// What the table says about one map's MS1 spectra before any array is read:
+/// the map, its first view's ranges and the retention-time unit it carries.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ms1Extent {
+    kind: MapKind,
     retention_time: (f64, f64),
     retention_time_unit: RetentionTimeUnit,
     mz: Option<(f64, f64)>,
@@ -96,8 +131,13 @@ pub struct Ms1Extent {
 }
 
 impl Ms1Extent {
-    /// The lowest and highest MS1 retention time. Equal for a single spectrum,
-    /// which is not a range a map can be drawn over.
+    #[must_use]
+    pub const fn kind(&self) -> MapKind {
+        self.kind
+    }
+
+    /// The lowest and highest retention time of this map's spectra. Equal for a
+    /// single spectrum, which is not a range a map can be drawn over.
     #[must_use]
     pub const fn retention_time(&self) -> (f64, f64) {
         self.retention_time
@@ -109,7 +149,7 @@ impl Ms1Extent {
     }
 
     /// The lowest and highest observed m/z the spectra state (MS:1000528,
-    /// MS:1000527); `None` unless every MS1 spectrum states both.
+    /// MS:1000527); `None` unless every spectrum of this map states both.
     #[must_use]
     pub const fn mz(&self) -> Option<(f64, f64)> {
         self.mz
@@ -121,32 +161,51 @@ impl Ms1Extent {
     }
 }
 
-/// The MS1 extent of a table, refusing a table with no MS1 spectrum or with
-/// mixed retention-time units, as ADR 0056 refuses a chromatogram.
-pub fn ms1_extent(table: &MzmlSpectrumTable) -> Result<Ms1Extent, MapError> {
-    let mut rows = table.rows().iter().filter(|row| row.ms_level() == 1);
-    let first = rows.next().ok_or(MapError::NoMs1Spectra)?;
-    let time = first.retention_time();
-    let mut extent = Ms1Extent {
-        retention_time: (time.value(), time.value()),
-        retention_time_unit: time.unit(),
-        mz: observed_mz(first),
-        spectra: 1,
-    };
-    for row in rows {
+/// The maps a table has, in the order their first spectra appear, each with its
+/// extent. Every MS1 spectrum of the file counts, inside any window or not: a
+/// table with no MS1 spectrum, with mixed retention-time units (as ADR 0056
+/// refuses a chromatogram), or where only some MS1 spectra declare a polarity or
+/// a representation has no map at all.
+pub fn ms1_extent(table: &MzmlSpectrumTable) -> Result<Vec<Ms1Extent>, MapError> {
+    let mut extents: Vec<Ms1Extent> = Vec::new();
+    for row in table.rows().iter().filter(|row| row.ms_level() == 1) {
+        let kind = MapKind::of(row);
         let time = row.retention_time();
-        if time.unit() != extent.retention_time_unit {
-            return Err(MapError::MixedRetentionTimeUnits);
+        if let Some(first) = extents.first() {
+            if time.unit() != first.retention_time_unit {
+                return Err(MapError::MixedRetentionTimeUnits);
+            }
+            if kind.polarity.is_some() != first.kind.polarity.is_some() {
+                return Err(MapError::PartlyDeclaredPolarity);
+            }
+            let undeclared = MzmlRepresentation::NotDeclared;
+            if (kind.representation == undeclared) != (first.kind.representation == undeclared) {
+                return Err(MapError::PartlyDeclaredRepresentation);
+            }
         }
-        let (low, high) = extent.retention_time;
-        extent.retention_time = (low.min(time.value()), high.max(time.value()));
-        extent.mz = extent
-            .mz
-            .zip(observed_mz(row))
-            .map(|((low, high), (lowest, highest))| (low.min(lowest), high.max(highest)));
-        extent.spectra += 1;
+        match extents.iter_mut().find(|extent| extent.kind == kind) {
+            Some(extent) => {
+                let (low, high) = extent.retention_time;
+                extent.retention_time = (low.min(time.value()), high.max(time.value()));
+                extent.mz = extent
+                    .mz
+                    .zip(observed_mz(row))
+                    .map(|((low, high), (lowest, highest))| (low.min(lowest), high.max(highest)));
+                extent.spectra += 1;
+            }
+            None => extents.push(Ms1Extent {
+                kind,
+                retention_time: (time.value(), time.value()),
+                retention_time_unit: time.unit(),
+                mz: observed_mz(row),
+                spectra: 1,
+            }),
+        }
     }
-    Ok(extent)
+    if extents.is_empty() {
+        return Err(MapError::NoMs1Spectra);
+    }
+    Ok(extents)
 }
 
 fn observed_mz(row: &MzmlSpectrumRow) -> Option<(f64, f64)> {
@@ -167,7 +226,7 @@ pub struct RtMzMap {
     /// is a cell no point fell in; the reader refuses non-finite values, so no
     /// stored value can be mistaken for it.
     cells: Vec<f64>,
-    spectra: [u64; 3],
+    spectra: u64,
     points_binned: u64,
     points_outside_mz: u64,
 }
@@ -223,10 +282,10 @@ impl RtMzMap {
         self.mz_axis.edges(mz_bin)
     }
 
-    /// How many binned spectra declared this representation.
+    /// How many of this map's spectra fell inside the window and were binned.
     #[must_use]
-    pub const fn spectra(&self, representation: MzmlRepresentation) -> u64 {
-        self.spectra[representation_slot(representation)]
+    pub const fn spectra(&self) -> u64 {
+        self.spectra
     }
 
     #[must_use]
@@ -252,17 +311,9 @@ impl std::fmt::Debug for RtMzMap {
     }
 }
 
-const fn representation_slot(representation: MzmlRepresentation) -> usize {
-    match representation {
-        MzmlRepresentation::Profile => 0,
-        MzmlRepresentation::Centroid => 1,
-        MzmlRepresentation::NotDeclared => 2,
-    }
-}
-
-/// Bins the MS1 spectra of the file the table was read from, after refusing
-/// any non-regular, symlinked or reparse-point path. Holds one handle for the
-/// pass and none after it returns.
+/// Bins one map's MS1 spectra of the file the table was read from, after
+/// refusing any non-regular, symlinked or reparse-point path. Holds one handle
+/// for the pass and none after it returns.
 pub fn bin_rt_mz_map(
     path: &Path,
     table: &MzmlSpectrumTable,
@@ -281,10 +332,11 @@ pub fn bin_rt_mz_map(
     )
 }
 
-/// Bins the MS1 spectra from a seekable reader over the document the table was
-/// read from. `progress` hears `(done, total)` after each spectrum, where
-/// `total` counts the MS1 spectra inside the retention-time window; the token
-/// is checked before each spectrum is read and once after the last.
+/// Bins one map's MS1 spectra from a seekable reader over the document the table
+/// was read from. A map the table does not have is refused, not drawn empty.
+/// `progress` hears `(done, total)` after each spectrum, where `total` counts the
+/// map's spectra inside the retention-time window; the token is checked before
+/// each spectrum is read and once after the last.
 pub fn bin_rt_mz_map_from<R: BufRead + Seek>(
     mut reader: R,
     table: &MzmlSpectrumTable,
@@ -292,7 +344,11 @@ pub fn bin_rt_mz_map_from<R: BufRead + Seek>(
     cancel: &CancellationToken,
     mut progress: impl FnMut(u64, u64),
 ) -> Result<RtMzMap, MapError> {
-    let retention_time_unit = ms1_extent(table)?.retention_time_unit;
+    let retention_time_unit = ms1_extent(table)?
+        .into_iter()
+        .find(|extent| extent.kind == request.kind)
+        .ok_or(MapError::MapNotInTable)?
+        .retention_time_unit;
     let time_axis = Axis::new(request.retention_time, request.retention_time_bins)?;
     let mz_axis = Axis::new(request.mz, request.mz_bins)?;
     let cell_count = u64::from(request.retention_time_bins) * u64::from(request.mz_bins);
@@ -306,19 +362,17 @@ pub fn bin_rt_mz_map_from<R: BufRead + Seek>(
         .map_err(|_| MapError::AllocationRefused)?;
     cells.resize(cell_count, f64::NEG_INFINITY);
 
-    let total = ms1_in_window(table, time_axis).count() as u64;
+    let total = map_in_window(table, request.kind, time_axis).count() as u64;
     let (mut mz_unit, mut intensity_unit) = (None, None);
-    let mut spectra = [0; 3];
     let (mut points_binned, mut points_outside_mz) = (0, 0);
     let mut done = 0;
-    for (position, row, time_bin) in ms1_in_window(table, time_axis) {
+    for (position, time_bin) in map_in_window(table, request.kind, time_axis) {
         if cancel.is_cancelled() {
             return Err(MapError::Cancelled);
         }
         let index = position as u64;
         let spectrum = read_selected_spectrum_from(&mut reader, table, index)
             .map_err(|error| MapError::Spectrum { index, error })?;
-        spectra[representation_slot(row.representation())] += 1;
         let (mz, intensity) = (spectrum.mz(), spectrum.intensity());
         // An empty spectrum's absent arrays declare nothing, so only a spectrum
         // with points takes part in the units' agreement.
@@ -353,25 +407,26 @@ pub fn bin_rt_mz_map_from<R: BufRead + Seek>(
         mz_unit: mz_unit.unwrap_or(ArrayUnit::NotDeclared),
         intensity_unit: intensity_unit.unwrap_or(ArrayUnit::NotDeclared),
         cells,
-        spectra,
+        spectra: done,
         points_binned,
         points_outside_mz,
     })
 }
 
-/// The MS1 rows whose retention time falls in the window, with their table
-/// position and retention-time bin. Read from the table alone.
-fn ms1_in_window(
+/// The table position and retention-time bin of each MS1 row of one map whose
+/// retention time falls in the window. Read from the table alone.
+fn map_in_window(
     table: &MzmlSpectrumTable,
+    kind: MapKind,
     axis: Axis,
-) -> impl Iterator<Item = (usize, &MzmlSpectrumRow, usize)> {
+) -> impl Iterator<Item = (usize, usize)> {
     table
         .rows()
         .iter()
         .enumerate()
-        .filter(|(_, row)| row.ms_level() == 1)
+        .filter(move |(_, row)| row.ms_level() == 1 && MapKind::of(row) == kind)
         .filter_map(move |(position, row)| {
-            Some((position, row, axis.bin(row.retention_time().value())?))
+            Some((position, axis.bin(row.retention_time().value())?))
         })
 }
 
