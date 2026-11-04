@@ -34,7 +34,7 @@
 //! unreachable file stays a marked row; it is never dropped, never relinked
 //! and never aged out. Only an offer the user could take ages a row: one a read
 //! presented as matching, in a session that then saved without putting it back,
-//! was declined; as built, not an owner decision, a row a press handed to
+//! was declined; accepted by the owner on 2026-11-03, a row a press handed to
 //! admission and admission refused is not (ADR 0061, decision 10's note). A row
 //! [`MAX_OFFERS`] sessions declined is no
 //! longer offered by a session whose first read finds it matching, and every read of that
@@ -674,7 +674,7 @@ struct Lane {
     /// The rows a press of Restore workspace handed to admission because its
     /// re-check found them matching. One still waiting after that was refused,
     /// so a save does not count it and a later read presenting it changes
-    /// nothing (as built, not an owner decision: ADR 0061, decision 10's note).
+    /// nothing (accepted by the owner on 2026-11-03: ADR 0061, decision 10's note).
     asked: HashSet<usize>,
     /// The restored rows this session no longer offers (decision 10), decided
     /// once, by this session's first read: `None` before it, when nothing is
@@ -991,7 +991,7 @@ impl WorkspaceRestoreStore {
     /// there, and its restored row reads `changed` at the next read. A marked
     /// row, or one admission refused, stays where it is, and a row the press
     /// handed to admission is not counted as declined, whatever became of it
-    /// (as built, not an owner decision: ADR 0061, decision 10's note). Nothing
+    /// (accepted by the owner on 2026-11-03: ADR 0061, decision 10's note). Nothing
     /// is previewed and nothing is written here: the webview's next save records
     /// the result.
     ///

@@ -792,9 +792,10 @@ None can be delivered by engineering alone; each waits for one input.
     save over 1,024 rows is refused with Start fresh offered. PR #177 stays a
     draft and merges together with its interface slice.
   - *2026-11-03:* PR #177 carried its interface slice too and merged as
-    `ae14765e` with review findings open. Their fixes are on PR #204, a held
-    draft; whether #204 or a revert is the way forward is the owner's
-    ([roadmap](ROADMAP_V511_AND_ANALYSIS.md), [A0061](OWNER_DECISIONS_V511.md#a0061-restore-workspace-177)).
+    `ae14765e` with review findings open. Their fixes are on PR #204. The owner
+    answered the same day: go forward with #204, after its review is dry and its
+    checks are green, and #177 is not reverted
+    ([roadmap](ROADMAP_V511_AND_ANALYSIS.md), [F-177](OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 
 ## 8. Dates and external dependencies
 

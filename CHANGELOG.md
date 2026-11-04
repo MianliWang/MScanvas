@@ -7,10 +7,9 @@ All notable changes will be documented here once versioned releases begin.
 ### Added
 
 - **Restore workspace.** MSCanvas remembers the Workbench's files, groups that hold
-  a file (an empty one does not come back, as built and
-  [not yet decided](docs/architecture/adr/0061-restore-workspace.md#consequences)), order
-  (a row's place does not hold in a group put back only in part, as built and
-  [not yet decided](docs/architecture/adr/0061-restore-workspace.md#consequences))
+  a file (an empty one does not come back, accepted by the owner on 2026-11-03), order
+  (a row's place does not hold in a group put back only in part, accepted by the
+  owner on 2026-11-04)
   and checked rows for the next start, in one document in its own per-user folder.
   At the next start nothing comes back by itself: a notice says how many files can
   be added again and lists any that changed, went missing or cannot be reached,
@@ -19,7 +18,7 @@ All notable changes will be documented here once versioned releases begin.
   against the last session. **Start fresh** forgets them, one marked file can be
   dismissed, and Settings turns restore off, saying that kept-aside copies remain.
   A file not taken is offered at the next start only, except one a press could
-  not place, as built and not an owner decision; a marked file waits
+  not place, accepted by the owner on 2026-11-03; a marked file waits
   ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md), decision 10).
 - **Spreadsheet CSV on a stored targeted result's table.** The results table has
   a third export, spreadsheet CSV / 电子表格 CSV, beside CSV and TSV. It is a
