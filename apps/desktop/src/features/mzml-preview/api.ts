@@ -25,6 +25,8 @@ import type {
   ConversionStartOutcome,
   FolderIngestionResult,
   Preview,
+  RawViewSnapshot,
+  RawViewState,
   SelectedSpectrumOutcome,
   SpectrumExportFormat,
   FigureSettings,
@@ -136,6 +138,18 @@ export interface PreviewApi {
   /** Forgets one restored row; the next save records it. The file is not touched. */
   dismissRestoredRow(handle: string): Promise<void>;
   openPreview(handle: string): Promise<Preview>;
+  /**
+   * Begins the one-click view of one Thermo RAW row (ADR 0060). It names the
+   * row and nothing else: Rust chooses the verified default, so no request can
+   * carry a picker.
+   */
+  beginRawView(handle: string): Promise<RawViewState>;
+  /** The latest view, and whether View can be pressed for the row named. Polled while one runs. */
+  getRawViewState(handle: string | null): Promise<RawViewSnapshot>;
+  /** Cancels the exact operation named. A late press answers the state. */
+  cancelRawView(operation: number): Promise<RawViewState>;
+  /** Opens a ready operation's cached copy, once, as the RAW row's preview. */
+  openRawView(operation: number): Promise<Preview>;
   /**
    * Reads one spectrum of the open file.
    *
@@ -456,6 +470,10 @@ export const tauriPreviewApi: PreviewApi = {
   planWorkspaceClear: () => invoke<WorkspaceClearPlanOutcome>("plan_workspace_clear", {}, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   executeWorkspaceClear: (planId, action) => invoke<WorkspaceClearOutcome>("execute_workspace_clear", { planId, action }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   openPreview: (handle) => invoke<Preview>("open_mzml_preview", { handle }),
+  beginRawView: (handle) => invoke<RawViewState>("begin_raw_view", { request: { handle } }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
+  getRawViewState: (handle) => invoke<RawViewSnapshot>("get_raw_view_state", { request: { handle } }),
+  cancelRawView: (operation) => invoke<RawViewState>("cancel_raw_view", { request: { operation } }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
+  openRawView: (operation) => invoke<Preview>("open_raw_view", { request: { operation } }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   loadSpectrum: (handle, index) =>
     invoke<AuthorityObserved<SelectedSpectrumOutcome>>("load_selected_spectrum", { handle, index }),
   describeConversion: (request) =>

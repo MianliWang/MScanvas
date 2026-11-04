@@ -149,10 +149,12 @@ export interface ViewedPreview {
   readonly handle: string;
   readonly token: string | null;
   readonly producerIdentified: boolean;
+  /** A Thermo RAW row viewed through the cache: its summary would be the converted copy's. */
+  readonly viewedThroughCache?: boolean;
 }
 
 /** Why a layer's QC summary cannot be captured right now. */
-export type QcUnavailable = "qcNeedsWorkbench" | "qcNeedsPreview" | "qcProducerUnidentified";
+export type QcUnavailable = "qcNeedsWorkbench" | "qcNeedsPreview" | "qcViewedThroughCache" | "qcProducerUnidentified";
 
 /**
  * Why this layer's source cannot have its QC summary captured now, or `null`
@@ -170,6 +172,7 @@ export function qcUnavailable(
 ): QcUnavailable | null {
   const handle = source === undefined ? null : attachedRow(source, liveDatasetHandles);
   if (handle === null) return "qcNeedsWorkbench";
+  if (viewed?.handle === handle && viewed.viewedThroughCache === true) return "qcViewedThroughCache";
   if (viewed === null || viewed.handle !== handle || viewed.token === null) {
     return "qcNeedsPreview";
   }

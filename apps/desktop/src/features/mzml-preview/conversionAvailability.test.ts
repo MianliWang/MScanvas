@@ -34,6 +34,7 @@ const CLEAR: ConversionLane = {
   backendUsable: true,
   backendChanging: false,
   backendQuarantined: false,
+  rawViewRunning: false,
   previewReading: false,
   laneClaimed: false,
   reclaimingStaging: false,
@@ -111,6 +112,7 @@ describe("the conversion lane's availability decision", () => {
     expect(startReason({ backendChanging: true })).toBe("backend-changing");
     expect(startReason({ backendUsable: false })).toBe("backend-unavailable");
     expect(startReason({ laneClaimed: true })).toBe("conversion-running");
+    expect(startReason({ rawViewRunning: true })).toBe("raw-view-running");
     expect(startReason({ previewReading: true })).toBe("preview-running");
     expect(startReason({ adopting: true })).toBe("adoption-running");
     expect(startReason({ exportingDiagnostics: true })).toBe("diagnostics-exporting");
@@ -316,6 +318,8 @@ function laneFor(reason: ConversionUnavailableReason): Partial<ConversionLane> {
       return { backendUsable: false };
     case "conversion-running":
       return { laneClaimed: true };
+    case "raw-view-running":
+      return { rawViewRunning: true };
     case "preview-running":
       return { previewReading: true };
     case "configuration-probing":

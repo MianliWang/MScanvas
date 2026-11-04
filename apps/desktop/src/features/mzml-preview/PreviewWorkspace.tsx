@@ -25,6 +25,7 @@ import { NotVerifiedTag } from "./NotVerifiedTag";
 import { WorkspaceRestoreNotice, announceRestore } from "./WorkspaceRestoreNotice";
 import { useWorkspaceRestore } from "./useWorkspaceRestore";
 import { InspectorClose, PreviewMetadata, PreviewSummary } from "./PreviewSummary";
+import { RawViewPane, formatElapsed, ownRawViewState, rawViewFailureText, rawViewFirstAction, rawViewPhaseText, rawViewRefusalText, refuseHeldEnter, shortFileName } from "./RawViewPane";
 import { SelectedSpectrumPanel, describeSpectrumExport } from "./SelectedSpectrumPanel";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { ExportFigureDialog } from "./ExportFigureDialog";
@@ -33,10 +34,12 @@ import { SpectrumTable, scanStepReasonId } from "./SpectrumTable";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
 import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 import { formatCount, formatDatasetLabel } from "./format";
-import { rosterProjection, type WorkspaceNotice } from "./rosterSelection";
-import { reconcileOrganization } from "../workbench/organization";
+import { pressRowActions, rosterProjection, type WorkspaceNotice } from "./rosterSelection";
 import type { WorkspaceAddResult } from "./contracts";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
+
+/** The visible line a viewed RAW file's refused exports point at. */
+const VIEW_EXPORT_WITHHELD_ID = "view-export-withheld";
 
 /** The session workspace: a curated roster of mzML files, and one open preview. */
 export function PreviewWorkspace() {
@@ -85,50 +88,13 @@ export function PreviewWorkspace() {
    * surface the column, and the row *is* the destination.
    */
   const revealInWorkbench = useCallback(
-    (handle: string) => {
+    (handle: string, openList = true) => {
       setSurface("workbench");
-      // A row the list is not showing cannot be revealed, and a reveal that
-      // reveals nothing is worse than no reveal. There are two reasons a row
-      // is not on screen and the reducer treats neither as a press it can
-      // act on, so both are cleared before the row is pressed.
-      //
-      // The search first. Deliberate, and only where it is needed: a row the
-      // query already shows keeps the reader's query exactly as they left it.
-      // A row that has just arrived is never in the projection this render
-      // was drawn from, so an add with a query set always clears it -- which
-      // is the right answer, because the row is the thing they asked to see.
-      if (!rosterProjection(workspace.roster).handles.has(handle)) {
-        workspace.dispatchRoster({ type: "searchCleared" });
-      }
-      // Then the group. A collapsed group drops its rows from the projection
-      // entirely, and the default destination for every new row is a group
-      // that can be collapsed -- so without this, revealing into one is a
-      // navigation that lands on nothing. The handle is named to the
-      // reconciliation as well, because a row that has just arrived is not in
-      // the organization this render was drawn from and belongs to the
-      // ungrouped group until it is.
-      const holding = reconcileOrganization(workspace.roster.organization, [
-        ...workspace.roster.datasets.map((dataset) => dataset.handle),
-        handle,
-      ]).groups.find((group) => group.handles.includes(handle));
-      if (holding?.collapsed === true) {
-        // `disclose` toggles, so this is asked only of a group that is closed.
-        workspace.dispatchRoster({
-          type: "organization",
-          action: { type: "disclose", groupId: holding.id },
-        });
-      }
-      // The same thing pressing the row does: it becomes the focused row and
-      // the highlighted one. It starts no read -- that is the component's
-      // separate response to a press, not the reducer's.
-      workspace.dispatchRoster({
-        type: "rowPressed",
-        handle,
-        modifiers: { ctrl: false, shift: false },
-      });
+      // A reveal that reveals nothing is worse than no reveal.
+      for (const action of pressRowActions(workspace.roster, handle)) workspace.dispatchRoster(action);
       revealToken.current += 1;
       setRevealRow({ handle, token: revealToken.current });
-      if (!rosterOpen && !panels.busy) panels.toggle("roster");
+      if (openList && !rosterOpen && !panels.busy) panels.toggle("roster");
     },
     [panels, rosterOpen, workspace],
   );
@@ -184,6 +150,7 @@ export function PreviewWorkspace() {
             handle: preview.preview.file.handle,
             token: preview.preview.qcSnapshotToken,
             producerIdentified: preview.preview.qcProducerIdentified,
+            viewedThroughCache: preview.preview.viewSource !== null,
           }
         : null,
     [preview],
@@ -197,9 +164,10 @@ export function PreviewWorkspace() {
   useLayoutEffect(() => {
     if (pendingRevealFocus.current && surface === "workbench" && !rosterOpen && !detailsOpen) {
       pendingRevealFocus.current = false;
-      evidenceRef.current?.focus({ preventScroll: true });
+      // A pane's own Show has already handed the keyboard to what replaced it.
+      if (evidenceRef.current?.contains(document.activeElement) !== true) evidenceRef.current?.focus({ preventScroll: true });
     }
-  }, [surface, rosterOpen, detailsOpen]);
+  }, [surface, rosterOpen, detailsOpen, revealRow]);
   /**
    * At 1050 px and below the roster and Details are drawers over the workspace
    * card (spec 3.1). While one is open it is modal: the rest of the card and
@@ -344,7 +312,10 @@ export function PreviewWorkspace() {
   // A conversion is one more reason for all of them. It holds the one backend
   // lane for as long as a process takes and it is reading a row of this very
   // roster, so Rust refuses every mutation while one is under way; these gates
-  // are what stop the interface asking.
+  // are what stop the interface asking. A one-click view holds the same slot.
+  //
+  // While the start-up installation check runs, `backendBusy` keeps both refused
+  // with the visible reason "Checking the installation…".
   const canAcquire =
     !workspace.backendBusy &&
     !workspace.pickerBusy &&
@@ -358,7 +329,8 @@ export function PreviewWorkspace() {
     // one-directional: the project action waits for an import, and an import
     // started during a project action discards itself.
     project.busy !== "admitting" &&
-    !workspace.conversion.busy;
+    !workspace.conversion.busy &&
+    !workspace.rawView.busy;
   // One thing more for the folder action, and only for it. Native page-load
   // start has already superseded work owned by the previous document; the
   // mount-time roster answer is what lets this document begin from a list it
@@ -401,7 +373,9 @@ export function PreviewWorkspace() {
   const canRemove =
     canMutate &&
     !workspace.conversion.adopting &&
-    !queueHandles.some((handle) => roster.selected.has(handle));
+    !queueHandles.some((handle) => roster.selected.has(handle)) &&
+    // The row a view is preparing is held the same way (ADR 0060 decision 5).
+    !(workspace.rawView.state.state === "running" && roster.selected.has(workspace.rawView.state.handle));
   // Reading the list back is not an escape route. It is a pure, gate-linearized
   // snapshot, but during a scan it would add a loading state and a projection
   // whose usefulness depends on whether the scan committed before or after it.
@@ -426,6 +400,7 @@ export function PreviewWorkspace() {
     !workspace.backendBusy &&
     !workspace.previewBackendBusy &&
     (!workspace.conversion.busy || workspace.conversion.adopting) &&
+    !workspace.rawView.busy &&
     !workspace.conversion.backendQuarantined;
   // There is deliberately no `canConvert` here any more. Converting had an
   // expression of its own on this line, strictly wider than the guard the
@@ -469,6 +444,8 @@ export function PreviewWorkspace() {
    * refused workspace actions point at. `null` exactly when none of them is
    * refused, so no control ever points at a reason that is not there.
    */
+  const rawViewRunning = workspace.rawView.state.state === "running" ? workspace.rawView.state : null;
+  const rawViewReason = rawViewRunning === null ? null : t("rawViewBusy", { name: shortFileName(rawViewRunning.fileName) });
   const busyReason = statusBusyReason({
     backendBusy: workspace.backendBusy,
     pickerBusy: workspace.pickerBusy,
@@ -476,6 +453,7 @@ export function PreviewWorkspace() {
     dropBusy: workspace.dropBusy,
     workspaceBusy: workspace.workspaceBusy,
     projectAdmitting: project.busy === "admitting",
+    rawViewBusy: rawViewReason,
     conversionBusy: workspace.conversion.busy,
     rosterLoad: workspace.rosterLoad.status,
   }, t);
@@ -498,10 +476,90 @@ export function PreviewWorkspace() {
    * A vendor row the reader picked: it is never previewed, so the evidence
    * says what it is and offers its one route, conversion (spec 3.6).
    */
-  const focusedVendor = roster.focused === null || !roster.selected.has(roster.focused)
+  const focusedRow = roster.focused === null || !roster.selected.has(roster.focused)
     ? null
-    : roster.datasets.find((row) => row.handle === roster.focused && row.sourceKind !== "mzml") ?? null;
-  const evidenceState = preview.status !== "empty" ? preview.status
+    : roster.datasets.find((row) => row.handle === roster.focused) ?? null;
+  const focusedVendor = focusedRow?.sourceKind === "mzml" ? null : focusedRow;
+  /**
+   * A highlighted Thermo RAW row takes the evidence (ADR 0060 decision 1), over
+   * whatever is open: another row's preview stays held, and comes back with its
+   * row. Its own open or preview is what the evidence shows instead, unless its
+   * own operation has something to say: a Try again or a Reopen runs a view with
+   * progress and Cancel, and a failure or a Ready has its buttons only here.
+   */
+  const previewedHandle = preview.status === "loaded" ? preview.preview.file.handle
+    : preview.status === "empty" ? null : workspace.activeDataset?.handle ?? null;
+  const focusedRaw = focusedVendor?.sourceKind === "thermo_raw" ? focusedVendor : null;
+  const focusedRawOperation = focusedRaw === null ? null : ownRawViewState(workspace.rawView.state, focusedRaw.handle);
+  const rawOperationSpeaks = focusedRawOperation?.state === "running" || focusedRawOperation?.state === "failed"
+    || (focusedRawOperation?.state === "ready" && focusedRawOperation.openable)
+    || workspace.rawView.refusal?.handle === focusedRaw?.handle;
+  const rawPaneRow = focusedRaw !== null && (focusedRaw.handle !== previewedHandle || rawOperationSpeaks) ? focusedRaw : null;
+  const readAgainOffered = preview.status === "failed" && (preview.error.retryable || preview.error.kind === "selection_superseded" || preview.error.kind === "raw_view_not_ready");
+  const rawViewLocalReason = busyReason === null || busyReason === "conversion" || busyReason === rawViewReason ? null : busyReason;
+  const nameOfRow = (handle: string) => roster.datasets.find(row => row.handle === handle)?.fileName ?? null;
+  /** Checks one row and shows the Conversion surface. Nothing is read. */
+  const convertRow = (handle: string) => {
+    workspace.dispatchRoster({ type: "membershipChanged", handles: [handle], checked: true });
+    workspace.setConversionScope("selected");
+    pendingSurfaceFocus.current = "conversion";
+    setSurface("conversion");
+    panels.navigate();
+  };
+  const rawViewFinished = workspace.rawView.state.state === "ready" && workspace.rawView.state.openable ? workspace.rawView.state : null;
+  const rawViewReadyName = rawViewFinished === null || rawViewFinished.handle === rawPaneRow?.handle
+    ? null : nameOfRow(rawViewFinished.handle);
+  /**
+   * A failure the reader has not seen: the row was not on screen when it ended,
+   * or a drawer covered it, where the pane's alert is inert. Written during the
+   * render that shows it, so the bar's line and the alert end the moment the row's
+   * pane says it.
+   */
+  const rawViewFailed = workspace.rawView.state.state === "failed" ? workspace.rawView.state : null;
+  const seenRawViewFailure = useRef<number | null>(null);
+  if (rawViewFailed !== null && surface === "workbench" && drawer === null && rawViewFailed.handle === rawPaneRow?.handle) seenRawViewFailure.current = rawViewFailed.operation;
+  const rawViewFailedUnseen = rawViewFailed !== null && seenRawViewFailure.current !== rawViewFailed.operation ? rawViewFailed : null;
+  const rawViewFailedName = rawViewFailedUnseen === null ? null : nameOfRow(rawViewFailedUnseen.handle);
+  const foldDrawerForRawPane = () => {
+    if (surface !== "workbench" || !constrained || !rosterOpen) return;
+    pendingRevealFocus.current = true;
+    panels.navigate();
+  };
+  /**
+   * Shows a RAW row's pane. Where the list is a drawer it stays folded, or it would
+   * cover the pane, so the row cannot take the keyboard and the evidence does.
+   */
+  const showRawRow = (handle: string) => {
+    pendingRevealFocus.current = constrained;
+    revealInWorkbench(handle, !constrained);
+  };
+  /** The bar's line: what runs, from every surface, or what became ready or failed out of sight. */
+  const rawViewStatus = rawViewRunning !== null ? {
+    text: t("rawViewStatus", { name: shortFileName(rawViewRunning.fileName), elapsed: formatElapsed(rawViewRunning.elapsedMs) }),
+    title: rawViewRunning.fileName,
+    reason: rawViewReason,
+    showLabel: t("rawViewShow", { name: rawViewRunning.fileName }),
+    onShow: () => showRawRow(rawViewRunning.handle),
+  } : rawViewFinished !== null && rawViewReadyName !== null ? {
+    text: t("rawViewReady", { name: shortFileName(rawViewReadyName) }),
+    title: rawViewReadyName,
+    reason: null,
+    showLabel: t("rawViewShow", { name: rawViewReadyName }),
+    onShow: () => showRawRow(rawViewFinished.handle),
+  } : rawViewFailedUnseen !== null && rawViewFailedName !== null ? {
+    text: t("rawViewFailedStatus", { name: shortFileName(rawViewFailedName) }),
+    title: rawViewFailedName,
+    reason: null,
+    showLabel: t("rawViewShow", { name: rawViewFailedName }),
+    onShow: () => showRawRow(rawViewFailedUnseen.handle),
+  } : null;
+  /** What a scan's refused selection says, naming the file a view holds the slot for. */
+  const selectionReason = workspace.spectrumSelection.status !== "unavailable" ? null
+    : workspace.spectrumSelection.reason === "raw-view-running" ? rawViewReason ?? t("rawViewBusyUnnamed")
+    : spectrumSelectionMessage(workspace.spectrumSelection.reason, t);
+  const viewSource = preview.status === "loaded" ? preview.preview.viewSource : null;
+  const exportWithheld = viewSource === null ? null : { reason: t("viewExportWithheldShort"), reasonId: VIEW_EXPORT_WITHHELD_ID };
+  const evidenceState = rawPaneRow !== null ? "raw-view" : preview.status !== "empty" ? preview.status
     // While the list is being read, or could not be, the evidence never sends
     // the reader to a list that has nothing in it yet.
     : roster.datasets.length === 0 ? (workspace.rosterLoad.status === "ready" ? "first-run"
@@ -536,11 +594,38 @@ export function PreviewWorkspace() {
     if (node === null) return;
     return () => { firstRunHeldFocus.current = node.contains(document.activeElement); };
   }, []);
+  // The same for a RAW row's pane, whose Open leaves as the file is read.
   useLayoutEffect(() => {
-    if (evidenceState === "first-run" || !firstRunHeldFocus.current) return;
+    if (evidenceState === "first-run" || evidenceState === "raw-view" || !firstRunHeldFocus.current) return;
     firstRunHeldFocus.current = false;
     if (document.activeElement === null || document.activeElement === document.body) evidenceRef.current?.focus({ preventScroll: true });
   }, [evidenceState]);
+  // And the way in: a press that re-reads a row takes its button with it, from a
+  // failed or open preview or the offer to read it again, so the keyboard continues
+  // at the pane that replaced it. Only the row being read: a pane another row's
+  // removal brought up has not been asked for, and the keyboard has its own way back.
+  const rawPaneOverOwnRead = rawPaneRow !== null && rawPaneRow.handle === (previewedHandle ?? workspace.activeDataset?.handle);
+  useLayoutEffect(() => {
+    if (!rawPaneOverOwnRead || document.activeElement !== document.body) return;
+    evidenceRef.current?.querySelector<HTMLElement>("[data-raw-view-pane] button")?.focus({ preventScroll: true });
+  }, [rawPaneOverOwnRead]);
+  /**
+   * A Show the view's end takes away, in the bar, on a pressed mzML row or on the
+   * Conversion page. Read in the ref's cleanup, as above. The keyboard continues at
+   * the surface on screen, not at the top of the page. A pane's own Show is the
+   * pane's to hand on.
+   */
+  const showHeldFocus = useRef(false);
+  const rawViewShowRef = useCallback((node: HTMLButtonElement | null) => {
+    if (node === null) return;
+    return () => { if (node === document.activeElement) showHeldFocus.current = true; };
+  }, []);
+  useLayoutEffect(() => {
+    if (!showHeldFocus.current) return;
+    showHeldFocus.current = false;
+    if (document.activeElement !== null && document.activeElement !== document.body) return;
+    document.getElementById(surface === "workbench" ? "workbench-evidence" : `workbench-${surface}`)?.focus({ preventScroll: true });
+  });
 
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {
@@ -836,11 +921,20 @@ export function PreviewWorkspace() {
       <p aria-live="polite" className="visually-hidden" data-live-region="conversion">
         {announceConversion(workspace.conversion, t)}
       </p>
+      <p aria-live="polite" className="visually-hidden" data-live-region="raw-view">
+        {announceRawView(workspace, rawPaneRow?.handle ?? null, nameOfRow, t)}
+      </p>
+      {/* A failure is an alert, once (decision 1): the pane's own while its row is
+          on screen, this one for a row that is not. Mounted for the same reason as
+          the regions above. */}
+      <p role="alert" className="visually-hidden" data-live-region="raw-view-alert">
+        {rawViewFailedUnseen === null ? "" : rawViewFailureText(rawViewFailedUnseen, t)}
+      </p>
       <p aria-live="polite" className="visually-hidden" data-live-region="restore">
         {announceRestore(restore, t)}
       </p>
 
-      {activeClear !== null ? <ActiveClearDialog returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onEmptyRosterClosed={claim => {
+      {activeClear !== null ? <ActiveClearDialog viewHolds={workspace.rawView.busy} returnTo={activeClear.returnTo} onClose={() => setActiveClear(null)} onEmptyRosterClosed={claim => {
         if (focusReturnOwnerLive.current) setActiveClearFocusReturn(claim); else claim.release();
       }} onExecute={workspace.executeActiveClear} /> : null}
       {figureDialog !== null ? <ExportFigureDialog
@@ -893,6 +987,17 @@ export function PreviewWorkspace() {
               // so widening the window brings the roster back.
               panels.navigate();
             }}
+            // Where the roster is a drawer it would cover the row's pane, so the
+            // drawer folds and the keyboard moves to the pane (ADR 0060 decision 1).
+            onRawHighlighted={foldDrawerForRawPane}
+            onReadHeld={rawViewRunning === null ? undefined : foldDrawerForRawPane}
+            onRawEnter={handle => {
+              foldDrawerForRawPane();
+              if (rawPaneRow?.handle !== handle) return;
+              const action = rawViewLocalReason !== null ? null : rawViewFirstAction(workspace.rawView, handle);
+              if (action === "view" || action === "retry") workspace.rawView.begin(handle);
+              if (action === "open" && canPreview && rawViewFinished !== null) workspace.openRawView(rawViewFinished.operation, handle);
+            }}
             onAddFiles={workspace.addFiles}
             // The first run's one primary (spec 3.3, 3.6): while the roster is
             // on screen the evidence leaves the Add actions to it.
@@ -912,7 +1017,7 @@ export function PreviewWorkspace() {
             }}
             canRemove={canRemove}
             onClearList={(returnTo) => {
-              if (!workspace.conversion.busy) return workspace.clearList();
+              if (!workspace.conversion.busy && !workspace.rawView.busy) return workspace.clearList();
               // From the list menu the item that was pressed is leaving; the
               // confirmation returns to the menu's trigger instead.
               setActiveClear({ returnTo: returnTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null) });
@@ -975,6 +1080,14 @@ export function PreviewWorkspace() {
             buildRelease={backendView.names?.release ?? null}
             liveDatasetHandles={liveDatasetHandles}
             onShowInWorkbench={revealInWorkbench}
+            rawViewHolder={rawViewRunning === null || rawViewReason === null ? null : {
+              reason: rawViewReason,
+              title: rawViewRunning.fileName,
+              showText: t("rawViewShow", { name: shortFileName(rawViewRunning.fileName) }),
+              showLabel: t("rawViewShow", { name: rawViewRunning.fileName }),
+              onShow: () => showRawRow(rawViewRunning.handle),
+              showRef: rawViewShowRef,
+            }}
             hidden={runHistoryOpen}
             onOpenHistory={() => setRunHistoryOpen(true)}
           />
@@ -992,11 +1105,11 @@ export function PreviewWorkspace() {
         </section>
         <section id="workbench-evidence" ref={evidenceRef} tabIndex={-1} className="workbench-evidence" hidden={surface !== "workbench"}
           inert={drawer !== null || undefined} data-evidence={evidenceState} aria-labelledby="surface-title-workbench">
-        {preview.status === "loaded" ? (
+        {preview.status === "loaded" && rawPaneRow === null ? (
           // Direction A's file row: the surface's title is the file being
           // read, then its three views as tabs. One view is mounted at a time;
           // what it shows lives in the workspace, so a switch loses nothing.
-          <div className="viewer-file">
+          <div className="viewer-file" data-viewed={viewSource === null ? undefined : ""}>
             <div className="viewer-file-title">
               <h1 id="surface-title-workbench" className="viewer-file-name" title={formatDatasetLabel(previewFile ?? preview.preview.file)}>
                 {formatDatasetLabel(previewFile ?? preview.preview.file)}
@@ -1005,17 +1118,27 @@ export function PreviewWorkspace() {
                   name (ADR 0055; owner decision A0055 (a)). */}
               <NotVerifiedTag label={(previewFile ?? preview.preview.file).notVerifiedByMscanvas} />
             </div>
+            {/* Decision 11's provenance is ADR 0060 slice 4: until an export can
+                name the RAW and the conversion, a view exports nothing, and this
+                line is what every refused export points at. */}
+            {viewSource === null ? null : <div className="viewer-file-facts">
+              {viewSource.verified ? null : <NotVerifiedTag label={{ unverifiedSettings: false, unverifiedBuildRelease: viewSource.unverifiedBuildRelease }} />}
+              <p id={VIEW_EXPORT_WITHHELD_ID} className="viewer-file-note" data-view-export-withheld="">{t("viewExportWithheld")}</p>
+            </div>}
             <Tabs className="viewer-tabs" label={t("viewerViews")} value={viewerView} onChange={setViewerView} items={[
               { value: "spectra", label: t("viewerTabSpectra") },
               { value: "scans", label: t("viewerTabScans") },
               { value: "metadata", label: t("viewerTabMetadata") },
-            ]}>
+            ]} actions={viewSource === null ? undefined : <div className="viewer-file-actions">
+              <Button size="sm" data-raw-view-convert="" onClick={() => convertRow(preview.preview.file.handle)}>{t("rawViewConvert")}</Button>
+            </div>}>
               {viewerView === "metadata" ? (
                 <PreviewMetadata
                   file={previewFile ?? preview.preview.file}
                   metadata={preview.preview.metadata}
                   runSummary={preview.preview.runSummary}
                   spectrumListTotal={preview.preview.spectrumTable.totalRowCount}
+                  viewSource={viewSource}
                 />
               ) : (
                 <div className="viewer-view" data-view={viewerView}>
@@ -1033,6 +1156,7 @@ export function PreviewWorkspace() {
                     exportTools={
                       workspace.chromatogramExportToken === null ? undefined : leadingItems => (
                         <ChromatogramExportTools
+                          withheld={exportWithheld}
                           leadingItems={leadingItems}
                           figureSettingsValidation={workspace.figureSettingsValidation}
                           linkedUnavailable={workspace.linkedFigureUnavailable}
@@ -1066,6 +1190,7 @@ export function PreviewWorkspace() {
                       table={preview.preview.spectrumTable}
                     />
                     <SelectedSpectrumPanel
+                      exportWithheld={exportWithheld}
                       onOpenFigure={() => openFigure("spectrum")}
                       // What would make a choice possible, in a few words; the
                       // full sentence is the controls' description (once).
@@ -1073,6 +1198,7 @@ export function PreviewWorkspace() {
                         : workspace.spectrumSelection.reason === "backend-unavailable" ? t("viewerSelectNeedsBackend")
                         : workspace.spectrumSelection.reason === "backend-changing" ? t("viewerSelectAfterCheck")
                         : workspace.spectrumSelection.reason === "conversion-running" ? t("viewerSelectAfterConversion")
+                        : workspace.spectrumSelection.reason === "raw-view-running" ? selectionReason
                         : null}
                       dispatchViewport={workspace.dispatchSpectrumViewportEvent}
                       exportState={workspace.spectrumExport}
@@ -1125,9 +1251,7 @@ export function PreviewWorkspace() {
                   : undefined
               }
             >
-              {workspace.spectrumSelection.status === "unavailable"
-                ? spectrumSelectionMessage(workspace.spectrumSelection.reason, t)
-                : ""}
+              {selectionReason ?? ""}
             </p>
           </div>
         ) : (
@@ -1135,7 +1259,32 @@ export function PreviewWorkspace() {
             <h1 id="surface-title-workbench" className="surface-title visually-hidden">{t("workbench")}</h1>
             {/* Each state centred in the card (spec 3.6): what is missing, and
                 the buttons that fill it. No paragraph explains the interface. */}
-            {preview.status === "opening" ? (
+            {rawPaneRow !== null ? (
+              // Keyed so a state after it is a new node, not this one reused: the
+              // ref's cleanup has to see the keyboard before the pane's buttons go.
+              <div key="raw-pane" className="raw-view-pane" ref={firstRunActions}>
+                <RawViewPane
+                  row={rawPaneRow}
+                  view={workspace.rawView}
+                  localReason={rawViewLocalReason}
+                  runningName={rawViewRunning !== null && rawViewRunning.handle !== rawPaneRow.handle ? rawViewRunning.fileName : null}
+                  canOpen={canPreview}
+                  openReasonId={previewReasonId}
+                  // Another row's read has no line of its own anywhere else.
+                  openReason={workspace.previewBackendBusy ? t("readingSelected") : null}
+                  onOpen={operation => workspace.openRawView(operation, rawPaneRow.handle)}
+                  onConvert={() => convertRow(rawPaneRow.handle)}
+                  onChooseFolder={workspace.chooseInstallation}
+                  onShowBackend={() => setBackendOpen(true)}
+                  onShowConversion={() => {
+                    pendingSurfaceFocus.current = "conversion";
+                    setSurface("conversion");
+                    panels.navigate();
+                  }}
+                  onShowRunning={() => { if (rawViewRunning !== null) showRawRow(rawViewRunning.handle); }}
+                />
+              </div>
+            ) : preview.status === "opening" ? (
               // The final layout's shape while the file is read (S2): the file
               // row, then empty plot frames and table rows where they will be.
               // ponytail: no Cancel; reading has no cancel path in Rust yet, and
@@ -1161,11 +1310,16 @@ export function PreviewWorkspace() {
                 // said the failure was retryable -- and it repeats the step that
                 // actually failed. A superseded open is not retryable as such,
                 // but where it is the one on screen (two opens can reach Rust
-                // out of order) reading the row again is the way on.
-                action={(preview.error.retryable || preview.error.kind === "selection_superseded") && workspace.activeDataset !== null ? (
-                  <Button variant="secondary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
-                    {t("retryEvidence")}
-                  </Button>
+                // out of order) reading the row again is the way on. So it is for a
+                // view no longer ready, whose own sentence says to view the file again.
+                action={(readAgainOffered || workspace.activeDataset?.sourceKind === "thermo_raw") && workspace.activeDataset !== null ? (
+                  <div className="evidence-actions" onKeyDownCapture={refuseHeldEnter}>
+                    {readAgainOffered ? <Button variant="secondary" refused={!canPreview} reasonId={previewReasonId} onClick={workspace.previewActiveAgain}>
+                      {t("retryEvidence")}
+                    </Button> : null}
+                    {/* Decision 10: the route with full diagnostics is always there. */}
+                    {workspace.activeDataset.sourceKind === "thermo_raw" ? <Button data-raw-view-convert="" onClick={() => convertRow(workspace.activeDataset?.handle ?? "")}>{t("rawViewConvert")}</Button> : null}
+                  </div>
                 ) : undefined}
               />
             ) : evidenceState === "first-run" ? (
@@ -1203,15 +1357,9 @@ export function PreviewWorkspace() {
                   <strong>{formatDatasetLabel(focusedVendor)}</strong>
                   <span id="preview-needs-conversion-description">{`${SOURCE_KIND_LABEL[focusedVendor.sourceKind]} · ${t("needsConversion")}`}</span>
                 </>}
-                action={<Button variant="primary" onClick={() => {
-                  // Checks this row and keeps every other check, then shows the
-                  // checked rows on the Conversion surface. Nothing is read.
-                  workspace.dispatchRoster({ type: "membershipChanged", handles: [focusedVendor.handle], checked: true });
-                  workspace.setConversionScope("selected");
-                  pendingSurfaceFocus.current = "conversion";
-                  setSurface("conversion");
-                  panels.navigate();
-                }}>
+                // Checks this row and keeps every other check, then shows the
+                // checked rows on the Conversion surface. Nothing is read.
+                action={<Button variant="primary" onClick={() => convertRow(focusedVendor.handle)}>
                   {t("openInConversion")}
                 </Button>}
               />
@@ -1234,6 +1382,16 @@ export function PreviewWorkspace() {
                     {t("evidenceShowAcquisitions")}
                   </Button>
                 ) : undefined}
+              />
+            ) : rawViewRunning !== null && focusedRow?.sourceKind === "mzml" ? (
+              // The row was pressed and a view holds the slot, so nothing was read
+              // (decision 5). "Select a row" would be wrong: one was just selected.
+              <EmptyState
+                className="evidence-state"
+                message={<><Icon name="clock" size={28} /><strong data-raw-view-held="" title={rawViewRunning.fileName}>{rawViewReason}</strong></>}
+                action={<Button ref={rawViewShowRef} aria-label={t("rawViewShow", { name: rawViewRunning.fileName })} onClick={() => showRawRow(rawViewRunning.handle)}>
+                  {t("rawViewShow", { name: shortFileName(rawViewRunning.fileName) })}
+                </Button>}
               />
             ) : (
               <EmptyState
@@ -1276,7 +1434,7 @@ export function PreviewWorkspace() {
               onShowInWorkbench={revealInWorkbench}
               onClose={() => closeDrawer(false)}
             />
-          ) : preview.status === "loaded" ? (
+          ) : preview.status === "loaded" && rawPaneRow === null ? (
             <PreviewSummary
               chromatogramScanCount={workspace.scanModel.status === "ready" ? workspace.scanModel.points.length : null}
               file={previewFile ?? preview.preview.file}
@@ -1293,7 +1451,7 @@ export function PreviewWorkspace() {
           )}
         </aside>
       </main>
-      <WorkbenchStatusBar backend={backendItem} items={statusItems} busy={busyReason}
+      <WorkbenchStatusBar backend={backendItem} items={statusItems} busy={busyReason} rawView={rawViewStatus} rawViewShowRef={rawViewShowRef}
         dropStatus={workspace.dropSubscriptionStatus} onNavigate={setSurface} inert={drawer !== null}
         // Connectivity is not a failed import: Rust may still hold a valid
         // roster and the picker actions remain usable, so its recovery stays
@@ -1368,6 +1526,36 @@ function announceDrop(workspace: ReturnType<typeof usePreviewWorkspace>, t: UiMe
     case "idle": return "";
     case "hovering": return t("dropRelease", { count: workspace.dropPresentation.itemCount });
     case "importing": return t("dropImportStatus");
+  }
+}
+
+/**
+ * What a reader hears about a view (ADR 0060 decision 1): each phase, the open,
+ * and a Ready or a failure they are not looking at. The elapsed time is not
+ * announced, and a failure on screen is the pane's own alert.
+ */
+function announceRawView(workspace: ReturnType<typeof usePreviewWorkspace>, shown: string | null, nameOf: (handle: string) => string | null, t: UiMessage): string {
+  // A press Rust refused is heard as well as read: no state changed to say it.
+  const { state, refusal } = workspace.rawView;
+  if (refusal !== null) return rawViewRefusalText(refusal.error.kind, state.state === "running" ? state.fileName : null, t);
+  switch (state.state) {
+    case "running":
+      return t("rawViewPhaseAnnounce", { name: state.fileName, phase: rawViewPhaseText(state.phase, t) });
+    case "ready": {
+      const { preview } = workspace;
+      if (!state.openable && preview.status === "loaded" && preview.preview.viewSource !== null && preview.preview.file.handle === state.handle) {
+        return t("rawViewOpened", { name: preview.preview.file.fileName });
+      }
+      const name = nameOf(state.handle);
+      return state.openable && state.handle !== shown && name !== null ? t("rawViewReady", { name }) : "";
+    }
+    // The alert says a failure, the pane's or the one for a row out of sight.
+    case "failed":
+      return "";
+    case "cancelled":
+      return t(state.stored ? "rawViewCancelledStored" : "rawViewCancelledEmpty");
+    case "idle":
+      return "";
   }
 }
 

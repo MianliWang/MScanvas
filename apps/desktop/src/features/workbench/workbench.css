@@ -73,6 +73,9 @@
 .status-icon[data-tone="attention"] { color: var(--color-warning); }
 .status-icon[data-tone="danger"] { color: var(--color-danger); }
 .status-busy { flex: none; overflow: hidden; padding: 0 4px; color: var(--color-text-primary); text-overflow: ellipsis; white-space: nowrap; }
+/* A view under way: its sentence gives way before its one button does. */
+.status-raw-view { display: flex; flex: 0 1 auto; min-width: 0; align-items: center; gap: 6px; padding: 0 4px; color: var(--color-text-primary); }
+.status-raw-view .ui-button { flex: none; }
 .status-layout { display: flex; min-width: 0; align-items: center; gap: 6px; margin: 0; }
 .workbench-status .workspace-drop-hint { flex: 0 1000 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The notice gives way; its one recovery does not. */
@@ -86,6 +89,12 @@
    boxed again (GOALS V12); the first run's dashed drop target is a cue, not a
    region, as v5.11's own dashed .module-empty is inside its cards. */
 .workbench-shell .workspace-layout { grid-area: content; position: relative; display: grid; gap: 0; margin: 8px 24px; padding: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+/* The card clips what is drawn outside it, so a region's own ring stays inside. */
+.workbench-shell .workspace-layout > [tabindex]:focus-visible { outline-offset: -2px; }
+/* What a main region holds is positioned and opaque, and paints over that ring, and
+   a layer inside the region would scroll away. So the card draws the ring, over the
+   region's area and under its own drawers. */
+.workbench-shell .workspace-layout:has(> :is(.workbench-evidence, .workbench-conversion, .workbench-project):focus-visible)::after { content: ""; position: absolute; z-index: 2; inset: 0; grid-area: main; outline: 2px solid var(--color-focus); outline-offset: -2px; pointer-events: none; }
 .workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr); grid-template-areas: "roster main"; }
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }
 .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }
@@ -463,6 +472,32 @@
 .viewer-skeleton > [aria-hidden="true"] { animation: viewer-skeleton-in 120ms linear 300ms both; }
 @keyframes viewer-skeleton-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .viewer-skeleton > [aria-hidden="true"] { animation-duration: 1ms; } }
+/* A Thermo RAW row's pane (ADR 0060). Running is the viewer's frame, empty, with
+   the phase over it; its line waits 300 ms like the frames, and Cancel does not. */
+.raw-view-pane { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; }
+.raw-view-reason { color: var(--color-warning); font-weight: 600; }
+.raw-view-progress { grid-template-rows: auto minmax(0, 2fr) minmax(0, 3fr); }
+.raw-view-progress:has(.raw-view-note) { grid-template-rows: auto auto minmax(0, 2fr) minmax(0, 3fr); }
+.raw-view-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; min-height: 36px; }
+.raw-view-head .viewer-skeleton-name { flex: 0 1 auto; min-width: 0; padding: 0; }
+.raw-view-phase { display: flex; flex: 1 1 240px; align-items: center; gap: 8px; min-width: 0; color: var(--color-text-secondary); font-size: 12px; animation: viewer-skeleton-in 120ms linear 300ms both; }
+.raw-view-elapsed { color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+.raw-view-bar { flex: 1 1 120px; min-width: 60px; }
+.raw-view-note { margin: 0; color: var(--color-warning); font-size: 12px; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .raw-view-phase { animation-duration: 1ms; } }
+/* A viewed RAW file's file row. Only the name gives way (it has an ellipsis); the label and the
+   sentence every refused export points at have the line below, which can wrap and never clips. */
+.viewer-file[data-viewed] { grid-template-columns: minmax(48px, max-content) auto minmax(min-content, 1fr); grid-template-rows: 36px auto minmax(0, 1fr); }
+.viewer-file[data-viewed] .viewer-tabs > .ui-tabpanel { grid-row: 3; }
+.viewer-file-actions { display: flex; grid-row: 1; grid-column: 3; align-items: center; justify-content: flex-end; padding: 0 12px; }
+.raw-view-pane:focus { outline: none; }
+.raw-view-pane:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.raw-view-notice { align-items: center; justify-content: space-between; }
+.raw-view-notice p { margin: 0; }
+.viewer-file-facts { display: flex; flex-wrap: wrap; grid-row: 2; grid-column: 1 / -1; align-items: center; gap: 2px 8px; padding: 2px 12px 4px; }
+.viewer-file-facts .not-verified-tag { flex: none; white-space: nowrap; }
+.viewer-file-note { margin: 0; color: var(--color-warning); font-size: 12px; font-weight: 600; }
+.metadata-digest { font-family: var(--font-mono); overflow-wrap: anywhere; }
 /* Evidence states (spec 3.6), centred in the card: an icon, one heading, a
    row of buttons. */
 .evidence-state { flex: 1 1 auto; min-height: 0; }
