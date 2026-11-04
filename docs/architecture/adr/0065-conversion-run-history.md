@@ -406,9 +406,13 @@ store now does with such a sibling:
   junction or a link at such a name, every other name (`.owner-pending-*` included)
   and every other store's siblings.
 - **When.** No start and no list removes one while recording. While Off holds, its
-  sweep runs at each start and list, so one that has aged goes then. The interface
+  sweep runs at each start and list, so one that has aged goes then. Otherwise only
+  the moment of a Clear or an Off judges its age, so one too young at the last of
+  them stays until another comes, and stays for good if none does. The interface
   refuses Clear while there is nothing to clear (section 10), so a sibling with no
-  run listed beside it waits for a later run's Clear, or for Off.
+  run listed beside it waits for a later run's Clear, or for Off. That includes one
+  a holder kept from a Clear: the answer says it remains, and the next read refuses
+  Clear as having nothing to clear.
 - **One that cannot be removed** counts in `notRemoved`, as a file kept aside does.
   The sweep goes on, no run's outcome changes, and one already gone counts as
   removed. The list read after it has no row for a sibling, so only the answer says
@@ -417,9 +421,12 @@ store now does with such a sibling:
 - **A session suspended for over 24 hours** between creating its sibling and
   publishing it. On Windows its handle shares reading only, so the sibling cannot
   go while the session lives: Clear and Off answer `notRemoved`, and its publish
-  lands when it wakes (tested). Elsewhere, from reading the code and not run: the
-  name goes, the rename fails, `publish` retries through a new sibling, and a write
-  still refused is kept for the next one (`ActiveRun::unwritten`).
+  lands when it wakes. A test holds a handle opened the same way and calls the
+  handle-bound rename after the refused removals; the suspension is simulated, and
+  `publish` itself does not run through it. If Off still holds when it wakes, the
+  first corner above applies. Elsewhere, from reading the code and not run: the name
+  goes, the rename fails, `publish` retries through a new sibling, and a write still
+  refused is kept for the next one (`ActiveRun::unwritten`).
 - **Why this differs from restore workspace:** see Residue under
   [Consequences](#consequences).
 
@@ -529,6 +536,9 @@ shows the queue.
   be removed it says how many, and the list read after it shows what remains. A
   Clear or an Off that fails after its view has gone is said once by the next
   view of that kind.
+  - *Note, 2026-11-04:* a private sibling that could not be removed (the note after
+    section 7's list) has no row, so the list read after it does not show it, and
+    only the answer says it remains. As built on 2026-11-04, not an owner decision.
 - **Off** is a button in Settings, not one of the dialog's segmented controls:
   those choose as the arrow keys pass over them, and Off forgets. Settings reads
   the switch each time it opens and refuses the button with its reason while it
@@ -575,8 +585,10 @@ row says something else for that state, which is a separate, existing problem.
     [OWNER_DECISIONS_V511.md](../../development/OWNER_DECISIONS_V511.md) section
     1c). Run history removes its old ones and shows no count, because this file
     holds full paths and the 24-hour rule removes the reason for not deleting: a
-    live write from another instance does not stay untouched that long. Making
-    either match the other takes a new owner answer.
+    live write from another instance does not stay untouched that long. One that
+    does, in a suspended session, is protected by its writer's handle on Windows,
+    not by its age (section 7's note). Making either match the other takes a new
+    owner answer.
 
 ## Open questions for the owner
 
