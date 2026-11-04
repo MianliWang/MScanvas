@@ -958,11 +958,11 @@ describe("what the restore live region says", () => {
   it("says why the workspace refused a put-back", async () => {
     const api = createFakePreviewApi({ workspaceRestore: {
       readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw")])),
-      restoreWorkspace: () => Promise.reject(previewError({ kind: "conversion_busy" })),
+      restoreWorkspace: () => Promise.reject(previewError({ kind: "conversion_busy", summary: "A conversion is running." })),
     } });
     mount(api);
     fireEvent.click(await restoreAction());
-    await waitFor(() => expect(region()).toHaveTextContent(en.workspaceFailed));
+    await waitFor(() => expect(region()?.textContent).toBe("The workspace could not be changed. A conversion is running."));
     expect(offerNotice()).toHaveTextContent(en.restoreAction);
   });
 
@@ -991,7 +991,7 @@ describe("what the restore live region says", () => {
     const session = { reading: { status: "ready", read: offered([row("restored-0", "a.raw")]) }, work: null, slowRead: false, slowWork: false, acted: false, putBackAsked: false, problem: null, stopped: null, failed: [], expiredDismissed: false } as unknown as WorkspaceRestoreSession;
     const failure = previewError({ kind: "unexpected_error" });
     expect(announceRestore(session, t, failure)).toBe("restoreOffer");
-    expect(announceRestore({ ...session, putBackAsked: true }, t, failure)).toContain("workspaceFailed");
+    expect(announceRestore({ ...session, putBackAsked: true }, t, failure)).toBe("messageWithDetail");
   });
 
   it("says a failure from Settings once, in the page's region, with no alert of its own", async () => {

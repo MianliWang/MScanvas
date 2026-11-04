@@ -499,8 +499,8 @@
    gives up height first, down to its 36 px, so the answers above it and the offer's
    buttons stay on screen and a row of any height can be reached. Past that the
    track scrolls too, and may show less than one row whole, also with no refusal
-   standing: a neutral notice does not relax its bound. The list's padding and the
-   scroll margin keep a focus ring inside it.
+   standing: a neutral notice does not relax its bound. A row's focus ring is drawn
+   inset: the list's top edge and the next row would cover one outside.
    Each part of a row may take a line of its own and wrap there: a group name can
    be 120 characters, and the file's name and reason still show. */
 .restore-notice .ui-button { flex: none; }
@@ -511,6 +511,7 @@
 .restore-marked ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .restore-marked li { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
 .restore-marked .ui-icon-button { flex: none; width: 26px; height: 26px; min-width: 26px; min-height: 26px; padding: 0; scroll-margin-block: 6px; }
+.restore-marked .ui-icon-button:focus-visible { outline-offset: -2px; }
 .restore-marked-text { display: flex; flex: 1; flex-wrap: wrap; gap: 0 8px; min-width: 0; padding-block: 3px; }
 .restore-marked-name, .restore-marked-group, .restore-marked-reason { min-width: 0; overflow-wrap: anywhere; }
 .restore-marked-name { color: var(--color-text-primary); font-weight: 600; }

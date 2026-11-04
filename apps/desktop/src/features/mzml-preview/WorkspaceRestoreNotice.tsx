@@ -1,4 +1,4 @@
-import { Fragment, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Button, Icon, IconButton, Toolbar } from "../../components/ui";
 import type { MessageKey, UiMessage } from "../preferences/i18n";
@@ -96,7 +96,7 @@ export function announceRestore(session: WorkspaceRestoreSession, t: UiMessage, 
   if (work === "reading" || (work === null && session.slowRead)) return t("restoreLoading");
   if (work === "restoring" && offered > 0) return t("restoreWorking", { count: offered });
   if (session.slowWork) return t("restoreBusy");
-  if (workspaceError !== null && session.putBackAsked) return `${t("workspaceFailed")} ${ownedErrorMessage(workspaceError, t)}`;
+  if (workspaceError !== null && session.putBackAsked) return t("messageWithDetail", { message: t("workspaceFailed"), detail: ownedErrorMessage(workspaceError, t) });
   const problem = session.failed.at(-1)?.problem ?? session.problem ?? session.stopped;
   if (problem !== null) {
     const { title, detail } = explainRestoreProblem(problem, t);
@@ -165,13 +165,19 @@ export function WorkspaceRestoreNotice({ session, canRestore, reason }: {
       ?? document.querySelector<HTMLElement>("[data-settings-return-target]"));
   });
 
-  // An answer above takes height, a put-back's by the time its press ends: what
-  // the keyboard is on stays in view, a row or a button of the offer.
-  const answers = session.failed.length;
-  useLayoutEffect(() => {
-    const active = document.activeElement;
-    if (active?.closest(".shell-notices")) active.scrollIntoView?.({ block: "nearest" });
-  }, [answers, problem, session.slowWork, stopped, work]);
+  // Anything in the track can take height, a put-back's answer or a folder scan's:
+  // what the keyboard is on stays in view, a row or a button of the offer. Class
+  // too, because the slow line shows by its class.
+  useEffect(() => {
+    const track = document.querySelector(".shell-notices");
+    if (track === null) return undefined;
+    const observer = new MutationObserver(() => {
+      const active = document.activeElement;
+      if (track.contains(active)) active?.scrollIntoView?.({ block: "nearest" });
+    });
+    observer.observe(track, { childList: true, subtree: true, characterData: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
 
   /** The refused or unavailable record's line, put away for this session. */
   const [readDismissed, setReadDismissed] = useState(false);

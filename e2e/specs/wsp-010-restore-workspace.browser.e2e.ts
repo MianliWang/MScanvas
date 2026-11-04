@@ -696,7 +696,7 @@ describe("WSP-010 Restore workspace, rendered", () => {
     await action.click();
     await browser.$(".shell-notices > .notice-danger").waitForDisplayed();
     expect(await action.isDisplayed()).toBe(true);
-    expect(await browser.$('[data-live-region="restore"]').getProperty("textContent")).toContain(en.workspaceFailed);
+    expect(await browser.$('[data-live-region="restore"]').getProperty("textContent")).toBe("The workspace could not be changed. A conversion is running.");
     await expectCleanConsole();
   });
 
@@ -749,6 +749,53 @@ describe("WSP-010 Restore workspace, rendered", () => {
   });
 
   for (const size of [[960, 640], [1366, 768]] as const) {
+    it(`keeps the first marked row's whole focus ring in the list at ${String(size[0])}x${String(size[1])}`, async () => {
+      await start({ read_workspace_restore: MARKED }, [], [], size);
+      await browser.$("[data-restored-row]").waitForDisplayed();
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-restore-dismiss]")?.focus());
+      expect(await browser.execute(() => {
+        const dismiss = document.querySelector("[data-restore-dismiss]");
+        const next = document.querySelectorAll("[data-restore-dismiss]")[1];
+        const list = document.querySelector(".restore-marked");
+        if (dismiss === null || next === undefined || list === null) return null;
+        const ring = getComputedStyle(dismiss);
+        const reach = parseFloat(ring.outlineOffset) + parseFloat(ring.outlineWidth);
+        const box = dismiss.getBoundingClientRect();
+        return { visible: dismiss.matches(":focus-visible"), top: box.top - reach >= list.getBoundingClientRect().top - 0.5, bottom: box.bottom + reach <= next.getBoundingClientRect().top + 0.5 };
+      })).toEqual({ visible: true, top: true, bottom: true });
+      await expectCleanConsole();
+    });
+
+    it(`keeps the row the keyboard is on whole as a folder scan starts and answers at ${String(size[0])}x${String(size[1])}`, async () => {
+      const answer = { roster: { datasets: [MZML_ROW], capacity: 1024 }, outcomes: [{ outcome: "added", dataset: MZML_ROW }], discovery: { complete: true, skippedReparseCount: 0, inaccessibleEntryCount: 0, limitsReached: [] } };
+      await start({ read_workspace_restore: read([row(0, "QC_01.raw", "matching"), ...ROW_STATES.map((state, index) => row(index + 1, `run_${String(index)}.raw`, state))], 3), dismiss_restored_row: null, begin_mzml_folder_import: { reservationId: "restore-folder" }, choose_mzml_folder: answer }, [], ["choose_mzml_folder"], size);
+      await browser.$("[data-restored-row]").waitForDisplayed();
+      const keyboard = () => browser.execute(() => {
+        const box = document.activeElement?.getBoundingClientRect();
+        const list = document.querySelector(".restore-marked")?.getBoundingClientRect();
+        const track = document.querySelector(".shell-notices")?.getBoundingClientRect();
+        if (box === undefined || list === undefined || track === undefined) return null;
+        return { label: document.activeElement?.getAttribute("aria-label"), whole: box.top >= Math.max(list.top, track.top) - 0.5 && box.bottom <= Math.min(list.bottom, track.bottom) + 0.5 };
+      });
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-restore-dismiss]")?.focus());
+      await browser.keys("ArrowDown");
+      await browser.keys("ArrowDown");
+      // Not modal for its whole length: both notices arrive with the keyboard in the list.
+      await browser.waitUntil(async () => browser.execute((label: string) => {
+        const button = [...document.querySelectorAll<HTMLElement>("button")].find(entry => entry.textContent === label && entry.getAttribute("aria-disabled") === null);
+        button?.click();
+        return button !== undefined;
+      }, en.addFolder));
+      await browser.waitUntil(async () => (await browser.$(".shell-notices").getText()).includes(en.folderBusy));
+      expect(await keyboard()).toEqual({ label: "Dismiss run_2.raw", whole: true });
+      await releaseInvokeHold("choose_mzml_folder");
+      await browser.$(`[data-handle="${MZML_ROW.handle}"]`).waitForExist();
+      expect(await keyboard()).toEqual({ label: "Dismiss run_2.raw", whole: true });
+      await browser.keys("Enter");
+      await browser.waitUntil(async () => (await calls("dismiss_restored_row")).length === 1);
+      expect((await calls("dismiss_restored_row"))[0]?.args["handle"]).toBe("restored-3");
+    });
+
     it(`keeps the stored order of groups through a put-back in two parts at ${String(size[0])}x${String(size[1])}`, async () => {
       const second = { ...MZML_ROW, handle: "file-second" };
       const stored = (a: readonly unknown[], b: readonly unknown[]) => ({ outcome: "restored", groups: [{ name: null, rows: [] }, { name: "Batch A", rows: a }, { name: "Batch B", rows: b }], expired: 0, leftoverCopies: 0 });
