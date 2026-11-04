@@ -825,8 +825,8 @@ None can be delivered by engineering alone; each waits for one input.
   [ADR 0067](../architecture/adr/0067-study-model-for-cross-sample-analysis.md)
   is accepted with the owner's answers to its ten questions. It supersedes ADR
   0050 for study recipes only, and its records join schema 5 if they merge before
-  a release writes it. A0067-D6, S-6.6-types, S-6.4-home and S-6.3-experiment
-  stay open.
+  a release writes it. The owner answered A0067-D6, S-6-TYPES, S-6-HOME,
+  S-6-EXPERIMENT and EXP-22-ROSTER on 2026-11-04, in that record's dated notes.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted. *Drafted 2026-10-30 as

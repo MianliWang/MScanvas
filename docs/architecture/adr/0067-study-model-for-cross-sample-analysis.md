@@ -8,10 +8,11 @@ of those answers is section 1d of
 PR #212, merged on 2026-11-04. The owner directed on 2026-10-30 that analysis is no
 longer deferred and is to be planned and built (G1), and that amendment is on
 `main` (#194). Nothing here is implemented, and nothing here reaches the
-interface. The answers decide this record's ten questions and the ids listed
+interface. On 2026-11-04 the owner answered five more ids in round two of the
+decision page (version 2026-11-04.1), which this record carries in dated notes
+and in that list. The answers decide this record's ten questions and the ids listed
 with them, and nothing else: what stays open is listed there too, and text that
-rests on an open item is named there, in decision 1's dated lines or in decision
-6's hold line.
+rests on an open item is named there or in its own dated line.
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the session-only
 workspace), [0016](0016-explicit-converted-output-adoption.md) (explicit
 adoption), [0028](0028-figure-renderer-and-semantic-specification.md)
@@ -138,8 +139,34 @@ would need an override added later. A Workbench row not yet in the project is
 added first, then classified (S-6.5), because the block needs a layer. A move of
 rows across experiment, type or batch groups in the interface (S-6.3's words) asks
 first, listing old to new per row, before it changes metadata. What the word
-"experiment" names there is not settled here (S-6.3-experiment). Removing a layer
+"experiment" names there is in the note below (S-6-EXPERIMENT). Removing a layer
 removes its block.
+
+*Owner decision, 2026-11-04 (S-6-EXPERIMENT, `group`; this record's
+S-6.3-experiment):* an experiment group is the group field above, as the question
+put it. That was read from v5.11's interface, its moves and its README, because v5.11
+does not define the word. The roster's view by group lists the project's group names
+and an ungrouped entry, with no QC or blank column: those follow from the type (S-6.6)
+and have their columns in the view by type. So one move changes one field, and a QC moved into a treatment
+group stays `qc`, where v5.11 makes it a sample. Moves across groups in the views by
+group, batch and type confirm first; a move between the user's own row groups (v5.11's
+work folders) changes no metadata and does not ask. Both are called a group and both
+have an ungrouped entry, so the interface has to tell them apart. Accepted cost: not
+v5.11's five columns, so the view by group shows no QC column. The row subtitle and
+the views are one slice and the move's confirmation with its acceptance one more,
+inside the metadata's five (N-A3). Not built.
+
+*2026-11-04, a reading, not an owner decision:* a QC or blank with no group shows
+under that ungrouped entry. The plan does not say where it shows; this is inferred.
+
+*Owner decision, 2026-11-04 (EXP-22-ROSTER, `keep`):* the roster, meaning its rows,
+the user's own row groups and their order, stays out of the `.mscanvas` file, as ADR
+0061 has it. Classification travels with the project anyway, because a row joins the
+project before it is classified (S-6.5). Those groups and that order can still leave
+in the project snapshot, which is export only (roadmap EXP-22). Accepted cost: on
+another computer or with a colleague, they and the rows not in the project do not
+follow, and changing this after a release costs users another one-way upgrade. This
+changes no document format and no text of ADR 0061, and no work follows from it.
 
 **The group and batch lists belong to the project.** The document holds top-level
 `sampleGroups` and `sampleBatches`, lists of `{id, label}` (`GroupId`, `BatchId`),
@@ -151,16 +178,33 @@ and in the CSV of decision 11. Validation refuses a block or an imported sample
 that names an entry the project does not list (`danglingReference`), so an entry
 still named cannot be removed.
 
-*2026-11-04, a reading, not an owner decision (S-6.4-home):* an imported-column
+*2026-11-04, written as a reading before the owner's answer (S-6.4-home):* an imported-column
 sample has no layer, so it holds its own four values on its study entry and uses
 the same project lists. This is S-6's imported-sample id and B-6.2's "stored
-elsewhere". The S-6.4 row of section 1d (#212) says "Open: that home".
+elsewhere". The S-6.4 row of section 1d (#212) said "Open: that home".
 
-*2026-11-04, a reading, not an owner decision (S-6.6-types):* the list `sample`,
+*Owner decision, 2026-11-04 (S-6-HOME, `study`; this record's S-6.4-home):* the line
+above is the answer: the four values stay on the study entry, and the group and batch
+lists are the project's, shared with the layers, so a group name means one group
+across a project. Accepted cost: an imported column in two studies is classified once
+in each, and the two may differ; an imported table's group names also appear in the
+roster's dropdown; classifying imported samples is outside the import's five slices
+(N-A4) and that work is not estimated. Where these values are edited after the import
+is still open (the list at the end). Not built.
+
+*2026-11-04, written as a reading before the owner's answer (S-6.6-types):* the list `sample`,
 `qc`, `blank`, `standard` is this record's. S-6.6 (a) fixed the type to a list and
-left group names free, and its row of section 1d (#212) says "Open: the type
-list". Schema 5 is unreleased, so another answer to either reading changes only
-these lines and the words that use them.
+left group names free, and its row of section 1d (#212) said "Open: the type
+list".
+
+*Owner decision, 2026-11-04 (S-6-TYPES, `four`; this record's S-6.6-types):* the list
+is those four words. A standard injection has a type of its own and is not marked as
+a sample, and a step that does not use a type lists why and excludes the sample
+(`roleNotUsed`, decision 2). Accepted cost: one word more than v5.11, and which
+computations take `standard` is decided one by one. The dropdown is inside the
+metadata's five slices (N-A3) and has no estimate of its own. After the first release
+that carries the list, changing it costs users another one-way upgrade. What `standard`
+names is still open (the list at the end). Not built.
 
 *2026-11-04, not an owner decision (a `null` role):* a layer with no block gives a
 `null` role, and S-6.1's refusal names only the order. What a computation that
@@ -685,23 +729,19 @@ at most 64 MiB. A feature map of 10^5 features × about ten fields is about 8 MB
 in binary **[arith]**. A larger output fails its sample with a typed reason;
 it is not split.
 
-*2026-11-04, held by A0067-D6, an open owner question:* the next paragraph writes
-imported tables into `mscanvas.studyMatrix/1`, while G2 (decided 2026-10-30) and
-the roadmap's change log keep Track A's import in a single payload of at most 64
-MiB until a need is measured. The paragraph stands as written, is not an owner
-decision and is not built until the owner answers. Resting on it: every sentence
-of decisions 1, 4, 5, 7, 9 and 12 that treats an import as a study step or names
-its review or plan. Those are decision 1's import review adding samples as a study
-edit; decision 4's single input and no attempt for an import; decision 5's import
-as a Rust step, with its failure codes; decision 7's plan that records the
-declarations (B-6.12 and B-6.13 themselves are answered) and its sentence on a
-sample whose import failed; decision 9's polarity at the import's review; and
-decision 12's first consumer of the study words. Decision 11's sample CSV import is
-a different import: its rows that address layers do not rest on it, and its rows
-that address imported samples do, because only that import review creates them.
-For the same reason, so does every sentence of decisions 1 and 2 about an imported
-sample, among them S-6.4-home and the revision's source and copy for an imported
-column (B-6.2's "stored elsewhere" itself is answered).
+*Owner decision, 2026-11-04 (A0067-D6, `matrix`):* the next paragraph stands: an
+imported feature table is written as a chunked `mscanvas.studyMatrix/1` matrix, and a
+page verifies only the chunks it touches. The imported CSV is at most 64 MiB: that
+figure, G2's "64 MiB payload cap in v1" (decided 2026-10-30), now limits the CSV and
+not a stored file. Accepted cost: for imported tables this replaces G2's "moves to
+chunked matrices only on a measured need" and the roadmap's change log ("a single
+payload of up to 64 MiB until a need is measured"); and the import needs A-09's 2-3
+slices, which the roadmap already places first, as well as N-A4's 5, each with one
+slice of window reads. Not built: A-09 comes before N-A4, and neither exists. The
+sentences of decisions 1, 2, 4, 5, 7, 9, 11 and 12 about an import or an imported
+sample no longer wait on an open question. The answer does not say how a page reads
+U1's per-sample outputs, which stay as the previous paragraph has them; that is still
+open (the list at the end).
 
 **Imported tables** (Track A) are written into the same format when they are
 imported. The table file is first a project reference; how it becomes one is
@@ -972,8 +1012,8 @@ appendix A). The new document content:
 
 **Kinds arrive with their first consumer.** The layer block and the two lists
 arrive with N-A3, as N-A2's first kind. The study words arrive with N-A4, as part
-of A-08-KINDS, if A0067-D6 keeps decision 6; otherwise that answer names their
-first consumer. Notes arrive with N-A6, and A-26's review kinds with A-26; neither
+of A-08-KINDS, because A0067-D6 (`matrix`, 2026-11-04) keeps decision 6. Notes
+arrive with N-A6, and A-26's review kinds with A-26; neither
 is defined here. Each word already named here keeps its name.
 
 **The recipe is named in the plan, not in the vocabulary.** A study plan's
@@ -1097,7 +1137,7 @@ outcomes.
 | --- | --- | --- |
 | Per study, keyed by `LayerId` within it (this record's first recommendation) | One acquisition in several designs; imported columns without a layer; a statistic names its design | A layer in two studies carries two copies, which may differ |
 | Per layer, for the whole project | Simplest record; one design per project | No second design without a second project; imported columns need a second place anyway |
-| **Per layer as current state, each study revision recording a copy of the values it used (chosen, B-6.2 and S-6.4)** | The roster classifies a row once, where the rows are; a finished study's results never change when a layer is edited, because the revision holds the copy | One design per project for layer-backed samples until a per-study override is added; imported columns still need a place of their own (S-6.4-home) |
+| **Per layer as current state, each study revision recording a copy of the values it used (chosen, B-6.2 and S-6.4)** | The roster classifies a row once, where the rows are; a finished study's results never change when a layer is edited, because the revision holds the copy | One design per project for layer-backed samples until a per-study override is added; imported columns still need a place of their own (S-6-HOME, decision 1) |
 
 **How a large matrix is stored.**
 
@@ -1193,12 +1233,31 @@ No answer approves a dependency.*
 | - | S-6.1 (a), S-6.3 (a), S-6.5 (a), S-6.6 (a) | Sample metadata | Four fields: group, type, batch, injection order. Confirm before a move across experiment, type or batch groups changes metadata, listing old to new per row. A row not yet in the project is added first, then classified. Type is a fixed vocabulary and group names are free | Decision 1 |
 | - | N-11 | The schema-5 content record | Roadmap item, not a question: decisions 1 and 12 as amended are that record | Decisions 1, 12 |
 
+*Answered by the owner on 2026-11-04, in round two of the decision page (version
+2026-11-04.1), each row at its recommended option. Each row's accepted costs are in
+the dated note its last column names. No answer approves a dependency, a window or a
+release.*
+
+| Id and option | Asked | Answer | Where |
+| --- | --- | --- | --- |
+| A0067-D6 `matrix` | What an imported feature table is stored as | A chunked matrix; 64 MiB is the CSV's limit. Not built | Decision 6 |
+| S-6-TYPES `four` (S-6.6-types) | The fixed type words | `sample`, `qc`, `blank`, `standard`. Not built | Decision 1 |
+| S-6-HOME `study` (S-6.4-home) | Where an imported sample's four values live | On its study entry, with the project's group and batch lists. Not built | Decision 1 |
+| S-6-EXPERIMENT `group` (S-6.3-experiment) | Whether the roster's view by group also lists QC and blank | Only group names and an ungrouped entry. Not built | Decision 1 |
+| EXP-22-ROSTER `keep` | Whether the roster goes in the project file | It stays out. No work follows | Decision 1 |
+
 **Still open.** None of these is answered here.
 
-- **A0067-D6:** what an imported feature table is stored as (decision 6's hold).
-- **S-6.6-types** and **S-6.4-home:** written above as readings, not owner
-  decisions (decision 1).
-- **S-6.3-experiment:** what "experiment" in S-6.3's question names.
+- **What `standard` names:** a calibration series, a standard mix or something else;
+  which computations take or exclude it; and whether S-3.3's "all non-blank samples"
+  counts it. S-6-TYPES settled the word only.
+- **Where an imported sample's four values are edited after the import:** the plan has
+  only the import review and the sample CSV, and S-6-HOME settled where they live.
+- **How a page reads U1's per-sample outputs:** A0067-D6 gives imported tables and
+  U2's and U3's matrices one format, and decision 6 keeps U1's outputs as ordinary
+  payload files.
+- **A QC or blank with no group:** that it shows under the ungrouped entry is a reading
+  (decision 1).
 - **Question 3's bounds:** chunks of at most 8 MiB, binary64, 1,000,000 rows, 1,024
   columns and 2^27 cells were not asked separately.
 - **Question 10's reading:** the commit limit and the worker count's place (decision
