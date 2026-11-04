@@ -188,8 +188,8 @@ describe("durable UI preferences", () => {
         <PreviewApiProvider value={createFakePreviewApi({ availability: unavailableBackend })}><App /></PreviewApiProvider>
       </PreferencesApiProvider>
     </WorkspaceDropTransportProvider>);
-    const dialog = (await screen.findByText("No ProteoWizard installation was found"), openSettings());
-    await within(dialog).findByText(en.storedMalformed);
+    await screen.findByText("No ProteoWizard installation was found");
+    await within(openSettings()).findByText(en.storedMalformed);
     expect(document.documentElement.lang).toBe("en");
     expect(preferences.requests).toEqual([]);
   });
