@@ -21,9 +21,24 @@ All notable changes will be documented here once versioned releases begin.
   A file not taken is offered at the next start only, except one a press could
   not place, as built and not an owner decision; a marked file waits
   ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md), decision 10).
+- **Spreadsheet CSV on a stored targeted result's table.** The results table has
+  a third export, spreadsheet CSV / 电子表格 CSV, beside CSV and TSV. It is a
+  document of its own, `mscanvas_targeted_ms1_results_spreadsheet` schema 1, that
+  starts with a UTF-8 byte-order mark and adds one apostrophe before a formula
+  trigger in a declared text field; numbers, `formula` and code-owned fields are
+  not altered. The CSV and TSV files do not change. The check of how Excel,
+  LibreOffice and WPS open it is pending
+  ([ADR 0054](docs/architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)).
 
 ### Changed
 
+- **A Thermo RAW row can be viewed in two presses.** Highlighting it shows **View**
+  and starts nothing. View converts it with the verified default into MSCanvas's
+  view cache, never beside your file, shows each phase with Cancel, and opens it in
+  the same viewer; a second View of the same file finds the cached copy. The view
+  says which RAW file and conversion it came from. Its exports are refused until
+  they can say so too; **Convert this file…** is the route to an output you can
+  export ([ADR 0060](docs/architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).
 - **Conversion runs are now remembered, and you can see and forget them.**
   Conversion → **Conversion history** lists every run with when it started and
   ended, or that it was cut short, and reads one run's files, outputs and checks
@@ -55,6 +70,13 @@ All notable changes will be documented here once versioned releases begin.
   chromatogram. Each axis names a declared unit by its accession. A spectrum
   whose preview is gone, or whose file changed, offers **Open the file again**
   ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
+- **A plot's axes now tick and read as its exported figure does.** The screen
+  uses the figure's rule for the same range: a label keeps its step's decimals
+  (`0.00, 0.02`), exponents read `5e6` rather than `5.0e+6`, and of two steps
+  equally near five ticks the coarser is taken. A single value reads as the
+  figure writes it (`12.500000`). A figure can still show fewer ticks, where its
+  labels would collide or leave the page. A long label at a plot's right end now
+  stays whole, where the panel's edge used to cut it into another number.
 - **Beta-1 projects open, and are upgraded when you save a change.** A project
   saved by beta 1 opens as it is. Opening it writes nothing, and Save with
   nothing unsaved writes nothing. The first Save after a change writes the new

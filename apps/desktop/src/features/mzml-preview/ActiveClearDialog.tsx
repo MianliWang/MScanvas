@@ -12,7 +12,9 @@ const REFUSALS = {
   nothingRemovable: "clearNothing", actionInFlight: "clearActionBusy", stopUnconfirmed: "clearStopUnconfirmed", quarantined: "clearQuarantined",
 } as const satisfies Record<WorkspaceClearRefusal, MessageKey>;
 
-export function ActiveClearDialog({ returnTo, onClose, onEmptyRosterClosed, onExecute }: {
+export function ActiveClearDialog({ returnTo, viewHolds = false, onClose, onEmptyRosterClosed, onExecute }: {
+  /** The active work is a one-click view rather than a queue (ADR 0060 decision 5). */
+  readonly viewHolds?: boolean;
   readonly returnTo: HTMLElement | null;
   readonly onClose: () => void;
   readonly onEmptyRosterClosed: (claim: ActiveClearFocusReturn) => void;
@@ -78,11 +80,11 @@ export function ActiveClearDialog({ returnTo, onClose, onEmptyRosterClosed, onEx
         if (!document.hasFocus() || !(active === document.body || active === returnTo || (active !== null && content.current?.contains(active)))) return;
         if (returnTo?.isConnected && !returnTo.closest("[hidden], [inert]")) returnTo.focus();
       }} onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { event.stopImmediatePropagation(); if (inFlight.current) event.preventDefault(); }}>
-      <Dialog.Title>{t("clearActiveTitle")}</Dialog.Title>
-      <Dialog.Description>{t("clearActiveHelp")}</Dialog.Description>
+      <Dialog.Title>{t(viewHolds ? "clearActiveTitleView" : "clearActiveTitle")}</Dialog.Title>
+      <Dialog.Description>{t(viewHolds ? "clearActiveHelpView" : "clearActiveHelp")}</Dialog.Description>
       {/* Also the visible reason each refused action points at. */}
       <div aria-live="polite" role="status" id="active-clear-status">
-        {reading ? t("clearReading") : executing ? t("clearStopping") : problem ? t(problem) : plan ? t("clearCounts", { count: plan.removableCount, total: plan.totalCount, protected: String(plan.protectedCount) }) : ""}
+        {reading ? t("clearReading") : executing ? t("clearStopping") : problem ? t(problem) : plan ? t(viewHolds ? "clearCountsView" : "clearCounts", { count: plan.removableCount, total: plan.totalCount, protected: String(plan.protectedCount) }) : ""}
       </div>
       <div className="group-dialog-actions">
         {/* Frozen (`disabled`) only while the other action is in flight;

@@ -1,7 +1,7 @@
 /** Real production composition. Synthetic roster metadata and controlled IPC are browser evidence only. */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { installIpcBoundary, ipcCalls as allIpcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult } from "../support/harness";
+import { installIpcBoundary, ipcCallsButViewState as allIpcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
 import { cdp } from "../support/cdp";
 

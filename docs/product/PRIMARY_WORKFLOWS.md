@@ -162,6 +162,14 @@ truncation refusals below remain. See the
 
 **Success:** user can confirm identity and inspect a relevant scan without changing modes.
 
+**A Thermo RAW row takes one more press** ([ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md), 2026-11-03).
+Activating it starts nothing and shows its pane. View converts it with the
+verified default into MSCanvas's view cache, with its phases and Cancel on screen,
+and then opens it as above, while the row stays highlighted. Otherwise it waits
+under Ready, and the status bar says so. Exports of a view wait for
+[ADR 0060 slice 4](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-3-notes-2026-11-03);
+Convert this file… is the route to one meanwhile.
+
 **Implemented for mzML, end to end.** Activating a row reads the file once; the
 run summary, the chromatogram, the scan table and the selected-spectrum panel are
 what comes back. TIC and BPC are drawn from the loaded spectrum table — each
@@ -283,7 +291,7 @@ availability, queue, adoption and export contracts.
    Both scopes exclude unsupported rows and show requested/eligible/excluded
    counts; a bounded disclosure names the excluded rows without changing
    membership, eligibility or order (PM9.4 O2). The three families may be mixed. Vendor rows cannot be previewed,
-   and say so. There is no `Convert visible` scope: search changes presentation
+   and say so, except a Thermo RAW row, which is read through View (ADR 0060, 2026-11-03). There is no `Convert visible` scope: search changes presentation
    only; the selected/all actions remain available.
 3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
    groups — peak processing, spectra included, numeric precision, array
@@ -647,7 +655,7 @@ the two parameters → **Review plan** (Rust resolves a digest-named plan per
 acquisition and says, per line or per acquisition, what stops it) → **Run** or
 **Run N analyses**, one worker at a time, with **Cancel** or **Stop batch** →
 the result report (outcome counts, rows in plan order, one target's stored
-evidence as the canonical figure) → **Export** SVG, PNG, CSV or TSV, with
+evidence as the canonical figure) → **Export** SVG, PNG, CSV, TSV or spreadsheet CSV, with
 **Details** for the plan, the source as read and the attempt. Recovery: a
 problem in the request is named by line and nothing runs; a refusal before a
 run (unsaved project, no runtime, no room for a copy, a quarantined session)

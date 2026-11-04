@@ -69,8 +69,8 @@ None of them is in an installer or a release.
   typed list of up to 200 small-molecule targets is reviewed as a digest-named
   plan over one positive-mode, centroided mzML acquisition, or one plan each over
   2–16 of them, and run in a supervised pyOpenMS 3.5.0 worker. Each result is
-  stored beside the project and is read, drawn and exported as SVG, PNG and
-  CSV/TSV from the stored result alone. `[M+H]+` only. It is not identification,
+  stored beside the project and is read, drawn and exported as SVG, PNG,
+  CSV/TSV and spreadsheet CSV from the stored result alone. `[M+H]+` only. It is not identification,
   not a validated assay and not a general XIC, it compares nothing across
   acquisitions, and `NOT_DETECTED` is not proof of absence.
   **Its runtime is development-only:** CPython 3.13.15 with pyOpenMS under
@@ -190,7 +190,7 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 
 - Set the interface language, the roster's row spacing and which of the two
   workspace panels you want, and find them the way you left them the next time
-  MSCanvas starts. That record holds those five things and, once you choose one,
+  MSCanvas starts. That record holds those four things and, once you choose one,
   the folder for ProteoWizard, and nothing else: no file list, no selection, no
   range and no conversion. A window that gets too narrow folds a panel away for space without
   changing what you asked for, so widening it again brings the panel back.
@@ -209,13 +209,15 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   choose lasts, what each recovery control does, and which Windows the first
   beta is supported on.
 
-Not implemented yet: vendor RAW preview; XIC — refused on measured evidence for
-the ProteoWizard build MSCanvas was tested against, not merely pending;
+Not implemented yet: viewing any vendor format but Thermo RAW, whose **View**
+converts it into MSCanvas's view cache and whose exports wait for a later slice
+(**Convert this file…** is the route to an output that can be exported); XIC —
+refused on measured evidence for the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
-anything other than filename, and grouping it; reopening a saved project as a
+anything other than filename; reopening a saved project as a
 Workbench session -- a saved project records references and history, but
 reopening one restores none; remembering a search, a sort, a highlighted
-selection or a range -- what does survive a restart is the five preferences
+selection or a range -- what does survive a restart is the four preferences
 listed above, the folder you chose for ProteoWizard, through Restore workspace
 the Workbench's files, groups that hold a file, order (not a row's place in a group put back only in part, as built and not yet decided) and checked rows, the conversion history,
 and the off switch of each of those two; a dark theme, or any
@@ -228,7 +230,8 @@ history, complete raw converter logs, and sending a diagnostics file anywhere;
 and every figure export but the selected spectrum's own SVG, PNG, CSV and TSV,
 the chromatogram's, the linked two-panel figure of the two, and a stored
 targeted-MS1 result's figure of one target (SVG, PNG) and its whole-result
-CSV/TSV table -- there is no
+CSV/TSV table and spreadsheet CSV
+([ADR 0054](docs/architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)) -- there is no
 saved figure specification, no figure composer, and figure settings are not
 remembered across a restart. mzXML output is refused at present
 ([ADR 0043, CNV-D1](docs/architecture/adr/0043-conversion-completion-route.md#cnv-d1--output-formats)

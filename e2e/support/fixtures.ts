@@ -257,6 +257,9 @@ export function ipcTable(
     set_workspace_restore_enabled: { outcome: "saved" },
     dismiss_restored_row: null,
     subscribe_workspace_drop_updates: null,
+    // No view has run, and View could begin (ADR 0060). A spec about a view
+    // replaces this answer as the operation moves.
+    get_raw_view_state: { state: { state: "idle" }, availability: { available: true, unverifiedBuildRelease: null } },
     ...RUN_HISTORY_EMPTY,
     // The conversion slot, and the authority it is answered under. Every
     // response in this shape carries the projection -- the poll included, which
