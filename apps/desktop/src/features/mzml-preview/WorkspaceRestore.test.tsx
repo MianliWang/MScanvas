@@ -101,7 +101,7 @@ describe("the arrangement Rust is told", () => {
   it("joins a waiting row by stored name and count, in any state, so moving a group changes where it joins", () => {
     const put = placeRestored(initialOrganization, [null, "Batch", "Batch"], [{ handle: "x", group: 1 }, { handle: "y", group: 2 }]);
     const moved = organize(put, { type: "reorderGroup", groupId: put.groups[2]?.id ?? "", targetId: put.groups[1]?.id ?? "" });
-    for (const state of ["missing", "matching"] as const) {
+    for (const state of ["matching", "changed", "missing", "unreachable", "unreadable", "unsafe"] as const) {
       const waiting = [{ name: null, rows: [] }, { name: "Batch", rows: [row("m", "m.raw", state)] }, { name: "Batch", rows: [row("n", "n.raw", state)] }];
       expect(buildArrangement(moved, new Set(), waiting).groups).toEqual([
         { name: null, handles: [] },
