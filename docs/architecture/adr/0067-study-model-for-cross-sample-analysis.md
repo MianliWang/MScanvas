@@ -11,7 +11,8 @@ longer deferred and is to be planned and built (G1), and that amendment is on
 `main` (#194). Nothing here is implemented, and nothing here reaches the
 interface. The answers decide this record's ten questions and the ids listed
 with them, and nothing else: what stays open is listed there too, and text that
-rests on an open item says so where it stands.
+rests on an open item is named there, in decision 1's dated lines or in decision
+6's hold line.
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the session-only
 workspace), [0016](0016-explicit-converted-output-adoption.md) (explicit
 adoption), [0028](0028-figure-renderer-and-semantic-specification.md)
@@ -123,8 +124,8 @@ A project holds zero or more **studies**. A study has a durable `StudyId`
   - a **group** and a **batch**, each an entry of the project's lists, or none;
   - an **injection order**: a positive integer, or `null` where unknown.
 
-  A computation that needs a role or the order refuses a study in which any
-  included sample lacks it; it does not guess.
+  A computation that needs the order refuses a study in which any included
+  sample lacks it; it does not guess (S-6.1).
 
 **The four values live on the layer, and each revision stores a copy (B-6.2,
 S-6.4).** A layer-backed sample holds no copy of them: it reads them from its
@@ -135,13 +136,15 @@ the layer is classified. The revision a step is given stores a copy of the value
 it used (decision 2). So one project has one design for its layers: an
 acquisition cannot be grouped differently in two studies, and a second design
 would need an override added later. A Workbench row not yet in the project is
-added first, then classified (S-6.5), because the block needs a layer. A move
-across groups in the interface asks first, listing old to new per row, before it
-changes metadata (S-6.3). What the word "experiment" in S-6.3's question names is
-not settled here (S-6.3-experiment). Removing a layer removes its block.
+added first, then classified (S-6.5), because the block needs a layer. A move of
+rows across experiment, type or batch groups in the interface (S-6.3's words) asks
+first, listing old to new per row, before it changes metadata. What the word
+"experiment" names there is not settled here (S-6.3-experiment). Removing a layer
+removes its block.
 
 **The group and batch lists belong to the project.** The document holds top-level
-`groups` and `batches`, lists of `{id, label}` (`GroupId`, `BatchId`). Ids make a
+`sampleGroups` and `sampleBatches`, lists of `{id, label}` (`GroupId`, `BatchId`),
+named apart from the roster's own row groups. Ids make a
 rename one edit and keep a statistic's group identity stable. No two groups share
 a label and no two batches do, compared without regard to ASCII case
 (`studyDuplicateLabel` otherwise), so a label names one group in the interface
@@ -159,6 +162,12 @@ elsewhere". The S-6.4 row of section 1d (#212) says "Open: that home".
 left group names free, and its row of section 1d (#212) says "Open: the type
 list". Schema 5 is unreleased, so another answer to either reading changes only
 these lines and the words that use them.
+
+*2026-11-04, not an owner decision (a `null` role):* a layer with no block gives a
+`null` role, and S-6.1's refusal names only the order. What a computation that
+reads roles does with a `null` role is that computation's record's decision. For
+B-6.3 that is U2's recipe record under A-21, so this record does not say whether a
+study with unclassified samples takes B-6.3's "otherwise" or is refused.
 
 **Injection order is unique within a batch.** It is checked across the project's
 layers (among layers with no batch, for a layer with none) when a block is
@@ -321,12 +330,17 @@ beyond that is the statistics record's decision.
 
 **Concurrency stays one worker at a time in the first build,** until a per-recipe
 measurement of time and peak memory on a real file exists. After that the count
-is computed for each run from free memory (B-6.9), within two limits: at most
-available commit divided by the 4 GiB per-process cap, and count × threads at most
-the logical core count (CK-6). The count is recorded in the ledger, on each
-sample line, and not in the plan digest. The ledger (decision 4) is in sample
-order, not completion order, and its format carries its own version (decision
-12), so a later parallel scheduler changes no document record.
+is computed for each run from the memory free at that moment, and count × threads
+stays within the logical core count (B-6.9; CK-6 sets the thread range). The
+ledger (decision 4) is in sample order, not completion order, and its format
+carries its own version (decision 12), so a later parallel scheduler changes no
+document record.
+
+*2026-11-04, a reading, not an owner decision (B-6.9's answer says none of this):*
+the count is also at most available commit divided by the 4 GiB per-process cap; it
+stays out of the plan digest; and it joins decision 4's sample lines, under a new
+ledger version, when a parallel scheduler arrives, so the first build's ledger has
+no such field.
 
 ### 4. One study run per step, and what the document holds
 
@@ -674,9 +688,14 @@ it is not split.
 imported tables into `mscanvas.studyMatrix/1`, while G2 (decided 2026-10-30) and
 the roadmap's change log keep Track A's import in a single payload of at most 64
 MiB until a need is measured. The paragraph stands as written, is not an owner
-decision and is not built until the owner answers. Resting on it: decision 1's
-sentence that the import review adds samples as a study edit, decision 4's single
-input for an import, and decision 12's first consumer of the study words.
+decision and is not built until the owner answers. Resting on it: every sentence
+of decisions 1, 4, 5, 7, 9 and 12 that treats an import as a study step or names
+its review or plan. Those are decision 1's import review adding samples as a study
+edit; decision 4's single input and no attempt for an import; decision 5's import
+as a Rust step, with its failure codes; decision 7's plan that records the
+declarations (B-6.12 and B-6.13 themselves are answered); decision 9's polarity at
+the import's review; and decision 12's first consumer of the study words. Decision
+11's sample CSV import is a different import and does not rest on it.
 
 **Imported tables** (Track A) are written into the same format when they are
 imported. The table file is first a project reference; how it becomes one is
@@ -701,11 +720,19 @@ The cell state is a closed vocabulary, one byte a cell. It belongs to the
 | --- | --- | --- |
 | `measured` | detected in that sample by the per-sample step | yes |
 | `reintegrated` | found again in that sample's raw data by gap filling; a different quantity from a detection: the engine's raw point sum (B-7.2), a sum of points, not an area in intensity × time | yes, not used by a test for now (CK-3) |
-| `engineImputed` | the engine's fit failed for that cell, and the intensity it returned is imputed, not measured (M9.0: a failed fit imputed by regression). With the raw point sum of B-7.2, such a cell also has a measured value: it holds that sum, not the imputed number, and this state keeps the failed fit visible | yes, never used by a test |
+| `engineImputed` | the engine's fit failed for that cell, and the intensity it returned is imputed, not measured (M9.0: a failed fit imputed by regression). A backfilled cell of this state holds the raw point sum instead (the dated line below) | yes, never used by a test |
 | `engineDiscarded` | the engine discarded every feature of the request because no fit in it was valid (`ENGINE_DISCARDED_NO_VALID_FIT`). The legend says this is a failure of the whole fit, not a finding about one feature | none; the state is its own reason |
 | `undecided` | the step could not decide for that sample; never an absence (M9 closure §3.2) | none; a reason code in the block's reason file |
 | `missing` | not found in that sample, which is not proof of absence | none |
 | `imported` | taken from an imported table whose producer did not say how it was obtained | yes |
+
+*2026-11-04, a reading, not an owner decision:* B-7.2 asked only what a backfilled
+cell holds, and M9.0 found a peak's raw area the same in a run where its fit failed
+and a run where it was valid. So a backfilled cell whose fit failed holds the raw
+point sum, not the imputed number, and is `engineImputed`, not `reintegrated`. That
+keeps the failed fit visible and keeps the cell out of tests even if A-22 lets
+`reintegrated` in. The state's legend and the export's state column say that such a
+value is a raw point sum, not an imputed number.
 
 - **A failure is not a missing value.** A cell is `undecided` where the step
   could not decide: the M9 `FAILED` reasons `EXTRACTION_AT_SPECTRUM_EDGE`,
@@ -751,10 +778,12 @@ The cell state is a closed vocabulary, one byte a cell. It belongs to the
 - Which states a statistic uses is the statistics record's decision, recorded
   with each result. `engineImputed` never enters a test.
 - **Backfilled cells stay out of tests for now (CK-3).** A `reintegrated` cell
-  does not enter a statistical test. On a synthetic file its raw point sum is
-  about 4 times a detected value, and the factor moves with scan interval and
-  isotope count. A-22 measures on real files, then the owner decides. These cells
-  are still shown and exported, with their state.
+  does not enter a statistical test. On a synthetic file (scan interval 0.4 s, 300
+  targets) its raw point sum is about 4 times a detected value, and the factor
+  moves with scan interval and isotope count. That figure is the decision table's
+  note, no committed record holds it, and real files are not measured. A-22
+  measures on real files, then the owner decides. These cells are still shown and
+  exported, with their state.
 - A value-changing step (normalization, or any later imputation or correction)
   never overwrites. Its output is a new matrix artifact whose cells keep their
   source state. If imputation is admitted, its state word is added then, as a
@@ -825,7 +854,7 @@ artifact's directory stays whole on its own; a reused output is not hard-linked.
   never join one matrix: each is its own layer, and a matrix has one polarity.
   The adduct set remains A-23's. Accepted cost: verifying single-file detection
   doubles, and negative mode's time and memory are not measured. Targeted MS1
-  keeps its positive-only domain (ADR 0050 stays in force for it, decision 3).
+  keeps its positive-only domain, which is its adapter's (ANA-004), not ADR 0050's.
 
 ### 10. The experimental label
 
@@ -906,9 +935,9 @@ Format `mscanvas_study_samples`, version 1:
 This decision, with decision 1, is the schema-5 content record (N-11, roadmap
 appendix A). The new document content:
 
-- every layer's `sample` block, and the top-level `groups` and `batches` arrays,
-  required and possibly empty (decision 1), with the identifiers `GroupId` and
-  `BatchId`;
+- every layer's `sample` block, and the top-level `sampleGroups` and
+  `sampleBatches` arrays, required and possibly empty (decision 1), with the
+  identifiers `GroupId` and `BatchId`;
 - a top-level `studies` array, required and possibly empty;
 - the identifiers `StudyId` and `SampleId`;
 - one plan kind (`studyStepPlanV1`), one run operation (`studyStepV1`) and one
@@ -924,10 +953,10 @@ appendix A). The new document content:
   `noSampleCompleted` and `computationFailed` (decision 5).
 
 **Kinds arrive with their first consumer.** The layer block and the two lists
-arrive with analysis-sample-metadata. The study words arrive with
-analysis-feature-import if A0067-D6 keeps decision 6; otherwise that answer names
-their first consumer. Notes arrive with N-A6, and A-26's review kinds with A-26;
-neither is defined here. Each word already named here keeps its name.
+arrive with N-A3, as N-A2's first kind. The study words arrive with N-A4, as part
+of A-08-KINDS, if A0067-D6 keeps decision 6; otherwise that answer names their
+first consumer. Notes arrive with N-A6, and A-26's review kinds with A-26; neither
+is defined here. Each word already named here keeps its name.
 
 **The recipe is named in the plan, not in the vocabulary.** A study plan's
 recipe binding names its recipe by a token (defined below) that the document
@@ -973,8 +1002,8 @@ outcomes.
   failure code or a new `RunInput` variant, is its own schema decision; a
   recipe's own failure reasons stay in the ledger (decision 5) for that reason.
 - **Schema 4 stays frozen.** On the schema-4 read path, every added word and
-  field is `malformed`: a layer's `sample` field, the `groups` and `batches`
-  fields, the `studies` and `studyPlans` fields, a run's
+  field is `malformed`: a layer's `sample` field, the `sampleGroups` and
+  `sampleBatches` fields, the `studies` and `studyPlans` fields, a run's
   `studyStep` field, the operation `studyStepV1`, the artifact kind
   `studyStepResultV1`, the `artifact` variant of `RunInput` and the failure
   codes `noSampleCompleted` and `computationFailed`. #161's
@@ -989,16 +1018,16 @@ outcomes.
   run inputs, the run operation, artifact payloads and failure codes through
   schema-4 types of its own, as #161 already does for inputs
   (`SchemaFourInput`), and its `upgraded()` gives every layer `sample: null`,
-  every run `studyStep: null`, and the document `groups: []`, `batches: []`,
-  `studies: []` and `studyPlans: []`. Each kind's slice does its part when it
+  every run `studyStep: null`, and the document `sampleGroups: []`,
+  `sampleBatches: []`, `studies: []` and `studyPlans: []`. Each kind's slice does its part when it
   arrives, and adds a test that refuses
   each added word and field on the schema-4 path, one by one, and a test that
   a beta-1 document with layers and runs still opens. The slice that adds the
   block also changes `LayerRecord`'s doc comment ("an identity and where it came
   from, and nothing else").
-- **Size.** An upgraded document gains `"groups": []`, `"batches": []`,
+- **Size.** An upgraded document gains `"sampleGroups": []`, `"sampleBatches": []`,
   `"studies": []` and `"studyPlans": []`, each existing layer gains
-  `"sample": null` and each existing run gains `"studyStep": null`: about 70
+  `"sample": null` and each existing run gains `"studyStep": null`: about 80
   bytes, plus about 25 bytes a layer and about
   25 bytes a run **[arith]**. The known limitation that ADR
   0055 records for a beta-1 document near the 4 MiB bound grows by those
@@ -1121,27 +1150,28 @@ outcomes.
 
 *Answered by the owner on 2026-11-03, in the decision table of that day (version
 2026-11-03.2). Cited by id and date until PR #212 puts them in section 1d of
-[OWNER_DECISIONS_V511](../../development/OWNER_DECISIONS_V511.md). No answer
-approves a dependency.*
+[OWNER_DECISIONS_V511](../../development/OWNER_DECISIONS_V511.md), which also holds
+each option's full gains and costs; this table keeps those that shape this record.
+No answer approves a dependency.*
 
 | Question | Id and option | Asked | Answer | Where |
 | --- | --- | --- | --- | --- |
 | 1 | B-6.1 `study` | The document model | One study record per step, with the details in result files. Accepted cost: sample-level details are readable only while the result files exist | Decision 4 |
 | 2 | B-6.2 `layercopy`, S-6.4 (a) | Where metadata lives | On the acquisition's layer, with a copy in each study revision. One design per project; a second would need an override added later. Samples of an imported table have no layer, so their values are stored elsewhere | Decisions 1, 2 |
-| 3 | B-6.11 `arrow`, read through CK-4 `export`, which governs | The matrix format | Keep the in-house chunked store, with its manifest and per-file SHA-256. Add a Parquet export later; its dependency is asked for separately when that work starts. A-09's estimate of 2-3 slices holds. The bounds were not asked separately | Decision 6 |
+| 3 | B-6.11 `arrow`, read through CK-4 `export`, which governs | The matrix format | Keep the in-house chunked store, with its manifest and per-file SHA-256. Add a Parquet export later; its dependency is asked for separately when that work starts. A-09's estimate of 2-3 slices holds. Accepted cost: one more export format to maintain. The bounds were not asked separately | Decision 6 |
 | 4 | B-6.5 `seven`, B-6.12 `declare`, B-6.13 `refuse` | Cell states and imported text | Seven states: the engine's discard is its own. The import asks what a zero means and records the answer. `NA`, `inf` and similar text is refused, naming line and column, unless declared | Decision 7 |
 | 5 | B-6.6 `refuse` | Unknown CSV columns | Refused, and the column is named | Decision 11 |
 | 6 | B-6.7 `reuse`, B-6.10 `copy` | Reuse | Matching per-sample outputs are reused by default, with run-every-sample at review, and a reused output is copied | Decisions 5, 8 |
-| 7 | B-6.8 `accept` | Long runs | Losing an unpublished run to a crash is accepted for the first build, with its staging kept and not recovered, and this is said plainly | Decision 5 |
+| 7 | B-6.8 `accept` | Long runs | Losing an unpublished run to a crash or a failed publication is accepted for the first build, with its staging kept and not recovered, and this is said plainly | Decision 5 |
 | 8 | B-6.14 `cache` | Acquisition-scale derived files | In the application cache, and the result records its digest | Decision 8 |
 | 9 | B-6.15 `generic`, S-6.2 (a) | The schema window and generic words | One generic step record. Schema 5 stays open until a release ships it; if a release ships first, these records take schema 6 under the same read-and-upgrade rule. Accepted cost: test projects written by development builds may later be refused | Decision 12 |
-| 10 | B-6.9 `share`, with CK-6 | The parallel worker count | Computed per run from free memory, once measurements exist, within the limits decision 3 states. The first build stays at one worker. Accepted cost: one method's speed differs between runs, and another program taking memory midway needs a guard | Decision 3 |
+| 10 | B-6.9 `share`, with CK-6 | The parallel worker count | Computed per run from free memory, once measurements exist. The first build stays at one worker. CK-6 sets the thread range: default 1, from 1 to the logical core count. Accepted cost: one method's speed differs between runs; another program taking memory midway needs a guard; parallel work pushes files near the limit towards the 600 s timeout, so count × threads must stay within the logical core count. Decision 3's commit limit and the count's place are a reading, not an owner decision | Decision 3 |
 | - | CK-3 `no` | Do backfilled cells enter tests | Not for now. A-22 measures on real files, then the owner decides. They are still shown and exported, with their state | Decision 7 |
 | - | B-7.2 `raw` | The quantity in a backfilled cell | The engine's raw point sum. A-22 confirms | Decision 7 |
 | - | B-5 `both` | Negative mode | Both polarities from the first untargeted function | Decision 9 |
 | - | B-6.3 `qcormost` | The alignment reference | The pooled QC when one is marked, otherwise the map with the most features | U2's recipe record, A-21 |
 | - | B-6.4 `add` | A LOWESS second stage | Add it now. It needs a written decision, and that decision is U2's recipe record under A-21: this record chooses no algorithm | U2's recipe record, A-21 |
-| - | S-6.1 (a), S-6.3 (a), S-6.5 (a), S-6.6 (a) | Sample metadata | Four fields: group, type, batch, injection order. Confirm before a move across groups changes metadata, listing old to new per row. A row not yet in the project is added first, then classified. Type is a fixed vocabulary and group names are free | Decision 1 |
+| - | S-6.1 (a), S-6.3 (a), S-6.5 (a), S-6.6 (a) | Sample metadata | Four fields: group, type, batch, injection order. Confirm before a move across experiment, type or batch groups changes metadata, listing old to new per row. A row not yet in the project is added first, then classified. Type is a fixed vocabulary and group names are free | Decision 1 |
 | - | N-11 | The schema-5 content record | Roadmap item, not a question: decisions 1 and 12 as amended are that record | Decisions 1, 12 |
 
 **Still open.** None of these is answered here.
@@ -1152,8 +1182,13 @@ approves a dependency.*
 - **S-6.3-experiment:** what "experiment" in S-6.3's question names.
 - **Question 3's bounds:** chunks of at most 8 MiB, binary64, 1,000,000 rows, 1,024
   columns and 2^27 cells were not asked separately.
+- **Question 10's reading:** the commit limit and the worker count's place (decision
+  3) were not asked.
+- **A backfilled cell whose fit failed:** its state and its value are a reading
+  (decision 7).
 - **For U2's recipe record:** which QC is the reference when several are marked,
-  the LOWESS span, and KD's internal warp.
+  what B-6.3 does with a `null` role (decision 1), the LOWESS span, and KD's
+  internal warp.
 - **CK-3's decision,** after A-22's measurement.
 - **S-4.2 and CK-5:** RF and QRILC are a direction only, so decision 7's sentence on
   admitting imputation stands as written.
