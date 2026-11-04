@@ -46,7 +46,7 @@ Binding preferences, carried into every item:
 
 **At a glance:**
 
-- 92 items in 24 lanes over five phases, 258-275 slices, plus 3 optional driver items (15-20 slices);
+- 92 items in 24 lanes over five phases, 259-275 slices, plus 3 optional driver items (15-20 slices);
 - critical path 42 slices, with each item's upper slice count;
 - 122 v5.11 rows: 108 closed by items, 14 refused, deferred or re-scoped (section 8);
 - *2026-11-03:* the owner's answers moved these from 93 items, 258-276 slices, a 39-slice path and 109 closed rows (section 10, last entry). Answered work with no estimate is listed after phase 4 and is in none of these totals.
@@ -240,7 +240,7 @@ New ADR files are new files, and any lane may add one. Amendments to existing AD
 
 **Exit:** Normalisation, overlay, cross-page selection, conversion history and the Export/records page; U2, U3 and U4 on studies.
 
-16 items, 45-50 slices, 10 parallel lanes: L-CONV-A, L-CONV-B, L-SHELL, L-FIG, L-PROJECT, L-FEATURES, L-STATS-UI, L-ANALYSIS-X, L-WORKER, L-STUDY.
+16 items, 46-50 slices, 10 parallel lanes: L-CONV-A, L-CONV-B, L-SHELL, L-FIG, L-PROJECT, L-FEATURES, L-STATS-UI, L-ANALYSIS-X, L-WORKER, L-STUDY.
 
 | Lane | ID | Title | Size (slices) | Depends on | After | Closes | Extends | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -259,7 +259,7 @@ New ADR files are new files, and any lane may add one. Amendments to existing AD
 | L-ANALYSIS-X | N-A11 | One current feature across pages, and back to source | M (3) | N-A6, N-A8, N-X2, N-X4 | N-A12 | XV-01, FA-14 | - | G3 |
 | L-WORKER | A-23 | U4 engine: adducts and ion identity, both polarities (SYNTHESIS step B4) | M (3-4) | A-20, A-21 | A-16 | - | - | B-4, B-5 |
 | L-STUDY | A-21 | U2 engine: alignment with a LOWESS second stage, and linking (SYNTHESIS step B2) | L (5) | A-20, A-08-KINDS, A-09, A-14, A-02 | - | - | - | B-2, B-4, B-6 |
-| L-STUDY | A-22 | U3 engine: gap filling, experimental, with typed cell provenance | M (3-4) | A-21, N-F4 | - | - | - | B-7 |
+| L-STUDY | A-22 | U3 engine: gap filling, experimental, with typed cell provenance | M (4) | A-21, N-F4 | - | - | - | B-7 |
 
 ### Phase 4: Annotation, review and the curated recipe; optional drivers
 
@@ -275,7 +275,7 @@ New ADR files are new files, and any lane may add one. Amendments to existing AD
 | L-STUDY | A-27 | Curated untargeted recipe on the Workflow page | M (2-3) | A-20-UI, A-21, A-22, N-A13 | - | - | SH-02 | G4, B-4 |
 | L-ANNOT | A-24 | U5 engine: MS2 mapping and the GNPS/FBMN writer (SYNTHESIS step B5) | M (2) | A-21, A-23 | - | - | - | B-9 |
 | L-ANNOT | A-25 | U6 engine: annotation (SYNTHESIS step B6) | M (4) | A-24, A-12, A-02 | - | - | - | B-8, B-3 |
-| L-DRIVERS | A-30 | SIRIUS driver (optional, own ADR, never bundled) | L (5) | A-24, A-08-KINDS | - | - | - | B-10 |
+| L-DRIVERS | A-30 | SIRIUS driver (optional, own ADR, never bundled) | L (5) | A-24, A-25, A-08-KINDS | - | - | - | B-10 |
 | L-DRIVERS | A-31 | MZmine 4 driver (optional, own ADR, never bundled) | XL (5-9) | A-21, A-08-KINDS | A-30 | - | - | B-10 |
 | L-DRIVERS | A-32 | MS-DIAL driver (optional, own ADR, never bundled) | L (5-6) | A-21, A-08-KINDS | A-31 | - | - | B-10 |
 
@@ -346,12 +346,12 @@ Latest-finishing items, if every lane starts as early as its dependencies allow:
 | N-A10 | 36 / 36 | N-01 -> N-04 -> N-03 -> N-05 -> N-F5 -> N-F4 -> N-A7 -> N-A8 -> N-A10 |
 | N-A11 | 36 / 36 | N-01 -> N-04 -> N-03 -> N-05 -> N-F5 -> N-F4 -> N-A7 -> N-A8 -> N-A11 |
 | A-23-UI | 36 / 34 | N-01 -> N-04 -> N-03 -> N-A2 -> N-A3 -> A-08-KINDS -> A-21 -> A-23 -> A-24 -> A-23-UI |
-| A-27 | 35 / 32 | N-01 -> N-04 -> N-03 -> N-A2 -> N-A3 -> A-08-KINDS -> A-21 -> A-22 -> A-27 |
+| A-27 | 35 / 33 | N-01 -> N-04 -> N-03 -> N-A2 -> N-A3 -> A-08-KINDS -> A-21 -> A-22 -> A-27 |
 | A-24 | 34 / 32 | N-01 -> N-04 -> N-03 -> N-A2 -> N-A3 -> A-08-KINDS -> A-21 -> A-23 -> A-24 |
-| A-22-UI | 34 / 31 | N-01 -> N-04 -> N-03 -> N-A2 -> N-A3 -> A-08-KINDS -> A-21 -> A-22 -> A-22-UI |
+| A-22-UI | 34 / 32 | N-01 -> N-04 -> N-03 -> N-A2 -> N-A3 -> A-08-KINDS -> A-21 -> A-22 -> A-22-UI |
 | N-A8 | 33 / 33 | N-01 -> N-04 -> N-03 -> N-05 -> N-F5 -> N-F4 -> N-A7 -> N-A8 |
 | N-A12 | 33 / 33 | N-01 -> N-04 -> N-03 -> N-05 -> N-B1 -> N-X1 -> N-X2 -> N-A12 |
-| A-22 | 32 / 30 | N-01 -> N-04 -> N-03 -> N-A2 -> N-A3 -> A-08-KINDS -> A-21 -> A-22 |
+| A-22 | 32 / 31 | N-01 -> N-04 -> N-03 -> N-A2 -> N-A3 -> A-08-KINDS -> A-21 -> A-22 |
 
 ## 6. Merge order of the in-flight work
 
@@ -377,7 +377,7 @@ Latest-finishing items, if every lane starts as early as its dependencies allow:
 
 **Opened since the second check** (about 04:05 UTC on 2026-10-31). `ui/fe2-workbench` (N-02's one screen for the owner, FE-2) is #197: merged 2026-11-03 UTC as `cd5dc748`. `be/two-step` (N-C2), a local commit at 23:00 UTC, is #189: merged 2026-10-31 UTC as `dfa96f94`. `docs/u1-feature-detection-measurement` (A-13) is #191: ready, head `b92fd88f`, nine checks green. `be/stats-crate` (N-A1) is #190: draft, library only (ADR 0069, Proposed), head `6d8fff04`, nine checks green. Each started ahead of some of its roadmap dependencies; their gating decisions, C-2 for #189, B-11 and HR-1 for #191 and S-2 for #190, were answered on 2026-11-03. `docs/runtime-release-adr` and `be/run-history`, listed here at 15:45 UTC, are #188 and #187. The owner approved the two test-only fixes on 2026-10-31 (M198): #198 `fix/m72-bulk-move-flake` merged that day as `1bf38ac5`, and #199 `fix/app-autopreview-flake` on 2026-11-03 as `d44b77ae`.
 
-**Since the fourth check** (the fifth check, `main` at `1fc507b2`). Merged: #177 `be/restore-workspace` on 2026-11-03 UTC as `ae14765e`, with its interface (N-S4), which makes row 5's "draft" out of date; #204 rewrites that row, and F-177 goes forward with #204. Also #187 (row 9), #200 (the 2026-10-31 decisions), #208 `ui/fe2-project` (the Project page in the v5.11 look), #209 `ui/one-tick-rule` (N-F5, the screen half) and #210 (test only). Open: #201 `ui/unverified-labels` (P201), #202 `ui/diagnostics-button` (N-S5, P202), #203 `ui/view-raw-slice-3` (N-R2, P203), and as drafts #204 (F-177, P177, P204), #205 (row 9), #206 `ui/targeted-spreadsheet-csv` (N-F2), #207 `be/xic-engine` (N-X1's X1, A0071-Q2) and #211 `be/uninstall-view-cache` (DEF-2). A0060-split moves View with… and Clear view cache out of #203 to the next slice, so N-R2 and SET-09 do not close with #203; N-R2's lines here say so. After this check, #206 merged on 2026-11-04 UTC as `9d52e39d`, and #183 (base `main`, head `bfca2e07`) and #188 (head `a57f5de3`) took the answers on their branches, so the status in rows 15 and 17 is out of date.
+**Since the fourth check** (the fifth check, `main` at `1fc507b2`). Merged: #177 `be/restore-workspace` on 2026-11-03 UTC as `ae14765e`, with its interface (N-S4), which makes row 5's "draft" out of date; #204 rewrites that row, and F-177 goes forward with #204. Also #187 (row 9), #200 (the 2026-10-31 decisions), #208 `ui/fe2-project` (the Project page in the v5.11 look), #209 `ui/one-tick-rule` (N-F5, the screen half) and #210 (test only). Open: #201 `ui/unverified-labels` (P201), #202 `ui/diagnostics-button` (N-S5, P202), #203 `ui/view-raw-slice-3` (N-R2, P203), and as drafts #204 (F-177, P177, P204), #205 (row 9), #206 `ui/targeted-spreadsheet-csv` (N-F2), #207 `be/xic-engine` (N-X1's X1, A0071-Q2) and #211 `be/uninstall-view-cache` (DEF-2). A0060-split moves View with… and Clear view cache out of #203 to the next slice, so N-R2 and SET-09 do not close with #203; N-R2's lines here say so. After this check, #206 merged on 2026-11-04 UTC as `9d52e39d`. By about 08:00 UTC that day #183, #184, #188, #190 and #191 had taken the answers on their branches and #183's base was `main`, so rows 15 to 17 and the #190 and #191 lines above are out of date. This note names no heads, because they keep moving.
 
 **Not merged as they stand:**
 
@@ -390,7 +390,7 @@ Latest-finishing items, if every lane starts as early as its dependencies allow:
 | Gate | Where | Items | Condition or owner input |
 | --- | --- | --- | --- |
 | Idle-desktop native window | The owner's desktop, not in use; `msedgedriver` matching WebView2; driver ports above 15000 | N-01 (#164's ported specs), N-05 (#175's four native specs, HR-1.4), N-S3 (#155), N-R3, A-05 (installed ANA-004 qualification, with SmartScreen and antivirus behaviour) | The owner provides the window (`OWNER_DECISIONS_V511.md` section 6) |
-| ProteoWizard hold release, bounded and recorded | Local | N-05 (#175's four native specs, HR-1.4), N-B1 (one `msaccess` run, HR-1.6), N-R3 (ADR 0060 native QA, HR-1.1), M10's closure (HR-1.8), A-13's fallback dataset (HR-1.3) | HR-1.1, HR-1.4, HR-1.6 and HR-1.8 are granted in principle on 2026-11-03, and each window is approved when its turn comes (HR-1.7): none starts on the answers alone. HR-1.3 is a fallback, granted only if no public file is found. C15 (Shimadzu and SCIEX centroiding, HR-1.5) and the ADR 0057 throughput measurement (HR-1.2) need hold releases too, but neither is planned here |
+| ProteoWizard hold release, bounded and recorded | Local | N-05 (#175's four native specs, HR-1.4), N-B1 (one `msaccess` run, HR-1.6), N-R3 (ADR 0060 native QA, HR-1.1), M10's closure (HR-1.8), A-13's fallback dataset (HR-1.3) | HR-1.1, HR-1.4, HR-1.6 and HR-1.8 are granted in principle on 2026-11-03, and each window is approved when its turn comes (HR-1.7): none starts on the answers alone. HR-1.3 is a fallback, granted only if no public file is found, and then asked for like the others (HR-1.7). C15 (Shimadzu and SCIEX centroiding, HR-1.5) and the ADR 0057 throughput measurement (HR-1.2) need hold releases too, but neither is planned here |
 | GitHub Actions heavy runs | CI | N-A1 (PCA timing at 10^5 × 500); N-X1 (the 77-row rerun, 153 invocations, where file licences allow the download); A-04 on the new non-required workflow; the ignored real-engine tests | B-11.1. A runner probe (CPU, RAM, free disk) comes before any number is trusted. The measurements left it (B-11.2) |
 | Memory gate | Local | A-03's wheel probes; N-X1's fallback; A-13 and A-14 (B-11.2) | Admit at 8 GiB free or 80 % used; stop at 4 GiB free or 90 %; never touch WSL or user apps |
 | Frozen figure documents | CI | N-01 | `the_linked_figure_document_is_unchanged` and `the_stored_target_figure_document_is_unchanged` pass against `main`'s goldens, after `66a6067c`'s export half and `3a416010` are reverted |
@@ -493,14 +493,17 @@ All 53 owner decisions are in [`OWNER_DECISIONS_V511.md`](OWNER_DECISIONS_V511.m
 - **Critic pass, about 15:45 UTC.** PR and branch states were re-checked (section 6). N-14 becomes the acceptance of ADR 0068. N-X4 drops its dependency on N-X1, gains one on N-B1 (polarity) and shrinks to 4 slices, because its library and measurement are done. A-09 is gated by B-6, since ADR 0067 decision 6 is its format. N-B1 gains HR-1 for a recorded `msaccess` pair. N-01, N-07, N-R1 and N-B1 restate their first slice for the pushed branches and PRs. Appendices A and B are new.
 - **Critic pass 2, about 23:00 UTC.** #185, #187 and #188 opened (section 6). N-07 becomes #185's merge. N-C9 shrinks to 3 slices and A-02 to 1, because #187 and #188 hold their first slices. RUN-1 moves to section 3 of `OWNER_DECISIONS_V511.md`. B-1 drops its claim that a runtime fix needs no app release: the manifest digest is compiled into the app (ADR 0066 decisions 3 and 5). B-2 sets its lean beside ADR 0066 decision 8. Coverage was re-checked against the gap table's missing rows, its sweep additions and its corrections: no row is unmapped.
 - **The owner's answers, 2026-11-03.** Edited by hand and recomputed from the tables (see the top of this file). Sizes and dependencies that moved:
-  - **B-5 (both polarities at once):** A-17 goes, and its 2-3 slices fold in: A-20 from 4 to 5 and A-23 from 2 to 3-4 (the split is an *estimate*). The engine keeps the adapter's own polarity check at each invocation (ADR 0067 decision 9, Proposed, on #184's branch), so A-17's dependency on N-B1 does not carry over. 93 items become 92, and phase 4 loses L-WORKER;
+  - **B-5 (both polarities at once):** A-17 goes, and its 2-3 slices fold in: A-20 from 4 to 5 and A-23 from 2 to 3-4 (the split is an *estimate*). The engine keeps the adapter's own polarity check at each invocation (ADR 0067 decision 9, on #184's branch), so A-17's dependency on N-B1 does not carry over. 93 items become 92, and phase 4 loses L-WORKER;
   - **B-6.4 (LOWESS now):** A-21 from 4 to 5, one slice more on the critical path;
   - **B-11.2 (local measurement only):** A-04 from 2-3 to 2, as its harness hosting goes; A-13 and A-14 run locally; A-13 depends on A-03, not A-04, and adds MTBLS449, negative mode and pyOpenMS 3.6.0, its size unchanged (#191 did part of it, and B-11.3 leaves the rest not estimated);
   - **V-7.4 (touch waits):** N-V4 from 3 to 2, and VW-04 moves to section 8, so 109 closed rows become 108 and 13 become 14;
   - **B-4.6 (noise default by analyzer):** A-20-UI gains a dependency on N-B1, which does not move slice 29. The edge is this roadmap's assumption: no answer says which item reads the declared analyzer, and #182, as R-1 accepted it, widens instrument configurations for the library only (`OWNER_DECISIONS_V511.md` section 1d's open list);
-  - **CK-6, CK-7, U1-2.2 and U1-2.3:** A-15 takes the thread range and the admission tiers at the same size; a third tier would follow only the low-threshold measurement;
+  - **CK-6, CK-7, U1-2.2 and U1-2.3:** A-15 takes the thread range and the admission tiers at the same size. The tiers hold only with a source check that keeps no MS1 copy (B-11.4), which A-20's appendix row names; a third tier would follow only the low-threshold measurement;
+  - **CK-3 (A-22 measures on real files, then decide):** the measurement is no longer optional, so A-22 goes from 3-4 to 4, its old upper count;
+  - **V-5 (the committed range):** N-C5 fills the RT step from the current range after a confirmation, not from a pending selection. Its 2 slices were estimated on the selection route and were not re-estimated;
+  - **B-10.1 (SIRIUS after library annotation):** A-30 depends on A-25 as well as A-24. The drivers stay out of the totals and the path;
   - **CK-4 over the review's advice:** A-09's estimate holds. **CK-1:** matchms arrives with A-25's runtime, and that release is not counted;
-  - **Totals:** phase 1 from 87-93 to 87-92; phase 2 stays 88-92 (A-20 +1, N-V4 -1); phase 3 from 43-47 to 45-50; phase 4 from 30-38 to 28-35, its 3 driver items still 15-20. Without them, 258-276 becomes 258-275. The critical path goes from 39 / 37 to 42 / 39.
+  - **Totals:** phase 1 from 87-93 to 87-92; phase 2 stays 88-92 (A-20 +1, N-V4 -1); phase 3 from 43-47 to 46-50; phase 4 from 30-38 to 28-35, its 3 driver items still 15-20. Without them, 258-276 becomes 259-275. The critical path goes from 39 / 37 to 42 / 39.
 
 ## Appendix A. Items: size basis and source
 
@@ -573,14 +576,14 @@ Sources name the planning documents (SYNTHESIS, the lane reports, XIC_EVALUATION
 | N-A9 | L-STATS-UI, 2 | M (4): QC metrics (1); recorded filter step with a rejected list (1); injection-order plots (1); QA (1) | GAP_TABLE MOD-08; stats.md 8; SYNTHESIS 5.2 (Blank/QC). |
 | N-X4 | L-MAP, 2 | M (4): library and the R0 546 MB measurement already on be/map2d (ADR 0068 slice 1, 0); desktop command with progress, Cancel and supersession (1); raster kind, figure and data exports (1); one map per polarity after N-B1 (1); rendered QA (1) | SYNTHESIS 6.2 step A7; ADR 0068 on origin/be/map2d (decisions 1-9, Evidence); GAP_TABLE VW-38. |
 | A-05 | L-RUNTIME, 2 | L (4-6): attested runtime artifact (1); notices walk (1); runtime installer with the ASCII check and app detection (1-2); verify_installed_payload.py (1); installed ANA-004 qualification (0-1, plus one idle-desktop campaign) | SYNTHESIS 6.1 P5 and 6.2 step B0; GAP_TABLE MOD-11; M9_CLOSURE (runtime packaging not started). |
-| A-20 | L-WORKER, 2 | L (5): adapter and fixed profile (1); recipe, plan, validation (1); payload as the shared feature-table artifact kind with EIC and isotope evidence (1); commands and conformance fixtures (1); negative admission and the engine's mode switch, with undeclared and mixed polarity still refused (1, from A-17, *estimate*) | SYNTHESIS 6.2 step B1; openms.md (U1). B-5, B-11.4. |
-| A-15 | L-WORKER, 2 | S (1): three constants become per-recipe limits from A-13's numbers, with a typed refusal, including 600 s, 4 GiB with two admission tiers and the refusal at about 1.47 GiB that names 1e4; the thread count (default 1, range 1 to the logical core count, in the reuse key until real files prove the result does not change) and `OPENBLAS_NUM_THREADS=1` (1). A third tier only if the low-threshold measurement asks for it, not counted | SYNTHESIS 6.1 P8 (per-recipe limits replacing 600 s, 4 GiB and OMP 1). U1-1, U1-2.1 to U1-2.3, CK-6, CK-7. |
+| A-20 | L-WORKER, 2 | L (5): adapter and fixed profile (1); recipe, plan, validation (1); payload as the shared feature-table artifact kind with EIC and isotope evidence (1); commands and conformance fixtures (1); negative admission and the engine's mode switch, with undeclared and mixed polarity still refused (1, from A-17, *estimate*). *2026-11-03 (B-11.4, U1-2.2):* the adapter also needs a new source check that keeps no MS1 copy, the precondition of the two tiers. Only its finite test was measured (#191's record, on its branch), and the 5 were not re-estimated | SYNTHESIS 6.2 step B1; openms.md (U1). B-5, B-11.4, U1-2.2. |
+| A-15 | L-WORKER, 2 | S (1): three constants become per-recipe limits from A-13's numbers, with a typed refusal, including 600 s, 4 GiB with two admission tiers (they hold only with A-20's source check) and the refusal over 80 million MS1 peaks below a noise threshold of 1e4 (about 1.47 GiB at the measured file's density), which names 1e4; the thread count (default 1, range 1 to the logical core count, in the reuse key until real files prove the result does not change) and `OPENBLAS_NUM_THREADS=1` (1). A third tier only if the low-threshold measurement asks for it, not counted | SYNTHESIS 6.1 P8 (per-recipe limits replacing 600 s, 4 GiB and OMP 1). U1-1, U1-2.1 to U1-2.3, CK-6, CK-7. |
 | A-16 | L-WORKER, 2 | S (1): refusal naming the verified vendor-centroiding route, with a reader preflight (1); PeakPickerHiRes only on a user need, not counted | SYNTHESIS 5.2 (centroided input) and 7 D10; ADR 0059 (the verified Thermo vendor-centroiding rows). |
 | A-20-UI | L-FEATURES, 2 | M (1-2): a run entry on the Features page with U1's typed parameters, including the thread count and the noise default by the file's declared analyzer (B-4.6: Orbitrap 1e4, QTOF 1e3, entered by hand when the declaration is unclear), results in N-A5's table and a detail panel with EIC and isotope evidence (1); rendered QA (0-1) | SYNTHESIS 6.2 step B1; GAP_TABLE MOD-01, MOD-02, MOD-04, MOD-05, FA-05. B-4.6, CK-6. |
 | A-14 | L-MEASURE, 2 | M (2-3): 20-50 real runs (1); labelled synthetic replicas at 100/300/500 (1); budgets and the N=500 go/no-go (0-1) | SYNTHESIS 9 (alignment at hundreds of samples); openms.md 5. |
 | N-C10 | L-CONV-A, 3 | M (3): export the canonical intent as a JSON method file (1); bounded import (1); copy and QA (1) | GAP_TABLE EXP-18, EXP-19; #176; ADR 0058:61-65; AFTER_BETA1_PLAN.md 7.3. |
 | N-C9 | L-CONV-B, 3 | M (3): #187 (merged 2026-11-03 as f2321b73) holds the versioned record and the bounded Rust store, 3 of the first estimate's 5 slices, and merged with this item's interface (ADR 0065 question 6, answered 2026-10-31): RUN-1's answers (1, done); history list, Clear and Off (1, done); redacted JSON snapshot (1, not built) | GAP_TABLE EXP-23, EXP-25; AFTER_BETA1_PLAN.md 7.4; FEATURE_CATALOG RUN-007. PR #187 body; ADR 0065 on origin/be/run-history. |
-| N-C5 | L-CONV-B, 3 | M (2): pending RT selection with 'Use in conversion...' confirmation (1); tests and QA (1) | GAP_TABLE VW-47, VW-12. |
+| N-C5 | L-CONV-B, 3 | M (2): pending RT selection with 'Use in conversion...' confirmation (1); tests and QA (1). *2026-11-03 (V-5):* after a confirmation, the current committed range fills the RT step, not a pending selection. The 2 were estimated on the selection route and were not re-estimated | GAP_TABLE VW-47, VW-12. V-5. |
 | N-S1 | L-SHELL, 3 | M (3): seven S changes in the roster files (3) | GAP_TABLE RO-08, RO-10, RO-11, RO-15, RO-16, RO-21, RO-25. |
 | N-S6 | L-SHELL, 3 | M (2): choose and record a lawful small file (1); 'Open sample data' with QA (1) | GAP_TABLE SH-16. |
 | N-A10 | L-STATS-UI, 3 | M (3): methods in crates/stats (1); provenance and exports (1); UI and QA (1) | GAP_TABLE MOD-10; stats.md 3, 9-11. |
@@ -590,7 +593,7 @@ Sources name the planning documents (SYNTHESIS, the lane reports, XIC_EVALUATION
 | A-08-KINDS | L-PROJECT, 3 | M (3-4): study run, artifact and member-chunk kinds plus A-26's review kinds in record.rs (1-2); fixtures and the upgrade path re-tested (1); bounds tests (1); schema 5 if no release has shipped it, else schema 6 (S-6) | SYNTHESIS 6.1 P7; ADR 0067 decisions 1-4 and 12; GAP_TABLE FA-10, FA-11 (A-26's kinds). |
 | A-21 | L-STUDY, 3 | L (5): derived-artifact adapter in a new study-worker module (1); study run and artifact (1); chunked consensus matrix (1); commands and windowed reads (1); the LOWESS second stage under its written decision, with the span in the recipe record, KD's warp on or off, and a numerical inverse (1) | SYNTHESIS 6.2 step B2 and 7 D13. B-6.4. |
 | A-21-UI | L-FEATURES, 3 | M (1-2): study table with per-sample columns in N-A5's table (1); rendered QA (0-1) | SYNTHESIS 6.2 step B2; GAP_TABLE MOD-06, FA-01. |
-| A-22 | L-STUDY, 3 | M (3-4): inverse-RT written decision (1); FFMI requantification per acquisition, holding the raw point sum (1); merge with the cell-state plane, seven states (1); measurement on real files, after which the owner decides whether backfilled cells enter tests (0-1) | SYNTHESIS 6.2 step B3 and 7 D11; openms.md 8 Q5. B-6.5, B-7.2, CK-3. |
+| A-22 | L-STUDY, 3 | M (4): inverse-RT written decision (1); FFMI requantification per acquisition, holding the raw point sum (1); merge with the cell-state plane, seven states (1); measurement on real files, after which the owner decides whether backfilled cells enter tests (1: CK-3 makes it required, and this is its old upper count) | SYNTHESIS 6.2 step B3 and 7 D11; openms.md 8 Q5. B-6.5, B-7.2, CK-3. |
 | A-22-UI | L-FEATURES, 3 | M (1-2): cell-state column, legend entry and CSV state column (1); rendered QA (0-1) | SYNTHESIS 6.2 step B3; GAP_TABLE MOD-07, FA-07. |
 | A-23 | L-WORKER, 3 | M (3-4): per-acquisition MetaboliteFeatureDeconvolution (1); IIMN over the consensus with the pair table (1); a negative adduct set and the U4 adapter's mode switch (1-2, from A-17, *estimate*) | SYNTHESIS 6.2 step B4 and 7 D10 (the minimum correlation); SYNTHESIS 7 D12. B-5. |
 | A-12 | L-FIG, 3 | M (2): PlotKind::Mirror with matched peaks coloured (1); golden SVGs (1) | SYNTHESIS 6.1 P3 (the mirror kind); GAP_TABLE FA-09, EXP-15. |
