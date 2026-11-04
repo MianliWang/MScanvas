@@ -91,6 +91,10 @@
 .workbench-shell .workspace-layout { grid-area: content; position: relative; display: grid; gap: 0; margin: 8px 24px; padding: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "main"; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
 /* The card clips what is drawn outside it, so a region's own ring stays inside. */
 .workbench-shell .workspace-layout > [tabindex]:focus-visible { outline-offset: -2px; }
+/* What a main region holds is positioned and opaque, and paints over that ring, and
+   a layer inside the region would scroll away. So the card draws the ring, over the
+   region's area and under its own drawers. */
+.workbench-shell .workspace-layout:has(> :is(.workbench-evidence, .workbench-conversion, .workbench-project):focus-visible)::after { content: ""; position: absolute; z-index: 2; inset: 0; grid-area: main; outline: 2px solid var(--color-focus); outline-offset: -2px; pointer-events: none; }
 .workbench-shell[data-roster-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr); grid-template-areas: "roster main"; }
 .workbench-shell[data-details-open="true"] .workspace-layout { grid-template-columns: minmax(0, 1fr) 245px; grid-template-areas: "main inspector"; }
 .workbench-shell[data-roster-open="true"][data-details-open="true"] .workspace-layout { grid-template-columns: 240px minmax(0, 1fr) 245px; grid-template-areas: "roster main inspector"; }

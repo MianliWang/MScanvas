@@ -1004,6 +1004,25 @@ describe("viewing a Thermo RAW row", () => {
       await waitFor(() => expect(panel.querySelector(".raw-view-notice")).toBeNull(), { timeout: 2_000 });
       expect(panel).toHaveFocus();
     });
+
+    it("hands the bar's keyboard to the Project page while that page is on screen", async () => {
+      const { world } = session({ state: running("converting") });
+      await act(async () => { fireEvent.click(await screen.findByRole("button", { name: words.projectSurface })); });
+      const show = await waitFor(() => { const found = statusBar()?.querySelector<HTMLElement>("button"); expect(found).toBeTruthy(); return found!; });
+      show.focus();
+      end(world);
+      await waitFor(() => expect(statusBar()).toBeNull(), { timeout: 2_000 });
+      expect(document.getElementById("workbench-project")).toHaveFocus();
+    });
+
+    it("moves nothing when the keyboard was not on it", async () => {
+      const { world } = session({ state: running("converting") });
+      await waitFor(() => expect(statusBar()?.querySelector("button")).toBeTruthy());
+      expect(document.body).toHaveFocus();
+      end(world);
+      await waitFor(() => expect(statusBar()).toBeNull(), { timeout: 2_000 });
+      expect(document.body).toHaveFocus();
+    });
   });
 
   it("reads the row's answer again when the queue ends, so View comes back with no other press", async () => {

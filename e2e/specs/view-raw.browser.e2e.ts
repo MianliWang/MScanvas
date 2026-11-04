@@ -131,13 +131,47 @@ async function cancelBy(table: Record<string, unknown>, press: () => Promise<unk
   await releaseInvokeHold("get_raw_view_state");
 }
 
-/** The keyboard on the evidence, with its ring inside the card that clips it. */
-async function ringOnEvidence() {
-  const ring = await browser.execute(() => {
-    const on = document.activeElement;
-    return on?.id === "workbench-evidence" && on.matches(":focus-visible") ? getComputedStyle(on).outlineOffset : "no ring on the evidence";
-  });
-  expect(ring).toBe("-2px");
+/**
+ * The keyboard on a region, with its ring on the screen on all four sides. Computed
+ * style cannot say so: the Conversion page's ring computed to -2px under columns that
+ * painted over it. Read with the region scrolled to its end, where a ring inside its
+ * scroll would have left, and without the corners, which the card rounds.
+ */
+async function ringPainted(region: string) {
+  const scrolled = await browser.execute((css: string) => {
+    const node = document.querySelector(css)!;
+    const top = node.scrollTop;
+    node.scrollTop = node.scrollHeight;
+    return top;
+  }, region);
+  await browser.execute(() => new Promise((done) => { requestAnimationFrame(() => { requestAnimationFrame(done); }); }));
+  const shot = await cdp("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
+  const missing = await browser.execute(async (css: string, png: string) => {
+    const node = document.querySelector(css)!;
+    if (document.activeElement !== node || !node.matches(":focus-visible")) return `no ring on ${css}`;
+    const box = node.getBoundingClientRect();
+    if (!node.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2))) return "the ring takes the pointer";
+    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(png), (byte) => byte.charCodeAt(0))], { type: "image/png" }));
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height).getContext("2d")!;
+    canvas.drawImage(bitmap, 0, 0);
+    const { data } = canvas.getImageData(0, 0, bitmap.width, bitmap.height);
+    const color = getComputedStyle(node).outlineColor.match(/\d+/gu)!.map(Number);
+    const ring = (x: number, y: number) => color.every((channel, index) => Math.abs(data[(y * bitmap.width + x) * 4 + index]! - channel) <= 16);
+    const [left, top, right, bottom] = [box.left, box.top, box.right - 1, box.bottom - 1].map(Math.round) as [number, number, number, number];
+    const gaps = (from: number, to: number, drawn: (along: number) => boolean) => {
+      let count = 0;
+      for (let along = from + 8; along <= to - 8; along += 1) if (!drawn(along)) count += 1;
+      return count;
+    };
+    return {
+      top: gaps(left, right, (x) => ring(x, top) || ring(x, top + 1)),
+      right: gaps(top, bottom, (y) => ring(right, y) || ring(right - 1, y)),
+      bottom: gaps(left, right, (x) => ring(x, bottom) || ring(x, bottom - 1)),
+      left: gaps(top, bottom, (y) => ring(left, y) || ring(left + 1, y)),
+    };
+  }, region, shot.data as string);
+  expect(missing).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
+  await browser.execute((css: string, top: number) => { document.querySelector(css)!.scrollTop = top; }, region, scrolled);
 }
 
 async function clean() {
@@ -248,7 +282,7 @@ for (const locale of ["en", "zh-CN"] as const) {
           await browser.pause(500);
           const where = await browser.execute(() => document.activeElement === document.body ? "body" : document.activeElement?.id === "workbench-evidence" ? "evidence" : document.activeElement?.matches("[data-handle]") ? "row" : "pane");
           expect(where).toBe(narrow ? "evidence" : "row");
-          if (narrow) await ringOnEvidence();
+          if (narrow) await ringPainted("#workbench-evidence");
         };
         const withState = (state: unknown, availability: unknown = AVAILABLE) => {
           const table = world(locale);
@@ -549,27 +583,43 @@ for (const locale of ["en", "zh-CN"] as const) {
         await step(ended);
         await keyboardOn("[data-raw-view-view]");
 
+        // A press of a key first: after a pointer's click a script's focus shows no ring.
         await open(locale, viewport, withState(running("converting"), busy));
         await foldNarrowRoster();
         await browser.$("[data-status-raw-view] button").waitForExist({ timeout: 10_000 });
+        await browser.keys("Shift");
         await focusOn("[data-status-raw-view] button");
         await step(ended);
         await keyboardOn("#workbench-evidence");
+        await ringPainted("#workbench-evidence");
 
         await open(locale, viewport, withState(running("converting"), busy));
         await revealRosterRow(OPEN.handle);
         await browser.$(`.grouped-roster [data-handle="${OPEN.handle}"]`).click();
         await browser.$("[data-raw-view-held]").waitForExist({ timeout: 10_000 });
+        await browser.keys("Shift");
         await focusOn(".evidence-state:has([data-raw-view-held]) button");
         await step(ended);
         await keyboardOn("#workbench-evidence");
+        await ringPainted("#workbench-evidence");
 
         await open(locale, viewport, withState(running("converting"), busy));
         await browser.$('.workbench-navigation [data-surface-tab="conversion"]').click();
         await browser.$(".raw-view-notice button").waitForExist({ timeout: 10_000 });
+        await browser.keys("Shift");
         await focusOn(".raw-view-notice button");
         await step(ended);
         await keyboardOn("#workbench-conversion");
+        await ringPainted("#workbench-conversion");
+
+        await open(locale, viewport, withState(running("converting"), busy));
+        await browser.$('.workbench-navigation [data-surface-tab="project"]').click();
+        await browser.$("[data-status-raw-view] button").waitForExist({ timeout: 10_000 });
+        await browser.keys("Shift");
+        await focusOn("[data-status-raw-view] button");
+        await step(ended);
+        await keyboardOn("#workbench-project");
+        await ringPainted("#workbench-project");
         await clean();
       });
 
@@ -647,6 +697,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         await browser.keys("Enter");
         await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 10_000 });
         await browser.waitUntil(async () => browser.execute(() => document.activeElement?.id === "workbench-evidence"), { timeout: 10_000, timeoutMsg: "Open left the keyboard on the body" });
+        await ringPainted("#workbench-evidence");
         await clean();
       });
 
@@ -706,7 +757,7 @@ for (const locale of ["en", "zh-CN"] as const) {
           await browser.keys("Enter");
         } else {
           // The drawer folded and the keyboard moved to the pane; Tab reaches View.
-          await ringOnEvidence();
+          await ringPainted("#workbench-evidence");
           await browser.keys("Tab");
           expect(await browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-view"))).toBe(true);
           await browser.keys("Enter");
