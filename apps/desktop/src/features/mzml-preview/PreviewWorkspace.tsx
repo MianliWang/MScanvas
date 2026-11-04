@@ -595,13 +595,14 @@ export function PreviewWorkspace() {
     firstRunHeldFocus.current = false;
     if (document.activeElement === null || document.activeElement === document.body) evidenceRef.current?.focus({ preventScroll: true });
   }, [evidenceState]);
-  // And the way in: a press that re-reads the row's own failed or open preview
-  // takes its button with it, so the keyboard continues at the pane that replaced it.
-  const rawPaneOverOwnPreview = rawPaneRow !== null && rawPaneRow.handle === previewedHandle;
+  // And the way in: a press that re-reads a row takes its button with it, from a
+  // failed or open preview or the offer to read it again, so the keyboard continues
+  // at the pane that replaced it.
+  const rawPaneHandle = rawPaneRow?.handle ?? null;
   useLayoutEffect(() => {
-    if (!rawPaneOverOwnPreview || document.activeElement !== document.body) return;
+    if (rawPaneHandle === null || document.activeElement !== document.body) return;
     evidenceRef.current?.querySelector<HTMLElement>("[data-raw-view-pane] button")?.focus({ preventScroll: true });
-  }, [rawPaneOverOwnPreview]);
+  }, [rawPaneHandle]);
 
   const handleTableRendered = useCallback(
     (renderedRowCount: number, milliseconds: number) => {

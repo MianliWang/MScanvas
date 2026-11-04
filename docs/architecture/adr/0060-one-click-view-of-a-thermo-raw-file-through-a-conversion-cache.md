@@ -388,9 +388,11 @@ under the `e2e` feature it is the same task-owned QA root.
 - **The uninstaller.** Whatever it does with the application data, it does with
   the cache. What its "Delete the application data" choice removes is not yet
   observed (plan section 7.2, as ADR 0058 records for presets).
-  Owner decision, 2026-11-03 (DEF-2): option (b), so the cache no longer follows the
-  application data on uninstall. Not built yet; see
-  [slice 3 note 9](#slice-3-notes-2026-11-03).
+  Owner decision, 2026-11-03 (DEF-2): option (b). Always remove the cache folder on
+  uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets and preferences
+  stay opt-in behind "Delete the application data".
+  Not an owner decision: no hook is built yet, so until one lands the sentence above
+  still describes an uninstall; see [slice 3 note 9](#slice-3-notes-2026-11-03).
 
 **Ownership marker.** The marker, `.mscanvas-view-cache-owner`, holds a
 constant, `mscanvas-view-cache\n`, as the staging marker does: it proves which

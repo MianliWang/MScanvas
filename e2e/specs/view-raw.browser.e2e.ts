@@ -12,7 +12,7 @@ import { cdp, metrics } from "../support/cdp";
 import { ALLOWED_CONSOLE_SUBSTRINGS, consoleEntries, horizontalOverflow, installIpcBoundary, ipcCalls, setInvokeRejection, setInvokeResult } from "../support/harness";
 import { NO_PROJECT, scenario, type Locale } from "../support/pm9Scenarios";
 import { readBackSavedPreferences, revealRosterRow, selectTheSpectrum } from "../support/viewer";
-import { availableBackend, completeCatalog, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
+import { availableBackend, chosenBackend, completeCatalog, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
 import type { SelectedFile } from "../../apps/desktop/src/features/mzml-preview/contracts";
 
 const AUTHORITY = settledAt(1, 1);
@@ -297,6 +297,29 @@ for (const locale of ["en", "zh-CN"] as const) {
         await browser.keys("Enter");
         await phase("checkingSource");
         await browser.waitUntil(async () => browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-cancel") === true), { timeout: 10_000, timeoutMsg: "the keyboard did not reach Cancel" });
+
+        // A change of installation discards the reading and keeps the row to offer it again.
+        const table = world(locale);
+        table.get_raw_view_state = { state: ready(), availability: AVAILABLE };
+        table.choose_backend_installation = chosenBackend;
+        await open(locale, viewport, table);
+        await highlight(FIRST);
+        await browser.$("[data-raw-view-open]").click();
+        await browser.$("[data-view-export-withheld]").waitForExist({ timeout: 10_000 });
+        await revealRosterRow(FIRST.handle);
+        await focusOn(`.grouped-roster [data-handle="${FIRST.handle}"]`);
+        await browser.keys(" ");
+        await foldNarrowRoster();
+        await browser.$("[data-backend-item]").click();
+        await browser.$('[data-backend-action="choose"]').click();
+        const offer = '#workbench-evidence[data-evidence="idle"] .evidence-actions .ui-button--primary';
+        await browser.$(offer).waitForExist({ timeout: 10_000 });
+        await step(running("checkingSource", { operation: 2 }));
+        await setInvokeResult("begin_raw_view", running("checkingSource", { operation: 2 }));
+        await focusOn(offer);
+        await browser.keys("Enter");
+        await phase("checkingSource");
+        await browser.waitUntil(async () => browser.execute(() => document.activeElement?.hasAttribute("data-raw-view-cancel") === true), { timeout: 10_000, timeoutMsg: "the offer left the keyboard on the body" });
         await clean();
       });
 

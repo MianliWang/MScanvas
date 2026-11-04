@@ -14,7 +14,8 @@ import { rawViewFailureText, shortFileName, viewSourceSettings } from "../featur
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { spectrumSelectionAvailability } from "../features/mzml-preview/viewer/selectionAvailability";
 import { chooseRosterAction, rosterActionRefused } from "../test/rosterActions";
-import { availableBackend, buildPreview, createFakePreviewApi, createFakeWorkspaceDropTransport, selectedFile, shippedIntent, unavailableBackend, type FakePreviewApiOptions } from "../test/previewFixtures";
+import { showBackendBanner } from "../test/backendBanner";
+import { availableBackend, buildPreview, chosenBackend, createFakePreviewApi, createFakeWorkspaceDropTransport, selectedFile, shippedIntent, unavailableBackend, type FakePreviewApiOptions } from "../test/previewFixtures";
 
 const words = UI_RESOURCES.en;
 const RAW: SelectedFile = { handle: "raw-1", fileName: "QC_pool_01.raw", byteLength: 78_309, sourceKind: "thermo_raw", relativeContext: null };
@@ -47,7 +48,7 @@ const failed = (code: string, retryable: boolean, extra: Partial<RawViewState> =
 } as RawViewState);
 
 /** A session whose view the test moves by hand. */
-function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"] } = {}) {
+function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"]; chosenInstallation?: FakePreviewApiOptions["chosenInstallation"] } = {}) {
   const world = { state: initial.state ?? ({ state: "idle" } as RawViewState), availability: initial.availability ?? ({ available: true, unverifiedBuildRelease: null } as RawViewAvailability) };
   const begun: string[] = [];
   const cancelled: number[] = [];
@@ -62,6 +63,7 @@ function session(initial: { state?: RawViewState; availability?: RawViewAvailabi
     ...(initial.planWorkspaceClear === undefined ? {} : { planWorkspaceClear: initial.planWorkspaceClear }),
     ...(initial.preview === undefined ? {} : { preview: initial.preview }),
     ...(initial.spectrum === undefined ? {} : { spectrum: initial.spectrum }),
+    ...(initial.chosenInstallation === undefined ? {} : { chosenInstallation: initial.chosenInstallation }),
     getRawViewState: read,
     beginRawView: (handle) => { begun.push(handle); world.state = running("checkingSource"); return Promise.resolve(world.state); },
     cancelRawView: (operation) => { cancelled.push(operation); world.state = { state: "cancelled", operation, handle: RAW.handle, stored: false }; return Promise.resolve(world.state); },
@@ -510,6 +512,23 @@ describe("viewing a Thermo RAW row", () => {
         await act(async () => { fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no such file" } }); });
         await act(async () => { fireEvent.click(again); });
         await waitFor(() => expect(evidence().querySelector("[data-raw-view-refusal='view_cache_unavailable']")).not.toBeNull());
+      });
+
+      it("keeps the keyboard when the offer to read a row again gives way to its pane", async () => {
+        const { begun } = session({ state: ready(), chosenInstallation: chosenBackend });
+        await highlight();
+        await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.rawViewOpen })); });
+        await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "loaded"));
+        await act(async () => { fireEvent.click(await row(RAW), { ctrlKey: true }); });
+        // A change of installation discards the reading, and keeps the row to offer it again.
+        await showBackendBanner();
+        fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+        const offer = await within(evidence()).findByRole("button", { name: `Preview ${RAW.fileName}` });
+        offer.focus();
+        await act(async () => { fireEvent.click(offer); });
+        expect(begun).toEqual([RAW.handle]);
+        await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "raw-view"));
+        expect(evidence().contains(document.activeElement)).toBe(true);
       });
 
       it("asks nothing further until the press is answered, so no read can release it", async () => {
