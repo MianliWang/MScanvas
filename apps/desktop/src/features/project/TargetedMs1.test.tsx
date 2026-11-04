@@ -1188,6 +1188,28 @@ describe("a stored result reused (M9.2)", () => {
       expect(document.activeElement).toBe(text());
     });
 
+    it("keeps its controls in reading order for the keyboard, each a real button", async () => {
+      await inspectResult();
+      await screen.findByText(en.targetedRowsCaption);
+      await press(sortBy("raw_area"));
+      const controls = [
+        ...document.querySelectorAll<HTMLElement>(
+          "[data-targeted-view-text], [data-targeted-view-outcome], [data-targeted-view-reset], [data-targeted-sort]",
+        ),
+      ];
+      expect(
+        controls.map(
+          (control) =>
+            control.getAttribute("data-targeted-view-outcome") ??
+            control.getAttribute("data-targeted-sort") ??
+            (control.hasAttribute("data-targeted-view-reset") ? "reset" : "text"),
+        ),
+      ).toEqual(["text", "DETECTED", "NOT_DETECTED", "reset", "label", "outcome", "feature_apex_rt_s", "raw_area"]);
+      expect(controls.slice(1).every((control) => control.tagName === "BUTTON" && control.tabIndex === 0)).toBe(true);
+      // The save comes before them, with the table's own exports.
+      expect(precedes(save(), text())).toBe(true);
+    });
+
     it("counts each outcome under the text and filters by what is pressed", async () => {
       await inspectResult();
       await screen.findByText(en.targetedRowsCaption);
