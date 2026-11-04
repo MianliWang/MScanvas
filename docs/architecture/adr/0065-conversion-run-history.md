@@ -407,7 +407,11 @@ store now does with such a sibling:
   included, and nothing says so: there is no count, no message and no interface
   change. So do one whose time cannot be read or lies in the future, a directory, a
   junction or a link at such a name, every other name (`.owner-pending-*` included)
-  and every other store's siblings.
+  and every other store's siblings. The owner's words were "untouched for over 24
+  hours"; keeping one whose time cannot be read or lies in the future, and a
+  directory, a junction or a link at such a name, is as built on 2026-11-04, not an
+  owner decision. After a crash with a clock running fast, such a file stays until
+  real time passes its last write by 24 hours.
 - **When.** No start and no list removes one while recording. While Off holds, its
   sweep runs at each start and list, so one that has aged goes then, which is as
   built on 2026-11-04 and not an owner decision. Otherwise only the moment of a

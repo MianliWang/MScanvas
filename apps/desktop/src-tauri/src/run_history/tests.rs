@@ -1925,6 +1925,7 @@ fn left_behind(directory: &Path, name: &str, age: Duration) -> PathBuf {
 
 #[test]
 fn clear_and_off_remove_a_sibling_past_a_day_and_keep_one_short_of_it() {
+    assert_eq!(SIBLING_MAX_AGE, DAY, "the owner's 24 hours");
     for sweep in CLEAR_AND_OFF {
         let scratch = Scratch::new("history-sibling-age");
         let history = open(&scratch);
@@ -2076,6 +2077,8 @@ fn a_junction_or_a_link_with_a_siblings_name_is_kept_and_its_target_untouched() 
         fs::create_dir_all(&elsewhere).expect("the target");
         let canary = elsewhere.join("canary");
         fs::write(&canary, SIBLING_BYTES).expect("write");
+        // Old, so that a stat that followed the link would see a file to remove.
+        set_written(&canary, SystemTime::now() - LONG_AGO);
         let junction = directory.join(sibling_name(0));
         let made = std::process::Command::new("cmd.exe")
             .args(["/C", "mklink", "/J"])
@@ -2135,6 +2138,24 @@ fn a_sibling_that_cannot_be_removed_is_counted_and_the_sweep_goes_on() {
         drop(holder);
         assert_eq!(sweep(&history), SWEPT);
         assert!(!held.exists());
+    }
+}
+
+/// A holder that allows deletion stops nothing: the name goes, so Done is true.
+#[cfg(windows)]
+#[test]
+fn a_holder_that_allows_deletion_does_not_keep_a_sibling() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-held-shared");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let held = left_behind(&directory, &sibling_name(0), LONG_AGO);
+        let holder = hold(&held, SHARES_DELETE_ONLY);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(!held.exists(), "its name is gone");
+        drop(holder);
     }
 }
 
