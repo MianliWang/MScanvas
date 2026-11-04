@@ -194,8 +194,11 @@ impl UiPreferenceStore {
     /// While remembering is off, the store stops writing what it would
     /// otherwise remember: a commit that leaves it off answers `NotRemembered`
     /// and writes nothing. The commit that turns it off writes that switch and
-    /// no other change, and what was stored stays stored, so the next launch
-    /// still starts on it. A commit that turns it on is written whole.
+    /// no other change. A commit that turns it on is written whole.
+    ///
+    /// What was stored stays stored, so the next launch still starts on it. That
+    /// is a reading, not an owner decision: the rule stops writing and says
+    /// nothing about erasing.
     #[must_use]
     pub fn save(&self, request: &UiPreferenceWriteDto) -> UiPreferenceSaveDto {
         if request.appearance.is_none() && request.layout.is_none() && request.display.is_none() {

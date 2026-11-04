@@ -570,7 +570,7 @@ and answers `notRemembered`; the session keeps the choice and says it is this
 session's. The commit that turns it off writes that switch and no other change.
 The commit that turns it on is written whole. The record keeps the switch.
 
-Three parts of this are as built on 2026-11-04, each a reading and not an owner
+Four parts of this are as built on 2026-11-04, each a reading and not an owner
 decision:
 
 - The ProteoWizard folder is still remembered and forgotten while remembering is
@@ -578,6 +578,8 @@ decision:
   the webview.
 - Turning remembering off leaves what was stored in place, so the next launch
   still starts on it. The v5.11 demo removes it instead.
+- `display.crosshair` defaults to off, because no pointer lines are drawn today.
+  The v5.11 demo defaults it on.
 - `display` is a new root group rather than part of `appearance`, and whether
   Reset defaults reaches it belongs to the lanes that add the rows.
 

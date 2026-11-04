@@ -162,6 +162,7 @@ pub enum WheelHabit {
 /// webview uses as its session state. Every default keeps what a build without
 /// these fields does, which is why `crosshair` is off: a plot draws no pointer
 /// lines today, only a crosshair cursor, and that cursor is not this switch.
+/// That default is a reading, not an owner decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DisplayPreferences {
