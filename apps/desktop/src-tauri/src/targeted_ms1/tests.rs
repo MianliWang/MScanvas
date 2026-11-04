@@ -4832,7 +4832,7 @@ use crate::project::payload::{
 use crate::project::record::TargetId;
 use crate::project::targeted_output::{
     self as output, EvidenceRefusal, StoredResult, TABLE_COLUMNS, TableFormat, TableRefusal,
-    evidence_figure, figure_text, result_table,
+    TableView, evidence_figure, figure_text, result_table, view_table,
 };
 use mscanvas_plot_spec::spec::{FigureSize, FigureTheme, IntervalRole};
 
@@ -6186,4 +6186,536 @@ fn numbers_formula_and_code_owned_fields_are_never_altered() {
     assert!(marked.contains(",114,126,-12.5,"));
     assert!(marked.contains(",'-caffeine,C8H10N4O2,"));
     assert!(marked.contains(",'=SUM(1),C5H5N5,135.054495,40.5,10,FAILED,"));
+}
+
+// ---------------------------------------------------------------------------
+// S-7.1: the rows a person was looking at
+// ---------------------------------------------------------------------------
+
+const EVERY_OUTCOME: [&str; 6] = [
+    "DETECTED",
+    "DETECTED_AMBIGUOUS",
+    "SHARED",
+    "SUPPRESSED_BY_OVERLAP",
+    "NOT_DETECTED",
+    "FAILED",
+];
+
+/// A view of `golden_stored()`, its rows named by their golden index.
+fn golden_view(
+    targets: &[u8],
+    outcomes: &[&str],
+    text: &str,
+    sort: Option<(&str, &str)>,
+) -> TableView {
+    TableView::from_wire(
+        &targets
+            .iter()
+            .map(|index| golden_target(*index).to_string())
+            .collect::<Vec<_>>(),
+        &outcomes
+            .iter()
+            .map(|word| (*word).to_owned())
+            .collect::<Vec<_>>(),
+        text.to_owned(),
+        sort,
+    )
+    .expect("a view")
+}
+
+/// The view every view golden holds: a text that would start a formula, two
+/// outcomes, sorted so its rows are out of plan order, one of them never
+/// extracted.
+fn pinned_view() -> TableView {
+    golden_view(
+        &[4, 2],
+        &["SHARED", "FAILED"],
+        "=",
+        Some(("label", "ascending")),
+    )
+}
+
+/// One column of a TSV table's data rows, by name. TSV, because it has no
+/// quoting to read past.
+fn column(table: &str, name: &str) -> Vec<String> {
+    let at = TABLE_COLUMNS
+        .iter()
+        .position(|known| *known == name)
+        .expect("a column");
+    table
+        .lines()
+        .skip_while(|line| line.starts_with('#'))
+        .skip(1)
+        .map(|line| line.split('\t').nth(at).expect("a cell").to_owned())
+        .collect()
+}
+
+fn preamble_value(table: &str, key: &str) -> String {
+    let prefix = format!("#{key},");
+    table
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .unwrap_or_else(|| panic!("no {key}"))
+        .to_owned()
+}
+
+/// A view is a document of its own: the CSV, TSV and spreadsheet CSV of
+/// `pinned_view()`, from literals only, like the whole table's goldens.
+#[test]
+fn a_view_table_is_its_golden_document_in_every_format() {
+    let stored = golden_stored();
+    for (format, golden) in [
+        (
+            TableFormat::Csv,
+            include_str!("../../../../../fixtures/targeted-table-golden/view.csv"),
+        ),
+        (
+            TableFormat::Tsv,
+            include_str!("../../../../../fixtures/targeted-table-golden/view.tsv"),
+        ),
+    ] {
+        let (table, count) = view_table(&stored, format, &pinned_view()).expect("a table");
+        assert_eq!(count, 2);
+        assert_eq!(table, golden, "{format:?}");
+        assert!(!table.starts_with('\u{FEFF}'), "no byte-order mark");
+    }
+    let (table, count) =
+        view_table(&stored, TableFormat::SpreadsheetCsv, &pinned_view()).expect("a table");
+    assert_eq!(count, 2);
+    assert!(
+        table.as_bytes().starts_with(b"\xEF\xBB\xBF"),
+        "a UTF-8 mark"
+    );
+    assert_eq!(table.matches('\u{FEFF}').count(), 1, "one mark, first");
+    assert_eq!(
+        &table['\u{FEFF}'.len_utf8()..],
+        include_str!("../../../../../fixtures/targeted-table-golden/view-spreadsheet.csv")
+    );
+}
+
+/// Written under its own name, so a reader of the first line cannot take it
+/// for the whole table, and the whole table's documents never gain a word of it.
+#[test]
+fn a_view_table_says_from_its_first_line_that_it_is_a_view() {
+    let stored = golden_stored();
+    for (format, first) in [
+        (
+            TableFormat::Csv,
+            "#format,mscanvas_targeted_ms1_results_view\n#schema_version,1\n",
+        ),
+        (
+            TableFormat::Tsv,
+            "#format\tmscanvas_targeted_ms1_results_view\n#schema_version\t1\n",
+        ),
+        (
+            TableFormat::SpreadsheetCsv,
+            "\u{FEFF}#format,mscanvas_targeted_ms1_results_view_spreadsheet\n#schema_version,1\n",
+        ),
+    ] {
+        let (table, _) = view_table(&stored, format, &pinned_view()).expect("a table");
+        assert!(table.starts_with(first), "{format:?}");
+        let (whole, _) = result_table(&stored, format).expect("a table");
+        assert!(!whole.contains("view"), "{format:?}");
+    }
+}
+
+#[test]
+fn a_view_table_names_what_it_keeps_and_how_many_of_how_many() {
+    let stored = golden_stored();
+    let (table, _) = view_table(&stored, TableFormat::Csv, &pinned_view()).expect("a table");
+    for (key, value) in [
+        ("target_count", "6"),
+        ("row_order", "view"),
+        ("view_rows", "2 of 6"),
+        ("view_outcomes", "SHARED;FAILED"),
+        ("view_text", "="),
+        ("view_sort_key", "label"),
+        ("view_sort_direction", "ascending"),
+    ] {
+        assert_eq!(preamble_value(&table, key), value, "{key}");
+    }
+
+    // A filter alone keeps plan order and has no sort to name: absent is empty.
+    let view = golden_view(&[1, 4], &EVERY_OUTCOME, "c8h10", None);
+    let (table, count) = view_table(&stored, TableFormat::Csv, &view).expect("a table");
+    assert_eq!(count, 2);
+    assert_eq!(preamble_value(&table, "row_order"), "plan");
+    assert_eq!(preamble_value(&table, "view_rows"), "2 of 6");
+    assert_eq!(
+        preamble_value(&table, "view_outcomes"),
+        EVERY_OUTCOME.join(";")
+    );
+    assert_eq!(preamble_value(&table, "view_text"), "c8h10");
+    assert_eq!(preamble_value(&table, "view_sort_key"), "");
+    assert_eq!(preamble_value(&table, "view_sort_direction"), "");
+
+    // A formula as a person writes it finds the rows the page shows, and the
+    // file says what was typed.
+    let view = golden_view(&[1, 4], &EVERY_OUTCOME, "C8H10", None);
+    let (table, count) = view_table(&stored, TableFormat::Csv, &view).expect("a table");
+    assert_eq!(count, 2);
+    assert_eq!(preamble_value(&table, "view_text"), "C8H10");
+
+    // A name typed in lower case finds the mixed-case name the page finds: only
+    // target 2's label holds "sum", so only the label can keep it.
+    let view = golden_view(&[2], &EVERY_OUTCOME, "sum", None);
+    let (table, count) = view_table(&stored, TableFormat::Csv, &view).expect("a table");
+    assert_eq!(count, 1);
+    assert_eq!(preamble_value(&table, "view_text"), "sum");
+}
+
+/// The same view writes the same line, whatever order its outcomes came in.
+#[test]
+fn a_view_table_writes_its_outcomes_in_one_order() {
+    let stored = golden_stored();
+    let view = golden_view(
+        &[4, 2],
+        &["FAILED", "SHARED", "FAILED"],
+        "=",
+        Some(("label", "ascending")),
+    );
+    assert_eq!(view, pinned_view());
+    assert_eq!(
+        view_table(&stored, TableFormat::Csv, &view).expect("a table"),
+        view_table(&stored, TableFormat::Csv, &pinned_view()).expect("a table"),
+    );
+}
+
+#[test]
+fn a_view_table_keeps_the_order_shown_and_every_row_keeps_its_plan_position() {
+    let stored = golden_stored();
+    let (table, _) = view_table(&stored, TableFormat::Tsv, &pinned_view()).expect("a table");
+    assert_eq!(column(&table, "target_position"), ["4", "2"]);
+    assert_eq!(
+        column(&table, "target_id"),
+        [golden_target(4).to_string(), golden_target(2).to_string()]
+    );
+    let view = golden_view(
+        &[6, 1, 3, 5, 2, 4],
+        &EVERY_OUTCOME,
+        "",
+        Some(("raw_area", "descending")),
+    );
+    let (table, count) = view_table(&stored, TableFormat::Tsv, &view).expect("a table");
+    assert_eq!(count, 6);
+    assert_eq!(
+        column(&table, "target_position"),
+        ["6", "1", "3", "5", "2", "4"]
+    );
+}
+
+/// A view of every row in plan order differs from the whole table in its
+/// preamble and nothing else, so a row is the same row in either document.
+#[test]
+fn a_view_table_writes_each_row_as_the_whole_table_does() {
+    let stored = golden_stored();
+    let view = golden_view(&[1, 2, 3, 4, 5, 6], &EVERY_OUTCOME, "", None);
+    let rows = |document: &str| {
+        document
+            .trim_start_matches('\u{FEFF}')
+            .lines()
+            .skip_while(|line| line.starts_with('#'))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    for format in [
+        TableFormat::Csv,
+        TableFormat::Tsv,
+        TableFormat::SpreadsheetCsv,
+    ] {
+        let (whole, _) = result_table(&stored, format).expect("a table");
+        let (table, _) = view_table(&stored, format, &view).expect("a table");
+        assert_eq!(rows(&table), rows(&whole), "{format:?}");
+    }
+}
+
+/// Absent is empty, never zero, in a view as in the whole table.
+#[test]
+fn a_view_table_leaves_an_absent_value_empty() {
+    let stored = golden_stored();
+    let (table, _) = view_table(&stored, TableFormat::Tsv, &pinned_view()).expect("a table");
+    let never_extracted = 1;
+    for name in [
+        "adduct",
+        "mz_theoretical_m",
+        "extracted_points",
+        "signal_sum_m",
+        "edge_trace_count",
+        "candidate_count",
+        "feature_apex_rt_s",
+        "raw_area",
+        "model_area",
+        "engine_intensity",
+    ] {
+        assert_eq!(column(&table, name)[never_extracted], "", "{name}");
+    }
+    assert_eq!(column(&table, "outcome")[never_extracted], "FAILED");
+}
+
+#[test]
+fn a_view_table_refuses_rows_that_are_not_the_views() {
+    let stored = golden_stored();
+    let refused = [
+        (
+            "outside the plan",
+            golden_view(&[99], &EVERY_OUTCOME, "", None),
+        ),
+        (
+            "every row and one outside the plan, which is not skipped",
+            golden_view(&[1, 2, 3, 4, 5, 6, 99], &EVERY_OUTCOME, "", None),
+        ),
+        ("no rows", golden_view(&[], &EVERY_OUTCOME, "", None)),
+        (
+            "no rows under a filter that keeps none",
+            golden_view(&[], &EVERY_OUTCOME, "no such target", None),
+        ),
+        (
+            "a row of an outcome the text would keep but the view does not",
+            golden_view(&[2, 4], &["FAILED"], "=", None),
+        ),
+        (
+            "a row twice",
+            golden_view(
+                &[1, 1, 2, 3, 4, 5],
+                &EVERY_OUTCOME,
+                "",
+                Some(("label", "ascending")),
+            ),
+        ),
+        (
+            "every row and one named twice, which is not collapsed",
+            golden_view(
+                &[1, 1, 2, 3, 4, 5, 6],
+                &EVERY_OUTCOME,
+                "",
+                Some(("label", "ascending")),
+            ),
+        ),
+        (
+            "an outcome the view does not keep",
+            golden_view(&[1, 2], &["FAILED"], "", None),
+        ),
+        (
+            "a row the text does not match",
+            golden_view(&[1, 2], &EVERY_OUTCOME, "=", None),
+        ),
+        (
+            "a kept row left out",
+            golden_view(&[2], &EVERY_OUTCOME, "=", None),
+        ),
+        (
+            "a row left out with no filter to say why",
+            golden_view(&[1, 2, 3, 4, 5], &EVERY_OUTCOME, "", None),
+        ),
+        (
+            "out of plan order with no sort to say why",
+            golden_view(&[4, 2], &EVERY_OUTCOME, "=", None),
+        ),
+    ];
+    for (why, view) in refused {
+        for format in [
+            TableFormat::Csv,
+            TableFormat::Tsv,
+            TableFormat::SpreadsheetCsv,
+        ] {
+            assert_eq!(
+                view_table(&stored, format, &view).unwrap_err(),
+                TableRefusal::ViewNotOfResult,
+                "{why}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_view_of_words_the_contract_does_not_have_is_refused() {
+    let target = vec![golden_target(1).to_string()];
+    let every: Vec<String> = EVERY_OUTCOME
+        .iter()
+        .map(|word| (*word).to_owned())
+        .collect();
+    let view = |targets: &[String], outcomes: &[String], text: &str, sort| {
+        TableView::from_wire(targets, outcomes, text.to_owned(), sort)
+    };
+    assert!(
+        view(
+            &target,
+            &every,
+            "caffeine",
+            Some(("raw_area", "descending"))
+        )
+        .is_some()
+    );
+    for column in output::VIEW_SORT_COLUMNS {
+        assert!(TABLE_COLUMNS.contains(&column), "{column}");
+        assert!(view(&target, &every, "", Some((column, "ascending"))).is_some());
+    }
+    assert!(view(&["not a target".to_owned()], &every, "", None).is_none());
+    assert!(
+        view(&target, &[], "", None).is_none(),
+        "an empty set is not every outcome"
+    );
+    assert!(view(&target, &["detected".to_owned()], "", None).is_none());
+    assert!(
+        view(
+            &target,
+            &["DETECTED".to_owned(), "detected".to_owned()],
+            "",
+            None
+        )
+        .is_none(),
+        "a known word does not carry an unknown one"
+    );
+    assert!(view(&target, &every, "a\tb", None).is_none());
+    assert!(view(&target, &every, "a\nb", None).is_none());
+    let longest = "a".repeat(record::MAX_LABEL_CHARS);
+    assert!(view(&target, &every, &longest, None).is_some());
+    assert!(view(&target, &every, &format!("{longest}a"), None).is_none());
+    assert!(view(&target, &every, "", Some(("adduct", "ascending"))).is_none());
+    assert!(view(&target, &every, "", Some(("label", "up"))).is_none());
+}
+
+/// A refused view reaches the webview under its own code, whichever check said so,
+/// never as an unknown format.
+#[test]
+fn a_refused_view_says_so_in_its_own_code() {
+    use crate::project::dto::TargetedTableViewDto;
+    assert_eq!(
+        crate::targeted_table_refusal(TableRefusal::ViewNotOfResult).kind,
+        "targeted_table_view_refused"
+    );
+    let unknown_word = serde_json::from_value::<TargetedTableViewDto>(serde_json::json!({
+        "targetIds": [golden_target(1).to_string()],
+        "outcomes": ["SHARED"],
+        "text": "",
+        "sort": { "key": "adduct", "direction": "ascending" },
+    }))
+    .expect("the wire's shape");
+    assert_eq!(
+        crate::read_table_view(unknown_word).unwrap_err().kind,
+        "targeted_table_view_refused"
+    );
+}
+
+/// The name a file is offered under is one of the things that keeps part of a
+/// table from passing for all of it. The whole table's names do not move.
+#[test]
+fn a_saved_table_is_offered_under_a_name_that_says_how_much_it_holds() {
+    let stored = golden_stored();
+    let view = pinned_view();
+    let artifact = ArtifactId::new();
+    let short: String = artifact.to_string().chars().take(8).collect();
+    let name = |format, view| {
+        crate::targeted_table_document(&stored, artifact, format, view)
+            .expect("a table")
+            .2
+    };
+    for (format, whole, part) in [
+        (TableFormat::Csv, "results.csv", "results-view-2-of-6.csv"),
+        (TableFormat::Tsv, "results.tsv", "results-view-2-of-6.tsv"),
+        (
+            TableFormat::SpreadsheetCsv,
+            "results-spreadsheet.csv",
+            "results-view-2-of-6-spreadsheet.csv",
+        ),
+    ] {
+        assert_eq!(
+            name(format, None),
+            format!("mscanvas-targeted-ms1-{short}-{whole}")
+        );
+        assert_eq!(
+            name(format, Some(&view)),
+            format!("mscanvas-targeted-ms1-{short}-{part}")
+        );
+    }
+}
+
+/// The exact shape `projectApi.ts` sends, with a sort and without, through the
+/// command's own conversion: no other test crosses this seam, since the webview's
+/// tests answer at `invoke` and no native spec drives this command.
+#[test]
+fn the_view_the_webview_sends_is_the_view_rust_reads() {
+    use crate::project::dto::TargetedTableViewDto;
+    let read = |wire: serde_json::Value| {
+        serde_json::from_value::<TargetedTableViewDto>(wire).map(TargetedTableViewDto::view)
+    };
+    let ids = [golden_target(4).to_string(), golden_target(2).to_string()];
+    let sorted = read(serde_json::json!({
+        "targetIds": ids,
+        "outcomes": ["FAILED", "SHARED"],
+        "text": "=",
+        "sort": { "key": "label", "direction": "ascending" },
+    }))
+    .expect("the wire's shape");
+    assert_eq!(sorted, Some(pinned_view()));
+
+    let unsorted = read(serde_json::json!({
+        "targetIds": [golden_target(2).to_string(), golden_target(4).to_string()],
+        "outcomes": EVERY_OUTCOME,
+        "text": "=",
+        "sort": null,
+    }))
+    .expect("the wire's shape");
+    assert_eq!(
+        unsorted,
+        Some(golden_view(&[2, 4], &EVERY_OUTCOME, "=", None))
+    );
+
+    // A word the contract does not have, and a field it does not name.
+    let word = read(serde_json::json!({
+        "targetIds": ids,
+        "outcomes": ["SHARED"],
+        "text": "",
+        "sort": { "key": "adduct", "direction": "ascending" },
+    }));
+    assert_eq!(word.expect("the wire's shape"), None);
+    assert!(
+        read(serde_json::json!({
+            "targetIds": ids,
+            "outcomes": ["SHARED"],
+            "text": "",
+            "sort": null,
+            "path": "C:/x.csv",
+        }))
+        .is_err()
+    );
+}
+
+/// A person's filter text is one more declared field of the view's spreadsheet
+/// CSV. The whole table's declared set does not move.
+#[test]
+fn a_filter_text_is_marked_only_in_the_spreadsheet_view() {
+    assert_eq!(
+        output::SPREADSHEET_VIEW_TEXT_PREAMBLE_KEYS,
+        [
+            "engine_pyopenms",
+            "engine_openms",
+            "engine_openms_revision",
+            "view_text",
+        ]
+    );
+    let stored = golden_stored();
+    let (csv, _) = view_table(&stored, TableFormat::Csv, &pinned_view()).expect("a table");
+    assert!(csv.contains("#view_text,=\n"));
+    let (tsv, _) = view_table(&stored, TableFormat::Tsv, &pinned_view()).expect("a table");
+    assert!(tsv.contains("#view_text\t=\n"));
+    let (marked, _) =
+        view_table(&stored, TableFormat::SpreadsheetCsv, &pinned_view()).expect("a table");
+    assert!(marked.contains("#view_text,'=\n"));
+    assert!(marked.contains(",'+x;'-y;'@z;'=w,"));
+    assert!(marked.contains(",\"'=SUM(1,2)\","));
+}
+
+#[test]
+fn a_saved_view_table_never_replaces_a_file() {
+    use crate::preview::scientific_output::write_named;
+    let scratch = Scratch::new("targeted-view-no-overwrite");
+    let facts = crate::TARGETED_TABLE_CSV;
+    let (table, _) =
+        view_table(&golden_stored(), TableFormat::Csv, &pinned_view()).expect("a table");
+    let destination = scratch.join("view.csv");
+    write_named(&destination, facts, table.as_bytes()).expect("written");
+    let taken = write_named(&destination, facts, b"other\n").unwrap_err();
+    assert_eq!(taken.kind, "spectrum_destination_exists");
+    assert_eq!(fs::read_to_string(&destination).expect("read"), table);
 }

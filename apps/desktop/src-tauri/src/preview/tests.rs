@@ -3972,6 +3972,7 @@ fn the_registered_command_surface_is_the_one_the_frontend_calls() {
             "preview_targeted_ms1_figure",
             "export_targeted_ms1_figure",
             "export_targeted_ms1_table",
+            "export_targeted_ms1_table_view",
             "get_targeted_ms1_runtime",
             "inspect_backend",
             "choose_backend_installation",

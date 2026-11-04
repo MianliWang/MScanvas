@@ -34,8 +34,10 @@
 //! unreachable file stays a marked row; it is never dropped, never relinked
 //! and never aged out. Only an offer the user could take ages a row: one a read
 //! presented as matching, in a session that then saved without putting it back,
-//! was declined. A row [`MAX_OFFERS`] sessions declined is no longer offered by
-//! a session whose first read finds it matching, and every read of that
+//! was declined; accepted by the owner on 2026-11-03, a row a press handed to
+//! admission and admission refused is not (ADR 0061, decision 10's note). A row
+//! [`MAX_OFFERS`] sessions declined is no
+//! longer offered by a session whose first read finds it matching, and every read of that
 //! session says how many such rows there are; it leaves the document only at a
 //! save after that read.
 //!
@@ -171,7 +173,8 @@ pub struct StoredRow {
     pub checked: bool,
     /// How many sessions have presented this row as matching and saved
     /// without putting it back, since it was last in the Workbench: 0 for a
-    /// live row and for a row only ever marked.
+    /// live row and for a row only ever marked. A row a press handed to
+    /// admission is not counted (`Lane::asked`).
     pub offered: u32,
     /// Primary first.
     pub members: Vec<StoredMember>,
@@ -498,8 +501,9 @@ pub struct RestoredRowDto {
 #[serde(rename_all = "camelCase")]
 pub struct PlacedRowDto {
     pub handle: String,
-    /// The stored group; `None` is Ungrouped.
-    pub group: Option<String>,
+    /// The stored group's place among a read's groups, not its name: the
+    /// Workbench allows two groups of one name.
+    pub group: usize,
     pub checked: bool,
     /// `false`: the object was already a row, which keeps its arrangement.
     pub added: bool,
@@ -667,6 +671,13 @@ struct Lane {
     /// offers the user could take, which a save counts in `offered`. Never
     /// refilled within a session, so positions stay meaningful.
     presented: HashSet<usize>,
+    /// The rows a press of Restore workspace handed to admission because its
+    /// re-check found them matching. A save does not count one still waiting
+    /// after that, and a later read presenting it changes nothing: accepted by
+    /// the owner on 2026-11-03 for a row admission refused (ADR 0061, decision
+    /// 10's note), as built and not an owner decision for a file replaced since
+    /// the re-check.
+    asked: HashSet<usize>,
     /// The restored rows this session no longer offers (decision 10), decided
     /// once, by this session's first read: `None` before it, when nothing is
     /// expired and a save must place every stored row, so nothing leaves the
@@ -730,6 +741,7 @@ impl WorkspaceRestoreStore {
                     restored: Vec::new(),
                     gone: HashSet::new(),
                     presented: HashSet::new(),
+                    asked: HashSet::new(),
                     expired: None,
                 },
             ),
@@ -881,7 +893,8 @@ impl WorkspaceRestoreStore {
             {
                 continue;
             }
-            let declined = u32::from(lane.presented.contains(&index));
+            let declined =
+                u32::from(lane.presented.contains(&index) && !lane.asked.contains(&index));
             let row = StoredRow {
                 offered: row.offered.saturating_add(declined),
                 ..row.clone()
@@ -978,8 +991,12 @@ impl WorkspaceRestoreStore {
     /// only if the row admission answered with is the recorded objects; a file
     /// replaced since the re-check stays in the Workbench as any file added
     /// there, and its restored row reads `changed` at the next read. A marked
-    /// row, or one admission refused, stays where it is. Nothing is previewed
-    /// and nothing is written here: the webview's next save records the result.
+    /// row, or one admission refused, stays where it is. A row the press handed
+    /// to admission and still waiting is not counted as declined: accepted by the
+    /// owner on 2026-11-03 for one admission refused (ADR 0061, decision 10's
+    /// note), as built and not an owner decision for a file replaced since the
+    /// re-check. Nothing is previewed and nothing is written here: the webview's
+    /// next save records the result.
     ///
     /// # Errors
     ///
@@ -1007,7 +1024,7 @@ impl WorkspaceRestoreStore {
             .saves
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let waiting: Vec<(usize, Option<String>, StoredRow)> = {
+        let waiting: Vec<(usize, usize, StoredRow)> = {
             let lane = self.locked();
             let Some(expired) = &lane.expired else {
                 return Err(PreviewErrorDto::new(
@@ -1018,10 +1035,11 @@ impl WorkspaceRestoreStore {
             };
             lane.restored
                 .iter()
-                .flat_map(|group| group.rows.iter().map(move |row| (&group.name, row)))
+                .enumerate()
+                .flat_map(|(at, group)| group.rows.iter().map(move |row| (at, row)))
                 .enumerate()
                 .filter(|(index, _)| !expired.contains(index) && !lane.gone.contains(index))
-                .map(|(index, (name, row))| (index, name.clone(), row.clone()))
+                .map(|(index, (at, row))| (index, at, row.clone()))
                 .collect()
         };
         let mut roots = Roots::new();
@@ -1029,6 +1047,13 @@ impl WorkspaceRestoreStore {
             .into_iter()
             .filter(|(_, _, row)| check_row(row, &mut roots) == RowState::Matching)
             .collect();
+        // Before admission can refuse them: the press asked for these rows. A
+        // row the re-check marked is not among them: if a read of this session
+        // presented it as matching and the session saves, it is declined like
+        // any other, whether or not it ever matches again.
+        self.locked()
+            .asked
+            .extend(matching.iter().map(|(index, _, _)| *index));
         let paths: Vec<PathBuf> = matching
             .iter()
             .map(|(_, _, row)| PathBuf::from(primary_path(row)))
@@ -1052,7 +1077,7 @@ impl WorkspaceRestoreStore {
                 lane.gone.insert(*index);
                 placed.push(PlacedRowDto {
                     handle: handle.clone(),
-                    group: group.clone(),
+                    group: *group,
                     checked: row.checked,
                     added,
                 });
@@ -1395,6 +1420,7 @@ fn load(directory: &Path) -> Lane {
         restored,
         gone: HashSet::new(),
         presented: HashSet::new(),
+        asked: HashSet::new(),
         expired: None,
     };
     // Off: a refused document may be one the user had switched off.

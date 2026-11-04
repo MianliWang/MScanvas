@@ -221,6 +221,12 @@ pub enum ArrayProblem {
     SpectrumByteCapExceeded,
     /// The base64 text is longer than the declared length allows.
     EncodedTextOverBound,
+    /// The array has more than one `binary` element, so no one payload is its
+    /// stored values, and two are never joined.
+    PayloadStatedTwice,
+    /// An element starts inside the `binary` element, so its text is not one
+    /// run of stored values, and the text around the element is never joined.
+    ElementInPayload,
     CorruptBase64,
     CorruptZlib,
     DecodedLongerThanDeclared,
@@ -252,6 +258,8 @@ impl ArrayProblem {
             Self::ArrayByteCapExceeded => "array_byte_cap_exceeded",
             Self::SpectrumByteCapExceeded => "spectrum_byte_cap_exceeded",
             Self::EncodedTextOverBound => "encoded_text_over_bound",
+            Self::PayloadStatedTwice => "payload_stated_twice",
+            Self::ElementInPayload => "element_in_payload",
             Self::CorruptBase64 => "corrupt_base64",
             Self::CorruptZlib => "corrupt_zlib",
             Self::DecodedLongerThanDeclared => "decoded_longer_than_declared",
@@ -1806,10 +1814,18 @@ impl<'t> Pass<'t> {
             .and_then(|spectrum| spectrum.array.as_mut())
     }
 
+    /// Whether the open element is an array's own `binary`, not one nested
+    /// anywhere else in the array.
+    fn in_payload(&self) -> bool {
+        self.stack
+            .split_last()
+            .is_some_and(|(&last, path)| last == El::Binary && path.ends_with(SPECTRUM_ARRAY))
+    }
+
     /// The bound on the payload being read, while a decoded array's payload is
     /// open.
     fn payload_bound(&self) -> Option<u64> {
-        if self.stack.last() != Some(&El::Binary) {
+        if !self.in_payload() {
             return None;
         }
         let spectrum = self.spectrum.as_ref()?;
@@ -1827,7 +1843,7 @@ impl<'t> Pass<'t> {
             return None;
         }
         let prepared = self.spectrum.as_ref()?.array.as_ref()?.prepared?;
-        (self.stack.last() == Some(&El::Binary))
+        self.in_payload()
             .then(|| array_fail(prepared.role, ArrayProblem::EncodedTextOverBound))
     }
 
@@ -1848,6 +1864,16 @@ impl<'t> Pass<'t> {
         )?;
         let attributes = capture_attributes(start, self.limits)?;
         let el = element(in_mzml, start.local_name().as_ref());
+        // Only a decoded array whose payload has started is prepared, and only a
+        // selected read opens an array. Text the file states apart is never joined.
+        if let Some(prepared) = self.open_array().and_then(|array| array.prepared) {
+            if self.in_payload() {
+                return Err(array_fail(prepared.role, ArrayProblem::ElementInPayload));
+            }
+            if el == El::Binary && self.stack.ends_with(SPECTRUM_ARRAY) {
+                return Err(array_fail(prepared.role, ArrayProblem::PayloadStatedTwice));
+            }
+        }
         let el = self.begin(el, start, &attributes, offset, resolver)?;
         self.stack.push(el);
         if empty {
@@ -2207,7 +2233,7 @@ impl<'t> Pass<'t> {
     }
 
     fn text(&mut self, bytes: &[u8]) -> Result<(), Fail> {
-        if self.stack.last() != Some(&El::Binary) {
+        if !self.in_payload() {
             return Ok(());
         }
         let Some(array) = self.open_array() else {
@@ -2236,7 +2262,7 @@ impl<'t> Pass<'t> {
     /// A predefined entity names `&`, `<`, `>`, `"` or `'`, none of which is
     /// base64.
     fn reference(&mut self, reference: &BytesRef<'_>) -> Result<(), Fail> {
-        if self.stack.last() != Some(&El::Binary) {
+        if !self.in_payload() {
             return Ok(());
         }
         let Some(prepared) = self.open_array().and_then(|array| array.prepared) else {

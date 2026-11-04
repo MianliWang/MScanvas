@@ -255,6 +255,7 @@ export function ipcTable(
     save_workspace_restore: { outcome: "saved" },
     clear_workspace_restore: { outcome: "saved" },
     set_workspace_restore_enabled: { outcome: "saved" },
+    dismiss_restored_row: null,
     subscribe_workspace_drop_updates: null,
     // No view has run, and View could begin (ADR 0060). A spec about a view
     // replaces this answer as the operation moves.

@@ -2117,6 +2117,13 @@ impl PreviewService {
         self.conversion_busy.load(Ordering::Acquire)
     }
 
+    /// What a conversion under way looks like to the rest of the workspace, for
+    /// a test outside this module that has no conversion to start.
+    #[cfg(test)]
+    pub(crate) fn set_conversion_busy_for_test(&self, busy: bool) {
+        self.conversion_busy.store(busy, Ordering::Release);
+    }
+
     /// Answers one exact plan question.
     //
     // Read-only and free: no gate, no discovery, no picker, no reservation, no
@@ -8305,6 +8312,18 @@ mod native_projection_tests {
                 "spectrum_refused",
                 false,
                 Some("mz:unit_not_an_accession"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)),
+                "spectrum_refused",
+                false,
+                Some("mz:payload_stated_twice"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Intensity, ArrayProblem::ElementInPayload)),
+                "spectrum_refused",
+                false,
+                Some("intensity:element_in_payload"),
             ),
             (
                 spectrum_refused(MzmlSpectrumError::ArrayLengthsDiffer),

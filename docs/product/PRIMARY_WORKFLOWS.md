@@ -42,7 +42,8 @@ drive `Remove highlighted`, drag and Move to group. Hidden highlights survive
 search/collapse; Ctrl+A applies only within the roster. Group checkboxes apply to
 all group members, including filtered ones, and do not change highlights.
 
-One level of session-only groups references admitted dataset IDs. New arrivals
+One level of groups references admitted dataset IDs; a group with rows in it
+comes back after a restart only through Restore workspace (WSP-010). New arrivals
 enter Ungrouped. Create/rename/disclose/reorder and Move to group have keyboard
 and menu paths; dissolving a group returns its members to Ungrouped without
 removing acquisitions. Drag captures the full highlighted payload, including
@@ -686,3 +687,13 @@ stored result and its history read as one task:
 
 Reopening a project still checks, relinks and admits nothing until asked. See
 [slice-06](../phases/pm9/slice-06.md).
+
+*2026-11-04 (S-7.1, the owner's answer of 2026-11-03):* the report's rows, still
+in plan order at first, sort by a pressed column head and filter by outcome and
+by text over target name and formula. **Save N of M rows…** then writes the rows
+shown, in that order, as CSV, TSV or spreadsheet CSV, in a document that says it
+is a view; **Reset** returns to the table, and **Export** still writes every row.
+See FIG-010 in the [feature catalog](FEATURE_CATALOG.md). The owner selected
+sorting, filtering and saving the rows shown, in a file that names its filter.
+Everything else here is as built, not an owner decision: the controls and their
+words, the formats offered and the form of the document.

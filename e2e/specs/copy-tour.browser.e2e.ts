@@ -517,14 +517,35 @@ const RESTORE_MARKED = {
   ],
 };
 
+const RESTORE_STATES = ["changed", "missing", "unreachable", "unreadable", "unsafe"] as const;
+const BACKEND_FAILED = { __reject: { kind: "unexpected_error", summary: "The record could not be changed.", detail: null, retryable: true } };
+
 const RESTORE_ANSWER = {
   workspace: { roster: { datasets: [MZML_ROW], capacity: 1024 }, outcomes: [{ outcome: "added", dataset: MZML_ROW }] },
-  placed: [{ handle: MZML_ROW.handle, group: null, checked: true, added: true }],
+  placed: [{ handle: MZML_ROW.handle, group: 0, checked: true, added: true }],
 };
+
+const RESTORE_PARTLY_ROWS = [
+  ...Array.from({ length: 9 }, (_, index) => restoredRow(index, `QC_${String(index + 1).padStart(2, "0")}.raw`, "matching")),
+  ...[9, 10, 11, 12].map(index => restoredRow(index, `run_${String(index)}.raw`, "missing")),
+];
 
 /** A first run whose start-up read answers `read`. */
 function restoreTable(read: unknown) {
   return (locale: Locale) => ({ ...emptyTable(locale), read_workspace_restore: read });
+}
+
+/** Start fresh on the marked rows, answered `answer`: the record is off afterwards if it says so. */
+function startFreshAnswered(answer: { readonly outcome: string }) {
+  return {
+    table: (locale: Locale) => ({ ...restoreTable(RESTORE_MARKED)(locale), clear_workspace_restore: answer }),
+    drive: async () => {
+      await browser.$('[data-restore="offer"] [data-restore-start-fresh]').waitForClickable();
+      if (answer.outcome === "turnedOff") await setInvokeResult("read_workspace_restore", { outcome: "off", leftoverCopies: 0 });
+      await browser.$('[data-restore="offer"] [data-restore-start-fresh]').click();
+    },
+    anchor: '[data-restore="action"]',
+  };
 }
 
 /** A change after the start-up read, which is what the first save is. */
@@ -1555,6 +1576,28 @@ const STOPS: readonly Stop[] = [
     anchor: '[data-targeted-table-export] [data-targeted-output="savedTable"]',
   },
   {
+    // The rows shown, sorted and filtered, and those rows just saved (S-7.1).
+    name: "targeted-table-view-saved",
+    table: (locale) => ({
+      ...scenario("projectWithResult", locale),
+      export_targeted_ms1_table_view: {
+        status: "saved",
+        format: "csv",
+        fileName: "mscanvas-targeted-ms1-eeeeeeee-results-view-1-of-2.csv",
+        rowCount: 1,
+      },
+    }),
+    drive: async () => {
+      await go(3);
+      await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+      await browser.$('[data-targeted-sort="raw_area"]').click();
+      await browser.$("[data-targeted-view-outcome]").click();
+      await browser.$("[data-targeted-view-save-button]").click();
+      await browser.$('[data-targeted-view-export="csv"]').click();
+    },
+    anchor: '[data-targeted-table-export] [data-targeted-output="savedTable"]',
+  },
+  {
     // Open project… refused by Rust: the refusal in words, with the head's buttons to try again.
     name: "project-open-failed",
     table: (locale) => ({ ...emptyTable(locale), open_project: { __reject: { kind: "unreadable" } } }),
@@ -2139,6 +2182,7 @@ const STOPS: readonly Stop[] = [
   { name: "restore-offer", table: restoreTable(RESTORE_OFFER), anchor: "[data-restore-action]" },
   { name: "restore-marked", table: restoreTable(RESTORE_MARKED), anchor: "[data-restored-row]" },
   { name: "restore-expired", table: restoreTable(restored([], 3)), anchor: "[data-restore-expired]" },
+  { name: "restore-expired-one", table: restoreTable(restored([], 1)), anchor: "[data-restore-expired]" },
   {
     // Refused like Add files, and for the same visible reason.
     name: "restore-refused-busy",
@@ -2163,18 +2207,152 @@ const STOPS: readonly Stop[] = [
     anchor: '[data-restore="read-failed"]',
   },
   { name: "restore-document-refused", table: restoreTable({ outcome: "refused", problem: "newerVersion", leftoverCopies: 1 }), anchor: '[data-restore="refused"]' },
+  { name: "restore-unavailable", table: restoreTable({ outcome: "unavailable", problem: "rootUnresolved" }), anchor: '[data-restore="unavailable"]' },
+  {
+    name: "restore-longest-group-name",
+    table: restoreTable(restored([restoredRow(0, "QC_01.raw", "missing")], 0, 0, "组".repeat(120))),
+    anchor: "[data-restored-row]",
+  },
+  {
+    // A dismiss held: every action is refused, for the reason on the line.
+    name: "restore-working",
+    table: restoreTable(RESTORE_MARKED),
+    hold: ["dismiss_restored_row"],
+    drive: async () => {
+      await browser.$('[data-state="missing"] [data-restore-dismiss]').click();
+    },
+    anchor: '.notice[data-restore="working"]',
+  },
+  {
+    name: "restore-putting-back",
+    table: (locale) => ({ ...restoreTable(RESTORE_OFFER)(locale), restore_workspace: RESTORE_ANSWER }),
+    hold: ["restore_workspace"],
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await browser.$("[data-restore-action]").click();
+    },
+    anchor: '[data-restore-action][aria-busy="true"]',
+  },
+  {
+    name: "restore-putting-back-one",
+    table: (locale) => ({ ...restoreTable(restored([restoredRow(0, "QC_01.raw", "matching")]))(locale), restore_workspace: RESTORE_ANSWER }),
+    hold: ["restore_workspace"],
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await browser.$("[data-restore-action]").click();
+    },
+    anchor: '[data-restore-action][aria-busy="true"]',
+  },
   {
     name: "restore-later-writer",
     table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }),
     drive: toggleTheFirstRow,
-    anchor: '[data-restore="problem"]',
+    anchor: '[data-restore="stopped"]',
   },
+  {
+    name: "restore-record-held",
+    table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "identityUnknown" } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"] [data-restore-retry]',
+  },
+  { name: "restore-turned-off-elsewhere", ...startFreshAnswered({ outcome: "turnedOff", problem: "changedElsewhere" } as { outcome: string }) },
+  { name: "restore-turned-off-held", ...startFreshAnswered({ outcome: "turnedOff", problem: "identityUnknown" } as { outcome: string }) },
+  { name: "restore-start-fresh-failed", ...startFreshAnswered({ outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: true } as { outcome: string }) },
   {
     name: "restore-too-many",
     table: (locale) => ({ ...populated(locale), read_workspace_restore: RESTORE_MARKED, save_workspace_restore: { outcome: "refused", problem: "tooManyRows" } }),
     drive: toggleTheFirstRow,
     anchor: '[data-restore="problem"]',
   },
+  {
+    name: "restore-too-many-start-fresh",
+    table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "tooManyRows" } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"] [data-restore-start-fresh]',
+  },
+  { name: "restore-marked-only", table: restoreTable(restored(RESTORE_STATES.map((state, index) => restoredRow(index, `${state}.raw`, state)))), anchor: "[data-restored-row]" },
+  {
+    name: "restore-dismiss-failed",
+    table: (locale) => ({ ...restoreTable(RESTORE_MARKED)(locale), dismiss_restored_row: BACKEND_FAILED }),
+    drive: async () => {
+      await browser.$('[data-state="missing"] [data-restore-dismiss]').click();
+      await browser.$('[data-restore="action"]').waitForDisplayed();
+    },
+    anchor: '[data-restore="action"] [data-restore-retry]',
+    keepFocus: true,
+  },
+  {
+    // The answer and the row the keyboard is on, with the list scrolled to its end.
+    name: "restore-dismiss-failed-end-of-list",
+    table: (locale) => ({ ...restoreTable(restored(Array.from({ length: 30 }, (_, index) => restoredRow(index, `run_${String(index)}.raw`, "missing"))))(locale), dismiss_restored_row: BACKEND_FAILED }),
+    drive: async () => {
+      await browser.$("[data-restored-row]").waitForDisplayed();
+      await browser.execute(() => [...document.querySelectorAll<HTMLElement>("[data-restore-dismiss]")].at(-1)?.focus());
+      await browser.keys("Enter");
+      await browser.$('[data-restore="action"]').waitForDisplayed();
+    },
+    anchor: '[data-restore="action"] [data-restore-retry]',
+    keepFocus: true,
+  },
+  {
+    name: "restore-put-back-refused",
+    table: (locale) => ({ ...restoreTable(RESTORE_OFFER)(locale), restore_workspace: { __reject: { kind: "conversion_busy", summary: "A conversion is running.", detail: null, retryable: true } } }),
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await browser.$("[data-restore-action]").click();
+    },
+    anchor: ".shell-notices > .notice-danger",
+  },
+  {
+    name: "restore-put-back-partly",
+    table: (locale) => ({
+      ...restoreTable(RESTORE_OFFER)(locale),
+      restore_workspace: { ...RESTORE_ANSWER, workspace: { ...RESTORE_ANSWER.workspace, outcomes: [...RESTORE_ANSWER.workspace.outcomes, { outcome: "rejected", candidateName: "QC_02.raw", error: { kind: "workspace_full", summary: "The workspace is full.", detail: null, retryable: false } }] } },
+    }),
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await setInvokeResult("read_workspace_restore", restored([restoredRow(1, "QC_02.raw", "matching")]));
+      await browser.$("[data-restore-action]").click();
+      await browser.$(`[data-handle="${MZML_ROW.handle}"]`).waitForExist();
+    },
+    anchor: "[data-restore-action]",
+  },
+  {
+    // The answer takes its most height, with the keyboard still on Restore workspace and rows marked below.
+    name: "restore-put-back-partly-marked",
+    table: (locale) => ({
+      ...restoreTable(restored(RESTORE_PARTLY_ROWS))(locale),
+      restore_workspace: { ...RESTORE_ANSWER, workspace: { ...RESTORE_ANSWER.workspace, outcomes: [...RESTORE_ANSWER.workspace.outcomes, ...RESTORE_PARTLY_ROWS.slice(1, 9).map(({ displayName }) => ({ outcome: "rejected", candidateName: displayName, error: { kind: "workspace_full", summary: "The workspace is full.", detail: null, retryable: true } }))] } },
+    }),
+    drive: async () => {
+      await browser.$("[data-restore-action]").waitForClickable();
+      await setInvokeResult("read_workspace_restore", restored(RESTORE_PARTLY_ROWS.slice(1)));
+      await browser.execute(() => document.querySelector<HTMLElement>("[data-restore-action]")?.focus());
+      await browser.keys("Enter");
+      await browser.$(`[data-handle="${MZML_ROW.handle}"]`).waitForExist();
+    },
+    anchor: "[data-restore-action]",
+    keepFocus: true,
+  },
+  { name: "restore-refused-conversion", table: (locale) => ({ ...conversionWorld(locale, STARTED), read_workspace_restore: RESTORE_OFFER }), anchor: "#restore-reason" },
+  // The last: a code this build does not know is shown, not swallowed.
+  ...(["staleArrangement", "invalidArrangement", "notStorable", "storedDocumentKept", "someCodeFromANewerBuild"] as const).map(problem => ({
+    name: `restore-save-refused-${problem}`,
+    table: (locale: Locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"]',
+  })),
+  ...([["directoryUnusable", true], ["notWritten", true], ["oversized", false], ["unsafeTarget", false]] as const).map(([problem, retryable]) => ({
+    name: `restore-save-failed-${problem}`,
+    table: (locale: Locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "failed", problem, retryable, temporaryLeftBehind: false } }),
+    drive: toggleTheFirstRow,
+    anchor: '[data-restore="problem"]',
+  })),
+  ...(["unsupportedVersion", "oversized", "unsafeTarget"] as const).map(problem => ({
+    name: `restore-document-refused-${problem}`,
+    table: restoreTable({ outcome: "refused", problem, leftoverCopies: 0 }),
+    anchor: '[data-restore="refused"]',
+  })),
   {
     name: "settings-restore",
     table: restoreTable(restored([], 0, 2)),
@@ -2198,6 +2376,83 @@ const STOPS: readonly Stop[] = [
     table: restoreTable({ outcome: "unavailable", problem: "rootUnresolved" }),
     drive: () => openRestoreSettings('[data-restore-settings="unavailable"]'),
     anchor: '[data-restore-settings="unavailable"]',
+  },
+  {
+    name: "settings-restore-read-failed",
+    table: restoreTable({ __reject: { kind: "unexpected_error", summary: "The record could not be read.", detail: null, retryable: true } }),
+    drive: () => openRestoreSettings('[data-restore-settings="read-failed"]'),
+    anchor: '[data-restore-settings="read-failed"]',
+  },
+  {
+    name: "settings-restore-off-failed",
+    table: (locale) => ({ ...restoreTable(restored([]))(locale), set_workspace_restore_enabled: { outcome: "failed", problem: "notPublished", retryable: true, temporaryLeftBehind: false } }),
+    drive: async () => {
+      await openRestoreSettings('[role="radio"]:has([data-setting-value="restore-off"])');
+      await browser.$('[role="radio"]:has([data-setting-value="restore-off"])').click();
+      await browser.$('[data-restore-settings="action"]').waitForExist();
+    },
+    anchor: '[data-restore-settings="action"]',
+  },
+  {
+    name: "settings-restore-working",
+    table: restoreTable(restored([])),
+    hold: ["set_workspace_restore_enabled"],
+    drive: async () => {
+      await openRestoreSettings('[role="radio"]:has([data-setting-value="restore-off"])');
+      await browser.$('[role="radio"]:has([data-setting-value="restore-off"])').click();
+      await browser.$('.settings-storage-note[data-restore-settings="working"]').waitForExist();
+    },
+    anchor: '.settings-storage-note[data-restore-settings="working"]',
+  },
+  {
+    name: "settings-restore-off",
+    table: restoreTable({ outcome: "off", leftoverCopies: 1 }),
+    drive: () => openRestoreSettings("[data-restore-settings-clear]"),
+    anchor: '[role="radio"][aria-checked="true"]:has([data-setting-value="restore-off"])',
+  },
+  {
+    name: "settings-restore-loading",
+    table: emptyTable,
+    hold: ["read_workspace_restore"],
+    drive: () => openRestoreSettings('[data-restore-settings="loading"]'),
+    anchor: '[data-restore-settings="loading"]',
+  },
+  {
+    name: "settings-restore-waiting-for-list",
+    table: emptyTable,
+    hold: ["get_workspace_roster"],
+    drive: () => openRestoreSettings('[data-restore-settings="loading"]'),
+    anchor: '[data-restore-settings="loading"]',
+  },
+  {
+    name: "settings-restore-on-refused",
+    table: (locale) => ({ ...restoreTable({ outcome: "off", leftoverCopies: 0 })(locale), set_workspace_restore_enabled: { outcome: "refused", problem: "changedElsewhere" } }),
+    drive: async () => {
+      await openRestoreSettings('[role="radio"]:has([data-setting-value="restore-on"])');
+      await browser.$('[role="radio"]:has([data-setting-value="restore-on"])').click();
+      await browser.$('[data-restore-settings="action"]').waitForExist();
+    },
+    anchor: '[data-restore-settings="action"]',
+  },
+  {
+    name: "settings-restore-later-writer",
+    table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "refused", problem: "changedElsewhere" } }),
+    drive: async () => {
+      await toggleTheFirstRow();
+      await browser.$('[data-restore="stopped"]').waitForDisplayed();
+      await openRestoreSettings('[data-restore-settings="stopped"]');
+    },
+    anchor: '[data-restore-settings="stopped"]',
+  },
+  {
+    name: "settings-restore-save-failed",
+    table: (locale) => ({ ...populated(locale), save_workspace_restore: { outcome: "failed", problem: "notWritten", retryable: true, temporaryLeftBehind: false } }),
+    drive: async () => {
+      await toggleTheFirstRow();
+      await browser.$('[data-restore="problem"]').waitForDisplayed();
+      await openRestoreSettings('[data-restore-settings="problem"]');
+    },
+    anchor: '[data-restore-settings="problem"]',
   },
 ];
 
