@@ -984,7 +984,9 @@ fn a_commit_that_leaves_remembering_off_writes_nothing_and_says_so() {
 fn turning_remembering_off_writes_the_switch_and_no_other_change() {
     let root = Root::new("remember-turned-off");
     let store = root.store();
-    let chosen = saved(&store.save(&appearance(UiLocale::ZhCn, RosterDensity::Compact)));
+    let folder = PathBuf::from(installation_folder());
+    saved(&store.save(&appearance(UiLocale::ZhCn, RosterDensity::Compact)));
+    let chosen = saved(&store.remember_backend_folder(Some(&folder)));
 
     let committed = saved(&store.save(&UiPreferenceWriteDto {
         appearance: Some(AppearancePreferences::default()),
@@ -1013,6 +1015,8 @@ fn turning_remembering_off_writes_the_switch_and_no_other_change() {
         root.stored_bytes(),
         write_record(&committed).expect("bytes")
     );
+    // V-7-FOLDER, `keep_folder`: the switch reaches interface preferences only.
+    assert_eq!(store.remembered_backend_folder(), Some(folder));
 }
 
 #[test]
@@ -1020,6 +1024,8 @@ fn turning_remembering_on_writes_the_whole_commit_and_later_ones_again() {
     let root = Root::new("remember-turned-on");
     let store = root.store();
     storage::publish(&root.root(), &a_record_with_remembering_off()).expect("the stored record");
+    let folder = PathBuf::from(installation_folder());
+    saved(&store.remember_backend_folder(Some(&folder)));
 
     let on = DisplayPreferences {
         contrast: TextContrast::High,
@@ -1032,10 +1038,17 @@ fn turning_remembering_on_writes_the_whole_commit_and_later_ones_again() {
     assert_eq!(committed.display, on);
     assert_eq!(committed.appearance, AppearancePreferences::default());
     assert_eq!(committed.layout, the_choices_in_those_records().layout);
+    // V-7-FOLDER, `keep_folder`: the switch reaches interface preferences only.
+    assert_eq!(committed.backend_folder, Some(installation_folder()));
+    assert_eq!(
+        root.stored_bytes(),
+        write_record(&committed).expect("bytes")
+    );
 
     let later = saved(&store.save(&appearance(UiLocale::ZhCn, RosterDensity::Comfortable)));
     assert_eq!(later.appearance.locale, UiLocale::ZhCn);
     assert_eq!(later.display, on);
+    assert_eq!(store.remembered_backend_folder(), Some(folder));
 }
 
 #[test]
