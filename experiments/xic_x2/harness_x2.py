@@ -29,7 +29,7 @@ FROZEN_HARNESS_SHA256 = "ae03b603b045337e4c12d30ef610e79633b943d53b1d4ef63bf4c35
 FROZEN_ORACLE_SHA256 = "61743961ad7462e136163bb198d15590027ede50bd04c1bbd143409ade4b635f"
 WATCHDOG_SECONDS = 300
 HERE = pathlib.Path(__file__).resolve().parent
-BUILD = ["cargo", "build", "-p", "mscanvas-proteowizard", "--release", "--example", "xic_candidate", "--locked"]
+BUILD = ["cargo", "build", "-p", "mscanvas-proteowizard", "--release", "--example", "xic_candidate", "--locked", "--target-dir", "target"]
 
 
 def require(condition, reason):
@@ -196,11 +196,11 @@ def run(args):
     freeze = json.loads((R / "protocol/FROZEN.json").read_text(encoding="utf-8"))
     for name, digest in freeze["files"].items():
         require(sha(R / name) == digest, (name, "protocol changed"))
-    ledger = json.loads((R / "protocol/case-ledger.json").read_text())
-    answers = json.loads((R / "protocol/oracle-answers.json").read_text())
+    ledger = json.loads((R / "protocol/case-ledger.json").read_text(encoding="utf-8"))
+    answers = json.loads((R / "protocol/oracle-answers.json").read_text(encoding="utf-8"))
     # File-specific later acquisitions have separately frozen answers and operand binding.
     require(sha(R / "protocol/acquisitions.json") == freeze["acquisition_reference_sha256"], "acquisitions.json changed")
-    entries = json.loads((R / "protocol/acquisitions.json").read_text())
+    entries = json.loads((R / "protocol/acquisitions.json").read_text(encoding="utf-8"))
     for row in ledger:
         if row["id"] in entries:
             row.update(entries[row["id"]]["ledger"])

@@ -19,7 +19,7 @@ def main(args):
     first = json.loads((args.main / "SUMMARY.json").read_text(encoding="utf-8"))
     second = json.loads((args.supplement / "SUMMARY.json").read_text(encoding="utf-8"))
     x2.require(first["identity"]["binary_sha256"] == second["identity"]["binary_sha256"], "two builds")
-    x2.require(not first["identity"]["uncommitted_source"], "a build from uncommitted source")
+    x2.require(not first["identity"]["uncommitted_source"] and not first["identity"]["mutation"], "a mutation or a build from uncommitted source")
     filled = {row["id"]: row for row in second["rows"]}
     rows = []
     for row in first["rows"]:

@@ -27,7 +27,8 @@ def main(args):
     args.out.mkdir(parents=True, exist_ok=False)
     observations = []
     for target in args.targets:
-        name, path, level, low, high = target.split("=")
+        name, rest = target.split("=", 1)
+        path, level, low, high = rest.rsplit("=", 3)
         path = pathlib.Path(path)
         source = dict(name=name, bytes=path.stat().st_size, sha256=x2.sha(path), query=[level, low, high])
         for repeat in range(args.repeats):

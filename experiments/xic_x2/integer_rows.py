@@ -16,7 +16,6 @@ are refused too, is the reading built into #207: as built, not an owner decision
 """
 import argparse
 import base64
-import binascii
 import hashlib
 import json
 import math
@@ -291,6 +290,7 @@ def run(args):
                 if actual.get("disclosures", {}).get("unreadable") != answers[row["id"]]["unreadable"]:
                     errors.append("unreadable role or reason differs")
                 canonical = harness.js(oracle.canonical(actual))
+                (folder / "science.json").write_bytes(canonical)
                 science.append(hashlib.sha256(canonical).hexdigest())
             except Exception as error:
                 errors = [type(error).__name__ + ":" + str(error)]

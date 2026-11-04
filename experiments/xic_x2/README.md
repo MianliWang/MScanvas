@@ -18,7 +18,7 @@ check the memory gate: 8 GiB free and at most 80% used.
 ```text
 python -B experiments/xic_x2/harness_x2.py identity --repo . --out OUT/build
 python -B experiments/xic_x2/harness_x2.py run --px3 PX3 --build OUT/build --out OUT/main
-python -B experiments/xic_x2/run_supplement_x2.py --px3 PX3 --reps REPS --build OUT/build --out OUT/supplement
+python -B experiments/xic_x2/run_supplement_x2.py --reps REPS --build OUT/build --out OUT/supplement
 python -B experiments/xic_x2/combine_x2.py --main OUT/main --supplement OUT/supplement --out OUT
 python -B experiments/xic_x2/integer_rows.py freeze --out OUT/integer
 python -B experiments/xic_x2/integer_rows.py run --px3 PX3 --build OUT/build --dir OUT/integer --out OUT/integer-scored

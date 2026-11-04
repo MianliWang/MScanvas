@@ -3,7 +3,7 @@
 The same four rows, the same frozen answers and the same comparison as the frozen
 run-supplement.py, on the build harness_x2.py runs, writing outside the archive.
 
-  run_supplement_x2.py --px3 PX3 --reps REPS --build BUILD --out EVIDENCE
+  run_supplement_x2.py --reps REPS --build BUILD --out EVIDENCE
 """
 import argparse
 import hashlib
@@ -18,15 +18,15 @@ import harness_x2 as x2
 
 
 def main(args):
-    harness, oracle = x2.load_frozen(args.px3)
+    harness, oracle = x2.load_frozen(args.reps)
     R = args.reps
     exe, build = x2.load_build(args.build)
-    freeze = json.loads((R / "protocol/SUPPLEMENT-FROZEN.json").read_text())
+    freeze = json.loads((R / "protocol/SUPPLEMENT-FROZEN.json").read_text(encoding="utf-8"))
     for name, digest in freeze["files"].items():
         x2.require(x2.sha(R / name) == digest, (name, "frozen binding changed"))
     x2.require(freeze["candidate_supplement_invocations_before_freeze"] == 0, "the supplement was run before its freeze")
-    rows = json.loads((R / "protocol/supplement-ledger.json").read_text())
-    answers = json.loads((R / "protocol/supplement-answers.json").read_text())
+    rows = json.loads((R / "protocol/supplement-ledger.json").read_text(encoding="utf-8"))
+    answers = json.loads((R / "protocol/supplement-answers.json").read_text(encoding="utf-8"))
     out = args.out
     out.mkdir(parents=True, exist_ok=False)
     summary = []
@@ -109,7 +109,6 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--px3", type=pathlib.Path, required=True)
     parser.add_argument("--reps", type=pathlib.Path, required=True)
     parser.add_argument("--build", type=pathlib.Path, required=True)
     parser.add_argument("--out", type=pathlib.Path, required=True)

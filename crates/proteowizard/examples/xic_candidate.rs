@@ -36,9 +36,9 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use mscanvas_proteowizard::{
-    ArrayRole, MzmlDeclared, MzmlPolarity, MzmlRepresentation, MzmlScanLimits, XIC_QUANTITY,
-    XicAxis, XicQuery, XicRefusal, XicResult, XicScan, XicScanState, XicSpectrumTransform, XicUnit,
-    read_xic, read_xic_from,
+    ArrayRole, MzmlDeclared, MzmlOpenError, MzmlPolarity, MzmlRepresentation, MzmlScanError,
+    MzmlScanLimits, XIC_QUANTITY, XicAxis, XicQuery, XicRefusal, XicResult, XicScan, XicScanState,
+    XicSpectrumTransform, XicUnit, read_xic, read_xic_from,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
@@ -141,6 +141,11 @@ fn run(source: &Path, bounds: Bounds, snapshot: &Path, mode: Mode) -> Result<Str
 
     let result = match outcome {
         Ok(result) => result,
+        // The file could not be read, which says nothing about the document, so it
+        // must not score as an honest refusal of one.
+        Err(XicRefusal::Document(MzmlOpenError::Scan(
+            error @ (MzmlScanError::Source(_) | MzmlScanError::Io { .. }),
+        ))) => return Err(error.stable_id().to_owned()),
         Err(refusal) => {
             let echo = match refusal {
                 XicRefusal::IncompleteUnit(_)
@@ -518,10 +523,7 @@ struct Param {
 
 impl Param {
     fn get(&self, key: &str) -> Option<&str> {
-        self.attributes
-            .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value.as_str())
+        attribute(&self.attributes, key)
     }
 
     fn accession_in(&self, accessions: &[&str]) -> bool {
