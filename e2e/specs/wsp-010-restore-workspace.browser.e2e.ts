@@ -794,6 +794,7 @@ describe("WSP-010 Restore workspace, rendered", () => {
       await browser.keys("Enter");
       await browser.waitUntil(async () => (await calls("dismiss_restored_row")).length === 1);
       expect((await calls("dismiss_restored_row"))[0]?.args["handle"]).toBe("restored-3");
+      await expectCleanConsole();
     });
 
     it(`keeps the stored order of groups through a put-back in two parts at ${String(size[0])}x${String(size[1])}`, async () => {
