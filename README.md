@@ -181,7 +181,7 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 
 - Set the interface language, the roster's row spacing and which of the two
   workspace panels you want, and find them the way you left them the next time
-  MSCanvas starts. That record holds those five things and, once you choose one,
+  MSCanvas starts. That record holds those four things and, once you choose one,
   the folder for ProteoWizard, and nothing else: no file list, no selection, no
   range and no conversion. A window that gets too narrow folds a panel away for space without
   changing what you asked for, so widening it again brings the panel back.
@@ -205,10 +205,10 @@ converts it into MSCanvas's view cache and whose exports wait for a later slice
 (**Convert this file…** is the route to an output that can be exported); XIC —
 refused on measured evidence for the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
-anything other than filename, and grouping it; reopening a saved project as a
+anything other than filename; reopening a saved project as a
 Workbench session -- a saved project records references and history, but
 reopening one restores none; remembering a search, a sort, a selection or a
-range -- what does survive a restart is the five preferences listed above, the
+range -- what does survive a restart is the four preferences listed above, the
 folder you chose for ProteoWizard, the rows of workspace restore and the conversion history, and the off switch of each; a dark theme, or any
 appearance setting beyond language and row spacing; a remembered panel *size*,
 which the workspace has no way to set; conversion progress as a
