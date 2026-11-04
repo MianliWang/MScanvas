@@ -514,9 +514,11 @@ does not do yet.
 | 10. Export | Decision 7, through the shared specification and the existing no-overwrite export path | All of it (slice 3) |
 | 11. Evidence | Evidence: time and memory on real files, release build, judged with no threshold set in advance. The tests' fixtures are hand-computed; `ltq_check.py` is an independent reference for the LTQ Velos counts it made | |
 
-## Questions for the owner, as asked 2026-10-30
+## Open questions for the owner
 
-Their text is as it was at `f92e71fc`. Each answer is in a dated note.
+*Answered by the owner on 2026-11-03, each as recommended; see
+[Owner decision, 2026-11-03](#owner-decision-2026-11-03). Their text is as it was
+at `f92e71fc`, and each answer is in a dated note.*
 
 1. **Cell rule:** greatest intensity per cell (recommended), or sum.
    *Answered 2026-11-03, MAP-1.2: greatest intensity per cell.*
