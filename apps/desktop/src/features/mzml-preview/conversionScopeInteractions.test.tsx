@@ -6,6 +6,7 @@ import { availableBackend, createFakePreviewApi, createFakeWorkspaceDropTranspor
 import { PreviewApiProvider } from "./api";
 import type { ConversionPlanOutcome, ConversionPlanRequest, SelectedFile, WorkspaceConversionState } from "./contracts";
 import { WorkspaceDropTransportProvider } from "./dropTransport";
+import { resolveConversionScope } from "./conversionScope";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
 import { chooseRosterAction } from "../../test/rosterActions";
 
@@ -216,5 +217,195 @@ describe("M6.7 through the production conversion surface", () => {
     await waitFor(() => expect(document.querySelector(".conversion-running")).not.toHaveTextContent("Retrying the failures"));
     expect(names()).toEqual(["sample-2.raw", "sample-1.raw"]);
     expect(api.beginRequests()).toEqual([]);
+  });
+});
+
+describe("N-C3: Convert this file converts this file", () => {
+  const checked = () => [...document.querySelectorAll<HTMLElement>(".grouped-roster [data-handle]")]
+    .filter((row) => within(row).getByRole<HTMLInputElement>("checkbox").checked).map((row) => row.dataset["handle"]);
+  const radio = (name: string) => screen.getByRole("radio", { name });
+
+  /** The way a reader gets there: Home, the row, its pane's Convert this file…. */
+  async function convertThisFile(handle: string) {
+    fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
+    fireEvent.click(document.querySelector(`.grouped-roster [data-handle="${handle}"]`)!);
+    fireEvent.click(await screen.findByRole("button", { name: "Convert this file…" }));
+    await waitFor(() => expect(document.querySelector(".workbench-shell")).toHaveAttribute("data-surface", "conversion"));
+  }
+
+  it("asks about that one file, leaves the other checks, and Checked rows brings them back", async () => {
+    const api = await mount();
+    select("raw-1"); select("raw-2", true); await ready();
+    const before = checked();
+    expect(before).toEqual(["raw-1", "raw-2"]);
+
+    await convertThisFile("raw-3");
+    await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-3"]);
+    expect(button()).toHaveTextContent("Convert 1 eligible");
+    expect(screen.getByText(/1 requested · 1 eligible · 0 excluded/)).toBeVisible();
+    expect(radio("sample-3.raw")).toBeChecked();
+    expect(checked()).toEqual(before);
+    // The keyboard's order: the third button comes last in the group.
+    expect(screen.getAllByRole("radio", { name: /^(Checked rows|All workspace rows|sample-3\.raw)$/ }).map((node) => (node as HTMLInputElement).value))
+      .toEqual(["selected", "all", "file"]);
+
+    fireEvent.click(radio("Checked rows"));
+    await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-2"]);
+    expect(button()).toHaveTextContent("Convert 2 eligible");
+    expect(screen.queryByRole("radio", { name: "sample-3.raw" })).toBeNull();
+    expect(checked()).toEqual(before);
+  });
+
+  it("leaves from All workspace rows too, and the Workbench's Convert goes back to the checked rows", async () => {
+    const api = await mount();
+    select("raw-1"); await ready();
+    scopeAll(); await ready();
+    await convertThisFile("raw-2");
+    await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-2"]);
+    expect(button()).toHaveTextContent("Convert 1 eligible");
+
+    scopeAll(); await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1", "raw-2", "raw-3"]);
+    expect(screen.queryByRole("radio", { name: "sample-2.raw" })).toBeNull();
+
+    await convertThisFile("raw-2");
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
+    fireEvent.click(screen.getByRole("button", { name: "Convert…" }));
+    await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-1"]);
+    expect(screen.queryByRole("radio", { name: "sample-2.raw" })).toBeNull();
+  });
+
+  it("a press on another file replaces the file, with nothing else having changed", async () => {
+    const api = await mount();
+    await convertThisFile("raw-1");
+    await ready();
+    await convertThisFile("raw-2");
+    await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-2"]);
+    expect(radio("sample-2.raw")).toBeChecked();
+    expect(screen.queryByRole("radio", { name: "sample-1.raw" })).toBeNull();
+  });
+
+  it("runs that file alone, and the checks are what they were after the run", async () => {
+    const drain = deferred<WorkspaceConversionState>();
+    const api = createFakePreviewApi({ initialDatasets: [vendor(1), vendor(2), vendor(3)], availability: availableBackend, conversion: () => drain.promise });
+    render(<App />, { wrapper: wrapper(api) });
+    await waitFor(() => expect(document.querySelector('[data-handle="raw-3"]')).not.toBeNull());
+    select("raw-1"); select("raw-2", true);
+    const before = checked();
+
+    await convertThisFile("raw-3");
+    await ready();
+    fireEvent.click(button());
+    await waitFor(() => expect(api.beginRequests()).toHaveLength(1));
+    expect(api.beginRequests()[0]?.handles).toEqual(["raw-3"]);
+    expect(checked()).toEqual(before);
+
+    const queue = queueOf([queueItem("raw-3", "sample-3.raw")]);
+    await act(async () => drain.resolve({ status: "terminal", reason: "completed", operationId: "1", queue }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start another conversion" }));
+    expect(checked()).toEqual(before);
+    expect(radio("sample-3.raw")).toBeChecked();
+  });
+
+  it("a removed row leaves an empty scope with the refusal, and a later press replaces the file", async () => {
+    const api = await mount();
+    select("raw-1"); await ready();
+    await convertThisFile("raw-3");
+    await ready();
+
+    fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
+    await chooseRosterAction("removeHighlighted");
+    await waitFor(() => expect(document.querySelector('[data-handle="raw-3"]')).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
+    const asked = api.planRequests().length;
+    await waitFor(() => expect(button()).toHaveAttribute("aria-disabled", "true"));
+    expect(button()).toHaveTextContent("Convert 0 eligible");
+    expect(radio("sample-3.raw")).toBeChecked();
+    expect(screen.getByText(/0 requested · 0 eligible · 0 excluded/)).toBeVisible();
+    expect(document.getElementById("conversion-availability-no-convertible-target")).toHaveTextContent("No supported vendor acquisitions in this scope.");
+    fireEvent.click(button());
+    expect(api.beginRequests()).toEqual([]);
+    expect(api.planRequests()).toHaveLength(asked);
+    expect(checked()).toEqual(["raw-1"]);
+
+    await convertThisFile("raw-2");
+    await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-2"]);
+    expect(radio("sample-2.raw")).toBeChecked();
+    expect(screen.queryByRole("radio", { name: "sample-3.raw" })).toBeNull();
+  });
+
+  it("holds a row that cannot convert as excluded, and asks no plan for it", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [vendor(1), open], availability: availableBackend });
+    const hook = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(hook.result.current.conversionConfiguration.configuration).not.toBeNull());
+    act(() => hook.result.current.setConversionScope("file", open));
+    expect(hook.result.current.conversionFile).toEqual(open);
+    expect(resolveConversionScope(hook.result.current.conversionScope, hook.result.current.roster, hook.result.current.conversionFile))
+      .toMatchObject({ scope: "file", requestedCount: 1, excludedCount: 1, handles: [], excluded: [open] });
+    expect(api.planRequests()).toEqual([]);
+  });
+
+  it("withdraws the old review in the same tick when the file or the scope changes, and never for a check", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [vendor(1), vendor(2)], availability: availableBackend });
+    const hook = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(hook.result.current.conversionConfiguration.configuration).not.toBeNull());
+    const reviewed = async (n: number) => {
+      act(() => {
+        hook.result.current.setConversionScope("file", vendor(n));
+        hook.result.current.conversionPlan.describe([`raw-${n}`], "file");
+      });
+      await waitFor(() => expect(hook.result.current.conversionPlan.current?.identity).toMatchObject({ scope: "file", handles: [`raw-${n}`] }));
+      return hook.result.current.conversionPlan.current!;
+    };
+
+    let review = await reviewed(1);
+    // Pressed again on the same file, the same question stands.
+    act(() => hook.result.current.setConversionScope("file", vendor(1)));
+    expect(hook.result.current.conversionPlan.readCurrent()).not.toBeNull();
+    // Another file, in the same scope: the review of the first cannot start.
+    act(() => {
+      hook.result.current.setConversionScope("file", vendor(2));
+      expect(hook.result.current.conversionPlan.readCurrent()).toBeNull();
+      hook.result.current.conversion.convert(review.identity);
+    });
+    expect(api.beginRequests()).toEqual([]);
+
+    review = await reviewed(2);
+    // A check moving is not this question's business.
+    act(() => {
+      hook.result.current.dispatchRoster({ type: "membershipChanged", handles: ["raw-1"], checked: true });
+      expect(hook.result.current.conversionPlan.readCurrent()).not.toBeNull();
+    });
+    // That file leaving is: its review is gone before the removal renders.
+    act(() => {
+      hook.result.current.dispatchRoster({ type: "datasetsRemoved", result: { roster: { datasets: [vendor(1)], capacity: 1024 }, removedHandles: ["raw-2"], unknownHandles: [] } });
+      expect(hook.result.current.conversionPlan.readCurrent()).toBeNull();
+      hook.result.current.conversion.convert(review.identity);
+    });
+    expect(api.beginRequests()).toEqual([]);
+    review = await reviewed(1);
+    // Checked rows forgets the file, and that review cannot start either.
+    act(() => {
+      hook.result.current.setConversionScope("selected");
+      expect(hook.result.current.conversionPlan.readCurrent()).toBeNull();
+      hook.result.current.conversion.convert(review.identity);
+    });
+    expect(hook.result.current.conversionFile).toBeNull();
+    expect(api.beginRequests()).toEqual([]);
+
+    // The same row under Checked rows, then held alone, is asked again.
+    act(() => hook.result.current.conversionPlan.describe(["raw-1"], "selected"));
+    await waitFor(() => expect(hook.result.current.conversionPlan.current?.identity).toMatchObject({ scope: "selected", handles: ["raw-1"] }));
+    const asked = api.planRequests().length;
+    review = await reviewed(1);
+    expect(review.identity.scope).toBe("file");
+    expect(api.planRequests()).toHaveLength(asked + 1);
   });
 });

@@ -49,6 +49,10 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **Convert this file… converts this file.** The Conversion page holds that one
+  file, named on a third scope button, and your checked rows stay as they were,
+  before and after the run. **Checked rows** brings them back. **Open in Conversion**
+  on a Shimadzu or SCIEX row does the same.
 - **"Not verified by MSCanvas" follows a labelled output further.** The viewer's
   file title, the Metadata tab's File row, the figure dialog and the figure
   itself say it: a labelled source's SVG, PNG, copied image and preview draw the

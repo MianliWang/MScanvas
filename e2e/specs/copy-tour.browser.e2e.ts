@@ -775,7 +775,73 @@ async function rereadTheFailedOpen() {
   await frames();
 }
 
+// Convert this file… (N-C3): that file alone, with another row checked and staying so.
+const FILE_SCOPE = 'input[name="conversion-scope"][value="file"]';
+const CONVERT_THIS_WORLD = (locale: Locale) => ({ ...viewWorld({ state: "idle" })(locale), get_workspace_roster: { datasets: [...ROWS, LONG_NAME, LCD], capacity: 1024 } });
+
+/** Checks another row, reaches this one's button, presses it, and waits for the page it shows. */
+async function convertThisFile(reach: () => Promise<string>, offered = true) {
+  await answerPlans([...ROWS, LONG_NAME, LCD]);
+  await checkMembers([SECOND.handle]);
+  await browser.$(await reach()).click();
+  await browser.$(FILE_SCOPE).waitForExist({ timeout: 30_000 });
+  if (offered) await waitUntilOffered(CONVERT);
+  await frames();
+}
+
+const fromThePane = (row: SelectedFile) => async () => { await highlight(row); return "[data-raw-view-pane] .evidence-actions button:last-child"; };
+
 const STOPS: readonly Stop[] = [
+  { name: "convert-this-file", table: CONVERT_THIS_WORLD, keepFocus: true, drive: () => convertThisFile(fromThePane(FIRST)), anchor: `${FILE_SCOPE}:checked` },
+  { name: "convert-this-file-keyboard", table: CONVERT_THIS_WORLD, keepFocus: true, drive: async () => {
+    await convertThisFile(fromThePane(FIRST));
+    await browser.waitUntil(async () => {
+      await browser.keys("Tab");
+      return browser.execute((css: string) => document.activeElement?.matches(css) === true, FILE_SCOPE);
+    }, { timeoutMsg: "Tab never reached the third button" });
+    await frames();
+  }, anchor: `.conversion-segment:has(${FILE_SCOPE}:focus-visible)` },
+  { name: "convert-this-file-long-name", table: CONVERT_THIS_WORLD, drive: () => convertThisFile(fromThePane(LONG_NAME)), anchor: `${FILE_SCOPE}:checked` },
+  { name: "convert-this-file-from-view", table: viewWorld(viewReady()), drive: () => convertThisFile(async () => { await openTheView(); return "[data-raw-view-convert]"; }), anchor: `${FILE_SCOPE}:checked` },
+  { name: "convert-this-file-failed-open", table: viewFinalOpenWorld, drive: () => convertThisFile(async () => { await failTheOpen(); return '#workbench-evidence[data-evidence="failed"] [data-raw-view-convert]'; }), anchor: `${FILE_SCOPE}:checked` },
+  { name: "convert-this-file-vendor-row", table: CONVERT_THIS_WORLD, drive: () => convertThisFile(async () => {
+    await revealRosterRow(LCD.handle);
+    await browser.$(`.grouped-roster [data-handle="${LCD.handle}"]`).click();
+    await foldNarrowRoster();
+    return '#workbench-evidence[data-evidence="vendor"] button';
+  }), anchor: `${FILE_SCOPE}:checked` },
+  // A queue under way keeps the page; the scope waits for the next conversion, behind its own button.
+  { name: "convert-this-file-queue-running", table: (locale) => ({ ...CONVERT_THIS_WORLD(locale), get_workspace_conversion_state: slot(1, STARTED), get_raw_view_state: { state: { state: "idle" }, availability: { available: false, code: "conversion_busy" } } }), drive: async () => {
+    await answerPlans([...ROWS, LONG_NAME, LCD]);
+    await checkMembers([SECOND.handle]);
+    await browser.$(await fromThePane(FIRST)()).click();
+    await browser.$(".conversion-running").waitForDisplayed({ timeout: 30_000 });
+    await frames();
+  }, anchor: '.workbench-shell[data-surface="conversion"] .conversion-running' },
+  { name: "convert-this-file-after-queue", table: (locale) => ({ ...CONVERT_THIS_WORLD(locale), get_workspace_conversion_state: slot(1, FINISHED) }), drive: async () => {
+    await answerPlans([...ROWS, LONG_NAME, LCD]);
+    await checkMembers([SECOND.handle]);
+    await browser.$(await fromThePane(LONG_NAME)()).click();
+    await browser.$("button[data-conversion-start-another]").waitForDisplayed({ timeout: 30_000 });
+    await browser.$("button[data-conversion-start-another]").click();
+    await browser.$(FILE_SCOPE).waitForExist({ timeout: 30_000 });
+    await frames();
+  }, anchor: `${FILE_SCOPE}:checked` },
+  // The row removed: the scope stays, empty, and says which file it was.
+  { name: "convert-this-file-removed", table: CONVERT_THIS_WORLD, drive: async () => {
+    await convertThisFile(fromThePane(FIRST));
+    const left = [...ROWS, LONG_NAME, LCD].filter((row) => row !== FIRST);
+    await setInvokeResult("remove_workspace_datasets", { roster: { datasets: left, capacity: 1024 }, removedHandles: [FIRST.handle], unknownHandles: [] });
+    await setInvokeResult("get_workspace_roster", { datasets: left, capacity: 1024 });
+    await go(1);
+    await revealRosterRow(SECOND.handle);
+    await browser.$("[data-roster-list-menu]").click();
+    await browser.$("[data-roster-remove]").click();
+    await browser.$(`.grouped-roster [data-handle="${FIRST.handle}"]`).waitForExist({ reverse: true, timeout: 30_000 });
+    await go(2);
+    await browser.$("#conversion-availability-no-convertible-target").waitForDisplayed({ timeout: 30_000 });
+    await frames();
+  }, anchor: `${FILE_SCOPE}:checked` },
   { name: "workbench-empty", table: emptyTable, anchor: ".workbench-shell" },
   { name: "workbench-roster-loading", table: populated, hold: ["get_workspace_roster"], anchor: ".workbench-shell" },
   {

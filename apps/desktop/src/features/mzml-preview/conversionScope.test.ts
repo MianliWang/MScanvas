@@ -60,3 +60,36 @@ describe("explicit conversion scope over the complete roster", () => {
     expect(sameConversionScope(all, resolveConversionScope("all", { ...facts, conversionMembership: new Set() }))).toBe(true);
   });
 });
+
+describe("the one-file scope (N-C3)", () => {
+  const two = { handle: "two", fileName: "Run-2.raw" };
+
+  it("holds exactly that file, whatever is checked", () => {
+    expect(resolveConversionScope("file", facts, two)).toMatchObject({ scope: "file", file: two, requestedCount: 1, excludedCount: 0, handles: ["two"] });
+    expect(resolveConversionScope("file", { ...facts, conversionMembership: new Set() }, two).handles).toEqual(["two"]);
+    expect(resolveConversionScope("file", { ...facts, conversionMembership: new Set(["one", "three"]) }, two).handles).toEqual(["two"]);
+  });
+
+  it("is empty once the row is gone, and still says which file it was", () => {
+    const removed = { ...facts, datasets: rows.filter((row) => row.handle !== "two") };
+    expect(resolveConversionScope("file", removed, two)).toMatchObject({ file: two, requestedCount: 0, excludedCount: 0, handles: [] });
+    expect(resolveConversionScope("file", facts, null)).toMatchObject({ file: null, requestedCount: 0, handles: [] });
+  });
+
+  it("puts a row that cannot convert in the excluded list", () => {
+    const scope = resolveConversionScope("file", facts, { handle: "open", fileName: "open.mzML" });
+    expect(scope).toMatchObject({ requestedCount: 1, excludedCount: 1, handles: [] });
+    expect(scope.excluded.map((row) => row.handle)).toEqual(["open"]);
+  });
+
+  it("is not read by the other two scopes", () => {
+    expect(resolveConversionScope("selected", facts, two)).toEqual(resolveConversionScope("selected", facts));
+    expect(resolveConversionScope("all", facts, two)).toEqual(resolveConversionScope("all", facts));
+  });
+
+  it("is a different question from the same row under Checked rows, and from another file", () => {
+    const one = { ...facts, conversionMembership: new Set(["two"]) };
+    expect(sameConversionScope(resolveConversionScope("file", one, two), resolveConversionScope("selected", one))).toBe(false);
+    expect(sameConversionScope(resolveConversionScope("file", facts, two), resolveConversionScope("file", facts, { handle: "one", fileName: "run-10.raw" }))).toBe(false);
+  });
+});

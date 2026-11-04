@@ -1,7 +1,13 @@
 import { isConvertibleSourceKind, type SelectedFile } from "./contracts";
 import { orderRoster, type SortMode } from "./rosterView";
 
-export type ConversionScope = "selected" | "all";
+export type ConversionScope = "selected" | "all" | "file";
+
+/**
+ * The one row "Convert this file…" named. Its name stays with its handle, so
+ * the scope can still say which file it holds after that row has been removed.
+ */
+export type ConversionFile = Pick<SelectedFile, "handle" | "fileName">;
 
 export interface ConversionScopeFacts {
   readonly datasets: readonly SelectedFile[];
@@ -11,6 +17,8 @@ export interface ConversionScopeFacts {
 
 export interface ResolvedConversionScope {
   readonly scope: ConversionScope;
+  /** The file this scope is held to; `null` under the other two scopes. */
+  readonly file: ConversionFile | null;
   readonly requestedCount: number;
   readonly excludedCount: number;
   /** The requested rows this scope cannot convert, in execution order, to name them (PM9.4 O2). */
@@ -28,12 +36,14 @@ export interface ResolvedConversionScope {
 export function resolveConversionScope(
   scope: ConversionScope,
   facts: ConversionScopeFacts,
+  file: ConversionFile | null = null,
 ): ResolvedConversionScope {
-  const requested = orderRoster(facts.datasets, facts.sort)
-    .filter((row) => scope === "all" || facts.conversionMembership.has(row.handle));
+  const requested = orderRoster(facts.datasets, facts.sort).filter((row) =>
+    scope === "all" || (scope === "file" ? row.handle === file?.handle : facts.conversionMembership.has(row.handle)));
   const members = requested.filter((row) => isConvertibleSourceKind(row.sourceKind));
   return {
     scope,
+    file: scope === "file" ? file : null,
     requestedCount: requested.length,
     excludedCount: requested.length - members.length,
     excluded: requested.filter((row) => !isConvertibleSourceKind(row.sourceKind)),

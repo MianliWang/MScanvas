@@ -1069,9 +1069,9 @@ function PlanStart(props: PlanProps & {
           }
         }}
       >
-        {resolvedScope.scope === "selected"
-          ? t(picks ? "m74CnvConvertSelected" : "m74CnvConvertSelectedDirect", { count })
-          : t(picks ? "m74CnvConvertAll" : "m74CnvConvertAllDirect", { count })}
+        {resolvedScope.scope === "all"
+          ? t(picks ? "m74CnvConvertAll" : "m74CnvConvertAllDirect", { count })
+          : t(picks ? "m74CnvConvertSelected" : "m74CnvConvertSelectedDirect", { count })}
       </Button>
       {/* An explicit re-ask of the same question, and nothing automatic. A
           plan can fail for a reason the reader cannot act on, and a machine
@@ -1113,6 +1113,14 @@ function PlanSummary(props: PlanProps & {
               {t(scope === "selected" ? "m74CnvSelected" : "m74CnvAll")}
             </label>
           ))}
+          {/* Only while it is the scope: already checked, it has nothing to
+              change to, and pressing either of the others leaves it for good. */}
+          {resolvedScope.file === null ? null : (
+            <label className="conversion-segment">
+              <input className="visually-hidden" type="radio" name="conversion-scope" value="file" checked readOnly />
+              <MiddleEllipsis text={resolvedScope.file.fileName} />
+            </label>
+          )}
         </div>
       </fieldset>
       <p className="conversion-scope-counts" id="conversion-scope-summary" aria-live="polite">
