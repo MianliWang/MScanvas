@@ -83,9 +83,10 @@ All notable changes will be documented here once versioned releases begin.
 - **A malformed mzML file can no longer show a spectrum joined from separate
   pieces.** Two `<binary>` elements in one m/z or intensity array, or an element
   inside its `<binary>`, read as one array whenever the pieces held the declared
-  length, and text in a `<binary>` nested elsewhere in the array was joined on
-  too. That spectrum is now refused, and the file still opens and its other
-  spectra still read
+  length. That spectrum is now refused, and the file still opens and its other
+  spectra still read. Text in a `<binary>` nested elsewhere in the array was
+  joined on the same way; it is now ignored, so the array is read from its own
+  payload alone
   ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
 
 ### Known limitations
