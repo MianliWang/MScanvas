@@ -374,7 +374,7 @@ Both runs give `DETECTED` and `NOT_DETECTED`, as on the pinned runtime.
   changed from `false` to true; the adapter sets it explicitly, so that is not the cause.
 - **Drift.** Repeated runs differ in both runtimes, always below 1e-6. Over three runs on
   the pinned runtime the largest is 8.84e-8. Over six on the shape it is 8.84e-8 between plain
-  runs and 1.59e-7 between the two run inside `loads_after.py` and `trace_nt.py`. All of these
+  runs and 1.59e-7 between the two runs made inside `loads_after.py` and `trace_nt.py`. All of these
   are on `isotopeProbability`, a binary32 value, at one or two units in its last place. Some
   pairs on each side are identical, and another pair on the shape differs by 1.46e-16, so a
   single pair says nothing about the limit. Nothing here shows that 3.6.0 or 3.14 removed this
@@ -493,8 +493,9 @@ The results in this record came from the copy's `share/OpenMS`, but it is not th
 the engine looks. A file trace of the adapter's run and of the `AccurateMassSearchEngine`
 group (`trace_nt.py`) shows it querying other locations first. Each was missing on this host
 (`0xc000003a`) in those runs, and a control run reads the copy's files and gives its usual 21
-`SML` rows. `<plant>` is a scratch copy of the shape, deleted afterwards. No `share` folder was
-ever created beside `<shape>`.
+`SML` rows. `<runtime>` is the folder holding `python.exe`. `<plant>` is a scratch folder holding
+a copy of the shape at `<plant>/shape`, deleted afterwards. No `share` folder was ever created
+beside `<shape>`.
 
 | Location queried before the copy | What was put there | Result |
 | --- | --- | --- |
