@@ -44,6 +44,7 @@ import {
   installIpcBoundary,
   ipcCalls,
   releaseInvokeHold,
+  revealInDetails,
   setInvokeRejection,
   setInvokeResult,
   type IpcCall,
@@ -69,6 +70,7 @@ import {
   type Scenario,
 } from "../support/pm9Scenarios";
 import { MZML_ROW, VENDOR_ROW } from "../support/fixtures";
+import { INPUTS, LAYERS, TYPED, manyRows, targetedTable, wideLayers, wideProject } from "../support/targeted";
 import {
   SPECTRUM_PLOT,
   readBackSavedPreferences,
@@ -1274,22 +1276,41 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
     /**
      * Real Tab presses from wherever focus is: each stop's name and whether it
      * is visible, on screen and not covered, and the document's own overflow
-     * after the walk. With `scope`, the walk ends once focus leaves it.
+     * after the walk. With `scope`, the walk ends once focus leaves it. `back`
+     * walks with Shift+Tab; `wholeRing` also holds that no box scrolling inside
+     * the Project surface cuts the ring.
      */
-    async function focusWalk(label: string, limit: number, scope?: string) {
+    async function focusWalk(label: string, limit: number, scope?: string, { back = false, wholeRing = false } = {}) {
       const stops = [];
       for (let step = 0; step < limit; step += 1) {
-        await browser.keys("Tab");
+        await browser.keys(back ? ["Shift", "Tab"] : "Tab");
         const at = await browser.execute((region: string | null) => {
           const active = document.activeElement as HTMLElement | null;
           if (active === null || active === document.body) return null;
           if (region !== null && active.closest(region) === null) return "left" as const;
           const box = active.getBoundingClientRect();
           const hit = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(box.height / 2, 8));
+          const style = getComputedStyle(active);
+          const reach = Number.parseFloat(style.outlineWidth) + Number.parseFloat(style.outlineOffset);
+          const cut: string[] = [];
+          for (let scroller = active.parentElement; scroller !== null && scroller.id !== "workbench-project"; scroller = scroller.parentElement) {
+            if (getComputedStyle(scroller).overflowY === "visible") continue;
+            const clip = scroller.getBoundingClientRect();
+            const left = clip.left + scroller.clientLeft;
+            const top = clip.top + scroller.clientTop;
+            const past = {
+              left: left - (box.left - reach),
+              right: box.right + reach - (left + scroller.clientWidth),
+              top: top - (box.top - reach),
+              bottom: box.bottom + reach - (top + scroller.clientHeight),
+            };
+            for (const [side, by] of Object.entries(past)) if (by > 0.5) cut.push(`${scroller.className} ${side} ${by.toFixed(1)}`);
+          }
           return {
             name: (active.getAttribute("aria-label") ?? active.textContent ?? active.tagName).trim().slice(0, 40),
             onScreen: box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth,
             uncovered: hit === null || active === hit || active.contains(hit) || hit.contains(active),
+            cut,
           };
         }, scope ?? null);
         if (at === "left") break;
@@ -1302,6 +1323,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
       evidence.push({ label, stops, overflow });
       expect(stops.length).toBeGreaterThan(0);
       expect(stops.filter((stop) => !stop.treatment.visible || !stop.onScreen || !stop.uncovered)).toEqual([]);
+      if (wholeRing) expect(stops.filter((stop) => stop.cut.length > 0)).toEqual([]);
       expect(overflow.x).toBeLessThanOrEqual(1);
       expect(overflow.y).toBeLessThanOrEqual(1);
     }
@@ -2070,6 +2092,364 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
         evidence.push({ label: `fe2-frame-${locale}-1366`, tabRoom: wideRoom, ...wide });
         expect(wide).toEqual({ header: 56, status: 30, insets: [24, 24], roster: 240, main: 831, inspector: 245, documentOverflowX: 0 });
         expect(wideRoom).toBeGreaterThanOrEqual(2 * 80);
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: Project in the v5.11 look, each refusal with its reason on screen, in ${locale}`, async () => {
+        const SIZES = [
+          [1366, 768],
+          [960, 640],
+        ] as const;
+        // Nothing runs sideways and nothing is cut, on the page, on the surface
+        // or in Details, and the surface is the only thing that scrolls.
+        const whole = () =>
+          browser.execute(() => {
+            const regions = [...document.querySelectorAll<HTMLElement>("#workbench-project, #workbench-inspector")];
+            const inside = regions.flatMap((region) => [...region.querySelectorAll<HTMLElement>("*")]);
+            const name = (node: HTMLElement) => `${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0] ?? ""}`;
+            return {
+              documentOverflowX: document.documentElement.scrollWidth - innerWidth,
+              sideways: [...regions, ...inside].filter((node) => node.getClientRects().length > 0 && !node.closest(".visually-hidden") && ["auto", "scroll"].includes(getComputedStyle(node).overflowX) && node.scrollWidth > node.clientWidth + 1).map(name),
+              nested: inside.filter((node) => ["auto", "scroll"].includes(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight + 1).map(name),
+              cut: inside.filter((node) => node.tagName === "BUTTON" && node.getClientRects().length > 0 && node.scrollWidth > node.clientWidth + 1).map(name),
+            };
+          });
+        const inOrder = { documentOverflowX: 0, sideways: [], nested: [], cut: [] };
+
+        await metrics(1366, 768);
+        const project = capturedProject();
+        const table = scenario("populated", locale);
+        table.get_project_state = {
+          ...project,
+          inputs: [project.inputs[0], { ...project.inputs[0], id: "22222222-2222-4111-8111-111111111111", label: "QC_pool_02.mzML" }],
+        };
+        table.open_project = { __reject: { kind: "unreadable" } };
+        await openTable(table);
+        await readBackSavedPreferences();
+        await navigate([en.projectSurface, zh.projectSurface]);
+        await browser.$("[data-project-surface]").waitForDisplayed();
+
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await frames();
+          const look = await browser.execute(() => {
+            const type = (css: string) => {
+              const style = getComputedStyle(document.querySelector(css)!);
+              return `${style.fontSize}/${style.fontWeight}`;
+            };
+            // A refused control's description is its reason, and the reason is on screen.
+            const refusal = (css: string) => {
+              const control = document.querySelector(css)!;
+              // The row's state comes first where a control names two (ProjectPanel).
+              const reason = document.getElementById((control.getAttribute("aria-describedby") ?? "").split(" ").at(-1) ?? "");
+              const box = reason?.getBoundingClientRect();
+              return {
+                refused: control.getAttribute("aria-disabled"),
+                reason: reason === null ? null : (reason.textContent ?? "").trim(),
+                shown: box !== undefined && box.width > 0 && box.height > 0 && box.bottom <= innerHeight,
+              };
+            };
+            const row = document.querySelector<HTMLElement>("[data-project-input]")!;
+            const tag = getComputedStyle(row.querySelector(".project-tag")!);
+            return {
+              title: type(".project-header h2"),
+              section: type(".project-section h3"),
+              sectionRule: getComputedStyle(document.querySelector(".project-section-head")!).borderBottomColor,
+              rowRule: getComputedStyle(row).borderBottomColor,
+              rowAtLeast44: row.getBoundingClientRect().height >= 44,
+              tag: [tag.fontSize, tag.fontWeight, tag.paddingTop, tag.paddingLeft, tag.borderTopLeftRadius],
+              tagHeight: Math.round(row.querySelector(".project-tag")!.getBoundingClientRect().height),
+              save: refusal(".project-actions > button:nth-child(3)"),
+              rowAction: refusal('[data-project-input] .project-row-actions button[aria-disabled="true"]'),
+            };
+          });
+          evidence.push({ label: `fe2-project-${locale}-${String(width)}`, ...look });
+          expect(look).toEqual({
+            title: "17px/650",
+            section: "14px/650",
+            sectionRule: "rgb(220, 227, 235)",
+            rowRule: "rgb(237, 241, 245)",
+            rowAtLeast44: true,
+            tag: ["12px", "550", "2px", "6px", "4px"],
+            tagHeight: 24,
+            save: { refused: "true", reason: words(locale).projectSaveNeedsLocation, shown: true },
+            rowAction: { refused: "true", reason: words(locale).projectAddNeedsCheck, shown: true },
+          });
+          expect(await whole()).toEqual(inOrder);
+
+          // The one ring on the refused Save, which stays a Tab stop and stays dashed.
+          await browser.execute(() => document.querySelector<HTMLElement>(".project-actions > button:nth-child(2)")?.focus());
+          await browser.keys("Tab");
+          const ring = await browser.execute(() => {
+            const active = document.activeElement as HTMLElement;
+            const style = getComputedStyle(active);
+            return {
+              onSave: active.matches('.project-actions > button:nth-child(3)[aria-disabled="true"]'),
+              outline: `${style.outlineWidth} ${style.outlineStyle} ${style.outlineColor}`,
+              edge: style.borderTopStyle,
+            };
+          });
+          expect(ring).toEqual({ onSave: true, outline: "2px solid rgb(23, 105, 209)", edge: "dashed" });
+          // Every stop on the surface in document order: visible, on screen, uncovered.
+          expect(await enter("#workbench-project")).toBe(true);
+          await focusWalk(`fe2-project-focus-${locale}-${String(width)}`, 30, "#workbench-project");
+
+          // A failed read: the refusal in the notice's words and edge, on screen.
+          await browser.$(".project-actions > button:nth-child(2)").click();
+          await browser.$("[data-project-problem]").waitForDisplayed();
+          const problem = await browser.execute(() => {
+            const node = document.querySelector<HTMLElement>("[data-project-problem]")!;
+            const style = getComputedStyle(node);
+            return { said: (node.textContent ?? "").trim().length > 0, size: style.fontSize, edge: style.borderTopColor, shown: node.getBoundingClientRect().bottom <= innerHeight };
+          });
+          expect(problem).toEqual({ said: true, size: "12px", edge: "rgb(232, 187, 181)", shown: true });
+          await browser.$("[data-project-problem] button").click();
+          await browser.$("[data-project-problem]").waitForDisplayed({ reverse: true });
+        }
+
+        // Details on a reference: the column at 1366, the drawer at 960.
+        await metrics(1366, 768);
+        await frames();
+        await browser.$("[data-project-inspect]").click();
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await revealInDetails('#workbench-inspector [data-provenance="input"]');
+          await frames();
+          const details = await browser.execute(() => {
+            const type = (css: string) => {
+              const style = getComputedStyle(document.querySelector(css)!);
+              return `${style.fontSize}/${style.fontWeight}`;
+            };
+            const panel = getComputedStyle(document.querySelector("#workbench-inspector .panel.provenance")!);
+            return {
+              width: Math.round(document.querySelector("#workbench-inspector")!.getBoundingClientRect().width),
+              inset: [panel.paddingTop, panel.paddingLeft, panel.paddingRight],
+              name: type("#workbench-inspector .provenance-name"),
+              sectionLabel: type("#workbench-inspector .provenance-section-label"),
+              close: getComputedStyle(document.querySelector("[data-provenance-close]")!).display,
+            };
+          });
+          evidence.push({ label: `fe2-project-details-${locale}-${String(width)}`, ...details });
+          expect(details).toEqual({
+            width: width > 1050 ? 245 : 300,
+            inset: ["16px", "16px", "16px"],
+            name: "16px/650",
+            sectionLabel: "12px/600",
+            close: width > 1050 ? "none" : "flex",
+          });
+          expect(await whole()).toEqual(inOrder);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+
+        // A stored result: its table as the Workbench's scan table draws one,
+        // its facts as Details draws them.
+        await metrics(1366, 768);
+        await openTable(scenario("projectWithResult", locale));
+        await readBackSavedPreferences();
+        await navigate([en.projectSurface, zh.projectSurface]);
+        await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+        await browser.$("[data-targeted-choose]").click();
+        await browser.$("[data-targeted-rows] tr.is-chosen").waitForDisplayed();
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await revealInDetails('#workbench-inspector [data-provenance="artifact"]');
+          await frames();
+          const result = await browser.execute(() => {
+            const head = document.querySelector<HTMLElement>("[data-targeted-rows] thead th")!;
+            const headStyle = getComputedStyle(head);
+            const chosen = document.querySelector<HTMLElement>("[data-targeted-rows] tr.is-chosen")!;
+            const fact = (tag: string) => getComputedStyle(document.querySelector(`#workbench-inspector .provenance-facts ${tag}`)!);
+            return {
+              head: [Math.round(head.getBoundingClientRect().height), headStyle.fontSize, headStyle.fontWeight, headStyle.backgroundColor],
+              row: Math.round(chosen.getBoundingClientRect().height),
+              chosen: [getComputedStyle(chosen.children[0]!).backgroundColor, getComputedStyle(chosen.children[0]!).boxShadow],
+              numbers: getComputedStyle(chosen.children[2]!).textAlign,
+              fact: [fact("dt").paddingTop, fact("dd").paddingBottom, fact("dd").borderBottomColor],
+            };
+          });
+          evidence.push({ label: `fe2-project-result-${locale}-${String(width)}`, ...result });
+          expect(result).toEqual({
+            head: [30, "11px", "650", "rgb(247, 248, 250)"],
+            row: 28,
+            chosen: ["rgb(237, 244, 255)", "rgb(23, 105, 209) 3px 0px 0px 0px inset"],
+            numbers: "right",
+            fact: ["7px", "7px", "rgb(237, 241, 245)"],
+          });
+          expect(await whole()).toEqual(inOrder);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      async function openProjectTable(table: Record<string, unknown>, width: number, height: number) {
+        await metrics(width, height);
+        await openTable(table);
+        await readBackSavedPreferences();
+        await navigate([en.projectSurface, zh.projectSurface]);
+        await browser.$("[data-project-surface]").waitForDisplayed();
+        await frames();
+      }
+
+      /** Puts keyboard focus on one control, the way Tab would have left it. */
+      async function focusOn(css: string) {
+        const focused = await browser.execute((selector: string) => {
+          const node = document.querySelector<HTMLElement>(selector);
+          node?.focus();
+          return node !== null && document.activeElement === node;
+        }, css);
+        expect(focused).toBe(true);
+        await frames();
+      }
+
+      const FE2_SIZES = [
+        [1366, 768],
+        [960, 640],
+      ] as const;
+
+      it(`FE-2: a refusal from far down Project stays in view and covers no stop, in ${locale}`, async () => {
+        const layers = wideLayers(8);
+        for (const [width, height] of FE2_SIZES) {
+          const table = targetedTable(locale, wideProject(8));
+          table.remove_project_layer = { __reject: { kind: "unreadable" } };
+          await openProjectTable(table, width, height);
+          await focusOn(`[data-project-remove-layer="${layers[7]!}"]`);
+          await browser.keys("Enter");
+          await browser.$("[data-project-problem]").waitForExist();
+          await frames();
+          const seen = await browser.execute(() => {
+            const surface = document.querySelector<HTMLElement>("#workbench-project")!;
+            const notice = document.querySelector<HTMLElement>("[data-project-problem]")!;
+            const edge = surface.getBoundingClientRect();
+            const box = notice.getBoundingClientRect();
+            const hit = document.elementFromPoint(box.left + 20, box.top + box.height / 2);
+            return {
+              scrolled: surface.scrollTop > 0,
+              inView: box.top >= edge.top && box.bottom <= edge.bottom,
+              onTop: hit !== null && notice.contains(hit),
+              opaque: !getComputedStyle(notice).backgroundColor.startsWith("rgba"),
+              focusKept: (document.activeElement as HTMLElement).hasAttribute("data-project-remove-layer"),
+            };
+          });
+          evidence.push({ label: `fe2-refusal-far-${locale}-${String(width)}`, ...seen });
+          expect(seen).toEqual({ scrolled: true, inView: true, onTop: true, opaque: true, focusKept: true });
+          // Back up the page with the notice standing: no stop goes under it.
+          await focusWalk(`fe2-refusal-far-back-${locale}-${String(width)}`, 45, "#workbench-project", { back: true });
+          // An open drawer's scrim still dims it, as it does the rest of the card.
+          // By the pixel: the surface is inert then, so hit testing cannot tell.
+          if (width <= 1050) {
+            await browser.$('.workbench-header [aria-controls="workbench-inspector"]').click();
+            await browser.$("[data-drawer-scrim]").waitForExist();
+            await frames();
+            const shot = await cdp("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
+            const red = await browser.execute(async (data: unknown) => {
+              const image = new Image();
+              image.src = `data:image/png;base64,${String(data)}`;
+              await image.decode();
+              const canvas = document.createElement("canvas");
+              canvas.width = image.width;
+              canvas.height = image.height;
+              const context = canvas.getContext("2d")!;
+              context.drawImage(image, 0, 0);
+              const box = document.querySelector("[data-project-problem]")!.getBoundingClientRect();
+              return context.getImageData(box.left + 4, box.top + box.height / 2, 1, 1).data[0];
+            }, shot.data);
+            evidence.push({ label: `fe2-refusal-far-scrim-${locale}`, red });
+            // The notice's fill is rgb(254, 228, 226); the scrim takes a fifth of it.
+            expect(red).toBeLessThan(230);
+          }
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: a batch's members with Details open at 1366x768 keep their states and actions in view, in ${locale}`, async () => {
+        const members = (css: string) =>
+          browser.execute((table: string) => {
+            const node = document.querySelector<HTMLElement>(table)!;
+            const scroller = node.parentElement!;
+            const edge = scroller.getBoundingClientRect();
+            const names = [...node.querySelectorAll<HTMLElement>('tbody th[scope="row"]')];
+            return {
+              sideways: scroller.scrollWidth - scroller.clientWidth > 1,
+              name: names.every((name) => name.getBoundingClientRect().width >= 160),
+              actions: [...node.querySelectorAll("button")].every((button) => button.getBoundingClientRect().right <= edge.right),
+            };
+          }, css);
+        const whole = { sideways: false, name: true, actions: true };
+        // A long name that cannot break, then short ones beside the same long state.
+        const wide = wideProject(3);
+        const shortNames = { ...wide, inputs: wide.inputs.map((input, index) => ({ ...input, label: `QC_${String(index + 1)}.mzML` })) };
+        for (const state of [undefined, shortNames]) {
+          await openProjectTable(targetedTable(locale, state), 1366, 768);
+          await focusOn(`[data-project-inspect="${INPUTS[0]!}"]`);
+          await browser.keys("Enter");
+          await frames();
+          await focusOn(`[data-project-targeted="${LAYERS[0]}"]`);
+          await browser.keys("Enter");
+          await browser.$("[data-targeted-setup]").waitForDisplayed();
+          await browser.$(`[data-targeted-member="${LAYERS[1]}"]`).click();
+          await browser.$(`[data-targeted-member="${LAYERS[2]}"]`).click();
+          await browser.$("[data-targeted-text]").setValue(TYPED);
+          await focusOn("[data-targeted-review]");
+          await browser.keys("Enter");
+          await browser.$("[data-targeted-batch-members]").waitForDisplayed();
+          expect(await members("[data-targeted-batch-members]")).toEqual(whole);
+          await focusOn("[data-targeted-run]");
+          await browser.keys("Enter");
+          await browser.$('[data-targeted-batch="ended"]').waitForDisplayed();
+          await frames();
+          const ended = await members("[data-targeted-batch-progress]");
+          evidence.push({ label: `fe2-batch-details-${locale}`, ...ended });
+          expect(ended).toEqual(whole);
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: 200 result rows keep focus clear of their head, its rule in place and the ring whole, in ${locale}`, async () => {
+        const table = scenario("projectWithResult", locale);
+        table.read_targeted_ms1_rows = manyRows(200);
+        for (const [width, height] of FE2_SIZES) {
+          await openProjectTable(table, width, height);
+          await browser.$(`[data-project-inspect-artifact="${RESULT}"]`).click();
+          await browser.$("[data-targeted-choose]").waitForDisplayed();
+          await focusOn(".targeted-rows tbody tr:last-child [data-targeted-choose]");
+          const rule = await browser.execute(() => {
+            const scroller = document.querySelector<HTMLElement>(".targeted-rows")!;
+            const head = document.querySelector<HTMLElement>(".targeted-rows thead th")!;
+            const style = getComputedStyle(head);
+            return { scrolled: scroller.scrollTop > 0, shadow: style.boxShadow, border: style.borderBottomWidth, row: Math.round(head.getBoundingClientRect().height) };
+          });
+          evidence.push({ label: `fe2-rows-head-${locale}-${String(width)}`, ...rule });
+          expect(rule).toEqual({ scrolled: true, shadow: "rgb(220, 227, 235) 0px -1px 0px 0px inset", border: "0px", row: 30 });
+          await focusWalk(`fe2-rows-back-${locale}-${String(width)}`, 30, ".targeted-rows", { back: true, wholeRing: true });
+          await focusOn(".targeted-rows tbody tr:last-child [data-targeted-choose]");
+          await browser.keys(["Shift", "Tab"]);
+          await focusWalk(`fe2-rows-last-${locale}-${String(width)}`, 1, ".targeted-rows", { wholeRing: true });
+        }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+
+      it(`FE-2: the rings in Project's scrolling lists are whole, in ${locale}`, async () => {
+        const windowed = scenario("populated", locale);
+        const project = capturedProject({ name: "Plasma QC batch 08", published: true });
+        windowed.get_project_state = {
+          ...project,
+          inputs: Array.from({ length: 60 }, (_, index) => ({
+            ...project.inputs[0],
+            id: `11111111-2222-4111-8111-${String(index + 1).padStart(12, "0")}`,
+            label: `QC_pool_${String(index + 1).padStart(2, "0")}.mzML`,
+          })),
+        };
+        for (const [width, height] of FE2_SIZES) {
+          await openProjectTable(windowed, width, height);
+          expect(await enter('.project-list[data-windowed="true"]')).toBe(true);
+          await focusWalk(`fe2-ring-windowed-${locale}-${String(width)}`, 12, '.project-list[data-windowed="true"]', { wholeRing: true });
+
+          await openProjectTable(targetedTable(locale), width, height);
+          await focusOn(`[data-project-targeted="${LAYERS[0]}"]`);
+          await browser.keys("Enter");
+          await browser.$("[data-targeted-setup]").waitForDisplayed();
+          await focusOn(`[data-targeted-member="${LAYERS[0]}"]`);
+          await focusWalk(`fe2-ring-members-${locale}-${String(width)}`, 4, "[data-targeted-members]", { wholeRing: true });
+        }
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
