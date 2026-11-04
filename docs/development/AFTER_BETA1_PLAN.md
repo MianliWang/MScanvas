@@ -681,7 +681,8 @@ writer and Rust's ownership of files.
     file whose name takes its path past `MAX_PATH`, and some folders whose whole name
     is combining marks or high surrogates, such as U+0301, U+20DD, U+3099, U+FE0F,
     U+D800, U+DBFF, or two of U+0301 or of U+D800, though not all (U+1AB0 and U+0903
-    go) (run against scratch folders with NSIS 3.13, not an owner decision).
+    go) (run against scratch folders with NSIS 3.13, the last two on 2026-11-04, not
+    an owner decision).
     A hard link is no reparse point: its name goes with the tree, its content stays
     under its other names, and they lose the read-only bit they share (the same run,
     not an owner decision); `view_cache.rs` makes none. A test in
