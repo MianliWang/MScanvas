@@ -7,9 +7,10 @@
 //! each row's locator, its family and the identity facts admission
 //! established (length, volume serial and file ID of every member), the
 //! groups, the order and the checked state (conversion membership, which
-//! starts nothing by itself). Nothing that starts work is representable in it:
-//! no open preview, no viewed or highlighted row, no conversion queue and no
-//! adoption.
+//! starts nothing by itself), and a row's "not verified by MSCanvas" label
+//! (owner decision P201-RESTORE, 2026-11-04). Nothing that starts work is
+//! representable in it: no open preview, no viewed or highlighted row, no
+//! conversion queue and no adoption.
 //!
 //! ## What a start does
 //!
@@ -73,6 +74,7 @@ use crate::preview::dto::{
 };
 use crate::preview::selection::bounded_context;
 use crate::preview::service::workspace_rows::LiveRow;
+use crate::project::record::{NotVerifiedByMscanvas, storable_label};
 
 /// The document's fixed name in the per-user directory.
 const FILE_NAME: &str = "workspace-restore.json";
@@ -178,6 +180,35 @@ pub struct StoredRow {
     pub offered: u32,
     /// Primary first.
     pub members: Vec<StoredMember>,
+    /// The row's "not verified by MSCanvas" label, in the project record's shape
+    /// (owner decision P201-RESTORE, 2026-11-04; ADR 0061, decision 1's note).
+    /// Absent on a row with none and in a document from before this field, which
+    /// is why the schema version did not move; absent never claims verification.
+    /// Held as found and read only through [`StoredRow::label`], and no rule of
+    /// [`RestoreDocument::valid`] looks at it, so it can refuse no read or save.
+    ///
+    /// ponytail: a value nested past `serde_json`'s 128 levels fails the parse, so
+    /// that document is refused whole like any other it cannot parse; a lazy value
+    /// type closes that if a build ever writes one, and none does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_verified_by_mscanvas: Option<serde_json::Value>,
+}
+
+impl StoredRow {
+    /// The label the stored value says, by the project record's rule: both halves
+    /// present and nothing else, one of them set, and a release it could store. A
+    /// value that is not one gives the row no label and the row and the document
+    /// stand, unlike every other field here (ADR 0061, decision 6): as built on
+    /// 2026-11-04, not an owner decision.
+    fn label(&self) -> Option<NotVerifiedByMscanvas> {
+        let stored = self.not_verified_by_mscanvas.clone()?;
+        let label: NotVerifiedByMscanvas = serde_json::from_value(stored).ok()?;
+        let release = label.unverified_build_release;
+        if release.as_deref().is_some_and(|text| !storable_label(text)) {
+            return None;
+        }
+        NotVerifiedByMscanvas::of(label.unverified_settings, release)
+    }
 }
 
 /// One object, as admission found it.
@@ -996,7 +1027,10 @@ impl WorkspaceRestoreStore {
     /// owner on 2026-11-03 for one admission refused (ADR 0061, decision 10's
     /// note), as built and not an owner decision for a file replaced since the
     /// re-check. Nothing is previewed and nothing is written here: the webview's
-    /// next save records the result.
+    /// next save records the result. A row that left brings its stored label, on
+    /// the same proof, to the row admission answered with and to the table a
+    /// reference asks (owner decision P201-RESTORE, 2026-11-04; onto a row already
+    /// there, as built, not an owner decision).
     ///
     /// # Errors
     ///
@@ -1059,13 +1093,14 @@ impl WorkspaceRestoreStore {
             .map(|(_, _, row)| PathBuf::from(primary_path(row)))
             .collect();
         between();
-        let workspace = service.add_files(&paths)?;
+        let mut workspace = service.add_files(&paths)?;
         let live: HashMap<String, Vec<(u64, String)>> = service
             .workspace_restore_rows()
             .iter()
             .filter_map(|row| Some((row.handle.clone(), objects(&stored_row(row)?))))
             .collect();
         let mut placed = Vec::new();
+        let mut labelled = Vec::new();
         let mut lane = self.locked();
         for ((index, group, row), outcome) in matching.iter().zip(&workspace.outcomes) {
             let (handle, added) = match outcome {
@@ -1081,9 +1116,17 @@ impl WorkspaceRestoreStore {
                     checked: row.checked,
                     added,
                 });
+                if let (Some(label), Some(primary)) = (row.label(), primary_identity(row)) {
+                    labelled.push((handle.clone(), primary, label));
+                }
             }
         }
         drop(lane);
+        // After the lane, because this takes the mutation gate; still under
+        // `saves`, so no save can record one of these rows before its label.
+        for (handle, primary, label) in labelled {
+            service.label_admitted_row(&mut workspace, &handle, primary, label);
+        }
         Ok(WorkspaceRestorePutBackDto { workspace, placed })
     }
 
@@ -1136,6 +1179,12 @@ fn primary_path(row: &StoredRow) -> &str {
     row.members
         .first()
         .map_or("", |member| member.path.as_str())
+}
+
+/// The object the row's primary member is, as a row and the label table name it.
+fn primary_identity(row: &StoredRow) -> Option<(u64, [u8; 16])> {
+    let primary = row.members.first()?;
+    Some((primary.volume_serial, file_id_bytes(&primary.file_id)?))
 }
 
 fn display_name(row: &StoredRow) -> &str {
@@ -1262,6 +1311,10 @@ fn stored_row(row: &LiveRow) -> Option<StoredRow> {
         checked: false,
         offered: 0,
         members,
+        not_verified_by_mscanvas: row
+            .not_verified
+            .as_ref()
+            .map(|label| serde_json::to_value(label).expect("a label always serializes")),
     };
     stored.members.iter().all(valid_member).then_some(stored)
 }

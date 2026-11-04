@@ -51,6 +51,7 @@ fn live(handle: &str, path: &Path) -> LiveRow {
             byte_length: fs::metadata(path).expect("the file").len(),
             identity: local_document::object_identity(path).expect("an identity"),
         }],
+        not_verified: None,
     }
 }
 
@@ -100,6 +101,7 @@ fn row_at(path: &Path) -> StoredRow {
         checked: false,
         offered: 0,
         members: vec![member(path)],
+        not_verified_by_mscanvas: None,
     }
 }
 
@@ -152,6 +154,7 @@ fn a_document_round_trips_and_anything_else_is_refused_whole() {
                         member(&scratch.join("s.wiff")),
                         member(&scratch.join("s.wiff.scan")),
                     ],
+                    not_verified_by_mscanvas: None,
                 }],
             },
             StoredGroup {
@@ -514,6 +517,7 @@ fn a_path_that_is_not_unicode_is_refused_rather_than_written_as_something_else()
             byte_length: 1,
             identity: (7, [1; 16]),
         }],
+        not_verified: None,
     };
     assert_eq!(
         reopen(&scratch).save(&ungrouped(&["file-0"]), vec![row]),
@@ -2046,4 +2050,408 @@ fn a_read_reports_the_context_only_among_the_rows_it_shows() {
         None,
         "no collision left"
     );
+}
+
+// ------------------------------------------------------------------ the label
+
+fn both_halves() -> Option<NotVerifiedByMscanvas> {
+    NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()))
+}
+
+/// The text a document holds for [`both_halves`], to replace with something else.
+fn both_halves_as_stored() -> String {
+    let value = serde_json::to_value(both_halves()).expect("JSON");
+    serde_json::to_string(&value).expect("JSON")
+}
+
+/// Records one row holding `label`, as a save would from the registry.
+fn saved_with_label(scratch: &Scratch, path: &Path, label: Option<NotVerifiedByMscanvas>) {
+    let row = LiveRow {
+        not_verified: label,
+        ..live("file-0", path)
+    };
+    assert_eq!(
+        reopen(scratch).save(&ungrouped(&["file-0"]), vec![row]),
+        WorkspaceRestoreWriteDto::Saved
+    );
+}
+
+/// The label of the only row the service holds.
+#[track_caller]
+fn the_rows_label(service: &PreviewService) -> Option<NotVerifiedByMscanvas> {
+    let roster = service.roster();
+    assert_eq!(roster.datasets.len(), 1);
+    roster.datasets[0].not_verified_by_mscanvas.clone()
+}
+
+/// The next session's first store, read, and a press of Restore workspace on a
+/// new service.
+fn put_back_in_a_later_session(
+    scratch: &Scratch,
+) -> (
+    WorkspaceRestoreStore,
+    PreviewService,
+    WorkspaceRestorePutBackDto,
+) {
+    let store = reopen(scratch);
+    let _ = restored(&store);
+    let service = workspace();
+    let answer = store.put_back(&service).expect("the batch runs");
+    (store, service, answer)
+}
+
+#[test]
+fn a_label_lasts_through_a_save_a_put_back_and_the_save_after_it() {
+    let scratch = Scratch::new("restore-label-kept");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let identity = local_document::object_identity(&a).expect("an identity");
+    {
+        // The first session: the registry's row, not a fixture's, is what is saved.
+        let service = workspace();
+        let mut added = service.add_files(std::slice::from_ref(&a)).expect("added");
+        let handle = added.roster.datasets[0].handle.clone();
+        let label = both_halves().expect("a label");
+        service.label_admitted_row(&mut added, &handle, identity, label);
+        assert_eq!(
+            reopen(&scratch).save_with(&ungrouped(&[handle.as_str()]), || {
+                service.workspace_restore_rows()
+            }),
+            WorkspaceRestoreWriteDto::Saved
+        );
+    }
+    assert_eq!(stored(&scratch).groups[0].rows[0].label(), both_halves());
+
+    let (store, service, answer) = put_back_in_a_later_session(&scratch);
+    assert_eq!(the_rows_label(&service), both_halves());
+    assert_eq!(
+        answer.workspace.roster.datasets[0].not_verified_by_mscanvas,
+        both_halves(),
+        "the answer's roster, which the webview draws"
+    );
+    let WorkspaceAddOutcomeDto::Added { dataset } = &answer.workspace.outcomes[0] else {
+        panic!("a new row");
+    };
+    assert_eq!(dataset.not_verified_by_mscanvas, both_halves());
+
+    let handle = answer.placed[0].handle.clone();
+    assert_eq!(
+        store.save_with(&ungrouped(&[handle.as_str()]), || service
+            .workspace_restore_rows()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(
+        stored(&scratch).groups[0].rows[0].label(),
+        both_halves(),
+        "and for the session after that"
+    );
+}
+
+#[test]
+fn a_row_still_waiting_keeps_its_label_through_a_save() {
+    let scratch = Scratch::new("restore-label-waiting");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    saved_with_label(&scratch, &a, both_halves());
+    let store = reopen(&scratch);
+    let _ = restored(&store);
+    assert_eq!(
+        store.save(&ungrouped(&["restored-0"]), Vec::new()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(stored(&scratch).groups[0].rows[0].label(), both_halves());
+}
+
+#[test]
+fn a_document_from_before_the_label_restores_with_none_and_reads_back_the_same() {
+    let scratch = Scratch::new("restore-label-older");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let (volume, id) = local_document::object_identity(&a).expect("an identity");
+    let path = serde_json::to_string(a.to_str().expect("a Unicode path")).expect("JSON");
+    let file_id = file_id_hex(id);
+    let length = fs::metadata(&a).expect("the file").len();
+    let older = format!(
+        "{{\"schemaVersion\":1,\"enabled\":true,\"groups\":[{{\"name\":null,\"rows\":[{{\"family\":\"mzml\",\"checked\":false,\"offered\":0,\"members\":[{{\"path\":{path},\"byteLength\":{length},\"volumeSerial\":{volume},\"fileId\":\"{file_id}\"}}]}}]}}]}}\n"
+    );
+    let document = read_document(older.as_bytes()).expect("not refused");
+    assert_eq!(
+        write_document(&document),
+        older.as_bytes(),
+        "a document with no label is still byte for byte what it was"
+    );
+    write_stored(&scratch, older.as_bytes());
+
+    let (_store, service, answer) = put_back_in_a_later_session(&scratch);
+
+    assert_eq!(answer.placed.len(), 1);
+    assert_eq!(the_rows_label(&service), None);
+    assert_eq!(service.not_verified_label_of_object((volume, id)), None);
+}
+
+#[test]
+fn a_row_with_no_label_stays_without_one() {
+    let scratch = Scratch::new("restore-label-none");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let identity = local_document::object_identity(&a).expect("an identity");
+    saved_with_label(&scratch, &a, None);
+    assert!(
+        !String::from_utf8(stored_bytes(&scratch))
+            .expect("UTF-8")
+            .contains("notVerifiedByMscanvas")
+    );
+
+    let (store, service, answer) = put_back_in_a_later_session(&scratch);
+
+    assert_eq!(the_rows_label(&service), None);
+    assert_eq!(service.not_verified_label_of_object(identity), None);
+    let handle = answer.placed[0].handle.clone();
+    assert_eq!(
+        store.save_with(&ungrouped(&[handle.as_str()]), || service
+            .workspace_restore_rows()),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    assert_eq!(stored(&scratch).groups[0].rows[0].label(), None);
+}
+
+#[test]
+fn a_stored_value_that_is_no_label_gives_no_label_and_refuses_nothing() {
+    let too_long = format!(
+        "{{\"unverifiedSettings\":true,\"unverifiedBuildRelease\":\"{}\"}}",
+        "9".repeat(crate::project::record::MAX_LABEL_CHARS + 1)
+    );
+    for (at, value) in [
+        "\"yes\"",
+        "1",
+        "true",
+        "[]",
+        "{}",
+        "{\"unverifiedSettings\":true}",
+        "{\"unverifiedBuildRelease\":null}",
+        "{\"unverifiedSettings\":\"yes\",\"unverifiedBuildRelease\":null}",
+        "{\"unverifiedSettings\":true,\"unverifiedBuildRelease\":1}",
+        "{\"unverifiedSettings\":true,\"unverifiedBuildRelease\":null,\"more\":1}",
+        "{\"unverifiedSettings\":false,\"unverifiedBuildRelease\":null}",
+        "{\"unverifiedSettings\":false,\"unverifiedBuildRelease\":\"\"}",
+        "{\"unverifiedSettings\":false,\"unverifiedBuildRelease\":\"3.0\\n\"}",
+        too_long.as_str(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let scratch = Scratch::new(&format!("restore-label-malformed-{at}"));
+        let a = scratch.write("a.mzML", b"<mzML/>");
+        let identity = local_document::object_identity(&a).expect("an identity");
+        let good = both_halves_as_stored();
+        saved_with_label(&scratch, &a, both_halves());
+        let text = String::from_utf8(stored_bytes(&scratch)).expect("UTF-8");
+        assert!(text.contains(&good));
+        write_stored(&scratch, text.replace(&good, value).as_bytes());
+
+        let store = reopen(&scratch);
+        assert_eq!(
+            states(&restored(&store)),
+            vec![("a.mzML".to_owned(), RowState::Matching)],
+            "{value}"
+        );
+        // While the row waits the value stays as found: nothing here repairs it.
+        assert_eq!(
+            store.save(&ungrouped(&["restored-0"]), Vec::new()),
+            WorkspaceRestoreWriteDto::Saved
+        );
+        assert_eq!(
+            stored(&scratch).groups[0].rows[0].not_verified_by_mscanvas,
+            Some(serde_json::from_str(value).expect("JSON")),
+            "{value}"
+        );
+
+        let service = workspace();
+        let answer = store.put_back(&service).expect("the batch runs");
+        assert_eq!(answer.placed.len(), 1, "{value}");
+        assert_eq!(the_rows_label(&service), None, "{value}");
+        assert_eq!(service.not_verified_label_of_object(identity), None);
+    }
+}
+
+#[test]
+fn an_explicit_null_is_no_label_and_a_neighbours_label_stands() {
+    let scratch = Scratch::new("restore-label-neighbour");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    let b = scratch.write("b.mzML", b"<mzML/>");
+    let rows = vec![
+        LiveRow {
+            not_verified: both_halves(),
+            ..live("file-0", &a)
+        },
+        LiveRow {
+            not_verified: both_halves(),
+            ..live("file-1", &b)
+        },
+    ];
+    assert_eq!(
+        reopen(&scratch).save(&ungrouped(&["file-0", "file-1"]), rows),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let good = both_halves_as_stored();
+    let text = String::from_utf8(stored_bytes(&scratch)).expect("UTF-8");
+    assert!(text.contains(&good));
+    write_stored(&scratch, text.replacen(&good, "null", 1).as_bytes());
+
+    let (_store, service, _answer) = put_back_in_a_later_session(&scratch);
+
+    let labels: Vec<_> = service
+        .roster()
+        .datasets
+        .iter()
+        .map(|row| (row.file_name.clone(), row.not_verified_by_mscanvas.clone()))
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            ("a.mzML".to_owned(), None),
+            ("b.mzML".to_owned(), both_halves())
+        ]
+    );
+}
+
+/// The ceiling `StoredRow`'s comment names: past the parser's depth the document
+/// is one it cannot parse, refused whole and left as found (ADR 0061, decision 6).
+#[test]
+fn a_value_nested_past_the_parser_is_refused_with_the_document() {
+    let scratch = Scratch::new("restore-label-deep");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    saved_with_label(&scratch, &a, both_halves());
+    let good = both_halves_as_stored();
+    let text = String::from_utf8(stored_bytes(&scratch)).expect("UTF-8");
+    assert!(text.contains(&good));
+    let deep = format!("{}{}", "[".repeat(129), "]".repeat(129));
+    assert_eq!(
+        read_document(text.replace(&good, &deep).as_bytes()),
+        Err(DocumentProblem::Malformed)
+    );
+}
+
+/// A reference made from a put-back row records the label, not `null`, and the
+/// same table `label_admitted_row` writes keeps it once the row has left.
+#[cfg(windows)]
+#[test]
+fn a_reference_registered_from_a_put_back_row_records_the_label() {
+    use crate::project::ProjectStore;
+
+    let scratch = Scratch::new("restore-label-reference");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    saved_with_label(&scratch, &a, both_halves());
+    let (_store, service, answer) = put_back_in_a_later_session(&scratch);
+
+    let reference_records = || {
+        let project = ProjectStore::new();
+        project
+            .create("Next".to_owned(), false)
+            .expect("a new project");
+        project
+            .register_input_labelled(&a, |identity| {
+                service.not_verified_label_of_object(identity)
+            })
+            .expect("register the object");
+        project.describe().inputs[0]
+            .not_verified_by_mscanvas
+            .clone()
+    };
+    assert_eq!(reference_records(), both_halves(), "from the row");
+
+    service
+        .remove_datasets(std::slice::from_ref(&answer.placed[0].handle))
+        .expect("remove the row");
+    assert_eq!(reference_records(), both_halves(), "with no row");
+
+    service
+        .add_files(std::slice::from_ref(&a))
+        .expect("the object added back");
+    assert_eq!(the_rows_label(&service), both_halves(), "by any route");
+}
+
+#[test]
+fn a_file_replaced_after_the_re_check_is_not_given_the_label_and_the_row_keeps_it() {
+    let scratch = Scratch::new("restore-label-race");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    saved_with_label(&scratch, &a, both_halves());
+    let store = reopen(&scratch);
+    let _ = restored(&store);
+    let recorded = local_document::object_identity(&a).expect("an identity");
+
+    let service = workspace();
+    let answer = store
+        .put_back_between(&service, || {
+            fs::remove_file(&a).expect("delete a");
+            fs::write(&a, b"<mzML/>").expect("another object at the same path");
+        })
+        .expect("the batch runs");
+
+    assert!(answer.placed.is_empty(), "not the recorded object");
+    assert_eq!(the_rows_label(&service), None);
+    assert_eq!(
+        service.not_verified_label_of_object(recorded),
+        None,
+        "not even the recorded object's table entry: nothing proved a row was it"
+    );
+    let handle = answer.workspace.roster.datasets[0].handle.clone();
+    assert_eq!(
+        store.save_with(&ungrouped(&[handle.as_str(), "restored-0"]), || {
+            service.workspace_restore_rows()
+        }),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let document = stored(&scratch);
+    let labels: Vec<_> = document.rows().map(StoredRow::label).collect();
+    assert_eq!(labels, vec![None, both_halves()]);
+}
+
+#[test]
+fn restoring_a_labelled_row_already_live_gives_that_row_the_label_merged() {
+    let scratch = Scratch::new("restore-label-duplicate");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    saved_with_label(&scratch, &a, NotVerifiedByMscanvas::of(true, None));
+    let store = reopen(&scratch);
+    let _ = restored(&store);
+    let service = workspace();
+    let mut added = service.add_files(std::slice::from_ref(&a)).expect("added");
+    assert_eq!(the_rows_label(&service), None);
+    let handle = added.roster.datasets[0].handle.clone();
+    service.label_admitted_row(
+        &mut added,
+        &handle,
+        local_document::object_identity(&a).expect("an identity"),
+        NotVerifiedByMscanvas::of(false, Some("3.0.26204".to_owned())).expect("a label"),
+    );
+
+    let answer = store.put_back(&service).expect("the batch runs");
+
+    assert!(!answer.placed[0].added);
+    let WorkspaceAddOutcomeDto::Duplicate { existing } = &answer.workspace.outcomes[0] else {
+        panic!("the row it already was");
+    };
+    assert_eq!(existing.not_verified_by_mscanvas, both_halves());
+    assert_eq!(the_rows_label(&service), both_halves());
+}
+
+/// The cost owner decision P201-RESTORE accepted: the same file added instead of
+/// put back has no label, and a save records it as that row (`arrange`).
+#[test]
+fn the_same_file_added_instead_of_put_back_has_no_label() {
+    let scratch = Scratch::new("restore-label-added-instead");
+    let a = scratch.write("a.mzML", b"<mzML/>");
+    saved_with_label(&scratch, &a, both_halves());
+    let store = reopen(&scratch);
+    let _ = restored(&store);
+    let service = workspace();
+    let added = service.add_files(std::slice::from_ref(&a)).expect("added");
+    assert_eq!(the_rows_label(&service), None);
+
+    let handle = added.roster.datasets[0].handle.clone();
+    assert_eq!(
+        store.save_with(&ungrouped(&[handle.as_str(), "restored-0"]), || {
+            service.workspace_restore_rows()
+        }),
+        WorkspaceRestoreWriteDto::Saved
+    );
+    let document = stored(&scratch);
+    let labels: Vec<_> = document.rows().map(StoredRow::label).collect();
+    assert_eq!(labels, vec![None]);
 }

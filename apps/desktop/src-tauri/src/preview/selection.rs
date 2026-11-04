@@ -1635,6 +1635,7 @@ pub(super) struct RegisteredDataset {
     /// as built in PR #201, 2026-11-03, not an owner decision). A property of the
     /// object, not of the route: a row the user had already added keeps its
     /// origin and gains the label when the same object is adopted.
+    /// 2026-11-04: accepted by the owner (P201-SCOPE), for a drop.
     not_verified: Option<NotVerifiedByMscanvas>,
 }
 

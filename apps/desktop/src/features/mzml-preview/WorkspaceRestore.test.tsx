@@ -281,6 +281,20 @@ describe("the restore notice", () => {
     expect(api.calls()).not.toContain("openPreview");
   });
 
+  it("records a row that gained a label without moving, which the arrangement alone does not show", async () => {
+    const save = vi.fn<(arrangement: unknown) => Promise<WorkspaceRestoreWrite>>(() => Promise.resolve({ outcome: "saved" }));
+    const labelled = { ...selectedFile, notVerifiedByMscanvas: { unverifiedSettings: true, unverifiedBuildRelease: null } };
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], workspaceRestore: {
+      readWorkspaceRestore: () => Promise.resolve(offered([row("restored-0", "a.raw")])),
+      saveWorkspaceRestore: save,
+      restoreWorkspace: () => Promise.resolve({ workspace: { roster: { datasets: [labelled], capacity: 1024 }, outcomes: [] }, placed: [] }),
+    } });
+    mount(api);
+    fireEvent.click(await restoreAction());
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save).toHaveBeenCalledWith({ groups: [{ name: null, handles: [selectedFile.handle, "restored-0"] }], checked: [] });
+  });
+
   it("refuses Restore workspace with the visible reason while the workspace is busy, and asks nothing", async () => {
     const restore = vi.fn(() => Promise.reject(new Error("never asked")));
     const adding = deferred<null>();
