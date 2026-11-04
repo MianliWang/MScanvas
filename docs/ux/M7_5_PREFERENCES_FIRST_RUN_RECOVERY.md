@@ -589,8 +589,10 @@ decision:
   not written and answers `notRemembered`, and the session keeps the choice. An
   appearance commit says it is this session's. A panel commit says nothing, because
   the user asked for this by turning remembering off, so a moved panel goes back at
-  the next launch with no word on screen. A panel reset still says it reset, and not
-  that this lasts only for the session. The commit that turns it off writes that
+  the next launch with no word on screen. A panel reset is announced only to
+  assistive technology, through visually hidden live regions. On screen the Panels
+  row reads "Already the default." and the panels move back. None of these says this
+  lasts only for the session. The commit that turns it off writes that
   switch and no other change. The commit that turns it on is written whole, and so
   is a confirmed replacement of an unusable record, because that confirmation says
   it stores the preferences shown.
