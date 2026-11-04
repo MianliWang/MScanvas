@@ -3,10 +3,17 @@
 //! A sibling of the conversion-integrity inspector in `mzml.rs`, not a part of
 //! it. It reuses that module's byte-counting reader, limits and refusal of a
 //! `DOCTYPE` or a custom entity, and the inspector stays decode-free: only this
-//! module ever base64-decodes or inflates an array, and only the m/z and
-//! intensity arrays of one selected spectrum.
+//! module holds the code that base64-decodes or inflates an array. The viewer's
+//! read decodes only the m/z and intensity arrays of one selected spectrum.
 //!
-//! Two reads, and nothing else:
+//! **Amended by ADR 0071 decision 2, under ADR 0070 decision 2.** The XIC pass
+//! in `mzml_xic.rs` decodes, through these primitives, the arrays of every
+//! spectrum it evaluates: one streaming pass in source order, one spectrum's
+//! arrays at a time, keeping only the per-scan result. That is the one
+//! computation admitted so far. The viewer's selected-spectrum read is
+//! unchanged, and nothing in this module computes from an array.
+//!
+//! This module's two reads, and nothing else:
 //!
 //! - [`read_spectrum_table`] reads every spectrum's metadata, decodes no array,
 //!   and records each spectrum's byte offset. No `indexList` is trusted. The
@@ -69,8 +76,8 @@ const XSI_NAMESPACE: &[u8] = b"http://www.w3.org/2001/XMLSchema-instance";
 
 // Retained by identity for the whole table, so bounded rather than streamed.
 // Real documents declare a handful of groups with a few terms each.
-const MAX_PARAM_GROUPS: usize = 1024;
-const MAX_TERMS_PER_PARAM_GROUP: usize = 1024;
+pub(crate) const MAX_PARAM_GROUPS: usize = 1024;
+pub(crate) const MAX_TERMS_PER_PARAM_GROUP: usize = 1024;
 // One selected spectrum keeps every precursor; MSX acquisitions carry about ten.
 const MAX_PRECURSORS_PER_SPECTRUM: u32 = 4096;
 
@@ -356,7 +363,7 @@ pub enum MzmlDeclared<T> {
 
 impl<T: PartialEq> MzmlDeclared<T> {
     /// Both statements of one fact together.
-    fn and(self, other: Self) -> Self {
+    pub(crate) fn and(self, other: Self) -> Self {
         match (self, other) {
             (Self::NotDeclared, other) | (other, Self::NotDeclared) => other,
             (Self::Unreadable, _) | (_, Self::Unreadable) => Self::Unreadable,
@@ -521,7 +528,7 @@ pub enum BinaryDataType {
 }
 
 impl BinaryDataType {
-    const fn width(self) -> usize {
+    pub(crate) const fn width(self) -> usize {
         match self {
             Self::Float32 | Self::Integer32 => 4,
             Self::Float64 | Self::Integer64 => 8,
@@ -1035,12 +1042,109 @@ const fn malformed(kind: MzmlMalformedKind) -> Fail {
     Fail::Scan(MzmlScanError::Malformed(kind))
 }
 
-fn drive<R: BufRead>(
+/// What [`drive`] asks of a pass over a document's events: the reader's own,
+/// and the XIC pass in `mzml_xic.rs`.
+pub(crate) trait EventPass {
+    type Fail: From<MzmlScanError> + From<MzmlOpenError>;
+
+    fn finished(&self) -> bool {
+        false
+    }
+
+    /// Checked before each event is handled.
+    fn before_event(&self, _event: &Event<'_>) -> Result<(), Self::Fail> {
+        Ok(())
+    }
+
+    /// Whether this pass reads a document declaring this encoding. The reader
+    /// reads UTF-8 and nothing else (ADR 0056 decision 1).
+    fn accepts_encoding(&mut self, encoding: &[u8]) -> bool {
+        encoding.eq_ignore_ascii_case(b"utf-8")
+    }
+
+    fn start(
+        &mut self,
+        start: &BytesStart<'_>,
+        in_mzml: bool,
+        offset: u64,
+        empty: bool,
+        resolver: &NamespaceResolver,
+    ) -> Result<(), Self::Fail>;
+
+    fn end(&mut self) -> Result<(), Self::Fail>;
+
+    fn text(&mut self, bytes: &[u8]) -> Result<(), Self::Fail>;
+
+    fn reference(&mut self, reference: &BytesRef<'_>) -> Result<(), Self::Fail>;
+
+    /// A limit the pass answers itself, rather than the document.
+    fn over_bound(&self, _tripped: Option<MzmlLimitKind>) -> Option<Self::Fail> {
+        None
+    }
+
+    /// A tighter text-run bound for the payload now open.
+    fn payload_bound(&self) -> Option<u64> {
+        None
+    }
+}
+
+impl EventPass for Pass<'_> {
+    type Fail = Fail;
+
+    fn finished(&self) -> bool {
+        self.done
+    }
+
+    // Strict after a seek: the recorded offset must be the spectrum's own start
+    // tag, not whitespace or anything else before it.
+    fn before_event(&self, event: &Event<'_>) -> Result<(), Fail> {
+        if self.decoding() && !self.root_seen && !matches!(event, Event::Start(_) | Event::Empty(_))
+        {
+            return Err(Fail::Spectrum(MzmlSpectrumError::NotAsRecorded));
+        }
+        Ok(())
+    }
+
+    fn start(
+        &mut self,
+        start: &BytesStart<'_>,
+        in_mzml: bool,
+        offset: u64,
+        empty: bool,
+        resolver: &NamespaceResolver,
+    ) -> Result<(), Fail> {
+        Pass::start(self, start, in_mzml, offset, empty, resolver)
+    }
+
+    fn end(&mut self) -> Result<(), Fail> {
+        Pass::end(self)
+    }
+
+    fn text(&mut self, bytes: &[u8]) -> Result<(), Fail> {
+        Pass::text(self, bytes)
+    }
+
+    fn reference(&mut self, reference: &BytesRef<'_>) -> Result<(), Fail> {
+        Pass::reference(self, reference)
+    }
+
+    fn over_bound(&self, tripped: Option<MzmlLimitKind>) -> Option<Fail> {
+        Pass::over_bound(self, tripped)
+    }
+
+    fn payload_bound(&self) -> Option<u64> {
+        Pass::payload_bound(self)
+    }
+}
+
+pub(crate) fn drive<R: BufRead, P: EventPass>(
     reader: R,
     limits: MzmlScanLimits,
     seed: &[(Option<Vec<u8>>, Vec<u8>)],
-    pass: &mut Pass<'_>,
-) -> Result<(), Fail> {
+    pass: &mut P,
+) -> Result<(), P::Fail> {
+    let not_well_formed =
+        || P::Fail::from(MzmlScanError::Malformed(MzmlMalformedKind::NotWellFormed));
     let mut xml = NsReader::from_reader(BoundedReader::new(
         reader,
         limits.max_document_bytes,
@@ -1060,11 +1164,11 @@ fn drive<R: BufRead>(
         };
         xml.resolver_mut()
             .add(declaration, Namespace(namespace))
-            .map_err(|_| malformed(MzmlMalformedKind::NotWellFormed))?;
+            .map_err(|_| not_well_formed())?;
     }
 
     let mut buffer = Vec::new();
-    while !pass.done {
+    while !pass.finished() {
         buffer.clear();
         // The byte-counting reader's count, not quick-xml's position, which
         // leaves out a byte-order mark.
@@ -1075,17 +1179,12 @@ fn drive<R: BufRead>(
                 let tripped = xml.get_mut().tripped;
                 return Err(pass
                     .over_bound(tripped)
-                    .unwrap_or_else(|| Fail::Scan(map_xml_error(tripped, error))));
+                    .unwrap_or_else(|| map_xml_error(tripped, error).into()));
             }
         };
         let in_mzml =
             matches!(resolved, ResolveResult::Bound(Namespace(ns)) if ns == MZML_NAMESPACE);
-        // Strict after a seek: the recorded offset must be the spectrum's own
-        // start tag, not whitespace or anything else before it.
-        if pass.decoding() && !pass.root_seen && !matches!(event, Event::Start(_) | Event::Empty(_))
-        {
-            return Err(Fail::Spectrum(MzmlSpectrumError::NotAsRecorded));
-        }
+        pass.before_event(&event)?;
         match event {
             Event::Eof => break,
             Event::Start(start) => pass.start(&start, in_mzml, offset, false, xml.resolver())?,
@@ -1096,7 +1195,7 @@ fn drive<R: BufRead>(
             Event::GeneralRef(reference) => {
                 let name = reference
                     .decode()
-                    .map_err(|_| malformed(MzmlMalformedKind::InvalidUtf8))?;
+                    .map_err(|_| MzmlScanError::Malformed(MzmlMalformedKind::InvalidUtf8))?;
                 if !is_predefined_reference(&name) {
                     return Err(MzmlScanError::Unsafe(UnsafeXmlKind::UndeclaredEntity).into());
                 }
@@ -1107,9 +1206,8 @@ fn drive<R: BufRead>(
             }
             Event::Decl(declaration) => {
                 if let Some(encoding) = declaration.encoding() {
-                    let encoding =
-                        encoding.map_err(|_| malformed(MzmlMalformedKind::NotWellFormed))?;
-                    if !encoding.eq_ignore_ascii_case(b"utf-8") {
+                    let encoding = encoding.map_err(|_| not_well_formed())?;
+                    if !pass.accepts_encoding(&encoding) {
                         return Err(MzmlOpenError::NotUtf8.into());
                     }
                 }
@@ -1120,7 +1218,7 @@ fn drive<R: BufRead>(
         if let Some(kind) = bounded.finish_event() {
             return Err(pass
                 .over_bound(Some(kind))
-                .unwrap_or(Fail::Scan(MzmlScanError::LimitExceeded(kind))));
+                .unwrap_or_else(|| MzmlScanError::LimitExceeded(kind).into()));
         }
         // Only a decoded array's payload runs under its own, tighter bound.
         bounded.max_text_run_bytes = pass
@@ -1135,7 +1233,7 @@ fn drive<R: BufRead>(
 /// The mzML elements this reader distinguishes. Anything else, and any element
 /// outside the mzML namespace, is `Other`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum El {
+pub(crate) enum El {
     IndexedMzml,
     Mzml,
     ParamGroupList,
@@ -1147,6 +1245,9 @@ enum El {
     Spectrum,
     ScanList,
     Scan,
+    // Read only by the XIC pass (`mzml_xic.rs`).
+    ScanWindowList,
+    ScanWindow,
     PrecursorList,
     Precursor,
     SelectedIonList,
@@ -1180,11 +1281,13 @@ enum El {
     Other,
 }
 
-fn element(in_mzml: bool, local: &[u8]) -> El {
+pub(crate) fn element(in_mzml: bool, local: &[u8]) -> El {
     if !in_mzml {
         return El::Other;
     }
     match local {
+        b"scanWindowList" => El::ScanWindowList,
+        b"scanWindow" => El::ScanWindow,
         b"userParam" => El::UserParam,
         b"chromatogramList" => El::ChromatogramList,
         b"chromatogram" => El::Chromatogram,
@@ -1232,11 +1335,11 @@ fn element(in_mzml: bool, local: &[u8]) -> El {
 /// ADR 0056 decision 1: a stated `version` alone decides, and must be 1.1.x.
 /// Without one, the mzML schema that `xsi:schemaLocation` names decides, read
 /// from its file name as ProteoWizard reads it (`mzML1.1.0.xsd` is 1.1.0).
-fn check_version(
+pub(crate) fn check_version(
     start: &BytesStart<'_>,
     attributes: &CapturedAttributes<'_>,
     resolver: &NamespaceResolver,
-) -> Result<(), Fail> {
+) -> Result<(), MzmlOpenError> {
     let supported = match attributes.version.as_deref() {
         Some(version) => is_mzml_1_1(version),
         None => schema_location(start, resolver)?.is_some_and(|value| names_mzml_1_1(&value)),
@@ -1244,7 +1347,7 @@ fn check_version(
     if supported {
         Ok(())
     } else {
-        Err(MzmlOpenError::NotMzml11.into())
+        Err(MzmlOpenError::NotMzml11)
     }
 }
 
@@ -1259,10 +1362,11 @@ fn is_mzml_1_1(version: &str) -> bool {
 fn schema_location<'a>(
     start: &'a BytesStart<'_>,
     resolver: &NamespaceResolver,
-) -> Result<Option<Cow<'a, str>>, Fail> {
+) -> Result<Option<Cow<'a, str>>, MzmlOpenError> {
     let mut found = None;
     for attribute in start.attributes() {
-        let attribute = attribute.map_err(|_| malformed(MzmlMalformedKind::NotWellFormed))?;
+        let attribute =
+            attribute.map_err(|_| MzmlScanError::Malformed(MzmlMalformedKind::NotWellFormed))?;
         let (namespace, local) = resolver.resolve_attribute(attribute.key);
         let xsi = matches!(namespace, ResolveResult::Bound(Namespace(ns)) if ns == XSI_NAMESPACE);
         if !xsi || local.as_ref() != b"schemaLocation" {
@@ -1270,7 +1374,7 @@ fn schema_location<'a>(
         }
         // Two prefixes bound to one namespace state the same attribute twice.
         if found.is_some() {
-            return Err(malformed(MzmlMalformedKind::DuplicateAttribute));
+            return Err(MzmlScanError::Malformed(MzmlMalformedKind::DuplicateAttribute).into());
         }
         found = Some(attribute_value(&attribute)?);
     }
@@ -1301,7 +1405,7 @@ fn names_mzml_1_1(value: &str) -> bool {
         .is_some_and(is_mzml_1_1)
 }
 
-const SPECTRUM_SCAN: &[El] = &[El::Spectrum, El::ScanList, El::Scan];
+pub(crate) const SPECTRUM_SCAN: &[El] = &[El::Spectrum, El::ScanList, El::Scan];
 const SPECTRUM_SELECTED_ION: &[El] = &[
     El::Spectrum,
     El::PrecursorList,
@@ -1309,7 +1413,8 @@ const SPECTRUM_SELECTED_ION: &[El] = &[
     El::SelectedIonList,
     El::SelectedIon,
 ];
-const SPECTRUM_ARRAY: &[El] = &[El::Spectrum, El::BinaryDataArrayList, El::BinaryDataArray];
+pub(crate) const SPECTRUM_ARRAY: &[El] =
+    &[El::Spectrum, El::BinaryDataArrayList, El::BinaryDataArray];
 const INSTRUMENT_COMPONENT: &[El] = &[
     El::InstrumentConfigurationList,
     El::InstrumentConfiguration,
@@ -1366,7 +1471,7 @@ fn metadata_attributes(start: &BytesStart<'_>) -> Vec<(String, String)> {
 /// The controlled-vocabulary terms this reader interprets. Every other term is
 /// not read, so it can neither conflict nor be shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Term {
+pub(crate) enum Term {
     MsLevel,
     Centroid,
     Profile,
@@ -1388,7 +1493,7 @@ enum Term {
     UnrecognizedCompression,
 }
 
-fn term(accession: &str, name: Option<&str>) -> Option<Term> {
+pub(crate) fn term(accession: &str, name: Option<&str>) -> Option<Term> {
     Some(match accession {
         "MS:1000511" => Term::MsLevel,
         "MS:1000127" => Term::Centroid,
@@ -1425,23 +1530,39 @@ fn term(accession: &str, name: Option<&str>) -> Option<Term> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Stated {
+pub(crate) struct Stated {
     term: Term,
     value: String,
     unit: Option<String>,
+}
+
+/// What one `cvParam` states, if this reader reads its term.
+pub(crate) fn stated_term(
+    accession: &str,
+    name: Option<&str>,
+    value: Option<&str>,
+    unit_accession: Option<&str>,
+) -> Option<Stated> {
+    Some(Stated {
+        term: term(accession, name)?,
+        value: value.unwrap_or_default().to_owned(),
+        unit: unit_accession
+            .filter(|unit| !unit.trim().is_empty())
+            .map(str::to_owned),
+    })
 }
 
 /// The facts read without refusing. They stay out of [`Term`], whose
 /// restatement with a different value refuses the open, and out of a param
 /// group's term count.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct Facts {
-    polarity: MzmlDeclared<MzmlPolarity>,
+pub(crate) struct Facts {
+    pub(crate) polarity: MzmlDeclared<MzmlPolarity>,
     charge: MzmlDeclared<i32>,
 }
 
 impl Facts {
-    fn and(self, other: Self) -> Self {
+    pub(crate) fn and(self, other: Self) -> Self {
         Self {
             polarity: self.polarity.and(other.polarity),
             charge: self.charge.and(other.charge),
@@ -1451,7 +1572,7 @@ impl Facts {
 
 /// The fact one term states, if it is one. A polarity term's value is not
 /// read, so restating it never disagrees with itself.
-fn fact(accession: &str, value: &str) -> Option<Facts> {
+pub(crate) fn fact(accession: &str, value: &str) -> Option<Facts> {
     let mut facts = Facts::default();
     match accession {
         "MS:1000130" => facts.polarity = MzmlDeclared::Value(MzmlPolarity::Positive),
@@ -1581,26 +1702,37 @@ struct PrecursorParse {
 }
 
 #[derive(Debug, Default)]
-struct ArrayParse {
+pub(crate) struct ArrayParse {
     array_length: Option<u64>,
     terms: Terms,
     /// A term stated twice with different values. Judged only if the array
     /// turns out to be one this reader decodes.
     conflict: bool,
     /// A term stated after the payload began, judged the same way.
-    late_term: bool,
-    prepared: Option<Prepared>,
-    payload_started: bool,
-    encoded: Vec<u8>,
+    pub(crate) late_term: bool,
+    pub(crate) prepared: Option<Prepared>,
+    pub(crate) payload_started: bool,
+    pub(crate) encoded: Vec<u8>,
+}
+
+impl ArrayParse {
+    pub(crate) fn add(&mut self, stated: &[Stated]) {
+        // Every term must be known when the payload starts, because the
+        // payload's bound depends on them.
+        self.late_term |= self.payload_started;
+        for stated in stated {
+            self.conflict |= self.terms.add(stated.clone()).is_err();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Prepared {
+pub(crate) struct Prepared {
     role: ArrayRole,
-    data_type: BinaryDataType,
+    pub(crate) data_type: BinaryDataType,
     zlib: bool,
-    bytes: u64,
-    bound: u64,
+    pub(crate) bytes: u64,
+    pub(crate) bound: u64,
 }
 
 #[derive(Debug, Default)]
@@ -1707,16 +1839,13 @@ impl<'t> Pass<'t> {
         empty: bool,
         resolver: &NamespaceResolver,
     ) -> Result<(), Fail> {
-        self.elements += 1;
-        if self.elements > self.limits.max_elements {
-            return Err(MzmlScanError::LimitExceeded(MzmlLimitKind::Elements).into());
-        }
-        if start.name().as_ref().len() > self.limits.max_name_bytes {
-            return Err(MzmlScanError::LimitExceeded(MzmlLimitKind::NameBytes).into());
-        }
-        if !empty && self.stack.len() >= self.limits.max_depth {
-            return Err(MzmlScanError::LimitExceeded(MzmlLimitKind::Depth).into());
-        }
+        check_element(
+            start,
+            empty,
+            &mut self.elements,
+            self.stack.len(),
+            self.limits,
+        )?;
         let attributes = capture_attributes(start, self.limits)?;
         let el = element(in_mzml, start.local_name().as_ref());
         let el = self.begin(el, start, &attributes, offset, resolver)?;
@@ -2003,17 +2132,13 @@ impl<'t> Pass<'t> {
                 Some(target) => target.add(&[], facts),
             };
         }
-        let Some(term) = term(accession, attributes.name.as_deref()) else {
+        let Some(stated) = stated_term(
+            accession,
+            attributes.name.as_deref(),
+            attributes.value.as_deref(),
+            attributes.unit_accession.as_deref(),
+        ) else {
             return Ok(());
-        };
-        let stated = Stated {
-            term,
-            value: attributes.value.as_deref().unwrap_or_default().to_owned(),
-            unit: attributes
-                .unit_accession
-                .as_deref()
-                .filter(|unit| !unit.trim().is_empty())
-                .map(str::to_owned),
         };
         match self.target() {
             Some(target) => target.add(std::slice::from_ref(&stated), Facts::default()),
@@ -2269,16 +2394,32 @@ impl Target<'_> {
                 Ok(())
             }
             Self::Array(array) => {
-                // Every term must be known when the payload starts, because the
-                // payload's bound depends on them.
-                array.late_term |= array.payload_started;
-                for stated in stated {
-                    array.conflict |= array.terms.add(stated.clone()).is_err();
-                }
+                array.add(stated);
                 Ok(())
             }
         }
     }
+}
+
+/// The per-element limits every pass over a document applies.
+pub(crate) fn check_element(
+    start: &BytesStart<'_>,
+    empty: bool,
+    elements: &mut u64,
+    depth: usize,
+    limits: MzmlScanLimits,
+) -> Result<(), MzmlScanError> {
+    *elements += 1;
+    if *elements > limits.max_elements {
+        return Err(MzmlScanError::LimitExceeded(MzmlLimitKind::Elements));
+    }
+    if start.name().as_ref().len() > limits.max_name_bytes {
+        return Err(MzmlScanError::LimitExceeded(MzmlLimitKind::NameBytes));
+    }
+    if !empty && depth >= limits.max_depth {
+        return Err(MzmlScanError::LimitExceeded(MzmlLimitKind::Depth));
+    }
+    Ok(())
 }
 
 /// Where a term inside the open element belongs, if this reader reads it.
@@ -2327,14 +2468,26 @@ fn prepare(
     if (role == ArrayRole::Mz && has_mz) || (role == ArrayRole::Intensity && has_intensity) {
         return Err(Fail::Spectrum(MzmlSpectrumError::DuplicateArray(role)));
     }
-    let fail = |problem| array_fail(role, problem);
+    prepare_array(array, role, default_length, decoded_bytes)
+        .map(Some)
+        .map_err(|problem| array_fail(role, problem))
+}
+
+/// Validates the terms of one array whose role is known and checks the caps,
+/// in ADR 0056's order, before anything is reserved.
+pub(crate) fn prepare_array(
+    array: &ArrayParse,
+    role: ArrayRole,
+    default_length: Option<u64>,
+    decoded_bytes: u64,
+) -> Result<Prepared, ArrayProblem> {
     if array.conflict {
-        return Err(fail(ArrayProblem::ConflictingTerm));
+        return Err(ArrayProblem::ConflictingTerm);
     }
 
     let terms = &array.terms;
     let data_type = match terms.count(|term| matches!(term, Term::DataType(_))) {
-        0 => return Err(fail(ArrayProblem::DataTypeMissing)),
+        0 => return Err(ArrayProblem::DataTypeMissing),
         1 => terms
             .stated
             .iter()
@@ -2343,48 +2496,47 @@ fn prepare(
                 _ => None,
             })
             .flatten()
-            .ok_or_else(|| fail(ArrayProblem::DataTypeUnsupported))?,
-        _ => return Err(fail(ArrayProblem::DataTypeStatedTwice)),
+            .ok_or(ArrayProblem::DataTypeUnsupported)?,
+        _ => return Err(ArrayProblem::DataTypeStatedTwice),
     };
     if terms.has(Term::Numpress) {
-        return Err(fail(ArrayProblem::Numpress));
+        return Err(ArrayProblem::Numpress);
     }
     if terms.has(Term::TruncationOrPrediction) {
-        return Err(fail(ArrayProblem::TruncationOrPrediction));
+        return Err(ArrayProblem::TruncationOrPrediction);
     }
     if terms.has(Term::UnrecognizedCompression) {
-        return Err(fail(ArrayProblem::CompressionUnrecognized));
+        return Err(ArrayProblem::CompressionUnrecognized);
     }
     let zlib = match (terms.has(Term::Zlib), terms.has(Term::NoCompression)) {
-        (true, true) => return Err(fail(ArrayProblem::CompressionStatedTwice)),
-        (false, false) => return Err(fail(ArrayProblem::CompressionMissing)),
+        (true, true) => return Err(ArrayProblem::CompressionStatedTwice),
+        (false, false) => return Err(ArrayProblem::CompressionMissing),
         (zlib, _) => zlib,
     };
 
     let points = array
         .array_length
         .or(default_length)
-        .ok_or_else(|| fail(ArrayProblem::LengthNotDeclared))?;
+        .ok_or(ArrayProblem::LengthNotDeclared)?;
     if points > MAX_DECODED_ARRAY_POINTS {
-        return Err(fail(ArrayProblem::PointCapExceeded));
+        return Err(ArrayProblem::PointCapExceeded);
     }
     let bytes = points
         .checked_mul(data_type.width() as u64)
         .filter(|bytes| *bytes <= MAX_DECODED_ARRAY_BYTES)
-        .ok_or_else(|| fail(ArrayProblem::ArrayByteCapExceeded))?;
+        .ok_or(ArrayProblem::ArrayByteCapExceeded)?;
     decoded_bytes
         .checked_add(bytes)
         .filter(|total| *total <= MAX_DECODED_SPECTRUM_BYTES)
-        .ok_or_else(|| fail(ArrayProblem::SpectrumByteCapExceeded))?;
+        .ok_or(ArrayProblem::SpectrumByteCapExceeded)?;
 
-    Ok(Some(Prepared {
+    Ok(Prepared {
         role,
         data_type,
         zlib,
         bytes,
-        bound: encoded_bound(bytes, zlib)
-            .ok_or_else(|| fail(ArrayProblem::ArrayByteCapExceeded))?,
-    }))
+        bound: encoded_bound(bytes, zlib).ok_or(ArrayProblem::ArrayByteCapExceeded)?,
+    })
 }
 
 /// The longest base64 text an array of `bytes` decoded bytes may arrive as.
@@ -2402,7 +2554,12 @@ fn encoded_bound(bytes: u64, zlib: bool) -> Option<u64> {
     base64.checked_add(base64 / 32)?.checked_add(1024)
 }
 
-fn decode(prepared: Prepared, mut encoded: Vec<u8>) -> Result<Vec<f64>, ArrayProblem> {
+/// The stored bytes of one array: base64, then inflate under the declared
+/// length. Whether their length is the declared one is left to the caller.
+pub(crate) fn stored_bytes(
+    prepared: Prepared,
+    mut encoded: Vec<u8>,
+) -> Result<Vec<u8>, ArrayProblem> {
     encoded.retain(|byte| !byte.is_ascii_whitespace());
     let declared =
         usize::try_from(prepared.bytes).map_err(|_| ArrayProblem::ArrayByteCapExceeded)?;
@@ -2414,11 +2571,17 @@ fn decode(prepared: Prepared, mut encoded: Vec<u8>) -> Result<Vec<f64>, ArrayPro
     drop(encoded);
     // An empty payload holds no bytes under either compression; whether that is
     // what was declared is the length check's to say.
-    let bytes = if prepared.zlib && !raw.is_empty() {
-        inflate(&raw, declared)?
+    if prepared.zlib && !raw.is_empty() {
+        inflate(&raw, declared)
     } else {
-        raw
-    };
+        Ok(raw)
+    }
+}
+
+fn decode(prepared: Prepared, encoded: Vec<u8>) -> Result<Vec<f64>, ArrayProblem> {
+    let declared =
+        usize::try_from(prepared.bytes).map_err(|_| ArrayProblem::ArrayByteCapExceeded)?;
+    let bytes = stored_bytes(prepared, encoded)?;
     match bytes.len().cmp(&declared) {
         std::cmp::Ordering::Greater => return Err(ArrayProblem::DecodedLongerThanDeclared),
         std::cmp::Ordering::Less => return Err(ArrayProblem::DecodedShorterThanDeclared),
@@ -2484,6 +2647,20 @@ fn inflate(compressed: &[u8], declared: usize) -> Result<Vec<u8>, ArrayProblem> 
 /// Widens stored little-endian values to `f64`, refusing any value that does
 /// not widen exactly or is not finite.
 fn widen(bytes: &[u8], data_type: BinaryDataType) -> Result<Vec<f64>, ArrayProblem> {
+    let values = widen_keeping_non_finite(bytes, data_type)?;
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(ArrayProblem::NonFiniteValue);
+    }
+    Ok(values)
+}
+
+/// Widens stored little-endian values to `f64`, refusing any value that does
+/// not widen exactly. A NaN or an infinity is kept, for the XIC pass, whose
+/// state policy judges it by where it sits (ADR 0046, XIC-S4).
+pub(crate) fn widen_keeping_non_finite(
+    bytes: &[u8],
+    data_type: BinaryDataType,
+) -> Result<Vec<f64>, ArrayProblem> {
     let width = data_type.width();
     let mut values = Vec::new();
     values
@@ -2512,9 +2689,6 @@ fn widen(bytes: &[u8], data_type: BinaryDataType) -> Result<Vec<f64>, ArrayProbl
                 exact_f64(i64::from_le_bytes(stored)).ok_or(ArrayProblem::IntegerNotExact)?
             }
         };
-        if !value.is_finite() {
-            return Err(ArrayProblem::NonFiniteValue);
-        }
         values.push(value);
     }
     Ok(values)
@@ -2658,14 +2832,18 @@ fn selected_spectrum(
 }
 
 fn finite(value: &str) -> Result<f64, Fail> {
+    Ok(parse_finite(value)?)
+}
+
+pub(crate) fn parse_finite(value: &str) -> Result<f64, MzmlScanError> {
     let parsed = value
         .trim()
         .parse::<f64>()
-        .map_err(|_| malformed(MzmlMalformedKind::InvalidNumber))?;
+        .map_err(|_| MzmlScanError::Malformed(MzmlMalformedKind::InvalidNumber))?;
     if parsed.is_finite() {
         Ok(parsed)
     } else {
-        Err(malformed(MzmlMalformedKind::NonFiniteNumber))
+        Err(MzmlScanError::Malformed(MzmlMalformedKind::NonFiniteNumber))
     }
 }
 
