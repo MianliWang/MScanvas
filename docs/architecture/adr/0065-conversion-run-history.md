@@ -15,6 +15,15 @@ the recommendations; this record states them. The store is
 the queue in the slice that offers the list, Clear and Off, so nothing was
 recorded before the user could see or stop it. The questions for the owner are
 listed [at the end](#open-questions-for-the-owner).
+
+*Note, 2026-11-04, on this status:* the edge cases of section 7 were answered on
+2026-11-03. Items 1 to 4 and HIST-1.1 are accepted as documented
+(A0065-section-7, HIST-1.1), and item 5 stands, with no leftover count
+(A0065-section-7 item 5, HIST-1.2), recorded under
+[Owner decision, 2026-11-03](#owner-decision-2026-11-03). Section 7's sixth
+bullet was not among the cases shown to the owner and stays open, as built and not
+an owner decision.
+
 Related: [0013](0013-serial-conversion-queue.md) (the serial queue and its
 *No persistence*), [0015](0015-user-visible-queue-stop.md) (stop),
 [0016](0016-explicit-converted-output-adoption.md) (adoption's object check),
@@ -157,6 +166,11 @@ A refusal that ends a running queue is terminal too, with its code.
   not fit (section 4). While Off holds, what is owed is that removal and no write,
   so the list does not say `notWritten`; Off's own answer said `notRemoved`. Both
   as built on 2026-11-03, not owner decisions.
+  - *Note, 2026-11-04, on the second of these (P205-T3, option `keep`; see
+    [Owner decision, 2026-11-04](#owner-decision-2026-11-04)):* the list stays as
+    it is and does not itself say that Off could not remove a file; Off's own
+    answer says how many. The first of these was not asked, and stays as built, not
+    an owner decision.
 - A running item records its state and attempts only. The result an earlier
   attempt of a retry left is not this attempt's; a pending item keeps it, for the
   reason section 5 gives.
@@ -373,6 +387,62 @@ and of G16, cross-session staging ownership, unchanged.
     2026-11-03, not an owner decision, and not among the cases shown to the owner
     on 2026-11-03.
 
+*Note, 2026-11-04, on the list above.* Its first five items keep the words the owner
+was shown on 2026-11-03. The first four are accepted as documented
+(A0065-section-7, HIST-1.1). Item 5, "What Clear and Off cannot reach", stands as
+the owner answered it, with no leftover count (A0065-section-7 item 5, HIST-1.2;
+[Owner decision, 2026-11-03](#owner-decision-2026-11-03)), so its "Neither Clear
+nor Off removes it" says what the store did before that answer. The sixth item was
+not shown and is not answered, and stays as built, not an owner decision. What the
+store now does with such a sibling:
+
+- **What goes.** Clear and Off also remove a private sibling untouched for over
+  24 hours: a name in the store's own folder exactly as a write gives it
+  (`.mscanvas-run-history-<process>-<attempt>.tmp`), an ordinary file by
+  `symlink_metadata`, last written more than 24 hours ago. Nothing is read from it.
+  The owner named `.mscanvas-run-history-*`; requiring the whole of a write's name,
+  so that another name with that prefix stays, is as built on 2026-11-04, not an
+  owner decision.
+- **What stays.** A sibling written in the last 24 hours can still remain, paths
+  included, and nothing says so: there is no count, no message and no interface
+  change. So do one whose time cannot be read or lies in the future, a directory, a
+  junction or a link at such a name, every other name (`.owner-pending-*` included)
+  and every other store's siblings. The owner's words were "untouched for over 24
+  hours"; keeping one whose time cannot be read or lies in the future, and a
+  directory, a junction or a link at such a name, is as built on 2026-11-04, not an
+  owner decision. After a crash with a clock running fast, such a file stays until
+  real time passes its last write by 24 hours.
+- **When.** No start and no list removes one while recording. While Off holds, its
+  sweep runs at each start and list, so one that has aged goes then, which is as
+  built on 2026-11-04 and not an owner decision. Otherwise only the moment of a
+  Clear or an Off judges its age, so one too young at the last of them stays until
+  another comes, and stays for good if none does. The interface
+  refuses Clear while there is nothing to clear (section 10), so a sibling with no
+  run listed beside it waits for a later run's Clear, or for Off. That includes one
+  a holder kept from a Clear: the answer says it remains, and the next read refuses
+  Clear as having nothing to clear.
+  That Clear stays refused while only a sibling remains, and that the answer and the
+  next read then say different things, is as built on 2026-11-04, not an owner
+  decision, and the owner has not been asked.
+- **One that cannot be removed** counts in `notRemoved`, as a file kept aside does.
+  The sweep goes on, no run's outcome changes, and one already gone counts as
+  removed. The list read after it has no row for a sibling, so only the answer says
+  it remains, and that answer does not also say how many runs were kept, as with any
+  file it could not remove. As built on 2026-11-04, not an owner decision: answering
+  Done while a sibling that should have gone stays would be untrue. A younger one
+  stays under Done, as the owner's rule says.
+- **A session suspended for over 24 hours** between creating its sibling and
+  publishing it. On Windows its handle shares reading only, so the sibling cannot
+  go while the session lives: Clear and Off answer `notRemoved`, and its publish
+  lands when it wakes. A test holds the handle `create_private_sibling` gives and
+  calls the handle-bound rename after the refused removals; the suspension is
+  simulated, and `publish` itself does not run through it. If Off still holds when
+  it wakes, the first corner above applies. Elsewhere, from reading the code and not
+  run: the name goes, the rename fails, `publish` retries through a new sibling, and
+  a write still refused is kept for the next one (`ActiveRun::unwritten`).
+- **Why this differs from restore workspace:** see Residue under
+  [Consequences](#consequences).
+
 *Recommendation, accepted (2026-10-30, RUN-1, question 1):* history is on by
 default, as workspace restore is in ADR 0061. *Alternative:* off until the user
 turns it on, with a first-run choice.
@@ -460,6 +530,10 @@ shows the queue.
   interrupted file says its outcome is unknown; an oversized run says its files
   were not kept. A code appears only beside its sentence. What ended the queue is
   said as what happened, since the queue's own sentence is about that moment.
+  - *Note, 2026-11-04, on the Details of a file a retry has not reached (P205-T3,
+    option `keep`; see [Owner decision, 2026-11-04](#owner-decision-2026-11-04)):*
+    both stay as they are: the history offers none on such a file, and the queue's
+    own row does.
 - **Reads only.** Nothing opens an output or runs anything from here (section 8)
   and no path reaches the document.
 - **Read again** re-lists on request, and the list is read again when the view
@@ -475,6 +549,9 @@ shows the queue.
   be removed it says how many, and the list read after it shows what remains. A
   Clear or an Off that fails after its view has gone is said once by the next
   view of that kind.
+  - *Note, 2026-11-04:* a private sibling that could not be removed (the note after
+    section 7's list) has no row, so the list read after it does not show it, and
+    only the answer says it remains. As built on 2026-11-04, not an owner decision.
 - **Off** is a button in Settings, not one of the dialog's segmented controls:
   those choose as the arrow keys pass over them, and Off forgets. Settings reads
   the switch each time it opens and refuses the button with its reason while it
@@ -511,6 +588,20 @@ row says something else for that state, which is a separate, existing problem.
   - An owner lock created by a session that crashed before naming it can also
     remain (`.owner-pending-*`).
   - Neither is read by anything.
+  - *Note, 2026-11-04, the owner's answer of 2026-11-03 (A0065-section-7 item 5,
+    HIST-1.2):* Clear and Off also remove the private sibling named above once it
+    has been untouched for over 24 hours, and show no count (section 7). A sibling
+    written in the last 24 hours can still remain. `.owner-pending-*` stays as
+    written here.
+  - *Different from restore workspace on purpose.* Restore keeps and counts its
+    leftovers, `leftoverCopies` ([ADR 0061](0061-restore-workspace.md) question 5;
+    [OWNER_DECISIONS_V511.md](../../development/OWNER_DECISIONS_V511.md) section
+    1c). Run history removes its old ones and shows no count, because this file
+    holds full paths and the 24-hour rule removes the reason for not deleting: a
+    live write from another instance does not stay untouched that long. One that
+    does, in a suspended session, is protected by its writer's handle on Windows,
+    not by its age (section 7's note). Making either match the other takes a new
+    owner answer.
 
 ## Open questions for the owner
 
@@ -559,3 +650,35 @@ the list, Clear and Off, so the store is attached to the queue in the slice that
 offers them and this record's pull request merges together with that interface.
 
 The edge cases of section 7 were not among them and stay **open**.
+
+## Owner decision, 2026-11-03
+
+Shown section 7's five edge cases as A0065-section-7, with eleven other ids and
+CK-1 to CK-8, the owner replied verbatim "全部按推荐" ("all as recommended"). Items
+1 to 4 are accepted as documented. Item 5 is to change, so that Clear and Off also
+remove private siblings (`.mscanvas-run-history-*`) untouched for over 24 hours. The
+decision page's table, the same day, accepted the same corners as HIST-1.1, and by
+"其余按推荐" ("the rest as recommended") took HIST-1.2's recommended option,
+"不删，显示残留个数（同恢复工作区）" ("do not delete; show a leftover count, as restore
+does"). That disagreed with item 5, so the owner was asked, and answered later that
+day, verbatim: "HIST和ADR0065就按照推荐来即可" ("HIST and ADR 0065 as recommended").
+The recommendation it answers: item 5 stands, with no leftover count, because the
+file holds full paths and the 24-hour rule removes the reason for not deleting.
+HIST-1.2's page option is not taken. The owner was told this reading and can correct
+it.
+
+Not answered: section 7's sixth bullet, which was not among the cases shown.
+
+## Owner decision, 2026-11-04
+
+Round two of the decision page asked whether the history and the queue should agree
+on Details for a file a retry has not reached, and whether the list should also say
+that Off could not remove a file (P205-T3). The owner replied verbatim "全部按推荐。"
+("all as recommended."), so P205-T3 is its recommended option `keep`, "两处都保持现状"
+("keep both as they are"). The costs the page names: the same file has Details in
+the queue and none in the history, and the list itself does not say that a file was
+not removed. The passages in sections 2 and 10 keep their words, with a note beside
+each.
+
+Not answered: section 7's sixth bullet, raised after the page was published, with no
+options and no recommendation. It stays as built, not an owner decision.
