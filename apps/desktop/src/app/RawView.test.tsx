@@ -52,7 +52,7 @@ const failed = (code: string, retryable: boolean, extra: Partial<RawViewState> =
 } as RawViewState);
 
 /** A session whose view the test moves by hand. */
-function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; checkingInstallation?: boolean; project?: ProjectState; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"]; chosenInstallation?: FakePreviewApiOptions["chosenInstallation"]; initialConversion?: FakePreviewApiOptions["initialConversion"] } = {}) {
+function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; checkingInstallation?: boolean; project?: ProjectState; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"]; chosenInstallation?: FakePreviewApiOptions["chosenInstallation"]; initialConversion?: FakePreviewApiOptions["initialConversion"]; conversionConfiguration?: FakePreviewApiOptions["conversionConfiguration"] } = {}) {
   const world = { state: initial.state ?? ({ state: "idle" } as RawViewState), availability: initial.availability ?? ({ available: true, unverifiedBuildRelease: null } as RawViewAvailability) };
   const begun: string[] = [];
   const cancelled: number[] = [];
@@ -69,6 +69,7 @@ function session(initial: { state?: RawViewState; availability?: RawViewAvailabi
     ...(initial.spectrum === undefined ? {} : { spectrum: initial.spectrum }),
     ...(initial.chosenInstallation === undefined ? {} : { chosenInstallation: initial.chosenInstallation }),
     ...(initial.initialConversion === undefined ? {} : { initialConversion: initial.initialConversion }),
+    ...(initial.conversionConfiguration === undefined ? {} : { conversionConfiguration: initial.conversionConfiguration }),
     getRawViewState: read,
     beginRawView: (handle) => { begun.push(handle); world.state = running("checkingSource"); return Promise.resolve(world.state); },
     cancelRawView: (operation) => { cancelled.push(operation); world.state = { state: "cancelled", operation, handle: RAW.handle, stored: false }; return Promise.resolve(world.state); },
@@ -1007,7 +1008,13 @@ describe("viewing a Thermo RAW row", () => {
 
   it("reads the row's answer again when the queue ends, so View comes back with no other press", async () => {
     const queue = queueOf([queueItem(RAW.handle, RAW.fileName, { state: "running", attempts: 1 })]);
-    const { world, api } = session({ availability: { available: false, code: "conversion_busy" }, initialConversion: { status: "running", operationId: "queue", queue } });
+    // The catalog's read has not answered, as for the seconds its probe takes. Its answer
+    // would read the row again too, and this is the queue's own read, without it.
+    const { world, api } = session({
+      availability: { available: false, code: "conversion_busy" },
+      initialConversion: { status: "running", operationId: "queue", queue },
+      conversionConfiguration: () => new Promise(() => undefined),
+    });
     await highlight();
     await waitFor(() => expect(document.querySelector("[data-raw-view-refusal='conversion_busy']")).not.toBeNull());
     world.availability = { available: true, unverifiedBuildRelease: null };
