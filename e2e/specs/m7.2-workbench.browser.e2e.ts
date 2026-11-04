@@ -1,9 +1,12 @@
 /** Real production composition. Synthetic roster metadata and controlled IPC are browser evidence only. */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { installIpcBoundary, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult } from "../support/harness";
+import { installIpcBoundary, ipcCalls as allIpcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult } from "../support/harness";
 import { ipcTable } from "../support/fixtures";
 import { cdp } from "../support/cdp";
+
+/** Everything but the record of the arrangement, the one call organizing a list now makes (ADR 0061). */
+const ipcCalls = async () => (await allIpcCalls()).filter(call => call.command !== "save_workspace_restore");
 import { readBackSavedPreferences, revealRosterRow } from "../support/viewer";
 import { selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 
@@ -36,10 +39,11 @@ async function metrics(width: number, height: number, dpr: number) {
 /**
  * Calls other than preference saves. Since M7.5, Apply and each panel toggle
  * commit through `save_ui_preferences` (docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md,
- * "Startup, Settings and layout semantics"); organization and pending reads
- * must still ask the backend for nothing.
+ * "Startup, Settings and layout semantics"), and Settings reads the history's
+ * off switch each time it opens (ADR 0065); organization and pending reads must
+ * still ask the backend for nothing.
  */
-const besidesPreferenceSaves = <T extends { readonly command: string }>(calls: readonly T[]) => calls.filter(call => call.command !== "save_ui_preferences");
+const besidesPreferenceSaves = <T extends { readonly command: string }>(calls: readonly T[]) => calls.filter(call => call.command !== "save_ui_preferences" && call.command !== "list_conversion_runs");
 async function capture(label: string) {
   const measured = await browser.execute(() => {
     const rect = (element: Element) => { const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height }; };
@@ -89,13 +93,23 @@ async function newGroup(name: string) {
  * footer became one row (direction A 2.1): read from the open menu, which is
  * then closed. With `backToRow`, the keyboard goes back to the row that holds
  * the list's tab stop, as it was before the menu took it.
+ *
+ * Closed means focus is back on the trigger, not merely the menu gone: Radix
+ * returns it a timer task after the menu unmounts. A row focused before then
+ * loses the keyboard to that return, and the next key lands on the trigger
+ * (the bulk-move test's End, which then never reached the roster).
  */
 async function highlightContext(backToRow = false): Promise<string> {
   await browser.$("[data-roster-list-menu]").click();
   const text = await browser.$(".roster-menu-context").getText();
   await browser.keys("Escape");
   await browser.$(".roster-menu-context").waitForExist({ reverse: true });
-  if (backToRow) await browser.execute(() => document.querySelector<HTMLElement>('.grouped-roster [data-handle][tabindex="0"]')?.focus());
+  await browser.waitUntil(() => browser.execute(() => document.activeElement?.matches("[data-roster-list-menu]") === true), { timeoutMsg: "list menu did not return focus to its trigger" });
+  if (backToRow) {
+    const tabStop = '.grouped-roster [data-handle][tabindex="0"]';
+    await browser.execute(selector => document.querySelector<HTMLElement>(selector)?.focus(), tabStop);
+    await browser.waitUntil(() => browser.execute(selector => document.activeElement?.matches(selector) === true, tabStop), { timeoutMsg: "tab-stop row did not take focus" });
+  }
   return text;
 }
 async function locale(value: "en" | "zh-CN") {

@@ -30,6 +30,12 @@ function scalar(row: SpectrumRow, key: ScanSortKey): number | string | null {
   return key === "retentionTime" ? row.retentionTime.value : row[key];
 }
 
+/**
+ * Rows in mixed retention-time units sort as groups, one per declared unit,
+ * so seconds and minutes are never interleaved as if they were one scale.
+ */
+const RETENTION_UNIT_RANK = { second: 0, minute: 1, notReported: 2 } as const;
+
 /** Raw, case-sensitive substring search; raw identifiers compare by UTF-16 code units.
  * Missing scalars stay last in either direction. Ties keep original table order.
  * No formatted or translated value is an input, and source rows are never mutated.
@@ -47,7 +53,9 @@ export function projectScanTable(index: ScanTableIndex, options: ScanTableOption
     const missingA = a === null || (typeof a === "number" && !Number.isFinite(a));
     const missingB = b === null || (typeof b === "number" && !Number.isFinite(b));
     if (missingA !== missingB) return missingA ? 1 : -1;
-    const comparison = missingA || missingB ? 0 : a! < b! ? -1 : a! > b! ? 1 : 0;
+    const byUnit = sort.key === "retentionTime"
+      ? RETENTION_UNIT_RANK[left.retentionTime.unit] - RETENTION_UNIT_RANK[right.retentionTime.unit] : 0;
+    const comparison = byUnit !== 0 ? Math.sign(byUnit) : missingA || missingB ? 0 : a! < b! ? -1 : a! > b! ? 1 : 0;
     return comparison === 0
       ? index.sourcePositions.get(left.index)! - index.sourcePositions.get(right.index)!
       : comparison * (sort.direction === "ascending" ? 1 : -1);

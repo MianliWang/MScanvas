@@ -94,24 +94,17 @@ describe("the PR #72 findings, and what now prevents each", () => {
     expect(consumeSelection(first.consumer, again.selection).consumed).not.toBeNull();
   });
 
-  it("4. a retention-time unit this build cannot name produces no model", () => {
+  it("4. rows in mixed retention-time units produce no model (ADR 0056)", () => {
+    const scan = { tablePosition: 0, scanNumber: 1, msLevel: 1, retentionTime: 0, totalIonCurrent: 1, basePeakIntensity: 1 };
     expect(
       buildScanModel({
         rows: [
-          {
-            index: 0,
-            tablePosition: 0,
-            scanNumber: 1,
-            msLevel: 1,
-            retentionTime: 0,
-            retentionTimeUnitKnown: true,
-            totalIonCurrent: 1,
-            basePeakIntensity: 1,
-          },
+          { ...scan, index: 0, retentionTimeUnit: "second" },
+          { ...scan, index: 1, retentionTimeUnit: "minute" },
         ],
         truncated: false,
       }),
-    ).toEqual({ status: "unavailable", reason: "unsupported-retention-time-unit" });
+    ).toEqual({ status: "unavailable", reason: "mixed-retention-time-units" });
   });
 
   it("5. one revision, and any number of consumers with their own bookmarks", () => {

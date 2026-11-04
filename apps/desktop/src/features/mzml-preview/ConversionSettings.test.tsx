@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render as renderTree, screen, within } from "@testi
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConversionSettings } from "./ConversionSettings";
+import { changedAxes, ConversionSettings } from "./ConversionSettings";
 import type { ConversionCatalogRow, ConversionConfiguration } from "./contracts";
 import type { ConversionConfigurationView } from "./useConversionConfiguration";
 import { admittedIntents, shippedIntent } from "../../test/previewFixtures";
@@ -33,6 +33,8 @@ const id = (
 const CENTROIDED_64 = id("unscoped_default_centroiding", "all", "mz64_intensity64", "zlib");
 const CENTROIDED_32 = id("unscoped_default_centroiding", "all", "mz32_intensity32", "zlib");
 const FLAT_32 = id("no_additional_centroiding", "all", "mz32_intensity32", "zlib");
+const VENDOR = id("vendor_centroiding_from_ms1", "all", "mz64_intensity32", "zlib");
+const VENDOR_MS2 = id("vendor_centroiding_from_ms2", "all", "mz64_intensity32", "zlib");
 
 function withoutRunning(...ids: readonly string[]): readonly ConversionCatalogRow[] {
   // The discriminator moves with the boolean; the pair is one decision in Rust.
@@ -329,6 +331,35 @@ describe("the four control groups", () => {
     expect(note).toContain("replaces the recorded profile points");
     expect(note).not.toContain("local-maximum");
     expect(note).not.toContain("vendor");
+  });
+
+  it.each([
+    ["Thermo vendor centroiding, MS1 and above", VENDOR, "cnvVendorCentroidingNote", "at every MS level"],
+    ["Thermo vendor centroiding, MS2 and above", VENDOR_MS2, "cnvVendorCentroidingMs2Note", "MS1 spectra are converted as the instrument recorded them."],
+  ])("mark %s lossy beside the choice, and select its row", (name, rowId, noteKey, scope) => {
+    // Each vendor-picker row shares the shipped precision and compression, so
+    // it is one processing edit from the shipped settings, and its loss and its
+    // scope are stated before it is chosen.
+    const onChoose = vi.fn();
+    render(<ConversionSettings
+        configuration={view(ready())}
+        onChoose={onChoose}
+        refusalNoticeId={null}
+      />);
+    const control = within(groupFor("processing")).getByLabelText(name);
+    expect(control).toBeEnabled();
+    const note = document.getElementById(control.getAttribute("aria-describedby") ?? "");
+    expect(note?.textContent).toContain("Lossy.");
+    expect(note?.textContent).toContain("Thermo RAW only.");
+    expect(note?.textContent).toContain(scope);
+    // Spoken, not shown: the tile says "Lossy" (ADR 0055, one label).
+    expect(note).toHaveClass("visually-hidden");
+    fireEvent.click(control);
+    expect(onChoose).toHaveBeenCalledExactlyOnceWith(rowId);
+    // And the reviewed settings name that one change from the shipped row.
+    const vendor = admittedIntents.find((intent) => intent.id === rowId)!;
+    expect(changedAxes(COMPLETE, shippedIntent.id, vendor)).toEqual(["processing"]);
+    expect(en[noteKey as keyof typeof en]).toContain(scope);
   });
 
   it("never call the chooser for a value that cannot be chosen", () => {

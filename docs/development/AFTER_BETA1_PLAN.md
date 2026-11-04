@@ -140,6 +140,16 @@ accepted):
 
 **Still open** (not decided on 2026-10-29):
 
+- what the schema-5 build does with beta 1's schema-4 projects. Implemented on
+  `be/integrate` (draft PR #161), pending an owner decision before merge: it
+  reads them, writes nothing on a Save with nothing unsaved, writes schema 5 on
+  the first Save after a change, and from then on beta 1 cannot open that
+  project (ADR 0055, risks, the note of 2026-10-29 on a schema-4 document). A
+  beta-1 document near the 4 MiB bound opens but cannot be saved here. Beta 1's `INSTALL_AND_SUPPORT.md` says no compatibility
+  between betas is promised, while the M9 closure says publishing begins
+  schema 4's promise; the owner decides which one stands. *Decided by the
+  owner on 2026-10-30: read and upgrade, as implemented, and the M9 closure's
+  position stands (the later decisions of 2026-10-30 below);*
 - the R0 real-file comparison for the reader (ADR 0056, decision 8): the PRIDE
   `PXD081190` download, an MS1 profile-mode file from the owner, and a
   ProteoWizard hold release. *R0 ran on 2026-10-29 on public files
@@ -193,7 +203,37 @@ there is capacity, no decompilation, and every other point as recommended):
    profile-MS2 file is measured (*one was on 2026-10-30: see
    [section 7.5](#75-evidence-gated-items)*)
    ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md),
-   [PR #162](https://github.com/MianliWang/MScanvas/pull/162)).
+   [PR #162](https://github.com/MianliWang/MScanvas/pull/162)). *Implemented
+   2026-10-30 on `be/thermo-ms1`;
+   [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)
+   records how. Later on 2026-10-30 "MS2 and up" became verified too (the
+   later decisions below).*
+
+**Owner decisions, later on 2026-10-30** (every recommendation accepted):
+
+1. **Beta 1's schema-4 projects are read and upgraded.** The schema-5 build
+   keeps the disposition implemented on `be/integrate` (draft PR #161).
+   Opening writes nothing, and a Save with nothing unsaved writes nothing. The
+   first Save after a change writes schema 5, which beta 1 cannot open. A
+   beta-1 document near the 4 MiB bound opens but cannot be saved. The M9
+   closure's position stands: publishing beta 1 began schema 4's compatibility
+   promise. Beta 1's `INSTALL_AND_SUPPORT.md` carries a dated correction, and
+   the next release notes say to keep a copy of a project before saving it in
+   the new version. A warning before the first schema-5 Save is still
+   interface work ([ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
+   risks).
+   *Implemented on `be/integrate` (PR #161), 2026-10-30: Save, Save first and
+   Save As over a beta-1 file ask first (ADR 0055, "The prompt"): Save only
+   with unsaved changes, Save As whenever the bound document is schema 4, the
+   keyboard on Cancel.*
+2. **"MS2 and up" vendor centroiding is verified.** `peakPicking vendor
+   msLevel=2-` becomes the eleventh verified row, for Thermo RAW on the
+   evidenced build, with the same family domain and output check as "MS1 and
+   up". The measurement decision 6 above waited for is source 3c of the
+   [evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md) (PR #173): all
+   23,676 Orbitrap profile MS2 spectra of a Q Exactive data-independent run
+   centroided, and its 474 profile MS1 spectra left bit-identical. The default
+   conversion stays profile ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#2-thermo-first)).
 
 **Owner direction, 2026-10-30** (later the same day), verbatim:
 "我们需要把这些后端功能都计划好来做，只有msconvert的其实只能算初版，但是也算是能用的MVP了"
@@ -423,6 +463,12 @@ writer and Rust's ownership of files.
   command is a sibling of the queue-wide one.
 - **Slices:** ADR and Rust; contract and hook; UI and copy; rendered QA.
   **Size M.**
+- **Status, 2026-10-30:** ADR and Rust done
+  ([ADR 0052](../architecture/adr/0052-per-output-adoption.md), accepted): the
+  Tauri command is `adopt_workspace_conversion_output(operationId, outputId)`,
+  refusals reuse `outputs_not_adoptable`, and the answer replaces the record on
+  the output's item. Contract and hook, UI and copy, and the 960x640 rendered
+  QA of a large SCIEX set are open.
 
 ### 6.3 PNG text metadata (FIG-002; ADR 0053)
 
@@ -467,6 +513,9 @@ writer and Rust's ownership of files.
   `spreadsheetCsv`) are implemented on `be/spreadsheet-csv`. The webview
   control follows after PR #164. The Excel, LibreOffice and WPS check is the
   owner's and pending, so no help or release text claims formula protection.
+- **Status, 2026-11-03:** the webview control, a third button on the results
+  table, is on `ui/targeted-spreadsheet-csv` (PR #206, draft). The Excel,
+  LibreOffice and WPS check is still the owner's and pending.
 
 ## 7. Backlog
 
@@ -482,7 +531,14 @@ writer and Rust's ownership of files.
     and its marker, the key, the manifest, verification, publishing, the pins,
     eviction, Clear and the staging sweep, with Rust tests. No command, UI or
     conversion yet; slice 2 is next.
-  - Left to slice 2: a chunked, cancellable hash of the RAW for Checking file
+  - Slice 2, the operation and its commands, is on `be/viewraw-op`
+    (2026-10-30): the phases, Cancel in each, the view as a holder of the
+    conversion slot, the failures of decision 10, and six commands with no UI
+    caller yet. Its departures and deferrals are ADR 0060's
+    [slice 2 notes](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-2-notes-2026-10-30),
+    including the two cases below (accepted by the owner, 2026-10-30, A0060).
+    Slice 3, the interface, builds on #164's structure once it lands (A0060).
+  - Left to slice 2, and done there: a chunked, cancellable hash of the RAW for Checking file
     and Checking output; reading the volume's free space for `make_space`; the
     1.5 GiB refusal before any work; the summary and Clear DTOs over `usage`
     and `clear`; and codes for a check that could not be made
@@ -490,6 +546,14 @@ writer and Rust's ownership of files.
     which decision 10's table does not list. An attempt that a sharing refusal
     keeps from being removed after `view_cache_not_stored` stays until a later
     session's sweep, because decision 6 leaves this process's attempts alone.
+- ADR 0056 decision 3's admission follow-up, not yet written: viewing mzML
+  without ProteoWizard changes Rust's admission, the webview's `canPreview` and
+  ADR 0044's `backendUsable` together, and stops judging `msaccess`
+  availability against the spectrum-table and selected-spectrum operations. In
+  the same change it removes those two operations and their parsers from
+  `crates/proteowizard`, which the owner ratified keeping until then
+  (2026-10-30).
+- Non-mzML outputs through ADR 0055's two runs: implemented in the conversion crate on `be/two-step` (2026-10-30, stacked on draft PR #161) for mgf, text, ms1, ms2, cms1, cms2, mz5 and mzMLb, against the fake provider ([ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md#6-every-other-format-is-written-from-a-private-mzml-intermediate), implementation note). mzXML stays refused. Left: the desktop still refuses these formats before planning (output name and not-adoptable label are interface work; two-phase progress also needs a live step signal the crate does not give yet), SCIEX output sets, and a measurement on the real build under a bounded ProteoWizard hold release.
 - CI runs the browser suite in six parallel Windows shards (`browser-e2e.yml`, informational, added 2026-10-29); it runs no native e2e, and `windows-smoke.yml` has never run.
 - `check_repo.py`'s current-status guard reads only ROADMAP's M5 section.
 - The WebDriver session-open flake needs one captured failure log.
@@ -536,6 +600,11 @@ writer and Rust's ownership of files.
   and base peak intensity, printed to two decimals, matched the stored values
   (installed check, item 5). Read at full precision or decode the arrays; the
   measurement needs a new bounded release of the ProteoWizard hold.
+  **Addressed by ADR 0056 slice 2 once merged** (Rust side and webview
+  commit implemented): the table and the
+  selected spectrum are read natively, `SELECTED_SPECTRUM_PRECISION` is gone,
+  and CSV/TSV write the stored values exactly (tested in Rust). Rechecking the
+  installed item still needs the hold release above.
 - NQ-I's worker `beforeSession` guard throws at `e2e/wdio.pm9-native.conf.ts:201`
   on every attempt and WDIO only logs it, so the checks after it never run;
   `specs[0]` arriving as a `file:///` URL is the unconfirmed suspect.
@@ -636,10 +705,21 @@ Stable CLI and schemas, then repository/user skills, then a narrow local MCP
 adapter, reusing the desktop's domain contracts (AUT-001…003). Starts with the
 M10.0 route decision.
 
+*2026-10-30: the route is proposed in
+[ADR 0064](../architecture/adr/0064-m10-automation-route.md): a small CLI
+package, `mscanvas`, over the desktop library, driving the same operations
+(inspect, intents, plan, run an approved plan, validate), then one skill, then
+an MCP adapter in the same binary; the plan and run slices wait for PRs #161 and #175.
+Accepted by the owner on 2026-10-30, all eight questions as recommended
+(decision A0064). Question 3's premise on viewing was wrong (ADR 0064,
+"Changed after acceptance"); on 2026-10-31 the owner confirmed it again with
+the corrected cost: while a command-line run holds the lock, opening a new
+preview is refused too.*
+
 ### 7.4 Future capabilities
 
 - P1: WSP-010 restore workspace; FIG-007 saved FigureSpec; ENV-004 copy
-  diagnostics.
+  diagnostics (*2026-10-30:* Rust side implemented, no interface yet; [ADR 0063](../architecture/adr/0063-copy-diagnostics.md), Accepted 2026-10-30).
   - *2026-10-30: FIG-007's Rust side is implemented with no interface, its
     decisions accepted by the owner on 2026-10-30 (A0062) in
     [ADR 0062](../architecture/adr/0062-saved-figurespec.md): a `.msfigure`
@@ -661,7 +741,7 @@ None can be delivered by engineering alone; each waits for one input.
 | --- | --- | --- |
 | Folder/drop vendor files | Owner decision (given 2026-10-28 for Thermo and Shimadzu; section 6.1). SCIEX: a measurement that its derived companion cannot pair with a same-stem `.wiff2` | M–L |
 | XIC (VIEW-007) | A new scope record for a bounded project-owned mzML array decoder: a new candidate, not a repair of PX's refused one, rerunning all 77 rows; a written decision on reader work and dependency approval. *2026-10-30: the scope record is [ADR 0071](../architecture/adr/0071-xic-re-entry-and-its-first-version.md), accepted with owner decisions X-1 and X-2; it needs no new dependency, and the 77-row rerun and its decision still gate the feature* | L–XL |
-| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2). Later the same day a public Q Exactive profile-MS2 file (PRIDE `PXD066799`) was measured, so "MS2 and up" meets that condition; its verified row is a follow-up code change ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#consequences))* | M–L |
+| Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2). Later the same day a public Q Exactive profile-MS2 file (PRIDE `PXD066799`) was measured, so "MS2 and up" meets that condition; its verified row is a follow-up code change ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#consequences)). That change is made: "MS2 and up" is the eleventh verified row (section 2, the later decisions of 2026-10-30)* | M–L |
 | Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
 | Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |
 
@@ -692,6 +772,19 @@ None can be delivered by engineering alone; each waits for one input.
 - **Owned elsewhere:** Workbench restore on reopen (WSP-010), surviving queue
   and adoption history (RUN-007), remembered choices (M7.5 preferences),
   saved typed plans and large unattended batches (M10).
+  - *2026-10-30:* WSP-010's Rust side is proposed in
+    [ADR 0061](../architecture/adr/0061-restore-workspace.md). It keeps
+    automatic adoption, preview, retry and relink refused: a restored row is
+    re-checked by identity and length only (a match is not a content claim),
+    and a changed or missing file stays a marked row. No interface calls it yet.
+  - *2026-10-31:* ADR 0061 is accepted. The owner answered its last open
+    questions (5 to 9) as recommended: off and clear keep kept-aside copies,
+    the later of two windows is refused, same-named restored rows show a
+    bounded collision-only parent-folder context (the ADR 0006 amendment is
+    approved in principle and written with the interface slice), an untaken
+    matching offer lasts one start while a marked row never expires, and a
+    save over 1,024 rows is refused with Start fresh offered. PR #177 carries
+    its interface slice too (2026-11-03) and merges as one.
 
 ## 8. Dates and external dependencies
 
@@ -733,7 +826,10 @@ None can be delivered by engineering alone; each waits for one input.
   7 and 10 stay open.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
-- M10.0's route, when drafted.
+- M10.0's route, when drafted. *Drafted 2026-10-30 as
+  [ADR 0064](../architecture/adr/0064-m10-automation-route.md). Answered
+  2026-10-30: the owner accepted it with its eight questions as recommended
+  (decision A0064); question 3 was confirmed again on 2026-10-31.*
 - *2026-10-30:* the decisions the
   [v5.11 and analysis roadmap](ROADMAP_V511_AND_ANALYSIS.md) needs, 53 in
   all, are in [OWNER_DECISIONS_V511.md](OWNER_DECISIONS_V511.md). Its

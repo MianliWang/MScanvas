@@ -83,7 +83,7 @@ export async function seedARunOf(rowCount: number): Promise<void> {
           identifier: `controllerType=0 controllerNumber=1 scan=${String(index + 1)}`,
           scanNumber: index + 1,
           msLevel: index % 4 === 0 ? 1 : 2,
-          retentionTime: { value: index * 0.0125, unitKnown: false },
+          retentionTime: { value: index * 0.0125, unit: "notReported" },
           basePeakMz: 400 + (index % 500),
           // Deterministic and shaped, so a reduction that dropped an extreme
           // would be dropping something a test can name.
@@ -94,10 +94,8 @@ export async function seedARunOf(rowCount: number): Promise<void> {
       }
       preview.spectrumTable = { rows, totalRowCount: count, truncated: false };
       preview.runSummary.totalSpectrumCount = count;
-      preview.runSummary.retentionTimeRange = {
-        minimum: { value: 0, unitKnown: false },
-        maximum: { value: (count - 1) * 0.0125, unitKnown: false },
-      };
+      preview.runSummary.retentionTimeRange = count === 0 ? { state: "noRows" }
+        : { state: "reported", minimum: 0, maximum: (count - 1) * 0.0125, unit: "notReported" };
     },
     IPC_TABLE_KEY,
     rowCount,

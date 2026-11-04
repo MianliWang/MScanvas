@@ -67,12 +67,13 @@ describe("Settings, by keyboard and by screen reader", () => {
         fireEvent.click(within(dialog).getByRole("radio", { name: en.simplifiedChinese }));
       }
       const groups = within(dialog).getAllByRole("radiogroup");
-      expect(groups).toHaveLength(2);
+      expect(groups).toHaveLength(3);
       // A group names itself from its own label element, not a placeholder or
       // a title. The choices explain themselves, so nothing describes them.
       expect(groups[0]).toHaveAccessibleName(bundle.language);
       expect(groups[0]).not.toHaveAttribute("aria-describedby");
       expect(groups[1]).toHaveAccessibleName(bundle.density);
+      expect(groups[2]).toHaveAccessibleName(bundle.restoreSwitch);
       expect(groups[1]).not.toHaveAttribute("aria-describedby");
       // Every option is a segmented-control radio with a real name: a button,
       // so the arrow keys and the single Tab stop are the radiogroup's.

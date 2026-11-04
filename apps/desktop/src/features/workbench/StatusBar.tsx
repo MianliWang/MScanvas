@@ -60,7 +60,7 @@ export function statusBusyReason(flags: BusyFlags, t: UiMessage): string | "conv
 }
 
 /**
- * The 28 px bar along the window's foot (direction A): ProteoWizard as an icon
+ * The 30 px bar along the window's foot (direction A): ProteoWizard as an icon
  * and a short label, work under way, why workspace actions wait, the project,
  * then the layout's save state and a file drop that stopped working. Built
  * from existing state only; it starts no work.

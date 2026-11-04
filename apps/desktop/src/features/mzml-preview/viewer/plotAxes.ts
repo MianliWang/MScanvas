@@ -33,51 +33,126 @@ export function withHeadroom(low: number, high: number): { readonly low: number;
   return { low: low < 0 ? low - pad : low, high: high > 0 ? high + pad : high };
 }
 
+/** How many ticks an axis aims for: plot-spec's `TARGET_TICKS`. */
+const TARGET_TICKS = 5;
+/** Past this many, a finer step only adds labels: plot-spec's `MAX_TICKS`. */
+const MAX_TICKS = 12;
+/** Past this, `k × mantissa` stops being an exact integer: plot-spec's `EXACT_INTEGER / 8`. */
+const EXACT_MULTIPLE = 2 ** 53 / 8;
+/** The longest a fixed-point tick label may be before the axis uses exponents: plot-spec's `MAX_FIXED_CHARS`. */
+const MAX_FIXED_CHARS = 12;
+
 /**
- * About `target` ticks inside `[low, high]`, at a 1, 2 or 5 step.
+ * The ticks for `[low, high]` and what each says: `crates/plot-spec/src/ticks.rs`
+ * `nice_ticks` under a `fits` that always answers yes, and where that has none,
+ * the ends as its caller labels them. `fixtures/plot-ticks/nice-ticks.json` holds
+ * both sides to one table.
  *
- * Inside, never beyond: an axis whose ends were rounded outwards would show a
- * range the reader did not ask for. A range with no width has one tick, at its
- * only value.
+ * ponytail: no label-collision check, the figure's `fits`: long labels on a
+ * narrow plot can overlap, where the figure would thin them out. Measure them
+ * here if that matters in real data.
  */
-export function niceTicks(low: number, high: number, target = 5): readonly AxisTick[] {
-  const span = high - low;
+export function niceTicks(low: number, high: number): readonly AxisTick[] {
   if (!Number.isFinite(low) || !Number.isFinite(high)) return [];
-  if (!(span > 0) || !Number.isFinite(span)) return labelTicks([low], 0);
-  const base = 10 ** Math.floor(Math.log10(span / target));
-  let best = { step: base, first: 0, count: 0 };
-  let miss = Infinity;
-  // Ascending steps, and a tie goes to the smaller one: seven ticks read a
-  // scale better than three.
-  for (const factor of [1, 2, 5, 10]) {
-    const step = factor * base;
-    const first = Math.ceil(low / step - 1e-9);
-    const count = Math.floor(high / step + 1e-9) - first + 1;
-    if (Math.abs(count - target) < miss) {
-      miss = Math.abs(count - target);
-      best = { step, first, count };
+  return ruleTicks(low, high) ?? endTicks(low, high);
+}
+
+/** `nice_ticks`: coarsest first, the count nearest the target, and the coarser of two equally near. */
+function ruleTicks(low: number, high: number): readonly AxisTick[] | null {
+  const span = high - low;
+  if (!(span > 0) || !Number.isFinite(span)) return null;
+  const top = Math.floor(Math.log10(span)) + 1;
+  let best: { readonly score: number; readonly ticks: readonly AxisTick[] } | null = null;
+  for (let exponent = top; exponent >= top - 4; exponent -= 1) {
+    for (const mantissa of [5, 2, 1]) {
+      const step = Number(`${mantissa}e${exponent}`);
+      if (!Number.isFinite(step) || step === 0) continue;
+      const first = Math.floor(low / step) - 1;
+      const last = Math.ceil(high / step) + 1;
+      // A finer step only needs larger integers: no later candidate is exact.
+      if (!(Math.abs(first) <= EXACT_MULTIPLE && Math.abs(last) <= EXACT_MULTIPLE)) return best?.ticks ?? null;
+      const ticks = candidateTicks(low, high, first, last, mantissa, exponent);
+      if (ticks === null || ticks.length > MAX_TICKS) return best?.ticks ?? null;
+      if (ticks.length < 2) continue;
+      const score = Math.abs(ticks.length - TARGET_TICKS);
+      if (best === null || score < best.score) best = { score, ticks };
     }
   }
-  const values = Array.from({ length: Math.max(0, best.count) },
-    (_, offset) => Number(((best.first + offset) * best.step).toPrecision(12)));
-  return labelTicks(values, best.step);
+  return best?.ticks ?? null;
 }
 
 /**
- * Each tick at the precision its step needs and no more. Very large or very
- * small values share one exponent, so the labels line up and read as a scale.
+ * `k × mantissa × 10^exponent` inside the range, each parsed from its decimal
+ * string so `0.3` is the number nearest three tenths and not `3 × 0.1`; `null`
+ * where two parse to one number.
  */
-function labelTicks(values: readonly number[], step: number): readonly AxisTick[] {
-  const largest = Math.max(0, ...values.map(Math.abs));
-  const stepPower = step > 0 ? Math.floor(Math.log10(step) + 1e-9) : Math.floor(Math.log10(largest || 1));
-  if (largest >= 1e6 || (largest > 0 && largest < 1e-3)) {
-    const power = Math.floor(Math.log10(largest) + 1e-9);
-    const digits = Math.max(0, power - stepPower);
-    return values.map(value => ({ value, label: value === 0 ? "0"
-      : `${(value / 10 ** power).toFixed(digits)}e${power < 0 ? "-" : "+"}${Math.abs(power)}` }));
+function candidateTicks(low: number, high: number, first: number, last: number, mantissa: number,
+  exponent: number): readonly AxisTick[] | null {
+  const kept: { readonly integer: number; readonly value: number }[] = [];
+  for (let k = first; k <= last; k += 1) {
+    const integer = k * mantissa;
+    const value = Number(`${integer}e${exponent}`);
+    if (value < low || value > high) continue;
+    if (kept.length > 0 && kept[kept.length - 1].value >= value) return null;
+    kept.push({ integer, value });
   }
-  const decimals = Math.max(0, -stepPower);
-  return values.map(value => ({ value, label: value === 0 ? "0" : value.toFixed(decimals) }));
+  const largest = Math.max(0, ...kept.map(tick => Math.abs(tick.value)));
+  const fixed = kept.map(tick => fixedLabel(tick.integer, exponent));
+  const exponential = largest >= 1e6 || (largest > 0 && largest < 1e-3)
+    || fixed.some(label => label.length > MAX_FIXED_CHARS);
+  return kept.map((tick, index) => ({ value: tick.value,
+    label: exponential ? scientificLabel(tick.integer, exponent) : fixed[index] }));
+}
+
+/** `integer × 10^exponent` with the step's own decimals: `0.0, 0.5, 1.0`, never `0, 0.5, 1`. */
+function fixedLabel(integer: number, exponent: number): string {
+  const sign = integer < 0 ? "-" : "";
+  const digits = String(Math.abs(integer));
+  if (exponent >= 0) return integer === 0 ? "0" : `${sign}${digits}${"0".repeat(exponent)}`;
+  const padded = digits.padStart(1 - exponent, "0");
+  const point = padded.length + exponent;
+  return `${sign}${padded.slice(0, point)}.${padded.slice(point)}`;
+}
+
+/** `integer × 10^exponent` as a shortest mantissa and an exponent: `2e6`, `1.5e-7`, and `0` for zero. */
+function scientificLabel(integer: number, exponent: number): string {
+  if (integer === 0) return "0";
+  const digits = String(Math.abs(integer));
+  const kept = digits.replace(/0+$/u, "");
+  const mantissa = kept.length === 1 ? kept : `${kept[0]}.${kept.slice(1)}`;
+  return `${integer < 0 ? "-" : ""}${mantissa}e${exponent + digits.length - 1}`;
+}
+
+/**
+ * `svg.rs` `axis_ends`, for a range the rule has no ticks for: one tick at the
+ * only value of a range with no width, and two numbers that read as two
+ * otherwise. Fixed point while it states them, else the shortest exponent form.
+ */
+function endTicks(low: number, high: number): readonly AxisTick[] {
+  const span = high - low;
+  const ends = span > 0 ? [low, high] : [low];
+  let decimals = span > 0 && Number.isFinite(span) ? Math.min(6, Math.max(0, Math.ceil(-Math.log10(span)) + 2)) : 6;
+  while (ends.length === 2 && decimals < 17 && fixedNumber(low, decimals) === fixedNumber(high, decimals)) decimals += 1;
+  const fixed = ends.map(value => fixedNumber(value, decimals));
+  const exponential = (ends.length === 2 && fixed[0] === fixed[1]) || ends.some((value, index) =>
+    fixed[index].length > 24 || (value !== 0 && Number(fixed[index]) === 0));
+  return ends.map((value, index) => ({ value,
+    label: exponential ? value.toExponential().replace("e+", "e") : fixed[index] }));
+}
+
+/**
+ * `svg.rs` `format_number`, Rust's `{:.decimals$}`. `toFixed` differs from it
+ * twice: it rounds an exact tie up where Rust takes the even digit, and from 1e21
+ * it turns exponential, where every double is an integer `BigInt` writes in full.
+ */
+function fixedNumber(value: number, decimals: number): string {
+  if (Math.abs(value) >= 1e21) return `${BigInt(value)}${decimals > 0 ? `.${"0".repeat(decimals)}` : ""}`;
+  // A hundred places hold every digit of a tie, which ends one place past `decimals`.
+  const exact = value.toFixed(100);
+  const point = exact.indexOf(".");
+  const down = exact.slice(0, decimals > 0 ? point + 1 + decimals : point);
+  const tie = /^50*$/u.test(exact.slice(point + 1 + decimals));
+  return tie && Number(down.at(-1)) % 2 === 0 ? down : value.toFixed(decimals);
 }
 
 /**
@@ -93,7 +168,10 @@ export function paintTicks(container: HTMLElement | null, ticks: readonly AxisTi
     const label = document.createElement("span");
     label.className = "plot-tick";
     label.textContent = tick.label;
-    label.style.setProperty(axis === "x" ? "left" : "top", `${percent(tick.value)}%`);
+    const at = percent(tick.value);
+    label.style.setProperty(axis === "x" ? "left" : "top", `${at}%`);
+    // What workbench.css keeps an x label inside its frame by.
+    if (axis === "x") label.style.setProperty("--tick-at", String(at));
     return label;
   }));
 }

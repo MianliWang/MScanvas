@@ -3,6 +3,9 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { SettingField } from "../../components/fields/SettingField";
 import { Button, Icon, SegmentedControl } from "../../components/ui";
+import type { WorkspaceRestoreSession } from "../mzml-preview/useWorkspaceRestore";
+import { WorkspaceRestoreSettings } from "../mzml-preview/WorkspaceRestoreSettings";
+import { RunHistorySetting } from "../run-history/RunHistorySetting";
 import { SESSION_DEFAULTS } from "./sessionPreferences";
 import { useSessionPreferences, useUiMessages } from "./SessionPreferencesProvider";
 import {
@@ -18,7 +21,10 @@ import {
  * and saved as it is made, so the dialog has one Close and no Apply or Cancel.
  * A failed save says so in place, with Try again beside it.
  */
-export function SettingsDialog() {
+export function SettingsDialog({ restore }: {
+  /** The workspace restore section; absent where no workspace is on screen. */
+  readonly restore?: WorkspaceRestoreSession;
+} = {}) {
   const preferences = useSessionPreferences();
   const message = useUiMessages();
   const languageId = useId();
@@ -170,6 +176,9 @@ export function SettingsDialog() {
               <Button size="sm" data-layout-reset="" refused={layoutRefusal !== undefined} reasonId={`${layoutId}-help`}
                 onClick={panels.reset}>{message("layoutReset")}</Button>
             </SettingField>
+            {restore === undefined ? null : <WorkspaceRestoreSettings session={restore} />}
+            <h3 className="settings-section-title">{message("runHistoryTitle")}</h3>
+            <RunHistorySetting />
             {/* The shell's layout region is aria-hidden behind this modal, so
                 the dialog says it here. Mounted empty, so the change is heard. */}
             <p aria-live="polite" className="visually-hidden" data-live-region="settings-layout">

@@ -4,7 +4,8 @@
 //! makes it part of the session: the workspace is a list the user curates, and
 //! adding rows to it because a background process finished is the application
 //! deciding what the user is working on. So adoption is an action, it is asked
-//! for, and it happens all at once for the queue that is on screen.
+//! for, and it happens for the queue that is on screen: all of its offered
+//! outputs at once, or one offered output by its id (ADR 0052).
 //!
 //! What makes it more than "add these files" is that MSCanvas knows something
 //! about these particular files that `Add files…` cannot know: it made them, it
@@ -40,7 +41,7 @@ use super::destination::{DestinationHold, admit_folder_for_open};
 use super::operation::AdmittedDestination;
 use super::operation::ItemState;
 use super::selection::DatasetSourceKind;
-use super::selection::{AcceptedFile, DatasetId, accept_mzml_file};
+use super::selection::{AcceptedFile, DatasetId, NotVerifiedByMscanvas, accept_mzml_file};
 use super::service::SciexConversion;
 
 /// The group outcome a set must have to be adoptable, by the lifecycle's own
@@ -105,8 +106,8 @@ impl AdoptionRefusal {
 /// afterwards from a filename and a report: the whole value of this is that it
 /// holds the object rather than a description of it.
 ///
-/// Bounded by the queue that owns it — sixteen items at most, one ticket each —
-/// and dropped with it.
+/// Bounded by the queue that owns it — `MAX_CONVERSION_QUEUE_ITEMS` items at
+/// most, one ticket each — and dropped with it.
 static NEXT_OUTPUT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub(super) struct FinalizedOutputAdoptionTicket {
@@ -126,6 +127,10 @@ pub(super) struct FinalizedOutputAdoptionTicket {
     destination: AdmittedDestination,
     /// The object itself, and what was measured about it.
     finalized: FinalizedOutput,
+    /// The conversion's "not verified by MSCanvas" label, which the adopted
+    /// row carries on (ADR 0055; owner decision 2 of 2026-10-29). Required at
+    /// construction, so every route that mints a ticket decides it.
+    not_verified: Option<NotVerifiedByMscanvas>,
 }
 
 impl FinalizedOutputAdoptionTicket {
@@ -136,6 +141,7 @@ impl FinalizedOutputAdoptionTicket {
         output_file_name: String,
         destination: AdmittedDestination,
         finalized: FinalizedOutput,
+        not_verified: Option<NotVerifiedByMscanvas>,
     ) -> Self {
         let identity = NEXT_OUTPUT_ID
             .fetch_update(
@@ -152,7 +158,12 @@ impl FinalizedOutputAdoptionTicket {
             output_file_name,
             destination,
             finalized,
+            not_verified,
         }
+    }
+
+    pub(super) fn not_verified(&self) -> Option<&NotVerifiedByMscanvas> {
+        self.not_verified.as_ref()
     }
 
     pub(super) fn output_id(&self) -> &str {
@@ -444,6 +455,11 @@ impl FinalizedOutputSetAdoptionTicket {
                         member.file_name().to_owned(),
                         destination.clone(),
                         output,
+                        // Verified by construction: a SCIEX set converts only
+                        // under a verified row on a measured build (ADR 0055,
+                        // the build gate and decision 1), so its set report
+                        // carries no label.
+                        None,
                     ))
                 })
                 .collect()
