@@ -822,8 +822,9 @@ None can be delivered by engineering alone; each waits for one input.
   ANA-004 within 1e-6 relative of the full runtime on one synthetic fixture
   and two targets), CPython 3.14 in place of the pinned 3.13.15 (its
   OpenSSL 3.0 is unsupported) and an AppContainer measurement. Owner decision
-  B-1 (2026-10-30) answered its questions 1, 2, 6, 8 and 9; questions 3, 4, 5,
-  7 and 10 stay open.
+  B-1 (2026-10-30) answered its questions 1, 2, 6, 8 and 9; the answers of
+  2026-11-03 (RT-1, B-2, B-3) took 3, 4, 5, 7 and 10. It stays Proposed until
+  the 3.6.0 probe names its engine.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted. *Drafted 2026-10-30 as
