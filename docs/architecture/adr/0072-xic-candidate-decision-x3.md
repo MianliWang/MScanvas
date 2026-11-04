@@ -24,8 +24,8 @@ is not edited). A stays viable, not prototyped, not rejected and outside this se
 
 | Binding | Exact identity |
 | --- | --- |
-| Scored executable | `4f86fe1de4d264abb82fb4581e936c3a7fa24b4e78d1d558513a25f4480d177d` |
-| Source manifest | `aea7431ab6dec8696c675c9656fb103f9cc845f0c8708c4b6b689ed43fd06734` |
+| Scored executable | `2d4a00c70050ac6f156fbed96ac3da2181edbb7e972a23e94bd2c2848ccf2fbc` |
+| Source manifest | `93027b90c2b51f568ac1a430a0ea7d7dd975172187a7297e78606d552219504d` |
 | Frozen protocol, unchanged | `e3a7340a937d2d48bf968270a538bdf18c36f3a2390e07177f762add503a4b6f` |
 | Frozen supplement, unchanged | `3de43a2b748ad9001f2ff9c628773f8669363b449bc4b8fa5956ea8fc0f3967a` |
 | Toolchain | rustc and cargo 1.97.1, `x86_64-pc-windows-msvc`, release |
@@ -54,8 +54,9 @@ rows. No threshold, precedence or input was relaxed.
 
 **3. It is practical at the observed scale, as proposed here.** No number was set in
 advance, as decision 9 requires. On the largest file, 546,327,287 bytes and 43,878
-spectra, one window took 3.23 to 4.14 s with the processor at a mean of 17–53%, and 8.13 to
-11.85 s with it at a mean of 84%, on two earlier builds with the same library. The process peaks at about 20 MB, whatever the window's width. The planning estimate
+spectra, one window took 4.03 to 7.08 s on the scored build with the processor at a mean of
+24–52%. On two earlier builds, whose library differs from the scored one's, it took 3.23 to 4.14 s
+at a mean of 17–53%, and 8.13 to 11.85 s at a mean of 84%. The process peaks at about 20 MB, whatever the window's width. The planning estimate
 was 5–11 s. Memory grows far more slowly than the file: about 5 MB at 17.7 million bytes,
 about 20 MB at 546 million. Every window is still a new full pass, so the judgment leans on
 two things X4 owes: progress, and a cancellation that takes effect between spectra. The
@@ -116,10 +117,24 @@ idle. These are observations of one host, never thresholds.
 | R0 profile, whole scan range | 546,327,287 | 43,878 / 2,748 | 24,744,260 | 3.354 / 3.349 / 3.275 | 3.993 / 3.919 / 3.932 | 8.127 / 11.850 / 11.014 | 19.8–19.9 |
 
 The processor figures are each set's mean load over the 7, 9 and 20 samples taken inside its
-run, so they are rough. Neither build is the scored one, and `crates/proteowizard/src` is the
-same in all three. `a7c6705c…` differs from the scored build only in the root `Cargo.toml` and
-`Cargo.lock`, and `73266bea…` also in the example: how it exits on a read failure, and one
-helper's body.
+run, so they are rough. Neither build is the scored one. Their `crates/proteowizard/src` is the
+same, and `73266bea…` differs from `a7c6705c…` also in the example: how it exits on a read
+failure, and one helper's body. The scored build's library differs from both, in seven manifest
+lines, and its machine code differs too, while `mzml_xic.rs` and the example are the same, so the
+same command ran again on it:
+
+| Source | Scored build `2d4a00c7…`, processor at 52% | At 41% | At 24% | Peak working set (MB) |
+| --- | --- | --- | --- | --- |
+| Profile representative | 0.273 / 0.227 / 0.256 | 0.168 / 0.177 / 0.194 | 0.143 / 0.137 / 0.141 | 5.2–5.3 |
+| Centroid representative | 0.703 / 0.719 / 0.801 | 0.524 / 0.569 / 0.493 | 0.378 / 0.394 / 0.405 | 7.8–8.0 |
+| R0 profile, narrow window | 6.132 / 4.663 / 7.075 | 5.307 / 5.483 / 5.388 | 4.228 / 5.035 / 4.536 | 19.6–19.9 |
+| R0 profile, whole scan range | 5.707 / 6.741 / 5.967 | 5.292 / 5.151 / 4.858 | 4.030 / 4.742 / 4.114 | 19.8–19.9 |
+
+The last two sets alternated with the previous build, `4f86fe1d…`, and neither build is plainly
+the slower, as
+[X2 shows](../../spikes/XIC_X2_CANDIDATE_EVIDENCE.md#on-the-scored-build). That build has
+`a7c6705c…`'s machine code and reads slower here than `a7c6705c…` did about ten hours earlier, so
+the sets in the two tables cannot be read across as a change of build.
 The time rose with the processor's load, and memory did not. Here a megabyte is 2^20 bytes.
 The bytes are in the
 [X2 record](../../spikes/XIC_X2_CANDIDATE_EVIDENCE.md#release-resource-observations).

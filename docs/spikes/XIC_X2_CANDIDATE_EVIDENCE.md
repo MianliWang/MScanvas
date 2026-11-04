@@ -1,8 +1,8 @@
 # XIC X2 — candidate C′ over the 77 frozen rows
 
 Status: **evidence only.** Date: 2026-11-04. Started from `origin/main` at `9f98504e`,
-PR #207 merged; the scored build is at `520ea2de`, which merges `main` at `b5058731`, and its
-`crates/proteowizard/src` is the same. Authority: [ADR 0071](../architecture/adr/0071-xic-re-entry-and-its-first-version.md),
+PR #207 merged; the scored build is at `a438da10`, which merges `main` at `c927a458`, and its
+`crates/proteowizard/src` is `main`'s at that commit. Authority: [ADR 0071](../architecture/adr/0071-xic-re-entry-and-its-first-version.md),
 decisions 8 and 9, and the owner's X-1 and X-2. The decision this feeds is
 [ADR 0072](../architecture/adr/0072-xic-candidate-decision-x3.md), which is Proposed.
 
@@ -20,8 +20,8 @@ spec ran.
 
 | Binding | Exact identity |
 | --- | --- |
-| Scored executable, `xic_candidate.exe` | `4f86fe1de4d264abb82fb4581e936c3a7fa24b4e78d1d558513a25f4480d177d` |
-| Source manifest, listing `Cargo.toml`, `Cargo.lock`, `crates/proteowizard/Cargo.toml`, every `crates/proteowizard/src/**/*.rs` and the example | `aea7431ab6dec8696c675c9656fb103f9cc845f0c8708c4b6b689ed43fd06734` |
+| Scored executable, `xic_candidate.exe` | `2d4a00c70050ac6f156fbed96ac3da2181edbb7e972a23e94bd2c2848ccf2fbc` |
+| Source manifest, listing `Cargo.toml`, `Cargo.lock`, `crates/proteowizard/Cargo.toml`, every `crates/proteowizard/src/**/*.rs` and the example | `93027b90c2b51f568ac1a430a0ea7d7dd975172187a7297e78606d552219504d` |
 | Build | `cargo build -p mscanvas-proteowizard --release --example xic_candidate --locked --target-dir target`, rustc 1.97.1 (8bab26f4f 2026-07-14), cargo 1.97.1 (c980f4866 2026-06-30), `x86_64-pc-windows-msvc`, release |
 | `experiments/xic_x2/harness_x2.py` | `94782e519e0167f66b3f2e7acdf87b23d64ac782207705d0172d4fa55f2872ff` |
 | `experiments/xic_x2/run_supplement_x2.py` | `6f00be3dac21c6943134932444d4d2c48d29e45ee6c1ac5255d14ead93f94398` |
@@ -31,35 +31,61 @@ spec ran.
 
 `harness_x2.py identity` runs the build itself, refusing a tree whose sources or runners
 are uncommitted, so this binary is the one these sources make. It ran at commit
-`520ea2de`, on this branch, after `cargo clean -p mscanvas-proteowizard --release`, so the
-library and the example were compiled again. The manifest binds the build to its source by
+`a438da10`, on this branch, after `cargo clean -p mscanvas-proteowizard --release --target-dir
+target`, so the library and the example were compiled again: `final-5/identity.log` holds cargo's
+`Removed 14 files` and `Compiling mscanvas-proteowizard`. The manifest binds the build to its source by
 content, so a later documentation commit does not unbind it. A reader recomputes it at the
 PR's head, by the listing `identity` writes. `rust-toolchain.toml` pins the channel to 1.97.1,
 and the manifest does not list that file.
 
-**Why this build and not the one before it.** Merging #190 into this branch changed the root
-`Cargo.toml` and `Cargo.lock`, which the manifest lists, so the matrix and the integer rows ran
-again here. #190 adds `crates/stats` and its packages, 172 lines added and none removed: no
-package changed version, and one existing entry, `num-traits`, lists one more dependency. The
-previous complete run is `final-3/`, build `a7c6705c…`, manifest `67844506…`.
-`COMPARISON-TO-FINAL-3.json` holds the result: those two manifest lines differ and no other;
-the executables have the same length and 25 bytes differ, all in the COFF timestamp, the debug
-directory's timestamps and the PDB identifier, with `.text` the same; all 187 `science.json`
+**Why this build and not the one before it.** Merging #216, #202, #201 and #183 into this
+branch changed files the manifest lists, so the matrix and the integer rows ran again here. The
+previous complete run is `final-4/`, build `4f86fe1d…`, manifest `aea7431a…`.
+`final-5/COMPARISON-TO-FINAL-4.json` holds the result:
+
+- **Seven manifest lines differ and no other,** all under `crates/proteowizard/src`:
+  `mzml_reader.rs` (#216, #183), `mzml_reader/tests.rs` (#216), `lib.rs` (#202, #183),
+  `structured.rs` (#202), `finalized_output.rs` (#201), and `rt_mz_map.rs` and
+  `rt_mz_map/tests.rs`, new with #183. `mzml_xic.rs`, its tests, the example and the three Cargo
+  files are the same.
+- **The machine code changed, unlike the step before.** The executable goes from 538,112 to
+  538,624 bytes, all five sections differ, and `.text` goes from 414,985 to 415,289 bytes. The
+  cause was not traced instruction by instruction. `mzml_xic.rs` imports `ArrayProblem` from
+  the reader, and #216 gives that enum two more variants.
+- **All 187 `science.json` files are equal byte for byte,** so no row's science changed. #216's
+  two new refusals are in the viewer's pass, and the XIC pass has its own, which the merge did not
+  touch.
+
+The step before it: merging #190 changed the root `Cargo.toml` and `Cargo.lock`. #190 adds
+`crates/stats` and its packages, 172 lines added and none removed: no package changed version,
+and one existing entry, `num-traits`, lists one more dependency. `final-4/COMPARISON-TO-FINAL-3.json`,
+against `final-3/`, build `a7c6705c…`, manifest `67844506…`: those two manifest lines differ and no
+other; the executables have the same length and 25 bytes differ, all in the COFF timestamp, the
+debug directory's timestamps and the PDB identifier, with `.text` the same; all 187 `science.json`
 files are equal byte for byte. So a rebuild need not reproduce the executable's digest:
 compare the manifest and `science.json` and not the executable.
 
-Read back after the run: the 187 per-invocation records under `final-4/` (143 main, 10
+Read back after the run: the 187 per-invocation records under `final-5/` (143 main, 10
 supplement, 34 integer) state the runner digests in this table, and its four summaries state
-this executable. So do the two `OBSERVATIONS.json` under `final-3/`, for runners and for build
-`a7c6705c…`. The 24 per-run records beside them state none.
+this executable. So do the `OBSERVATIONS.json` of `final-5/observations/` and of the two
+`final-5/alternating/` sets on this build. The two `final-5/alternating/` sets on `4f86fe1d…` and
+the two under `final-3/`, on `a7c6705c…`, state these runners and their own build. The per-run
+records beside them state none.
 
 **The comparator is byte-identical.** Before anything else, every digest in
 [PX.3's frozen artifact table](PX_3_XIC_COMPARATIVE_EVIDENCE.md#s3-and-s4-were-frozen-before-scoring)
 and in the 10-file `FROZEN.json` and 43-file `SUPPLEMENT-FROZEN.json` was recomputed
 and matched, as did all 77 inputs and both retained archives,
 `px3-b-evidence.zip` (`be25076e…`) and `px3-approved-input-evidence-v2.zip`
-(`74194d5f…`). None differed and none was missing. Each runner checks them again before
-its first invocation. `compare()`, `peak()` and `js()` are imported from the frozen
+(`74194d5f…`). None differed and none was missing, and this build's `final-5/pre-check.json`
+says so again. The runners then check less, each its own. All four below check the frozen
+`harness.py` and `oracle.py`. `harness_x2.py` also checks `FROZEN.json`'s 10 files and
+`acquisitions.json` before its first invocation, and each row's input before that row, where a
+difference makes the row `MISSING`. `run_supplement_x2.py` also checks `SUPPLEMENT-FROZEN.json`'s
+43 files, then each row's input, and a difference refuses the run. `integer_rows.py` also
+checks its freeze's files and that the freeze names its own digest. `observe_x2.py` checks
+nothing more: it records each source's digest and compares it with nothing. No runner hashes
+the two archives again. `compare()`, `peak()` and `js()` are imported from the frozen
 `harness.py`, and `canonical()` from the frozen `oracle.py`, unedited, after their
 digests are checked. The archives were only read: every command ran with `python -B`,
 so not even bytecode was written there.
@@ -114,13 +140,14 @@ they are.
 
 The 73 rows of `harness_x2.py` and the 4 of `run_supplement_x2.py` ran on the same
 executable, and `combine_x2.py` refuses two builds. No result from an earlier build is
-in this matrix. Five earlier complete runs also passed 77 of 77. They are retained and are
-not part of this result. `a7c6705c…`, at `abc6b443`, differs from this build in the two Cargo
+in this matrix. Six earlier complete runs also passed 77 of 77. They are retained and are
+not part of this result. `4f86fe1d…`, at `520ea2de`, differs from this build in the seven lines
+above. `a7c6705c…`, at `abc6b443`, differs from `4f86fe1d…` in the two Cargo
 files only. Four came before it, while the example and runners were being written and
 reviewed, on builds `46509d36…`, `02690522…`, `541880b9…` and `73266bea…`. Their source differs
 from `a7c6705c…`'s in the example only: where the pass is timed, one `match` arm, how the echo
 reads a number with spaces around it, how a read failure exits and one helper's body. Each
-manifest shows `crates/proteowizard/src` is the same in all six. The first, `46509d36…`, built
+manifest shows `crates/proteowizard/src` is the same in those six, and not in this build. The first, `46509d36…`, built
 an uncommitted example and its source was not kept, only that digest, so "where the pass is
 timed" cannot be checked. `02690522…` is at `6fef86a0`, amended and never pushed, so outside
 this machine's reflog its example too is only a digest, and "one `match` arm" cannot be checked
@@ -232,8 +259,11 @@ Both stay `Evaluated`, so `must_disagree` scores a scientific disagreement.
 Four mutations of `mzml_xic.rs`, each built and run alone over the 73 rows and the 17
 integer rows in a throwaway worktree and undone before the next, with the tree checked
 clean each time. None is in this PR or in the matrix above. The supplement's 4 rows were
-not part of these runs. The four mutations were built from `abc6b443`, before #190, and were not run again:
-#190 changes neither `mzml_xic.rs` nor any package version.
+not part of these runs. The four mutations were built from `abc6b443`, before #190, and were not run again: #190 changes neither `mzml_xic.rs` nor any package version. They were not run again for the
+scored build either, because they need a throwaway worktree and four builds. `mzml_xic.rs`, the
+example, the comparator and the answers are the same, and the library around them is not, as
+above. So this table says the frozen comparison can fail on that earlier library, and not that
+the scored executable would fail these same rows.
 
 | Mutation | 73 rows, PASS / FAIL | 17 integer rows, PASS / FAIL | Rows it fails, among others |
 | --- | --- | --- | --- |
@@ -308,10 +338,10 @@ warm-cache numbers. A cold read was not measured.
 throughout. A separate loop over `Win32_Processor.LoadPercentage`, about one sample every
 3 s, ran beside each set. It ran longer than the sets did, so the table counts only the
 samples inside each set's own run, and they are few. The first two sets are build
-`a7c6705c…`, which differs from the scored build in the two Cargo files only, and they were not
-taken again. The third is build `73266bea…`, about an hour before them. Its
-`crates/proteowizard/src` is the same, and its example differs only in how a read failure exits
-and in one helper's body.
+`a7c6705c…`, and the third is build `73266bea…`, about an hour before them. Their
+`crates/proteowizard/src` is the same, and the latter's example differs only in how a read failure
+exits and in one helper's body. Neither is the scored build, whose library differs from both, as
+above. [The sets on the scored build](#on-the-scored-build) follow these.
 
 | Set | Build | Run (UTC) | Processor load in the run, mean (lowest–highest), samples | Memory load |
 | --- | --- | --- | --- | --- |
@@ -368,6 +398,34 @@ Sigurdur Smarason and Giuseppe Paglia (Zenodo 20729183); centroid, Michael Witti
 Johannes Rainer (Zenodo 20729093). They are reused as ADR 0071 decision 8 approves, and
 no acquisition bytes are in this repository.
 
+### On the scored build
+
+`.text` changed and one `observe_x2.py` command takes under a minute, so these were taken on the
+scored build: `final-5/observations/`, then `final-5/alternating/`, by the method above with one
+load sample about every 3 s. The alternating sets take turns with the previous build, `4f86fe1d…`,
+whose `.text` is `a7c6705c…`'s, so as to tell a change of build from a change of load. `read_xic`
+alone, in seconds, each cell three serial runs.
+
+| Folder | Build | Run (UTC) | Processor load in the run, mean (lowest–highest), samples | Memory load | Profile | Centroid | R0 narrow | R0 whole |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `observations` | `2d4a00c7…` | 23:12:38–23:13:20 | 52% (34–71), 13 | 68–69% | 0.273 / 0.227 / 0.256 | 0.703 / 0.719 / 0.801 | 6.132 / 4.663 / 7.075 | 5.707 / 6.741 / 5.967 |
+| `alternating/1-final-4-build` | `4f86fe1d…` | 23:14:04–23:14:42 | 39% (21–59), 12 | 70% | 0.217 / 0.195 / 0.176 | 0.440 / 0.445 / 0.442 | 5.303 / 5.785 / 5.578 | 5.585 / 5.642 / 5.386 |
+| `alternating/2-final-5-build` | `2d4a00c7…` | 23:14:43–23:15:18 | 41% (26–56), 12 | 70% | 0.168 / 0.177 / 0.194 | 0.524 / 0.569 / 0.493 | 5.307 / 5.483 / 5.388 | 5.292 / 5.151 / 4.858 |
+| `alternating/3-final-4-build` | `4f86fe1d…` | 23:15:19–23:15:48 | 21% (0–54), 9 | 67–70% | 0.146 / 0.143 / 0.142 | 0.434 / 0.580 / 0.484 | 4.730 / 4.194 / 4.354 | 4.264 / 3.570 / 3.794 |
+| `alternating/4-final-5-build` | `2d4a00c7…` | 23:15:48–23:16:18 | 24% (2–49), 10 | 67–69% | 0.143 / 0.137 / 0.141 | 0.378 / 0.394 / 0.405 | 4.228 / 5.035 / 4.536 | 4.030 / 4.742 / 4.114 |
+
+On the scored build, R0 took 4.030 to 7.075 s over these three sets, and the window's width again
+stays within the runs' own spread, by means of 5.957 against 6.138 s, 5.393 against 5.100 s and
+4.600 against 4.295 s. Neither build is plainly the slower: by R0's means, the scored build
+reads 5.393 and 5.100 s beside the previous build's 5.556 and 5.538 s, then 4.600 and 4.295 s beside
+4.426 and 3.876 s. Three runs a cell show no slowdown from the merge and cannot rule out a small
+one. `4f86fe1d…` has `a7c6705c…`'s `.text` and reads slower here at like loads than `a7c6705c…` did
+about ten hours earlier, so the machine moved in a way these load samples do not capture. R0's
+peak working set on the scored build is 20,598,784 to 20,856,832 bytes.
+
+The invocation table above stays `a7c6705c…`'s. The same invocations ran in `final-5/`, with their
+timings in each `result.json`, and no load was sampled beside them.
+
 ## What this evidence does not establish
 
 - **Anything about the product's path.** The rows score the standalone engine. In the
@@ -400,13 +458,15 @@ no acquisition bytes are in this repository.
 
 ## Retained evidence
 
-Local, as PX.3's is, and not published. `D:/MSCanvas-X2-20261104/`: `final-4/` holds the
+Local, as PX.3's is, and not published. `D:/MSCanvas-X2-20261104/`: `final-5/` holds the
 build, each invocation's stdout, stderr, snapshot, canonical science and diagnostics,
-the combined ledger, the scored integer rows and `COMPARISON-TO-FINAL-3.json`; `final-3/` the
+the combined ledger, the scored integer rows, `COMPARISON-TO-FINAL-4.json` with the one-off script
+that wrote it, the pre-check with its script, the run logs and memory-gate lines, and its observations;
+`final-4/` the build, the runs, the ledger and `COMPARISON-TO-FINAL-3.json` for build `4f86fe1d…`; `final-3/` the
 same for build `a7c6705c…`, with its two sets of observations; `integer/`, `integer-2/` and `integer-3/` hold the three freezes; `discrimination/` the four
 mutations; `superseded-0/` to `superseded-3/` the earlier runs, the third set of
 observations in `superseded-3/observations-2/`; `superseded-discrimination/` and
 `superseded-discrimination-2/` earlier runs of the mutations; `xic-d5/` the throwaway
 rendering, with its patch. `MANIFEST.json` lists every file's length and SHA-256, and its
 own digest is
-`22962aa78c4a935ba236d63611525482371e9c6fbb136560385704e57b14718d`.
+`3b5676e2f8da87c0e9094f9f3737ffb40bf60e9317b82561e08223fc7b7a50e4`.

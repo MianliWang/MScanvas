@@ -24,6 +24,7 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 EVIDENCE = os.environ.get("MSCANVAS_X2_EVIDENCE")
+ALTERNATING = [f"final-5/alternating/{name}" for name in ("1-final-4-build", "2-final-5-build", "3-final-4-build", "4-final-5-build")]
 
 
 def prose(path: str) -> str:
@@ -103,6 +104,7 @@ class Record(unittest.TestCase):
             (ADR, "nothing calls the library", "no product code calls the library"),
             (X2, "Baseline: `origin/main` at", "Started from `origin/main` at `9f98504e`"),
             (X2, "They were built from", "The four mutations were built from `abc6b443`"),
+            (X2, "Each runner checks them again", "No runner hashes the two archives again"),
         ):
             self.assertNotIn(gone, text)
             self.assertIn(present, text)
@@ -133,25 +135,56 @@ class RetainedRuns(unittest.TestCase):
     def test_read_back_counts_and_digests(self) -> None:
         table = runner_table()
         self.assertEqual(len(table), 5)
-        records = [self.records(f"final-4/{folder}") for folder in ("main", "supplement", "integer-scored")]
+        records = [self.records(f"final-5/{folder}") for folder in ("main", "supplement", "integer-scored")]
         self.assertEqual([len(group) for group in records], [143, 10, 34])
         for group in records:
             for record in group:
                 self.assertEqual(record.get("runners") or record["binding"]["runners"], table)
-        for folder in ("observations", "observations-2"):
-            summary = json.loads(pathlib.Path(EVIDENCE, "final-3", folder, "OBSERVATIONS.json").read_text(encoding="utf-8"))
+        for folder in ("final-3/observations", "final-3/observations-2", "final-5/observations", *ALTERNATING):
+            summary = json.loads(pathlib.Path(EVIDENCE, folder, "OBSERVATIONS.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["runners"], table)
 
     def test_the_scored_build_is_the_records_and_its_science_is_the_previous_runs(self) -> None:
-        identity = json.loads(pathlib.Path(EVIDENCE, "final-4/build/identity.json").read_text(encoding="utf-8"))
+        identity = json.loads(pathlib.Path(EVIDENCE, "final-5/build/identity.json").read_text(encoding="utf-8"))
         self.assertIn(f"`{identity['binary_sha256']}`", X2_TEXT)
         self.assertIn(f"`{identity['source_manifest_sha256']}`", X2_TEXT)
         self.assertIn(f"the scored build is at `{identity['built_at_commit'][:8]}`", X2)
-        scored = [path for folder in ("main", "supplement", "integer-scored") for path in pathlib.Path(EVIDENCE, "final-4", folder).glob("*/science.json")]
+        self.assertIn(identity["rustc"].splitlines()[0], X2_TEXT)
+        scored = [path for folder in ("main", "supplement", "integer-scored") for path in pathlib.Path(EVIDENCE, "final-5", folder).glob("*/science.json")]
         self.assertEqual(len(scored), 187)
         for path in scored:
-            earlier = pathlib.Path(EVIDENCE, "final-3", *path.parts[-3:])
+            earlier = pathlib.Path(EVIDENCE, "final-4", *path.parts[-3:])
             self.assertEqual(path.read_bytes(), earlier.read_bytes(), path)
+
+    def test_the_comparison_is_what_the_record_says(self) -> None:
+        result = json.loads(pathlib.Path(EVIDENCE, "final-5/COMPARISON-TO-FINAL-4.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(result["manifest_lines_differing"]), 7)
+        self.assertTrue(all(line.startswith("crates/proteowizard/src/") for line in result["manifest_lines_differing"]))
+        self.assertEqual(result["science_differ"] + result["science_missing"] + result["science_only_in_final_5"], [])
+        self.assertTrue(result["text_section_differs"])
+        for build in ("final_4", "final_5"):
+            self.assertIn(f"{result['sections']['.text'][build]['virtual_size']:,}", X2)
+            self.assertIn(f"{result['executable_bytes'][build]:,}", X2)
+
+    def test_the_sets_on_the_scored_build_are_the_tables(self) -> None:
+        scored = json.loads(pathlib.Path(EVIDENCE, "final-5/build/identity.json").read_text(encoding="utf-8"))["binary_sha256"]
+        peaks = []
+        for folder in ("final-5/observations", *ALTERNATING):
+            summary = json.loads(pathlib.Path(EVIDENCE, folder, "OBSERVATIONS.json").read_text(encoding="utf-8"))
+            build = summary["identity"]["binary_sha256"]
+            self.assertEqual(build == scored, "final-4" not in folder, folder)
+            line = next(line for line in X2_TEXT.splitlines() if line.startswith(f"| `{folder.removeprefix('final-5/')}` |"))
+            self.assertIn(f"`{build[:8]}…`", line)
+            seconds = {}
+            for observation in summary["observations"]:
+                seconds.setdefault(observation["source"]["name"], []).append(observation["result"]["pass_wall_seconds"])
+                if build == scored and observation["source"]["name"].startswith("r0"):
+                    peaks.append(observation["peak_working_set_final_bytes"])
+            for values in seconds.values():
+                self.assertIn(" / ".join(f"{value:.3f}" for value in values), line)
+            if build == scored:
+                self.assertIn(f"{statistics.mean(seconds['r0_narrow']):.3f} against {statistics.mean(seconds['r0_whole']):.3f} s", X2)
+        self.assertIn(f"{min(peaks):,} to {max(peaks):,} bytes", X2)
 
     def test_earlier_builds_are_at_the_commits_named(self) -> None:
         for folder in ("superseded-1", "superseded-2", "superseded-3"):
