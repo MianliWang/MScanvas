@@ -88,6 +88,14 @@ decision 7 and its retention rule again (U7's option (b)), or stay refused
 - **A record is accepted as any ADR is.** It does not reopen the class or
   decision 2, and needs no further amendment of ADR 0056.
 
+*Owner decision, 2026-11-04 (A0070-MAX, option `record_both`):* picking the MS1 at the
+TIC apex on open (V-1) and the base of a relative intensity (V-3) are in this class, so
+one short record covers both. ADR 0075 is reserved for it and is not written. The
+costs the page names: one more record to accept, with those two parts unable to merge
+before that; V-1's reason that picking a maximum is not a computation goes; and "in
+Rust" above means N-V3's pick moves to Rust or the record relaxes that sentence
+([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
+
 ### 2. A bounded, cancellable pass may run and keep only its result
 
 This amends ADR 0056 decision 4's "never arrays", and the reader's rule that

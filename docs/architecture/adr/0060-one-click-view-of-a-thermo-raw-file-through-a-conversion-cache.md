@@ -1524,6 +1524,8 @@ unless it carries "Owner decision, 2026-11-03".
      release's install page
      ([after-beta-1 plan, section 7.2](../../development/AFTER_BETA1_PLAN.md#72-polish-and-limits)).
      Not written: that page does not exist yet.
+   - **A cached Thermo RAW during a conversion.** Owner decision, 2026-11-04 (R-3-RAW,
+     option `refuse`): View stays refused (the note under decision 5).
 10. **Departures the answers of 2026-11-03 do not cover.** Each stays as built, and
     is not an owner decision.
     - Exports of a view are withheld until slice 4 (note 2).

@@ -461,7 +461,7 @@ The owner answered three times on 2026-11-04.
 | D2 | **Closed:** #218 and #195, routine updates. Each fails one version-pin test and needs its own verification, and #218 would force #217's rerun | None. No Dependabot alert was dismissed |
 | P216 | **Accepted:** #216's two refusal ids, `payload_stated_twice` and `element_in_payload`, join ADR 0056 decision 1's list, which the owner closed | None. #216 wrote it. It covers these two ids only: #216's other as-built readings stay "as built, not an owner decision" |
 
-#154 and #155 were closed on the same request, as superseded, with their branches kept. Dependabot closed #165 on 2026-11-04.
+On the same request, #154 and #155 were closed as superseded, with their branches kept. Dependabot closed #165 on 2026-11-04.
 
 **What these answers do not cover:**
 
@@ -959,6 +959,7 @@ Ordered: work blocked now first, then by the slice each decision gates. Counts: 
 *Decided 2026-10-30: (a), as recommended (section 1b).*
 
 *2026-11-04:* ADR 0070's two open questions were asked after the table of 2026-11-03 and had no answer as of this note (section 1d).
+*2026-11-04, later:* both are answered as recommended (A0070-Q1, A0070-Q2, section 1e). A0070-MAX puts the TIC-apex pick and the percentage's base under one short record.
 
 - **Question.** ADR 0056 decision 7 says: "Any computation over the decoded arrays is an algorithm, and it needs its own record." The reader keeps offsets, "never arrays" (:394). The XIC and the MS1 map both compute over the arrays of many spectra. Should one written decision:
   - admit project-owned computations over the reader's decoded arrays, each with its own per-algorithm record (XIC per-scan sum; MS1 map binning; later a summed spectrum);
