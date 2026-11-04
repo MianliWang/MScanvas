@@ -273,6 +273,12 @@ default.
 >   routes, and the build goes further. A drop and a reference carried back from
 >   a project consult the same table, and a reference registered with no row asks
 >   it too.*
+>   *As built in PR #201, 2026-11-03, not an owner decision: a row Restore
+>   workspace puts back in a later session has no label. The table ends with its
+>   process and ADR 0061's document keeps no label, so nothing that reads that row
+>   says it, figures included, and a reference registered from it records `null`.
+>   A reference carried back from a project still brings its label to the row.
+>   The owner has not been asked.*
 > - (c) `Describe again` is offered only after a failure Rust calls retryable.
 >
 > **Owner decision, 2026-11-03:** asked whether to draw "Not verified by MSCanvas"

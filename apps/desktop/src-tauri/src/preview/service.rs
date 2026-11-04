@@ -1648,10 +1648,14 @@ impl PreviewService {
 
     /// The "not verified by MSCanvas" label of the row whose primary is the
     /// object `identity` names, where this session finalized it from a labelled
-    /// conversion (ADR 0055; owner decisions of 2026-10-29 and 2026-10-31).
+    /// conversion or a project's reference brought the label to the row
+    /// (ADR 0055; owner decisions of 2026-10-29 and 2026-10-31).
     ///
     /// Asked by a project registration about the object it just hashed, so
-    /// the label follows the object whatever route the user registers it by.
+    /// the label follows the object whatever route the user registers it by, as
+    /// far as this process knows it: a row Restore workspace put back in a later
+    /// session has none, so none is recorded (ADR 0055: as built in PR #201,
+    /// 2026-11-03, not an owner decision).
     /// A row's identity is one its lease holds, so a match is that row's own
     /// object. A finalized output with no row answers for itself (ADR 0055: as
     /// built in PR #201, 2026-11-03, not an owner decision). Memory only; reads
@@ -1678,10 +1682,14 @@ impl PreviewService {
     /// 2026-10-31, for Add files… and Add mzML folder…; for a drop and a reference
     /// carried back, as built in PR #201, 2026-11-03, not an owner decision).
     ///
-    /// Every route a user adds a file by comes through here, so a route cannot
-    /// lose the label. By object identity and never by name: an output moved on
-    /// its volume keeps it, and a copy under any name is a new object without
-    /// it. The slot is asked first and let go of, as everywhere that needs both.
+    /// Every route a user adds a file by comes through here, so within the
+    /// process that finalized an output a route cannot lose the label. The table
+    /// ends with that process and the restore document keeps no label, so a row
+    /// Restore workspace puts back in a later session has none (ADR 0055: as built
+    /// in PR #201, 2026-11-03, not an owner decision). By object identity and never
+    /// by name: an output moved on its volume keeps it, and a copy under any name
+    /// is a new object without it. The slot is asked first and let go of, as
+    /// everywhere that needs both.
     fn register_admitted(
         &self,
         accepted: AcceptedFile,

@@ -253,6 +253,9 @@ It is apart from the title, so an edited title cannot remove it.
   has left by then refuses the figure as stale, since "no row" is not "no label".
   One removed after the claim does not take the label off.
 - Not covered: a reopened `.msfigure`, which no command reaches yet.
+- Not covered: a row Restore workspace puts back in a later session. It has no
+  label, so its figures draw no note (ADR 0055; as built in PR #201, 2026-11-03,
+  not an owner decision).
 
 ## The saved figure — FIG-007, Rust side
 
