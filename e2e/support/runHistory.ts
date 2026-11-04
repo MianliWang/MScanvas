@@ -104,6 +104,9 @@ export const REFUSED_END_ITEMS = [item("First_01.raw"), item("Second_02.raw", { 
 /** Still being written, by this instance or another. */
 export const RUNNING = run("00000000000000000000000000000005", { state: "running", startedAtMs: NOON + 2 * HOUR, endedAtMs: null, finalizedCount: 0 });
 
+/** In its second pass: two files converted in the first, and one failed then, waiting again as RETRY_WAITING_ITEM. */
+export const RETRYING = run("00000000000000000000000000000009", { state: "running", startedAtMs: NOON + 2 * HOUR, endedAtMs: null, passes: 2, itemCount: 3 });
+
 /** Outgrew its bound: a SCIEX queue kept as counts. */
 export const OMITTED = run("00000000000000000000000000000006", { itemsOmitted: true, itemCount: 800, finalizedCount: 790, failedCount: 10, startedAtMs: NOON - 96 * HOUR, endedAtMs: NOON - 60 * HOUR });
 
@@ -118,6 +121,16 @@ export const SET_ITEM = item("Sciex_batch.wiff", {
     { fileName: "Sciex_batch-Sample1.mzML", state: "validated_not_published", byteLength: 1_048_576, sha256: "aa".repeat(32), checks: { mode: "output_only", fullyVerified: false, verified: ["well_formed"], unverified: ["spectrum_count"], inapplicable: [], advisory: ["scan_window_rounded"] } },
     { fileName: "Sciex_batch-Sample2.mzML", state: "rejected", byteLength: null, sha256: null, checks: null },
   ],
+}, { family: "sciex_wiff" });
+
+/** A retry pass has not reached it yet: it waits, still holding its earlier attempt (ADR 0065 §5). A set failure is retryable only like this one. */
+export const RETRY_WAITING_ITEM = item("Sciex_batch.wiff", {
+  state: "pending",
+  outcome: "refused_before_publication",
+  failure: "multi_output_destination_not_inspectable",
+  completeness: { kind: "notEstablished", reason: "source_sample_set_not_fully_published" },
+  setAdoptable: false,
+  outputs: SET_ITEM.progress.outputs.slice(0, 1),
 }, { family: "sciex_wiff" });
 
 /** Every member published, and still not adoptable whole: ADR 0065 §1's failed item with no failure code. */
