@@ -1189,15 +1189,7 @@ async fn export_targeted_ms1_table_view(
 ) -> Result<project::dto::TargetedTableExportDto, PreviewErrorDto> {
     verified_document_epoch(&ipc_request, &webview, &service).await?;
     let artifact = parsed_artifact_id(&artifact_id)?;
-    let view = project::targeted_output::TableView::from_wire(
-        &view.target_ids,
-        &view.outcomes,
-        view.text,
-        view.sort
-            .as_ref()
-            .map(|sort| (sort.key.as_str(), sort.direction.as_str())),
-    )
-    .ok_or_else(targeted_table_view_refused)?;
+    let view = view.view().ok_or_else(targeted_table_view_refused)?;
     save_targeted_table(&app, &projects, artifact, &format, Some(view)).await
 }
 

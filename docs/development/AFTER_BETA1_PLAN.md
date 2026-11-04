@@ -772,7 +772,7 @@ None can be delivered by engineering alone; each waits for one input.
   - *2026-11-04:* on-screen result sorting and filtering and view-scoped export
     left this list for the targeted results table: the owner selected S-7.1 (a)
     on 2026-11-03, and FIG-010 builds it. The feature table's half comes with
-    N-A5 and N-A6. History notes and stored-result clipboard copy stay.
+    N-A5 and N-A6.
 - **Owned elsewhere:** Workbench restore on reopen (WSP-010), surviving queue
   and adoption history (RUN-007), remembered choices (M7.5 preferences),
   saved typed plans and large unattended batches (M10).

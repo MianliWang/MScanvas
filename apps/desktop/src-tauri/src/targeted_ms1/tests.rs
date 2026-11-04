@@ -6469,6 +6469,57 @@ fn a_view_of_words_the_contract_does_not_have_is_refused() {
     assert!(view(&target, &every, "", Some(("label", "up"))).is_none());
 }
 
+/// The exact shape `projectApi.ts` sends, with a sort and without, through the
+/// command's own conversion: no other test crosses this seam, since the webview's
+/// tests answer at `invoke` and no native spec drives this command.
+#[test]
+fn the_view_the_webview_sends_is_the_view_rust_reads() {
+    use crate::project::dto::TargetedTableViewDto;
+    let read = |wire: serde_json::Value| {
+        serde_json::from_value::<TargetedTableViewDto>(wire).map(TargetedTableViewDto::view)
+    };
+    let ids = [golden_target(4).to_string(), golden_target(2).to_string()];
+    let sorted = read(serde_json::json!({
+        "targetIds": ids,
+        "outcomes": ["FAILED", "SHARED"],
+        "text": "=",
+        "sort": { "key": "label", "direction": "ascending" },
+    }))
+    .expect("the wire's shape");
+    assert_eq!(sorted, Some(pinned_view()));
+
+    let unsorted = read(serde_json::json!({
+        "targetIds": [golden_target(2).to_string(), golden_target(4).to_string()],
+        "outcomes": EVERY_OUTCOME,
+        "text": "=",
+        "sort": null,
+    }))
+    .expect("the wire's shape");
+    assert_eq!(
+        unsorted,
+        Some(golden_view(&[2, 4], &EVERY_OUTCOME, "=", None))
+    );
+
+    // A word the contract does not have, and a field it does not name.
+    let word = read(serde_json::json!({
+        "targetIds": ids,
+        "outcomes": ["SHARED"],
+        "text": "",
+        "sort": { "key": "adduct", "direction": "ascending" },
+    }));
+    assert_eq!(word.expect("the wire's shape"), None);
+    assert!(
+        read(serde_json::json!({
+            "targetIds": ids,
+            "outcomes": ["SHARED"],
+            "text": "",
+            "sort": null,
+            "path": "C:/x.csv",
+        }))
+        .is_err()
+    );
+}
+
 /// A person's filter text is one more declared field of the view's spreadsheet
 /// CSV. The whole table's declared set does not move.
 #[test]

@@ -820,6 +820,23 @@ pub struct TargetedTableViewDto {
     pub sort: Option<TargetedTableSortDto>,
 }
 
+impl TargetedTableViewDto {
+    /// The view as the table writer reads it, or `None` for a word it does not have.
+    #[must_use]
+    pub fn view(self) -> Option<super::targeted_output::TableView> {
+        let sort = self
+            .sort
+            .as_ref()
+            .map(|sort| (sort.key.as_str(), sort.direction.as_str()));
+        super::targeted_output::TableView::from_wire(
+            &self.target_ids,
+            &self.outcomes,
+            self.text,
+            sort,
+        )
+    }
+}
+
 /// A view's sort: a column of the table, and which way.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
