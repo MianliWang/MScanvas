@@ -300,9 +300,9 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
 - The button reads when pressed, and again as **Read again**. A second read leaves
   the screen as it is until it answers, with **Copy** refused meanwhile, and the
   result of a copy still out when it was pressed is not shown, because that copy
-  took the old text. The answer shows the new text from its first line, wherever the
-  keyboard is. A failed read takes the text and **Copy** away, so if either had the
-  keyboard it goes to **Read again**.
+  took the old text. The answer shows the new text from its first line. A failed read
+  takes the text and **Copy** away, so if either had the keyboard it goes to
+  **Read again**.
 - The box is a fixed 200 px and scrolls inside the dialog's body, which scrolls too.
   Measured with the 42-line fixture at 1366x768 and 960x640: a 198 px client area
   holding 822 px, so about ten lines show, and `[ProteoWizard]` (line 19) and
@@ -329,6 +329,13 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
   `document.execCommand("copy")`, so those are for review to refuse.
 - The release guide's list points at the button from the first release that has
   it; beta 1's guide describes beta 1, which does not.
+
+*As built, 2026-11-04, not an owner decision:*
+
+- The answer shows the new text from its first line wherever the keyboard is. A
+  reader who has moved keeps the keyboard and the body where they are.
+- A Tab with Ctrl, Alt or Meta held moves no focus, so it does not count as a Tab,
+  and pressing the text after one does not scroll.
 
 ## Alternatives
 

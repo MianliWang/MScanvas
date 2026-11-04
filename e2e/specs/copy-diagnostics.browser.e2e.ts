@@ -36,6 +36,7 @@ const COPY = "[data-diagnostics-copy]";
 const COPIED = "[data-diagnostics-copied]";
 const COPY_FAILED = "[data-diagnostics-copy-failed]";
 const FAILED = "[data-diagnostics-failed]";
+const FIRST_CHOICE = `${DIALOG} [role="radio"][aria-checked="true"]`;
 /** Why the button is refused while a read is out. */
 const REASON = ".settings-diagnostics-field .setting-field-help";
 
@@ -291,6 +292,34 @@ describe("Copy diagnostics, rendered", () => {
         });
       }
 
+      // With the box in view a scroll to it moves nothing. Here it is below the body,
+      // so a scroll would take the control that has the keyboard out of sight.
+      for (const read of ["first", "second"] as const) {
+        it(`a ${read} read leaves the body with a reader who moved away from the box, ${locale} ${String(width)}x${String(height)}`, async () => {
+          await open(locale, width, height);
+          if (read === "second") {
+            await browser.$(READ).click();
+            await browser.waitUntil(() => activeMatches(PREVIEW));
+            await setInvokeResult(COMMAND, SECOND_READING);
+          }
+          await holdInvoke(COMMAND);
+          await browser.$(READ).click();
+          await browser.$(`${READ}[aria-disabled="true"]`).waitForExist();
+          await browser.execute((css: string) => { document.querySelector<HTMLElement>(css)!.focus({ preventScroll: true }); }, FIRST_CHOICE);
+          await browser.execute((css: string) => { document.querySelector(css)!.scrollTop = 0; }, BODY);
+
+          await releaseInvokeHold(COMMAND);
+          await browser.waitUntil(async () => (await value()) === (read === "second" ? SECOND_READING : TEXT));
+          await aFrameLater();
+          expect(await bodyTop()).toBe(0);
+          expect(await activeMatches(FIRST_CHOICE)).toBe(true);
+          await inTheBody(FIRST_CHOICE);
+          expect(await boxPlace()).toEqual({ top: 0, caret: 0 });
+          // What makes this case worth having: the box really is out of the body.
+          expect(contains(await boxOf(BODY), await boxOf(PREVIEW))).toBe(false);
+        });
+      }
+
       // Copy sits on the body's lower edge after a wheel or a Tab, with its result
       // below it and the refusal pushing it further down.
       it(`a copy pressed on the body's edge shows that it was written, each time, ${locale} ${String(width)}x${String(height)}`, async () => {
@@ -329,24 +358,31 @@ describe("Copy diagnostics, rendered", () => {
       });
 
       // A Tab before the press is what could make it scroll, and a drag would lose its start.
-      it(`a press in the text after a Tab moves nothing, ${locale} ${String(width)}x${String(height)}`, async () => {
-        await open(locale, width, height);
-        await standInClipboard(true);
-        await browser.$(READ).click();
-        await browser.waitUntil(() => activeMatches(PREVIEW));
-        await browser.keys("Tab");
-        expect(await activeMatches(COPY)).toBe(true);
-        await pressAt(COPY);
-        await browser.$(COPY_FAILED).waitForDisplayed();
-        await aFrameLater();
-        await boxHalfBelow();
-        const before = await bodyTop();
-        await pressTheText();
-        expect(await activeMatches(PREVIEW)).toBe(true);
-        await aFrameLater();
-        expect(await bodyTop()).toBe(before);
-        await inTheBody(COPY_FAILED);
-      });
+      // With a modifier held, Tab moves no focus, so nothing takes it back before the press.
+      for (const modifier of [null, "Control", "Alt", "Meta"]) {
+        it(`a press in the text after a ${modifier === null ? "" : `${modifier}+`}Tab moves nothing, ${locale} ${String(width)}x${String(height)}`, async () => {
+          await open(locale, width, height);
+          await standInClipboard(true);
+          await browser.$(READ).click();
+          await browser.waitUntil(() => activeMatches(PREVIEW));
+          await browser.keys("Tab");
+          expect(await activeMatches(COPY)).toBe(true);
+          await pressAt(COPY);
+          await browser.$(COPY_FAILED).waitForDisplayed();
+          await aFrameLater();
+          if (modifier !== null) {
+            await browser.keys([modifier, "Tab"]);
+            expect(await activeMatches(COPY)).toBe(true);
+          }
+          await boxHalfBelow();
+          const before = await bodyTop();
+          await pressTheText();
+          expect(await activeMatches(PREVIEW)).toBe(true);
+          await aFrameLater();
+          expect(await bodyTop()).toBe(before);
+          await inTheBody(COPY_FAILED);
+        });
+      }
 
       it(`a refused copy reached backwards by Tab shows the refusal whole, ${locale} ${String(width)}x${String(height)}`, async () => {
         await open(locale, width, height);
@@ -409,9 +445,8 @@ describe("Copy diagnostics, rendered", () => {
         await browser.$(PREVIEW).waitForExist();
         await browser.execute(() => document.querySelector<HTMLElement>("[data-settings-close]")?.focus());
         await browser.keys("Tab");
-        const first = `${DIALOG} [role="radio"][aria-checked="true"]`;
-        expect(await activeMatches(first)).toBe(true);
-        await inTheBody(first);
+        expect(await activeMatches(FIRST_CHOICE)).toBe(true);
+        await inTheBody(FIRST_CHOICE);
       });
     }
   }

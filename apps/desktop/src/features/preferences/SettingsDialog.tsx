@@ -154,7 +154,9 @@ export function SettingsDialog({ restore }: {
         onCompositionStartCapture={() => { composing.current = true; }}
         onCompositionEndCapture={() => { composing.current = false; }}
         onKeyDownCapture={(event) => {
-          tabbing.current = event.key === "Tab";
+          // Radix's own test for a Tab that moves focus. Any other leaves the flag set
+          // until the next focus, which can be a press.
+          tabbing.current = event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey;
           if ((composing.current || event.nativeEvent.isComposing || event.keyCode === 229) && event.key === "Enter") {
             event.preventDefault(); event.stopPropagation();
           }
