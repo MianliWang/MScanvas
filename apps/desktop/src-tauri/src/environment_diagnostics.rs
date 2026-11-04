@@ -511,8 +511,10 @@ pub(crate) fn render(facts: &Facts, roots: &KnownRoots, accounts: &[String]) -> 
             code_or_none(facts.remembered_not_saved.as_deref())
         ),
         String::new(),
-        // ponytail: the session holds no view cache yet (ADR 0060 slice 2
-        // wires it); report the held cache's usage here then.
+        // ponytail: ADR 0060's slice 2 binds only the cache's parent folder, and
+        // `describe_view_cache` makes the cache if there is none, which this
+        // summary never does (ADR 0063, decision 1). Report the usage here once
+        // the session holds an open cache.
         "[View cache]".to_owned(),
         "Usage: not in this build".to_owned(),
         String::new(),

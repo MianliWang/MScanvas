@@ -59,7 +59,6 @@ revision).
 | ProteoWizard | `State`, `Origin`, `Failure` | the last reading's verdict, `automatic`/`chosen`, and its failure kind | code |
 | ProteoWizard | `Release`, `Build date`, `Source revision` | the reported build identity; the revision from the identity the last reading bound | digits and dots; `Jan 13 2026`; 6–40 hex digits |
 | ProteoWizard | `msconvert SHA-256` | the digest discovery bound to the executable the last reading described | 64 hex digits |
-| ProteoWizard | `Verified build` | whether that digest is ADR 0055's verified build, read from the adapter's `VERIFIED_MSCONVERT_SHA256`, never a copy of it | `yes`/`no`; `unknown` without a digest |
 | ProteoWizard | `Folder` | which known root the usable reading's folder sits under, never the folder (decision 4) | one of five placeholders |
 | ProteoWizard | `Remembered folder`, `… refused at startup`, `… not saved` | whether a folder is remembered, and the two owned codes beside it. Never the remembered path | `yes`/`no`; code |
 | View cache | `Usage` | `not in this build` until ADR 0060's slice 2 gives the session a cache; then the held cache's usage, never by opening one | fixed |
@@ -83,10 +82,23 @@ the reading was taken under is still current, and are `unknown` after it
 changed, never the new build's facts beside the old reading's release and
 folder.
 
-*As built, 2026-11-03:* `Verified build` (question 3) follows that digest, so it
-is `unknown` after the binding changed as well as without a digest. Question 3
-says `yes/no`; the third value follows from having no digest to compare and is
-not an owner decision.
+*As built, 2026-11-03:* the table above stays as it was accepted, and the summary
+differs from it in two lines.
+
+- `Verified build` is a new `ProteoWizard` line after `msconvert SHA-256`
+  (question 3): whether that digest is ADR 0055's verified build, read from the
+  adapter's `VERIFIED_MSCONVERT_SHA256`, never a copy of it. Question 3 says
+  `yes/no`. The line follows the digest, so it is `unknown` after the binding
+  changed as well as without a digest; that third value follows from having no
+  digest to compare and is not an owner decision.
+- `Usage` under `View cache` still says `not in this build`, which is not an owner
+  decision. ADR 0060's slice 2 has landed, but it binds only the folder the cache
+  would live under, and no interface calls `describe_view_cache` or
+  `clear_view_cache`, because the owner moved **View with…** and Clear view cache
+  to the next slice (A0060-split, 2026-11-03). That answer does not cover this
+  line. `describe_view_cache` goes through `ViewCache::open`, which makes the cache
+  if there is none, and the table says never by opening one, so the line stays until
+  the session holds an open cache.
 
 ### 2. What never goes in
 
@@ -288,7 +300,16 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
 - The button reads when pressed, and again as **Read again**. A second read leaves
   the screen as it is until it answers, with **Copy** refused meanwhile, and the
   result of a copy still out when it was pressed is not shown, because that copy
-  took the old text.
+  took the old text. A failed read takes the text and **Copy** away, so if either
+  had the keyboard it goes to **Read again**.
+- The box is a fixed 200 px and scrolls inside the dialog's body, which scrolls too.
+  Measured with the 42-line fixture at 1366x768 and 960x640: a 198 px client area
+  holding 822 px, so about ten lines show, and `[ProteoWizard]` (line 19) and
+  `[Recent errors]` (line 38) are reached by scrolling inside the box. **Copy** does
+  not wait for them to be read. Decision 2 says that those last lines can name a
+  vendor and a time. Decision 10 sets no height, and the answer to question 8 did not
+  cover it. The alternative is a box that grows with the text, so that only the body
+  scrolls.
 - Closing Settings drops the text. The clipboard's refusal is shown above the text,
   because the text stays selectable by hand. Support is the last section, below
   anything a save or the stored record has to say, because the text makes it tall.
@@ -297,9 +318,11 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
   at 1366x768, so where a Tab lands is brought into view: past Close it wraps to the
   first choice without scrolling. A press does not scroll, so the clipboard's refusal
   stays in sight while the text is selected.
-- `check_repo.py` refuses any other use of `navigator.clipboard` in the interface's
-  source, and a second call or a read in this one, because the route was accepted
-  for this button only (question 4).
+- `check_repo.py` holds the route to this button (question 4) as far as a text
+  search can. It refuses the words `navigator.clipboard` in any other non-test file
+  of the interface's source, and in this one anything but one `writeText` call. It
+  does not see `const { clipboard } = navigator`, `navigator["clipboard"]` or
+  `document.execCommand("copy")`, so those are for review to refuse.
 - The release guide's list points at the button from the first release that has
   it; beta 1's guide describes beta 1, which does not.
 
@@ -373,9 +396,10 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
   section reports its usage and `Format` stays `1` only if the keys do not
   change.
 - *2026-11-03:* the frontend calls the command, so the registration test no longer
-  exempts it. `Format` is `2` (decision 6), and the line above holds for `2`.
-  `VERIFIED_MSCONVERT_SHA256` is public from the ProteoWizard adapter, so this
-  summary and ADR 0055's tier read one value.
+  exempts it. `Format` is `2` (decision 6), and the line above holds for `2`. Slice 2
+  has landed and the section does not report usage yet; the note under decision 1
+  says why. `VERIFIED_MSCONVERT_SHA256` is public from the ProteoWizard adapter, so
+  this summary and ADR 0055's tier read one value.
 
 ## Owner decision, 2026-10-30 (A0063)
 
@@ -390,8 +414,8 @@ questions 1–5, and each is answered as recommended:
    accepting that an error built and then discarded counts.
 3. **The verified-build line:** add `Verified build: yes/no` once PR #161
    merges, reading its constant rather than a copy. Not done yet: #161 is open.
-   *Done on 2026-11-03; it says `unknown` when there is no digest to read
-   (decision 1).*
+   *Done on 2026-11-03. It also says `unknown`, which is not an owner decision (the
+   note under decision 1).*
 4. **The interface and the copy route (decision 10):** a Settings button, a
    read-only preview and the platform text clipboard written from that
    button's click. The departure from ADR 0030 and ADR 0034's "the clipboard is
@@ -475,3 +499,5 @@ recommended:
    sharing", ADR 0017), but that file holds redacted backend text the user has not
    seen when saving it. The alternative was one line beside the preview, in en and
    zh-CN.
+   *Note, 2026-11-03:* "no backend text" here means none beyond the three identity
+   tokens the Context lists (the release, the build date and the source revision).
