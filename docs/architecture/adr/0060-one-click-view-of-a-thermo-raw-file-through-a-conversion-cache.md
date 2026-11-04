@@ -1692,9 +1692,11 @@ Q2–Q5 and Q7 stand. Q6, the hold release, stays open under HR-1.
    schema change that the store refuses rather than migrates", and this question's
    "the store refuses another schema rather than migrating it". A version the store
    does not know is still refused and left in place, and an earlier build still reads
-   a later record as unsupported. Schema 2 carries V-7's seven settings and no cap. A
-   user-adjustable cap stays not built, and this note decides nothing about it:
-   question 2 and its default stand as A0060 left them.
+   a later record as unsupported. Schema 2 carries V-7's seven settings and no cap.
+   A cap added before the release that ships schema 2 stays schema 2 (PR #213's
+   reading, not an owner decision); after that release it bumps again, V-7.1's "a
+   setting added later bumps again". A user-adjustable cap stays not built, and this
+   note decides nothing about it: question 2 and its default stand as A0060 left them.
 3. **A same-session repeat view on highlight.** With a memo hit and an existing
    entry, a highlighted RAW row could open at once, as an mzML row does, at the
    cost of the cached copy's hash and the open on every highlight. *Default: no;
