@@ -9,8 +9,11 @@
 //! **Amended by ADR 0071 decision 2, under ADR 0070 decision 2.** The XIC pass
 //! in `mzml_xic.rs` decodes, through these primitives, the arrays of every
 //! spectrum it evaluates: one streaming pass in source order, one spectrum's
-//! arrays at a time, keeping only the per-scan result. That is the one
-//! computation admitted so far. The viewer's selected-spectrum read is
+//! arrays at a time, keeping only the per-scan result. The map pass in
+//! `rt_mz_map.rs` (ADR 0068, under the same decision) decodes, through the
+//! selected read, the arrays of the MS1 spectra of one map inside its window, one
+//! spectrum's arrays at a time, keeping only its raster. Those are the two
+//! computations admitted so far. The viewer's selected-spectrum read is
 //! unchanged, and nothing in this module computes from an array.
 //!
 //! This module's two reads, and nothing else:
