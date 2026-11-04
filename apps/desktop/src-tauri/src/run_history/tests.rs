@@ -1242,6 +1242,9 @@ fn hold(path: &Path, share: u32) -> fs::File {
 const SHARES_ALL_BUT_DELETE: u32 = 0x1 | 0x2;
 #[cfg(windows)]
 const SHARES_NOTHING: u32 = 0;
+/// `FILE_SHARE_DELETE`: a name can go, and nobody else can open the file.
+#[cfg(windows)]
+const SHARES_DELETE_ONLY: u32 = 0x4;
 
 #[cfg(windows)]
 const NOT_REMOVED_ONE: RunHistoryWriteDto = RunHistoryWriteDto::Failed {
@@ -1639,6 +1642,38 @@ fn another_document_at_a_name_already_kept_aside_gets_a_link_of_its_own() {
         assert_eq!(kept, [b"{ document A".to_vec(), b"{ document B".to_vec()]);
         assert_eq!(unreadable(), 2);
     }
+}
+
+/// An identity nobody could read says nothing about a link, so the link is made
+/// before the name goes. This calls `set_aside` itself: a list stops at Unreadable
+/// under this holder, and only a holder arriving after the read, or a filesystem
+/// with no file ID, reaches this from there.
+#[cfg(windows)]
+#[test]
+fn a_run_whose_identity_cannot_be_read_gets_its_link_before_its_name_goes() {
+    let scratch = Scratch::new("history-corrupt-no-identity");
+    let _history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let name = file_name_of(&format!("{:013}-{}", 1, "c".repeat(32)));
+    let path = directory.join(&name);
+    fs::write(&path, b"{ not a run").expect("write");
+
+    let holder = hold(&path, SHARES_DELETE_ONLY);
+    assert_eq!(
+        local_document::object_identity(&path),
+        None,
+        "this holder leaves no identity to read"
+    );
+    assert!(set_aside(&directory, &name));
+    drop(holder);
+
+    assert!(!path.exists(), "its name is gone");
+    let kept: Vec<Vec<u8>> = entries(&directory)
+        .iter()
+        .filter(|name| is_set_aside(name))
+        .map(|name| fs::read(directory.join(name)).expect("read"))
+        .collect();
+    assert_eq!(kept, [b"{ not a run".to_vec()]);
 }
 
 #[cfg(windows)]
