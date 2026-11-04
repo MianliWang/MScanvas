@@ -1053,8 +1053,8 @@ fn a_first_commit_can_turn_remembering_off_and_the_record_keeps_the_switch() {
     ));
 }
 
-/// A reading, not an owner decision (V-7.3 does not say). A different answer
-/// changes this test and the closure in `remember_backend_folder`.
+/// The owner's answer to V-7-FOLDER, `keep_folder`, on 2026-11-04: the switch
+/// governs interface preferences only.
 #[test]
 fn the_folder_is_still_remembered_and_forgotten_while_remembering_is_off() {
     let root = Root::new("remember-folder");

@@ -565,22 +565,32 @@ defaults and leaves the file, the cost V-7.1 accepted. Beta 1 probes the version
 first, so it reports `unsupportedVersion` and says "The saved file was written
 by a newer version of MSCanvas."
 
-Five parts of this are as built on 2026-11-04, each a reading, not an owner
+The owner answered two more on 2026-11-04, in round two of the decision page:
+
+- V-7-FOLDER, `keep_folder`: "文件夹继续记，开关只管界面偏好" (the folder stays
+  remembered, and the switch governs interface preferences only). The ProteoWizard
+  folder is still remembered and forgotten while remembering is off, a newly chosen
+  one included, and it never reaches the webview. Accepted with it: the path stays
+  on disk while off, removing it takes Forget (N-S5, not yet in the interface), and
+  the switch's copy cannot repeat the demo's "不保存文件路径" (saves no file paths).
+  The answer also settles the rule V-7.3 (2026-11-03) left open, where "turned off"
+  is stored. The row says "两个选项都把“已关闭”存在这份记录里，选哪个都一并定下
+  V-7.3 留的这条规则" (both options store "turned off" in this record, and either
+  settles that rule), so the record keeps the switch. Section 1d of
+  `OWNER_DECISIONS_V511.md` still says "Open: that rule" on 2026-11-04, until a
+  records PR takes this answer.
+- V-3-SWITCH, `no_remember`: "不记，每次从绝对强度开始" (not remembered, each launch
+  starts on absolute intensity). The relative-intensity switch is not a field.
+
+Four parts of this are as built on 2026-11-04, each a reading, not an owner
 decision:
 
-- The write rule. V-7.3 (2026-11-03) chose the switch and accepted that where
-  "turned off" is stored needs a rule, and that rule is open: its row in section
-  1d of `OWNER_DECISIONS_V511.md` (#212, not merged) says "Open: that rule", and
-  owner question "V-7.3 ProteoWizard 文件夹" is unanswered. As built, the record
-  keeps the switch. A commit that leaves remembering off is not written and
-  answers `notRemembered`; the session keeps the choice and says it is this
-  session's. The commit that turns it off writes that switch and no other change.
-  The commit that turns it on is written whole, and so is a confirmed replacement
-  of an unusable record, because that confirmation says it stores the preferences
-  shown.
-- The ProteoWizard folder is still remembered and forgotten while remembering is
-  off, because it is what lets the next launch find the tools. It never reaches
-  the webview.
+- How a commit behaves under the switch. A commit that leaves remembering off is
+  not written and answers `notRemembered`; the session keeps the choice and says
+  it is this session's. The commit that turns it off writes that switch and no
+  other change. The commit that turns it on is written whole, and so is a confirmed
+  replacement of an unusable record, because that confirmation says it stores the
+  preferences shown.
 - Turning remembering off leaves what was stored in place, so the next launch
   still starts on it. The v5.11 demo removes it instead, and the gain V-7.3 was
   chosen with, "不想留记录的人有开关" (people who want no record have a switch),

@@ -174,9 +174,9 @@ pub struct DisplayPreferences {
     pub crosshair: bool,
     pub grid: bool,
     /// Whether interface preferences are written at all, by the rule in
-    /// [`super::UiPreferenceStore::save`]. The record keeping this switch itself
-    /// is a reading, not an owner decision: V-7.3 chose the switch and left open
-    /// where "off" is stored.
+    /// [`super::UiPreferenceStore::save`]. The record keeps this switch itself:
+    /// the owner's answer to V-7-FOLDER, `keep_folder`, on 2026-11-04, which
+    /// settles where V-7.3 left "off" to be stored.
     pub remember: bool,
 }
 

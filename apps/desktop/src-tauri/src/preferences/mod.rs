@@ -201,8 +201,11 @@ impl UiPreferenceStore {
     ///
     /// What was stored stays stored, so the next launch still starts on it.
     ///
-    /// All of this is a reading, not an owner decision. V-7.3 chose the switch
-    /// and left its rule open, and nothing says whether off also erases.
+    /// That the record keeps the switch, and that it governs interface preferences
+    /// only, is the owner's answer to V-7-FOLDER, `keep_folder`, on 2026-11-04. How
+    /// each commit behaves is as built on that date: a reading, not an owner
+    /// decision. So is what was stored staying stored, because nothing says whether
+    /// off also erases.
     #[must_use]
     pub fn save(&self, request: &UiPreferenceWriteDto) -> UiPreferenceSaveDto {
         if request.appearance.is_none() && request.layout.is_none() && request.display.is_none() {
@@ -261,9 +264,9 @@ impl UiPreferenceStore {
     /// a layout or Settings commit and this one cannot overwrite each other.
     /// An unusable stored record is never replaced from here.
     ///
-    /// The remember switch does not reach it. That is a reading, not an owner
-    /// decision: V-7.3 does not say, and the folder is what lets the next launch
-    /// find the tools. A different answer changes this closure and nothing else.
+    /// The remember switch does not reach it: the owner's answer to V-7-FOLDER,
+    /// `keep_folder`, on 2026-11-04. The folder stays remembered, and the switch
+    /// governs interface preferences only.
     #[must_use]
     pub fn remember_backend_folder(&self, folder: Option<&Path>) -> UiPreferenceSaveDto {
         let folder = match folder.map(Path::to_str) {
