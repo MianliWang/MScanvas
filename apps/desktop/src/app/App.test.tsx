@@ -1824,6 +1824,31 @@ describe("the session workspace roster", () => {
       open.resolve(buildPreview(3));
       await open.promise;
     });
+    // That read is over, so the press that waited for it reads its own row, once.
+    await waitFor(() => {
+      expect(api.openedHandles).toEqual(["file-0", "file-1"]);
+    });
+  });
+
+  it("puts nothing back when a removed row's read lands, and the next activation reads", async () => {
+    const open = deferred<ReturnType<typeof buildPreview>>();
+    const api = createFakePreviewApi({
+      pickedFiles: [selectedFile, secondFile],
+      preview: () => open.promise,
+    });
+    await openTheFile(api);
+    await screen.findByText("Reading QC_pool_01.mzML…");
+    await screen.findByRole("row", { name: /QC_pool_01\.mzML/ });
+    highlightRows(/QC_pool_01\.mzML/);
+    await chooseRosterAction("removeHighlighted");
+    await waitFor(() => {
+      expect(rosterRows()).toHaveLength(1);
+    });
+
+    await act(async () => {
+      open.resolve(buildPreview(3));
+      await open.promise;
+    });
     // The reply landed for a row that is gone, so it put nothing back.
     expect(screen.queryByRole("grid", { name: "Scans" })).toBeNull();
     expect(api.openedHandles).toEqual(["file-0"]);

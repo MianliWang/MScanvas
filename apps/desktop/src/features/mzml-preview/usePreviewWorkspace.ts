@@ -768,6 +768,7 @@ export interface PreviewWorkspace {
   readonly clearList: () => boolean;
   /** Explicitly reads one dataset; returns whether this request started a read. */
   readonly activateDataset: (handle: string) => boolean;
+  readonly holdOpen: (handle: string) => void;
   /** Reads the active dataset again, after a failure or a backend change. */
   readonly previewActiveAgain: () => void;
   /** The one-click view of a Thermo RAW row (ADR 0060): the operation, and its polling. */
@@ -1020,6 +1021,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   /** What each file and each scan keep while the workspace lives: see `viewer/scanMemory.ts`. */
   const fileViewMemory = useRef(new Map<string, FileViewMemory>());
   const scanZooms = useRef(new Map<string, MzDomain>());
+  /** The row a press asked for while a viewer read was out. It opens when the read lands. */
+  const heldOpen = useRef<string | null>(null);
   const [chromatogramTraces, setChromatogramTraces] =
     useState<TraceVisibility>(INITIAL_TRACES);
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
@@ -2113,6 +2116,24 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     [loadPreview],
   );
 
+  /**
+   * A press on an mzML row while a viewer read is out, as one now is after every
+   * open (V-1). One read at a time still holds, so the press waits for it rather
+   * than being lost: the latest press only, and one on the file already open
+   * asks for nothing.
+   */
+  const holdOpen = useCallback((handle: string) => {
+    heldOpen.current = handle === openHandle.current ? null : handle;
+  }, []);
+  useEffect(() => {
+    const handle = heldOpen.current;
+    if (previewBackendBusy || viewerRequests.current > 0 || handle === null) return;
+    heldOpen.current = null;
+    // `activateDataset` keeps its own guards; these are the rest of `canPreview`,
+    // and a row that left the list while the press waited.
+    if (!conversionBusyRef.current && !rawViewBusyRef.current && rosterRef.current.datasets.some(dataset => dataset.handle === handle)) activateDataset(handle);
+  }, [activateDataset, previewBackendBusy]);
+
   const openRawView = useCallback(
     (operation: number, handle: string) => {
       // One viewer read at a time. It stays ready, and the row's pane offers Open.
@@ -2705,6 +2726,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       if (row === undefined) {
         return;
       }
+      // A scan chosen here is the latest word: a file press still waiting is not.
+      heldOpen.current = null;
       const startedAt = now();
       // The reducer allocates the revision. Several producers reach this one
       // function -- the plot, the table, Previous and Next -- and the number
@@ -2943,23 +2966,26 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
    * the row lookup reads the table this render published, and `preview-loaded`
    * would clear anything selected before it.
    */
-  const enteredPreview = useRef<Preview | null>(null);
   useLayoutEffect(() => {
-    if (preview.status !== "loaded" || enteredPreview.current === preview.preview) return;
-    enteredPreview.current = preview.preview;
-    if (readViewerInteraction().selection !== null) return;
+    // A press has already asked for another file, so this one is not read on the way past.
+    if (preview.status !== "loaded" || heldOpen.current !== null) return;
     const { rows, truncated } = preview.preview.spectrumTable;
-    const left = openHandle.current === null ? null : fileViewMemory.current.get(openHandle.current)?.selected ?? null;
-    if (left !== null) {
-      const row = rows.find(candidate => candidate.index === left.index);
-      if (row?.identifier === left.identifier) selectSpectrum(row.index);
-      return;
+    const file = openHandle.current === null ? undefined : fileViewMemory.current.get(openHandle.current);
+    if (file !== undefined && file.selected !== null) {
+      const { index, identifier } = file.selected;
+      const row = rows.find(candidate => candidate.index === index);
+      if (row?.identifier === identifier) {
+        selectSpectrum(index);
+        return;
+      }
+      // Another scan now: what the person left is gone, so this is a first time here.
+      file.selected = null;
     }
     // First time here: the apex of the declared TIC (V-1). Not on a truncated
     // table, whose largest value is a prefix's and not the run's.
     const apex = truncated ? null : apexMs1Row(rows);
     if (apex !== null) selectSpectrum(apex.index);
-  }, [preview, readViewerInteraction, selectSpectrum]);
+  }, [preview, selectSpectrum]);
 
   const toggleChromatogramTrace = useCallback((trace: TraceKind) => {
     setChromatogramTraces((current) => ({ ...current, [trace]: !current[trace] }));
@@ -4552,6 +4578,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     removeSelected,
     clearList,
     activateDataset,
+    holdOpen,
     previewActiveAgain,
     rawView,
     openRawView,

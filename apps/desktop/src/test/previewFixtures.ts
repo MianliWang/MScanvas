@@ -523,7 +523,7 @@ export function buildPreview(rowCount = 6, truncated = false, receipt = 1): Prev
       msLevels: [
         { msLevel: 2, spectrumCount: rowCount },
       ],
-      totalMsLevelCount: 2,
+      totalMsLevelCount: 1,
       msLevelsTruncated: false,
       chromatogramCount: null,
       retentionTimeRange: rowCount === 0 ? { state: "noRows" }

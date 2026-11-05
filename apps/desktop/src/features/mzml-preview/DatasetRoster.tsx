@@ -57,8 +57,8 @@ export interface DatasetRosterProps {
   readonly onRawHighlighted?: (handle: string) => void;
   /** Enter on the highlighted Thermo RAW row: the pane's first action. */
   readonly onRawEnter?: (handle: string) => void;
-  /** An mzML row pressed while a view holds the slot: nothing is read, and the evidence says why. */
-  readonly onReadHeld?: () => void;
+  /** An mzML row pressed while the read it asks for has to wait: a view holds the slot, or another read is out. */
+  readonly onReadHeld?: (handle: string) => void;
   /**
    * A row another surface has asked to reveal, with the activation that asked.
    *
@@ -725,7 +725,7 @@ export const DatasetRoster = memo(function DatasetRoster({
     if (kind === "thermo_raw") onRawHighlighted?.(handle);
     else if (kind === "mzml") {
       if (canPreview) onActivate(handle);
-      else onReadHeld?.();
+      else onReadHeld?.(handle);
     }
   };
 
@@ -759,7 +759,7 @@ export const DatasetRoster = memo(function DatasetRoster({
         const focused = state.datasets.find(row => row.handle === state.focused);
         if (focused?.sourceKind === "mzml" && !canPreview && onReadHeld !== undefined) {
           dispatch({ type: "rowPressed", handle: focused.handle, modifiers: { ctrl: false, shift: false } });
-          onReadHeld();
+          onReadHeld(focused.handle);
         } else if (focused?.sourceKind === "mzml" && canPreview) {
           onActivate(focused.handle);
         } else if (focused?.sourceKind === "thermo_raw" && !event.repeat) {

@@ -837,5 +837,30 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.waitUntil(() => inSpectrumPanel(words.errSpectrumEncodingUnsupported), { timeoutMsg: "the refusal was never shown on open" });
     expect(await selectedSource()).toBe("6");
     await capture(label("numpress"));
+    // A press on another file while the read on open is out waits for it, and opens.
+    await installIpcBoundary({ ...answers("complete"), get_workspace_roster: { capacity: 1024, datasets: [selectedFile, secondFile] } });
+    await metrics(scenario.width, scenario.height, scenario.dpr);
+    await browser.url("/");
+    await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').waitForExist();
+    await sourceBoundary(1);
+    await preferences(scenario.language, "comfortable");
+    const opens = async () => (await ipcCalls()).filter(call => call.command === "open_mzml_preview").map(call => call.args.handle);
+    const press = async (handle: string) => {
+      await revealRosterRow(handle);
+      await browser.$('.grouped-roster [data-handle="' + handle + '"]').click();
+    };
+    await holdInvoke("load_selected_spectrum");
+    await press(selectedFile.handle);
+    await browser.waitUntil(async () => await heldCallers("load_selected_spectrum") === 1, { timeoutMsg: "the read on open never went out" });
+    await press(secondFile.handle);
+    expect(await opens()).toEqual([selectedFile.handle]);
+    await capture(label("second-press-during-read"));
+    await releaseInvokeHold("load_selected_spectrum");
+    await browser.waitUntil(async () => (await opens()).length === 2, { timeoutMsg: "the press never opened its file" });
+    expect(await opens()).toEqual([selectedFile.handle, secondFile.handle]);
+    await browser.waitUntil(async () => (await reads()).length === 2, { timeoutMsg: "the second file's read never went out" });
+    await browser.$(MZ).waitForDisplayed();
+    await capture(label("second-press-opened"));
+    expect(await consoleEntries()).toEqual([]);
   });
 });

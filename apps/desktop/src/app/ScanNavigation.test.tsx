@@ -575,6 +575,119 @@ describe("a spectrum on open (V-1)", () => {
     expect(result.current.viewerInteraction.selection?.index).toBe(0);
   });
 
+  it("falls to the apex when the scan a person left is another scan after a re-read", async () => {
+    let reads = 0;
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum, preview: () => {
+      reads += 1;
+      const run = runOf([[1, 10], [2, 5], [1, 70]]);
+      return Promise.resolve({ ...run, spectrumTable: { ...run.spectrumTable,
+        rows: run.spectrumTable.rows.map(row => ({ ...row, identifier: `${row.identifier} read=${reads}` })) } });
+    } });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(1));
+    const open = async (count: number) => {
+      await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(selectedFile.handle); });
+      await waitFor(() => expect(api.openedHandles).toHaveLength(count));
+      await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+    };
+    await open(1);
+    act(() => { result.current.selectSpectrum(0); });
+    await waitFor(() => expect(api.requestedSpectra).toEqual([2, 0]));
+    await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+    await open(2);
+    expect(result.current.viewerInteraction.selection?.index).toBe(2);
+    expect(api.requestedSpectra).toEqual([2, 0, 2]);
+  });
+
+  describe("a press on another file while a read is out", () => {
+    const pressFile = (name: string) => fireEvent.click(within(screen.getByRole("treegrid")).getByText(name));
+    /** Two files whose every spectrum read waits to be answered. */
+    function heldReads() {
+      const replies: (() => void)[] = [];
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(runOf([[1, 10], [1, 70]])),
+        spectrum: index => new Promise(resolve => { replies.push(() => { void spectrum(index).then(resolve); }); }) });
+      return { api, replies };
+    }
+    const land = async (reply: (() => void) | undefined) => { await act(async () => { reply!(); await Promise.resolve(); }); };
+
+    it("opens that file when the read lands", async () => {
+      const { api, replies } = heldReads();
+      await opened(api);
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+      pressFile(secondFile.fileName);
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+      await land(replies[0]);
+      await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle, secondFile.handle]));
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1, 1]));
+      await land(replies[1]);
+      await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    });
+
+    it("does not read the first file on the way past when the press came during its open", async () => {
+      let finish: (run: ReturnType<typeof runOf>) => void = () => undefined;
+      let opens = 0;
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], spectrum,
+        preview: () => (opens += 1) === 1 ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(runOf([[1, 10], [1, 70]])) });
+      render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+      </WorkspaceDropTransportProvider>);
+      fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
+      await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle]));
+      pressFile(secondFile.fileName);
+      await act(async () => { finish(runOf([[1, 10], [1, 70]])); await Promise.resolve(); });
+      await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle, secondFile.handle]));
+      await screen.findByRole("img", { name: /^Spectrum 1,/u });
+      expect(api.requestedSpectra).toEqual([1]);
+    });
+
+    it("forgets the press when a scan row is pressed after it", async () => {
+      const { api, replies } = heldReads();
+      await opened(api);
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      pressFile(secondFile.fileName);
+      fireEvent.click(within(grid()).getAllByRole("row").find(row => row.getAttribute("data-source-index") === "0")!);
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1, 0]));
+      await land(replies[1]);
+      await land(replies[0]);
+      await screen.findByRole("img", { name: /^Spectrum 0,/u });
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+    });
+
+    it("asks for nothing when the press is on the file already open", async () => {
+      const { api, replies } = heldReads();
+      await opened(api);
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      pressFile(selectedFile.fileName);
+      await land(replies[0]);
+      await screen.findByRole("img", { name: /^Spectrum 1,/u });
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+    });
+
+    it("opens the latest press only, and not a row that has left the list", async () => {
+      const replies: (() => void)[] = [];
+      const third = { ...secondFile, handle: "third", fileName: "third.mzML" };
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile, third], preview: () => Promise.resolve(runOf([[1, 10], [1, 70]])),
+        spectrum: index => new Promise(resolve => { replies.push(() => { void spectrum(index).then(resolve); }); }) });
+      const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+      await waitFor(() => expect(result.current.roster.datasets).toHaveLength(3));
+      await waitFor(() => expect(result.current.backendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(selectedFile.handle); });
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      act(() => {
+        result.current.holdOpen(secondFile.handle);
+        result.current.holdOpen(third.handle);
+        result.current.dispatchRoster({ type: "rowPressed", handle: third.handle, modifiers: { ctrl: false, shift: false } });
+        result.current.removeSelected();
+      });
+      await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+      await land(replies[0]);
+      await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+    });
+  });
+
   it("is refused where a press would be, and does not come back when the lane frees", async () => {
     let check: () => void = () => undefined;
     let answers = 0;

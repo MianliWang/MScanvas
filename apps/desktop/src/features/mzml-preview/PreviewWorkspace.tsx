@@ -989,7 +989,7 @@ export function PreviewWorkspace() {
             // Where the roster is a drawer it would cover the row's pane, so the
             // drawer folds and the keyboard moves to the pane (ADR 0060 decision 1).
             onRawHighlighted={foldDrawerForRawPane}
-            onReadHeld={rawViewRunning === null ? undefined : foldDrawerForRawPane}
+            onReadHeld={rawViewRunning !== null ? foldDrawerForRawPane : workspace.previewBackendBusy ? workspace.holdOpen : undefined}
             onRawEnter={handle => {
               foldDrawerForRawPane();
               if (rawPaneRow?.handle !== handle) return;
