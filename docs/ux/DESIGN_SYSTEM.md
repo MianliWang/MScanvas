@@ -452,10 +452,10 @@ uses its value, and elsewhere v5.11's final value:
 
 ### Conversion and Settings in the v5.11 look (2026-11-04): interim, not owner decisions
 
-Draft PR `ui/fe2-conversion-settings` ports both stylesheets, so the line above,
-"reach them through the shell and tokens until those screens are ported", no longer
-describes Conversion or Settings once it lands. The owner has not seen them and none of these is an owner decision. They
-are the answers the draft ships with, for the owner to change, by the rule the
+Draft PR #225 ports both, so once it lands the accepted list's line, "reach them
+through the shell and tokens until those screens are ported", no longer describes
+Conversion. The owner has not seen them and none of these is an owner decision.
+They are the answers the draft ships with, for the owner to change, by the rule the
 Project block states:
 
 - **Insets and heads.** 16 px in from the card, and a 36 px head with a 14 px title
