@@ -1427,6 +1427,24 @@ mod windows_job {
     const JOB_OBJECT_LIMIT_ACTIVE_PROCESS: u32 = 0x0000_0008;
     const JOB_OBJECT_LIMIT_PRIORITY_CLASS: u32 = 0x0000_0020;
     const JOB_OBJECT_LIMIT_JOB_MEMORY: u32 = 0x0000_0200;
+    const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: u32 = 0x0000_0400;
+    const JOB_OBJECT_UILIMIT_HANDLES: u32 = 0x0000_0001;
+    const JOB_OBJECT_UILIMIT_READCLIPBOARD: u32 = 0x0000_0002;
+    const JOB_OBJECT_UILIMIT_WRITECLIPBOARD: u32 = 0x0000_0004;
+    const JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS: u32 = 0x0000_0008;
+    const JOB_OBJECT_UILIMIT_DISPLAYSETTINGS: u32 = 0x0000_0010;
+    const JOB_OBJECT_UILIMIT_GLOBALATOMS: u32 = 0x0000_0020;
+    const JOB_OBJECT_UILIMIT_DESKTOP: u32 = 0x0000_0040;
+    const JOB_OBJECT_UILIMIT_EXITWINDOWS: u32 = 0x0000_0080;
+    /// ADR 0066 decision 7's list, and nothing beyond it.
+    const WORKER_UI_RESTRICTIONS: u32 = JOB_OBJECT_UILIMIT_DESKTOP
+        | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS
+        | JOB_OBJECT_UILIMIT_EXITWINDOWS
+        | JOB_OBJECT_UILIMIT_GLOBALATOMS
+        | JOB_OBJECT_UILIMIT_HANDLES
+        | JOB_OBJECT_UILIMIT_READCLIPBOARD
+        | JOB_OBJECT_UILIMIT_WRITECLIPBOARD
+        | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS;
     const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
     const TH32CS_SNAPTHREAD: u32 = 0x0000_0004;
     const THREAD_SUSPEND_RESUME: u32 = 0x0002;
@@ -1441,6 +1459,7 @@ mod windows_job {
     const SNAPSHOT_ATTEMPTS: usize = 4;
     const SNAPSHOT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(15);
     const JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS: i32 = 1;
+    const JOB_OBJECT_BASIC_UI_RESTRICTIONS_CLASS: i32 = 4;
     const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
     const CANCELLED_EXIT_CODE: u32 = 0xC000_013A;
 
@@ -1712,7 +1731,16 @@ mod windows_job {
         ///
         /// One active process, a cap on what the whole Job may commit, and
         /// below-normal priority -- each enforced by the kernel for the Job,
-        /// not by anything the worker does.
+        /// not by anything the worker does. So are its UI restrictions, and an
+        /// unhandled exception ending it with that exception's code instead of
+        /// waiting on an error dialog nobody can see (ADR 0066 decision 7).
+        ///
+        /// All of it is set before the child joins, and any failure is this
+        /// function's failure: a worker never runs in a lesser Job. That covers
+        /// a host already in a Job with UI restrictions, where a second such Job
+        /// is refused with `ERROR_NOT_SUPPORTED` (measured on Windows build
+        /// 26300, which does nest it under a plain Job, though the documentation
+        /// of `AssignProcessToJobObject` rules that out too).
         pub(super) fn assign_with(
             child: &Child,
             limits: Option<&crate::WorkerLimits>,
@@ -1731,11 +1759,27 @@ mod windows_job {
             if let Some(limits) = limits {
                 information.basic_limit_information.limit_flags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS
                     | JOB_OBJECT_LIMIT_PRIORITY_CLASS
-                    | JOB_OBJECT_LIMIT_JOB_MEMORY;
+                    | JOB_OBJECT_LIMIT_JOB_MEMORY
+                    | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
                 information.basic_limit_information.active_process_limit = 1;
                 information.basic_limit_information.priority_class = BELOW_NORMAL_PRIORITY_CLASS;
                 information.job_memory_limit = usize::try_from(limits.job_memory_bytes)
                     .map_err(|_| io::Error::other("the memory limit does not fit this platform"))?;
+                let restrictions_length = structure_size::<u32>()?;
+                // SAFETY: The job HANDLE is live, and the pointer and byte size
+                // describe one DWORD, which is the whole of
+                // JOBOBJECT_BASIC_UI_RESTRICTIONS, for the duration of the call.
+                let restricted = unsafe {
+                    set_information_job_object(
+                        handle.as_raw_handle(),
+                        JOB_OBJECT_BASIC_UI_RESTRICTIONS_CLASS,
+                        ptr::from_ref(&WORKER_UI_RESTRICTIONS).cast(),
+                        restrictions_length,
+                    )
+                };
+                if restricted == 0 {
+                    return Err(io::Error::last_os_error());
+                }
             }
             let information_length = structure_size::<ExtendedLimitInformation>()?;
             // SAFETY: The job HANDLE is live, the information pointer references the
@@ -1830,6 +1874,47 @@ mod windows_job {
                 return Err(io::Error::last_os_error());
             }
             Ok(Some(information.peak_job_memory_used as u64))
+        }
+
+        /// The limit flags and the UI restrictions, as the kernel reports them.
+        #[cfg(test)]
+        pub(super) fn limit_flags_and_ui_restrictions(&self) -> io::Result<(u32, u32)> {
+            let mut information = ExtendedLimitInformation::default();
+            let information_length = structure_size::<ExtendedLimitInformation>()?;
+            // SAFETY: The handle is live and the mutable repr(C) buffer and byte
+            // size match JobObjectExtendedLimitInformation for this call.
+            let queried = unsafe {
+                query_information_job_object(
+                    self.handle.as_raw_handle(),
+                    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+                    ptr::from_mut(&mut information).cast(),
+                    information_length,
+                    ptr::null_mut(),
+                )
+            };
+            if queried == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let mut restrictions = 0_u32;
+            let restrictions_length = structure_size::<u32>()?;
+            // SAFETY: The handle is live and the mutable buffer and byte size
+            // describe the one DWORD of JOBOBJECT_BASIC_UI_RESTRICTIONS.
+            let queried = unsafe {
+                query_information_job_object(
+                    self.handle.as_raw_handle(),
+                    JOB_OBJECT_BASIC_UI_RESTRICTIONS_CLASS,
+                    ptr::from_mut(&mut restrictions).cast(),
+                    restrictions_length,
+                    ptr::null_mut(),
+                )
+            };
+            if queried == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok((
+                information.basic_limit_information.limit_flags,
+                restrictions,
+            ))
         }
     }
 
@@ -3228,6 +3313,214 @@ mod tests {
         drop(owned_job);
     }
 
+    /// The bits a worker's Job holds, as the kernel reports them. Literal values
+    /// from `winnt.h` rather than the module's constants, so a wrong constant
+    /// fails here, and equality, so a restriction added or lost fails too.
+    #[cfg(windows)]
+    #[test]
+    fn a_workers_job_carries_the_restrictions_and_a_job_with_no_limits_does_not() {
+        let test_directory = TestDirectory::new();
+
+        let mut worker = suspended_root(&test_directory);
+        let job = OwnedProcessJob::assign_with(&worker, Some(&WORKER_LIMITS)).expect("assign");
+        assert_eq!(
+            job.limit_flags_and_ui_restrictions().expect("query"),
+            // Kill on close, active process, priority, job memory, die on
+            // unhandled exception; desktop, display settings, exit Windows,
+            // global atoms, user handles, clipboard read and write, system
+            // parameters. Not IME or injection, which decision 7 does not list.
+            (
+                0x2000 | 0x0008 | 0x0020 | 0x0200 | 0x0400,
+                0x40 | 0x10 | 0x80 | 0x20 | 0x01 | 0x02 | 0x04 | 0x08,
+            )
+        );
+        drop(job);
+        worker.wait().expect("reap the worker");
+
+        // What every ProteoWizard run gets: kill on close and nothing else.
+        let mut plain = suspended_root(&test_directory);
+        let job = OwnedProcessJob::assign(&plain).expect("assign");
+        assert_eq!(
+            job.limit_flags_and_ui_restrictions().expect("query"),
+            (0x2000, 0)
+        );
+        drop(job);
+        plain.wait().expect("reap the plain root");
+    }
+
+    /// A host already in a Job with UI restrictions cannot put a worker in a
+    /// second one. That is a failure with the root having run nothing, and it
+    /// must stay one: a retry without the restrictions would pass here.
+    #[cfg(windows)]
+    #[test]
+    fn a_workers_job_refused_under_a_restricted_job_is_a_failure_before_the_root_runs() {
+        let test_directory = TestDirectory::new();
+        let mut root = suspended_root(&test_directory);
+        let host = OwnedProcessJob::assign_with(&root, Some(&WORKER_LIMITS)).expect("host Job");
+
+        let refused = OwnedProcessJob::assign_with(&root, Some(&WORKER_LIMITS))
+            .expect_err("a second Job with UI restrictions was accepted");
+
+        assert_eq!(refused.raw_os_error(), Some(50), "ERROR_NOT_SUPPORTED");
+        assert!(root.try_wait().expect("poll the root").is_none());
+        assert!(!test_directory.path().join("child-launched").exists());
+        drop(host);
+        root.wait().expect("reap the root");
+    }
+
+    /// A host in a Job with no UI restrictions, the ordinary way to be in one,
+    /// still starts workers.
+    #[cfg(windows)]
+    #[test]
+    fn a_workers_job_nests_under_a_job_with_no_ui_restrictions() {
+        let test_directory = TestDirectory::new();
+        let mut root = suspended_root(&test_directory);
+        let host = OwnedProcessJob::assign(&root).expect("host Job");
+
+        let nested = OwnedProcessJob::assign_with(&root, Some(&WORKER_LIMITS)).expect("nest");
+
+        drop(nested);
+        drop(host);
+        root.wait().expect("reap the root");
+    }
+
+    /// Everything the Job promises, through the production launch: the worker
+    /// is kept off the desktop and the clipboard, and dies of an exception
+    /// nothing handles as an ordinary exit with that exception's code, every
+    /// process gone, for the caller to classify.
+    #[cfg(windows)]
+    #[test]
+    fn a_worker_is_restricted_and_dies_of_an_unhandled_exception_with_its_code() {
+        let test_directory = TestDirectory::new();
+        let executable = std::env::current_exe().expect("test executable");
+        let digest = Sha256Digest::calculate_file(&executable).expect("digest");
+        let spec = CommandSpec::analysis_worker(
+            executable,
+            digest,
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_restricted_worker",
+                "--nocapture",
+                "--test-threads=1",
+            ]
+            .map(OsString::from)
+            .to_vec(),
+            test_directory.path().to_path_buf(),
+            vec![(
+                OsString::from("MSCANVAS_PROCESS_TEST_DIRECTORY"),
+                test_directory.path().as_os_str().to_owned(),
+            )],
+            WORKER_LIMITS,
+        );
+
+        let output = execute_cancellable(&spec, &CancellationToken::new()).expect("launch");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.termination, Termination::Exited, "{stdout}");
+        assert_eq!(
+            output.exit_code,
+            Some(UNHANDLED_EXCEPTION_CODE as i32),
+            "{stdout}"
+        );
+        assert!(output.owned_tree_confirmed_gone(), "{stdout}");
+        assert!(stdout.contains("desktop refused Some(5)"), "{stdout}");
+        assert!(stdout.contains("clipboard refused Some(5)"), "{stdout}");
+    }
+
+    /// The worker's end of the test above. It stops before the exception if the
+    /// Job did not turn off the error dialog, so a run without that flag fails
+    /// by its exit code and never opens a dialog. It asks the clipboard only for
+    /// a private format nobody has put there, so no owner is made to render
+    /// anything, and it never writes: if the restriction were gone, a write here
+    /// would be the user's clipboard.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "controlled subprocess entry point"]
+    fn controlled_restricted_worker() {
+        use std::ffi::c_void;
+        use std::ptr;
+
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            #[link_name = "GetErrorMode"]
+            fn get_error_mode() -> u32;
+            #[link_name = "RaiseException"]
+            fn raise_exception(code: u32, flags: u32, count: u32, arguments: *const usize);
+        }
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            #[link_name = "CreateDesktopW"]
+            fn create_desktop_w(
+                name: *const u16,
+                device: *const u16,
+                mode: *const c_void,
+                flags: u32,
+                access: u32,
+                attributes: *const c_void,
+            ) -> *mut c_void;
+            #[link_name = "OpenClipboard"]
+            fn open_clipboard(owner: *mut c_void) -> i32;
+            #[link_name = "GetClipboardData"]
+            fn get_clipboard_data(format: u32) -> *mut c_void;
+            #[link_name = "CloseClipboard"]
+            fn close_clipboard() -> i32;
+        }
+        const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
+        const DESKTOP_CREATEWINDOW: u32 = 0x0002;
+        const CF_PRIVATELAST: u32 = 0x02FF;
+
+        // Only the test above sets this, so a run of every ignored test panics
+        // here, as its sibling entry points do, rather than crash the harness.
+        controlled_test_directory();
+
+        let name: Vec<u16> = "mscanvas-process-test\0".encode_utf16().collect();
+        // SAFETY: A live NUL-terminated name and the documented null arguments.
+        // A desktop this creates ends with this process; the handle is not used.
+        let desktop = unsafe {
+            create_desktop_w(
+                name.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                0,
+                DESKTOP_CREATEWINDOW,
+                ptr::null(),
+            )
+        };
+        let desktop_error = io::Error::last_os_error().raw_os_error();
+        if desktop.is_null() {
+            println!("desktop refused {desktop_error:?}");
+        }
+
+        // SAFETY: Takes no pointer from this process. The returned handle is
+        // only compared to null, never read.
+        let (opened, data) = unsafe {
+            (
+                open_clipboard(ptr::null_mut()),
+                get_clipboard_data(CF_PRIVATELAST),
+            )
+        };
+        let clipboard_error = io::Error::last_os_error().raw_os_error();
+        if opened != 0 {
+            // SAFETY: This thread opened the clipboard just above.
+            unsafe { close_clipboard() };
+        }
+        if data.is_null() {
+            println!("clipboard refused {clipboard_error:?}");
+        }
+
+        // SAFETY: Takes no arguments.
+        if unsafe { get_error_mode() } & SEM_NOGPFAULTERRORBOX == 0 {
+            println!("the Job left the error dialog on");
+            return;
+        }
+        io::stdout().flush().expect("flush the worker's report");
+        // SAFETY: A software exception with no arguments, which nothing in this
+        // process has a handler for. Ending the process is its purpose.
+        unsafe { raise_exception(UNHANDLED_EXCEPTION_CODE, 0, 0, ptr::null()) };
+        panic!("the exception was handled");
+    }
+
     /// A descendant created as early as the operating system allows is owned.
     ///
     /// **What this does not prove**, and the previous test does: that the
@@ -4023,6 +4316,38 @@ mod tests {
         fn peak_memory_bytes(&self) -> io::Result<Option<u64>> {
             Ok(None)
         }
+    }
+
+    #[cfg(windows)]
+    const WORKER_LIMITS: crate::WorkerLimits = crate::WorkerLimits {
+        job_memory_bytes: 4 * 1024 * 1024 * 1024,
+    };
+
+    /// A customer-range error code of this test's own, so an exit with it can
+    /// only be the exception `controlled_restricted_worker` raises.
+    #[cfg(windows)]
+    const UNHANDLED_EXCEPTION_CODE: u32 = 0xE05A_0001;
+
+    /// A root created the production way, suspended, that writes
+    /// `child-launched` in the directory if it ever runs.
+    #[cfg(windows)]
+    fn suspended_root(test_directory: &TestDirectory) -> Child {
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        );
+        let mut command = process_command(&spec).expect("construct the controlled command");
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        suspend_root_creation(&mut command);
+        command.spawn().expect("spawn the suspended root")
     }
 
     #[cfg(windows)]

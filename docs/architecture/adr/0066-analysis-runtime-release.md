@@ -1407,3 +1407,9 @@ this record's status answers none of it.
   the environment variable and the firewall rule above"; that rule is the runtime
   installer's (delivery step 3). The roadmap's A-06 row names the variable and the
   AppContainer, not the Job additions.
+  *2026-11-05, as built, not an owner decision:* the Job additions and the variable are in
+  the code, for a worker's Job and environment only. ProteoWizard's Jobs, the adapter, the
+  recipe, the runtime pin and every stored result are as they were, and no release user has
+  them until a runtime ships. One limit comes with them: a host that is itself in a Job with
+  UI restrictions cannot start a worker, which is the typed `WorkerLaunchFailed` and never a
+  run without them (`ERROR_NOT_SUPPORTED`, measured on Windows build 26300).
