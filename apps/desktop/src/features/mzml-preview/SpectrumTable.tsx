@@ -366,7 +366,8 @@ export const SpectrumTable = memo(function SpectrumTable({
     [canCommit, moveFocus, onSelect, rowCount, rows, rowsHeight],
   );
 
-  const countText = !table.truncated && view.rtDomain === null && view.options.query.trim() === "" && view.options.msLevel === null
+  const oneCount = !table.truncated && view.rtDomain === null && view.options.query.trim() === "" && view.options.msLevel === null;
+  const countText = oneCount
     ? t("scanCountAll", { count: table.totalRowCount })
     : t("scanCounts", { visible: rowCount, total: table.totalRowCount, count: table.rows.length }) + (table.truncated ? ` · ${t("scanPrefix")}` : "");
 
@@ -402,7 +403,7 @@ export const SpectrumTable = memo(function SpectrumTable({
         {/* One number while every row is loaded and none is filtered out;
             the three counts, and the loaded-prefix disclosure, only where
             they differ. */}
-        <p className="scan-result-count" aria-live="polite" title={countText}>{countText}</p>
+        <p className="scan-result-count" aria-live="polite" data-counts={oneCount ? "one" : "three"} title={countText}>{countText}</p>
         <div className="plot-search">
           <Icon name="search" />
           <label className="visually-hidden" htmlFor="scan-search">{t("scanSearch")}</label>
