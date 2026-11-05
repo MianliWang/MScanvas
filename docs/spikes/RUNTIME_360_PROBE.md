@@ -8,7 +8,7 @@ with no release before a legal opinion on Qt)".
 
 | Part of the pass condition | Verdict | Evidence |
 | --- | --- | --- |
-| "Every planned class runs" | **PASS** | 26 of 26 ran: a real call on synthetic data, in one launch per polarity, each with a non-empty observable (80 rows for the 26 classes, plus 2 `fitModel` checks; section 5.2 says what those rows are). In the negative launch, 22 classes read the relabelled negative files or features made from them: U1, alignment, linking, adducts, search, export, requested quantification, `ConsensusMapNormalizerAlgorithmMedian` and `OnDiscMSExperiment`. `SavitzkyGolayFilter`, `GaussFilter` and `PeakPickerHiRes` read the one positive profile file and a synthetic chromatogram in both launches, and `MSPGenericFile` reads a library with no scan polarity. The brief asks for two polarities only for U1 and for alignment and linking. None was only imported, and none failed in the final run. |
+| "Every planned class runs" | **PASS** | 26 of 26 ran: a real call on synthetic data, in one launch per polarity, each with a non-empty observable (80 rows for the 26 classes, plus 2 `fitModel` checks; section 5.2 says what those rows are). In the negative launch, 22 classes read the relabelled negative files or features made from them: U1, alignment, linking, adducts, search, export, requested quantification, `ConsensusMapNormalizerAlgorithmMedian` and `OnDiscMSExperiment`. `SavitzkyGolayFilter` and `GaussFilter` read the one positive profile file and a synthetic chromatogram in both launches, `PeakPickerHiRes` reads that profile file in both, and `MSPGenericFile` reads a library with no scan polarity. The brief asks for two polarities only for U1 and for alignment and linking. None was only imported, and none failed in the final run. |
 | "without the Thermo folder" | **PASS** | The copy holds 0 Thermo-named files, 0 of its 76 native files has a CLR header, and neither any group nor the adapter's process loaded a Thermo module, `hostfxr` or `coreclr`. `OPENMS_THERMO_MANAGED_DIR` stayed unset. No RAW file was read (section 7). |
 | "libiconv is shown not to be linked" | **NOT SHOWN** | 0 of 76 native files imports it, and `iconv`, `libiconv`, `libcharset`, `locale_charset` and, in exact case, 10 libiconv alias names each count 0, where a control libiconv DLL holds all 10 alias names. No SBOM or link map of this build was found. Upstream's Windows build installed `libiconv` 1.18 for `libxml2[core,iconv,zlib]` and logged `Arrow is linked statically: added LibXml2 to its link interface`, and upstream's comment says the one object in that archive needing libxml2 is Azure's, which this build's Arrow leaves out. Those point opposite ways, and none is a record of this DLL's link (section 8). |
 | "or its terms are accepted" | **NOT SHOWN** | The owner's to answer, and not asked here. This record does not answer it. |
@@ -195,9 +195,9 @@ What the negative launch read differs by class (`probe_classes.py`):
   `MzTabFile`, `MzTabMFile`); requested quantification (`FeatureFinderAlgorithmMetaboIdent`'s
   requantification call; ANA-004's fixture is positive only); and
   `ConsensusMapNormalizerAlgorithmMedian` and `OnDiscMSExperiment`.
-- **The same input in both launches: 4 classes.** `SavitzkyGolayFilter`, `GaussFilter` and
-  `PeakPickerHiRes` read `synth_profile.mzML`, whose 20 scans all declare positive, and a
-  chromatogram the script builds. `MSPGenericFile` reads `library.msp`, which declares no scan
+- **The same input in both launches: 4 classes.** `SavitzkyGolayFilter` and `GaussFilter` read
+  `synth_profile.mzML`, whose 20 scans all declare positive, and a chromatogram the script
+  builds. `PeakPickerHiRes` reads that file alone. `MSPGenericFile` reads `library.msp`, which declares no scan
   polarity (each entry has `Precursor_type: [M+H]+`). Their negative rows match because the
   input is the same, and they say nothing about a file that declares negative mode. The review
   of this record ran `PeakPickerHiRes` and `SavitzkyGolayFilter` on a profile file of its own
@@ -315,7 +315,9 @@ review of this record reports the same two cells on a wider grid, which was not 
 needs this only if it measures below 1e3.
 
 The call forms that changed, for A-07 and A-20. This is a floor and not the full list: the two
-bindings were not compared call by call, and these are the forms this run and its review used.
+bindings were not compared call by call, and these are only forms this run and its review met. Of
+the 44 `oms.` names `probe_classes.py` uses, `TransformationModel_DataPoint` alone is absent on
+3.5.0. That says nothing of how the others are called, because `probe_classes.py` did not run on 3.5.0.
 
 | 3.5.0 | 3.6.0 |
 | --- | --- |
@@ -328,11 +330,17 @@ bindings were not compared call by call, and these are the forms this run and it
 The first three rows ran on both engines. The last two ran on 3.6.0, and their 3.5.0
 forms are from that binding's docstrings.
 
-These also changed, and each was tried on both engines (`call_forms.py`, third review round, on
-`<pinned>` and on a scratch copy of `<shape>` that matched its manifest and was then deleted). "Also"
-means 3.6.0 still takes the 3.5.0 form. `MzTabFile.load` takes neither engine's form on the other,
-and the last two rows are return types. ANA-004's adapter completes unedited, so none of these is on
-its path. They bear on A-20's recipe code.
+These also changed, and each was tried on both engines (`call_forms.py`, third and fourth review
+rounds, on `<pinned>` and on a scratch copy of `<shape>` that matched its manifest in three SHA-256
+passes and was then deleted). "Also" means 3.6.0 still takes the 3.5.0 form. `MzTabFile.load` takes
+neither engine's form on the other, and the last two rows are return types.
+
+ANA-004's adapter completes unedited. The `getPolarity()` and `getType()` row is on its path:
+`check_source` reads both and compares them with the binding's own `SpectrumType.CENTROID` and
+`Polarity.POSITIVE`, so it needs no edit, and section 6.3's `dom_profile` and `dom_mixed_polarity`
+refusals fire on both engines. `experiments/m9_0/worker_pyopenms.py` compares the same way; that was
+read and not run on 3.6.0. The other rows name calls `adapter_v1.py` does not make, and they bear on
+A-20's recipe code.
 
 | 3.5.0 | 3.6.0 |
 | --- | --- |
@@ -342,6 +350,7 @@ its path. They bear on A-20's recipe code.
 | `td.setDataPoints` with a list of lists; a list of tuples raises `Exception` | a list of tuples, also a list of lists |
 | `oms.TM_DataPoint`; no `oms.TransformationModel_DataPoint` | `oms.TransformationModel_DataPoint`, also `oms.TM_DataPoint` |
 | `oms.NormalizationMethod.NM_SCALE`, the integer 0; `ConsensusMapNormalizerAlgorithmMedian.NormalizationMethod` raises `AttributeError` | `ConsensusMapNormalizerAlgorithmMedian.NormalizationMethod.NM_SCALE`, also `oms.NormalizationMethod.NM_SCALE`, an enum member |
+| `ConsensusMapNormalizerAlgorithmMedian().normalizeMaps(map, method, "", "")` on an instance; on the class it raises `TypeError` | on the class, as `probe_classes.py` calls it, also on an instance |
 | On a positive centroid scan, `getPolarity()` and `getType()` return the integer 1 | `Polarity.POSITIVE` and `SpectrumType.CENTROID` |
 | `Param.keys()` gives `bytes`: `b'mass_error_ppm'` | `str`: `'mass_error_ppm'` |
 
@@ -580,8 +589,9 @@ has `ThermoRawFile`, `ThermoRawFileOptions` and `ThermoRawFileParser`, and
 present, and none of that code was exercised.
 
 **The Thermo check at the end,** after the last run, all review rounds included: no path in the
-copy contains `thermo`, in any case; no native file has a CLR header; 0 `.cpp`, 0 `.pyi`,
-nothing under a `tests/` folder, no pandas and no matplotlib file; `CV/brenda.obo` is there.
+copy contains `thermo`, in any case; 0 `.cpp`, 0 `.pyi`, nothing under a `tests/` folder, no
+pandas and no matplotlib file; `CV/brenda.obo` is there. That no native file has a CLR header is
+`pe_scan.py`'s, run earlier and not repeated, on bytes that section 9.1's passes show unchanged.
 
 ### 7.1 Where the engine looks for its data
 
@@ -712,10 +722,11 @@ It approximates an installer increment and is not a built installer.
 | `pyopenms` `.dist-info` | 5 | 5,646 |
 | `nanobind_backend` `.dist-info` | 3 | 1,902 |
 
-Three SHA-256 passes over every file, after all runs, all review rounds included: 0.55, 0.54 and
-0.55 s, each against the manifest, with 0 changed, 0 missing and 0 extra. The third review round
-ran on a scratch copy and did not start this one. Earlier sets took 1.05, 2.28 and 3.81 s on a
-busier host, 0.70, 0.70 and 0.78 s, 0.70, 0.72 and 0.80 s, and 0.58, 0.64 and 0.72 s. The LZMA2
+Three SHA-256 passes over every file, after all runs, all review rounds included: 0.78, 0.67 and
+0.65 s, each against the manifest, with 0 changed, 0 missing and 0 extra. The third and fourth
+review rounds ran on scratch copies and did not start this one. Earlier sets took 1.05, 2.28 and
+3.81 s on a busier host, 0.70, 0.70 and 0.78 s, 0.70, 0.72 and 0.80 s, 0.58, 0.64 and 0.72 s, and
+0.55, 0.54 and 0.55 s. The LZMA2
 estimate gave the same count on its three kept runs. The cost at the installed location is
 unmeasured.
 
@@ -868,13 +879,13 @@ enters the repository except this record.
 | `u1_floor_cmp.py` | system Python `-I` | second review round: compares two `u1_floor.py` outputs | `c9a26f9928d4749e0edff35f54f45a161101915ae4eb6253737e55c9a95178a9` |
 | `review2_static.py` | system Python `-I` | second review round: the libxml2 names, the source paths by port and the self-stated versions | `0353346421897897ea4d4a12c7c534069e55c389a9b646456f9810dfc51db401` |
 | `review2_more.py` | system Python `-I` | second review round: the `xmlparse` strings, the embeddable's zlib-ng, the defaults compared | `5e13079f684e24674b0b357d38cd00fcc11c72ba4816dc2a229807518f59234e` |
-| `call_forms.py` | a scratch copy of the shape and `<pinned>` | third review round: section 5.3's second table, and the mzML reader with `brenda.obo` moved out of the copy | `39944fd4d83824f732cceeab5279290c4a71d71c4ae5016a827ae3f9656a9515` |
+| `call_forms.py` | a scratch copy of the shape and `<pinned>` | third and fourth review rounds: section 5.3's second table and its count of `oms.` names, and the mzML reader with `brenda.obo` moved out of the copy | `29f9d0fbf59252059f5a9a7c44619997099b519ea842a7ffb2087278d24a3f6f` |
 | `list_wheels.py` | system Python `-I` | what the downloads hold, without unpacking, with any name holding `sbom` marked: section 8's `sboms` check | `ba4693ca37a5f76a85dbb25bed2d7a5dbb97a7a9471cbf2a2906afe9d2cba7ce` |
 
-The same directory holds six one-off views that print what the downloads or the runs already hold,
-and no result here rests on them: `debug_features.py`, `debug_traces.py`, `peek.py`, `pyi_grep.py`,
-`stub_show.py` and `summarize.py`. `adapter_v1_main.py` beside them is the adapter of section 6, with
-the digest given there.
+The same directory holds six one-off scripts, and no result here rests on them. Five print what
+the downloads or the runs already hold: `debug_features.py`, `peek.py`, `pyi_grep.py`,
+`stub_show.py` and `summarize.py`. `debug_traces.py` runs the U1 chain on a file while debugging.
+`adapter_v1_main.py` beside them is the adapter of section 6, with the digest given there.
 
 `request_absent.json` is `request.json` without the target `C8H10N4O2`, written by a one-off
 command. So are section 6.3's requests. Its null-mass request is the protocol's with every
