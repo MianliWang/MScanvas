@@ -329,6 +329,14 @@ describe("each file as it was left (VW-51, VW-35)", () => {
     }
     const shownWindow = (request: { low: number; high: number }) => [request.low, request.high];
 
+    it("does not put a zoom on the scan a renumbered re-read left at its index", { timeout: 15_000 }, async () => {
+      const api = await mountTwo(renumberedOnEachRead());
+      await open(api, selectedFile.fileName);
+      await zoomed(api, 3);
+      await open(api, selectedFile.fileName);
+      expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
+    });
+
     it("gives each scan its own, asks once for it on return, and follows a reset", { timeout: 15_000 }, async () => {
       const api = await mountTwo();
       await open(api, selectedFile.fileName);
@@ -339,14 +347,6 @@ describe("each file as it was left (VW-51, VW-35)", () => {
       fireEvent.click(within(spectrumPanel()).getByRole("button", { name: en.viewerMzReset }));
       await waitFor(() => expect(api.spectrumProjectionRequests.length).toBe(asked + 1));
       await visit(api, 4);
-      expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
-    });
-
-    it("does not put a zoom on the scan a renumbered re-read left at its index", { timeout: 15_000 }, async () => {
-      const api = await mountTwo(renumberedOnEachRead());
-      await open(api, selectedFile.fileName);
-      await zoomed(api, 3);
-      await open(api, selectedFile.fileName);
       expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
     });
 
