@@ -5,9 +5,10 @@ no wider than the owner's answers, both in the block of that date below. Engine:
 pyOpenMS 3.6.0 without Qt on CPython 3.14
 ([decision 8](#8-engine-and-interpreter-the-owners-rule-on-cpython-314)). Proposed
 2026-10-30. Not implemented: nothing here is built, and this status approves no
-shipping, release, upload, window or outbound message. What the owner did not answer,
-in the blocks below or in a note under a decision, is still the recommendation of
-2026-10-30.
+shipping, release, upload, window, outbound message or dependency: the owner's
+dependency answers are under [decision 10](#10-dependency-approval-and-provisioning).
+What the owner did not answer, in the blocks below or in a note under a decision, is
+not an owner decision: it is the text of 2026-10-30 or a later note.
 
 > **Owner decision B-1, 2026-10-30** ([OWNER_DECISIONS_V511.md](../../development/OWNER_DECISIONS_V511.md),
 > B-1). Decisions 1 and 2 are accepted: a separate, verified runtime package
@@ -858,7 +859,7 @@ looked for. The licence slice settles them.
 | libiconv | listed in the notices, text in `LICENSES/vcpkg/libiconv.txt`; the DLL has 0 `iconv` strings and no such import, which does not prove the absence of a static link | **NOT SHOWN:** no import, string or alias name in the 76 native files, no SBOM or link map of this build, and upstream's statements point both ways; its build installed `libiconv` 1.18 for `libxml2[core,iconv,zlib]` ([section 8](../../spikes/RUNTIME_360_PROBE.md#8-libiconv)) | **terms accepted, treated as possibly linked** (LIB-1, below). How a static link's relink term is met is open |
 | The MSVC copies | not inventoried for 3.6.0 | seven files: five at 14.51.36247.0, and one `msvcp140` at 14.40.33810.0 in each of `nanobind_backend.libs` and `numpy.libs`, one digest. Two `msvcp140` versions load in one process ([section 9.3](../../spikes/RUNTIME_360_PROBE.md#93-every-msvc-runtime-copy)) | **open**: RT-3's reading applies on this branch too |
 | The other libraries | not inventoried for 3.6.0 | [section 9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)'s table, and `_arrow_zerocopy.pyd` (7,720,448 B), a static Arrow with zlib and bzip2, never loaded | **open**: the licence slice; a port missing from that table says nothing about that port |
-| `openms-thermo-bridge`'s native half | the notices' entry [25], text in `LICENSES/vcpkg/openms-thermo-bridge.txt`, which decision 4's note leaves out | its files are left out; `OpenMS.dll` keeps the bridge's code, 102 `Thermo` and 13 `hostfxr` strings ([section 7](../../spikes/RUNTIME_360_PROBE.md#7-what-loads)), with `get_hostfxr_path` from `nethost`; build log: 0.3.1 ([section 9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)) | **open**: the wheel's notices, read for this row, say "The native bridge library links nethost". That the native half is in this DLL is a reading, with no link map, and no licence conclusion. The BSD 3-Clause text's clause 2 says "Redistributions in binary form must reproduce the above copyright notice", and with that file out the text is only entry [25] of the notices file below, headed by the `.doc`'s name and first bytes. If the licence slice finds it linked, the generated notices keep the BSD text, without that heading |
+| `openms-thermo-bridge`'s native half | the notices' entry [25], text in `LICENSES/vcpkg/openms-thermo-bridge.txt`, which decision 4's note leaves out | its files are left out; `OpenMS.dll` keeps the bridge's code, 102 `Thermo` and 13 `hostfxr` strings ([section 7](../../spikes/RUNTIME_360_PROBE.md#7-what-loads)), with `get_hostfxr_path` from `nethost`; build log: 0.3.1 ([section 9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)) | **open**: the wheel's notices, read for this row, say "The native bridge library links nethost", and their entry for nethost adds "on Windows, nethost.dll, which it loads", while the wheel holds no `nethost.dll` and `OpenMS.dll` has 0 `nethost` strings. These statements do not settle it. That the native half is in this DLL is a reading, with no link map, and no licence conclusion. The BSD 3-Clause text's clause 2 says "Redistributions in binary form must reproduce the above copyright notice", and with that file out the text stays twice in the unedited notices file below: entry [25], headed by the `.doc`'s name and first bytes, and [T1] inside entry [47], which reproduces the left-out folder's own notices and states it for `ThermoWrapperManaged.*`, the managed files left out. If the licence slice finds it linked, the generated notices keep the BSD text, without that heading. What happens if the link stays not shown is not decided: LIB-1 covers libiconv only |
 | `share/OpenMS/THIRD-PARTY-NOTICES.txt` itself | lists `Thermo RawFileReader` with the `.doc`, and `openms-thermo-bridge` with texts [25] and [47]; [47] is `openms_thermo_bridge/managed/THIRD-PARTY-NOTICES.txt`, inside the folder decision 4 leaves out | 522,059 B, left in the copy unedited, so it declares what the copy does not hold; `LICENSES/` keeps 157 files ([section 9.4](../../spikes/RUNTIME_360_PROBE.md#94-notices)) | **open**: whether this file is left out, revised or replaced by the generated notices, so that the package does not declare what it does not ship |
 
 > **LIB-1, the owner, 2026-11-04: "选A" ("option A").** The owner accepts libiconv's
@@ -1381,3 +1382,10 @@ this record's status answers none of it.
   AppContainer can be enforced without administrator rights is unknown, and the
   answer decides whether the container blocks the release. The probe's findings for that
   measurement are under [decision 7](#7-confinement).
+- **The Job additions and the environment variable (delivery step 4).** Not built.
+  [Decision 7](#7-confinement) lists them under "Before the release (code, no measurement
+  needed)", the text of 2026-10-30. If the container does not block, B-1 question 6 says
+  "a release ships with the stated limit and the measured mitigations: the Job additions,
+  the environment variable and the firewall rule above"; that rule is the runtime
+  installer's (delivery step 3). The roadmap's A-06 row names the variable and the
+  AppContainer, not the Job additions.
