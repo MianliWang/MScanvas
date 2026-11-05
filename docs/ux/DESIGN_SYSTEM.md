@@ -450,6 +450,49 @@ uses its value, and elsewhere v5.11's final value:
 - **The inspected row.** Told by its pressed Details. It does not take the
   roster's bar and fill.
 
+### Conversion and Settings in the v5.11 look (2026-11-04): interim, not owner decisions
+
+Draft PR #225 ports both, so once it lands the accepted list's line, "reach them
+through the shell and tokens until those screens are ported", no longer describes
+Conversion. The owner has not seen them and none of these is an owner decision.
+They are the answers the draft ships with, for the owner to change, by the rule the
+Project block states:
+
+- **Insets and heads.** 16 px in from the card, and a 36 px head with a 14 px title
+  at 650 over the hairline, as on Project. The rail's title sits on the same line.
+- **Rail.** On the card's white, as Details is, in place of a tint. Its width stays
+  300 to 360 px, which `narrowLayout.test.tsx` holds, against v5.11's 292 px.
+- **Segments.** v5.11's `.seg`, as Settings draws it, 32 px tall. A refused option
+  keeps its strike-through and takes Settings' dashed inner edge, because an unchosen
+  option now has its secondary ink. A chosen scope, the one file included, is lifted in
+  white, and the one file keeps a row of its own under the pair.
+- **Tiles and labels.** v5.11's `.radio-option` edge and fill, at the tile's 5 by
+  10 px. Labels are Project's 13 px at 550, in ink. The left label column stays.
+- **Tags.** `.project-tag`'s values. The Lossy tag is v5.11's `.tag.amber`. The
+  not-verified tag keeps its own look, as on Project.
+- **Notices.** The shell's `.notice`, so each one has its tinted edge again.
+- **Names.** Short of room an output takes a line of its own, and a name
+  `MiddleEllipsis` did not split wraps whole, at any width, mid-word if it must. That
+  includes the plain names beside a refused plan, long ones too, which `main` ends with
+  an ellipsis that takes the extension. A settled row can then take two lines while the
+  queue runs. *As built 2026-11-05, not an owner decision:* where a queue column is
+  narrower than a `MiddleEllipsis` name's tail, as with a long Chinese name, both side
+  panels open and a window about 1050 to 1130 px wide, the tail is cut with its
+  extension and no ellipsis (C11 does not hold there). `main` cuts far more in that
+  state.
+- **Progress.** v5.11's `.progress-track`, a 5 px bar on `#e6edf7`. It is one rule, so
+  the view bar on the Workbench went from 8 px to 5 px with it. That bar merged in #203
+  on 2026-11-04, after the Workbench's acceptance, and no accepted text fixes its height.
+  Added 2026-11-05; not an owner decision.
+- **History rows.** They stay bordered buttons, where v5.11's `.history-item` is a
+  hairline row, and the chosen one takes the fill and 3 px edge of v5.11's selected row.
+- **Settings.** v5.11's `.setting-row` label at 14 px, its scrim and shadow, and its
+  notes for problems. Rows keep 12 px and not v5.11's 15 px, because a stored record's
+  problem must show without scrolling at 960x640 (`copy-diagnostics.browser.e2e.ts`).
+  One column in place of v5.11's left navigation, and the diagnostics box stays 200 px
+  (owner, 2026-11-04, P202-BOX).
+- **Export figure.** Not changed. The dialog already has v5.11's modal chrome.
+
 ## M6.6 destination and conflict surface
 
 This is a focused continuation of the accepted v5.11 organization using the
