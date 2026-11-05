@@ -197,6 +197,12 @@ owner's reply and what it leaves open.
 2026-10-30. ADR 0068 was accepted on 2026-11-03, as N-14, and MAP-1.1 to MAP-1.9
 are answered.
 
+*Note, 2026-11-04, a status and not an owner decision:* the second row speaks of
+2026-10-30. The X0 scope record is [ADR 0071](0071-xic-re-entry-and-its-first-version.md),
+accepted that day. Its candidate decision is
+[ADR 0072](0072-xic-candidate-decision-x3.md), which is Proposed and unanswered. No
+product code calls X1's library, and VIEW-007 stays unavailable.
+
 The owner-decisions list says the umbrella decision "is written with N-13
 (X0)". It is written here on its own instead, so that X0 and ADR 0068 both
 stand under it.
