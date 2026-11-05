@@ -403,11 +403,13 @@
 /* The scan list (direction A): one head with the title, the count, the search
    and the MS-level filter, then the table. */
 .workbench-shell .spectrum-table-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.scan-head { display: flex; flex: none; align-items: center; gap: 8px; height: 36px; min-width: 0; padding: 0 8px 0 12px; }
+.scan-head { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 36px; min-width: 0; padding: 3px 8px 3px 12px; }
 .scan-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 650; white-space: nowrap; }
-/* The count stays whole beside its title; the search gives way first. */
-.scan-head .scan-result-count { flex: none; max-width: 40%; margin: 0 auto 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.plot-search { position: relative; flex: 0 1 180px; min-width: 64px; }
+/* The count stays beside its title. Where the three counts and the controls do
+   not fit one line, the controls take a second, so a list the range has narrowed
+   says how many of how many in full. */
+.scan-head .scan-result-count { flex: 0 1 auto; max-width: calc(100% - 52px); margin: 0 auto 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.plot-search { position: relative; flex: 1 1 88px; min-width: 64px; max-width: 180px; }
 .plot-search > .ui-icon { position: absolute; top: 7px; left: 8px; color: var(--color-text-secondary); pointer-events: none; }
 .scan-head input, .scan-head select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-input); padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
 .scan-head select { flex: none; max-width: 40%; }

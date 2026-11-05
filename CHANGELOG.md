@@ -6,6 +6,17 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **Go to a scan number.** An input beside the scan search: Enter selects the scan
+  with that number and clears the search or MS-level filter if it hides it. A number
+  no loaded row declares is refused beside the input, and nothing changes.
+- **The scan list follows the chromatogram's range.** Zoom the chromatogram, or type
+  a range through Set range…, and the list shows the scans inside it; the count says
+  how many of how many. A selected scan outside the range says so, and one button
+  moves the range to it. A list too long to have a chromatogram is not filtered.
+- **Each file as you left it.** Switching back to a file while the workspace is open
+  brings back its selected scan, filters, sort and place in the list. Each scan keeps
+  its own spectrum zoom, for the 12 most recently used across the workspace. None of
+  it is saved: a restart starts clean.
 - **Copy diagnostics.** Settings → Support → **Copy diagnostics** shows a short
   environment summary in a read-only box, and **Copy** puts that text on
   the clipboard, for you to paste into a bug report yourself. It holds the

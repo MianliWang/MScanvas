@@ -119,7 +119,7 @@ describe("the list following the chromatogram's range (V-2)", () => {
     const reads = api.requestedSpectra.length;
     await setRange("1", "3");
     await waitFor(() => expect(shown()).toEqual([1, 2, 3]));
-    const sentence = en.scanSelectedOutsideRange.replace("{{name}}", "7");
+    const sentence = en.scanSelectedOutsideRange.replace("{{name}}", "8");
     expect(screen.getByText(sentence)).toBeVisible();
     expect(screen.getByRole("button", { name: en.scanNext })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: en.scanNext })).toHaveAccessibleDescription(sentence);
@@ -139,7 +139,7 @@ describe("the list following the chromatogram's range (V-2)", () => {
     const search = screen.getByRole("searchbox", { name: en.scanSearch });
     fireEvent.change(search, { target: { value: "raw-2" } });
     await waitFor(() => expect(shown()).toEqual([2]));
-    expect(screen.getByText(en.scanSelectedOutside.replace("{{name}}", "7"))).toBeVisible();
+    expect(screen.getByText(en.scanSelectedOutside.replace("{{name}}", "8"))).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: en.scanReveal }));
     await waitFor(() => expect(shown()).toContain(7));
     expect(search).toHaveValue("");

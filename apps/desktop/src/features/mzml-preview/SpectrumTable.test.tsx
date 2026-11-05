@@ -454,7 +454,7 @@ describe("stepping through scans from the table", () => {
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search loaded scans" }), { target: { value: "no such scan" } });
 
-    const reason = "Selected scan 3 is hidden by the filters.";
+    const reason = "Selected scan 4 is hidden by the filters.";
     expect(screen.getByText(reason)).toBeVisible();
     for (const name of ["Previous scan", "Next scan"]) {
       const button = screen.getByRole("button", { name });

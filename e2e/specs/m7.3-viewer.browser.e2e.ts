@@ -1,7 +1,9 @@
 /** Production viewer; deterministic synthetic source responses at the existing IPC boundary only. */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
+import { buildPreview, buildSpectrum, secondFile, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
+import { en } from "../../apps/desktop/src/features/preferences/locales/en";
+import { zhCN } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 import { ipcTable } from "../support/fixtures";
 import { readBackSavedPreferences, revealRosterRow, seedARunOf } from "../support/viewer";
 import { choosePlotMenuItem, FIGURE_DIALOG, openFigureDialog } from "../support/figure";
@@ -236,7 +238,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.waitUntil(async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").length === 3);
     expect(before).toEqual([]);
     await browser.$(SCANS + ' input[type="search"]').setValue("raw-1");
-    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is hidden by the filters");
+    expect(await browser.$(SCANS).getText()).toContain("Selected scan 4 is hidden by the filters");
     expect(await browser.$('button[aria-label="Next scan"]').getAttribute("aria-disabled")).toBe("true");
     await capture("hidden-selection");
     await browser.$("button=Clear filters and reveal").click(); await browser.$('button[aria-label="Next scan"]').click();
@@ -359,7 +361,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.$(RT).scrollIntoView({ block: "center" });
     await clickPlot(RT, 3 / 7);
     await browser.$(MZ).waitForDisplayed();
-    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is hidden by the filters");
+    expect(await browser.$(SCANS).getText()).toContain("Selected scan 4 is hidden by the filters");
     expect(await browser.$(SCANS + " select").getValue()).toBe("1");
     expect(await browser.$('button[aria-label="Next scan"]').getAttribute("aria-disabled")).toBe("true");
     await capture("plot-hidden-by-ms-filter");
@@ -614,5 +616,113 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
     await failed.$("button").click();
     await browser.$(SCANS).waitForExist();
+  });
+
+  // N-V3: go to a scan, the list following the range, each file as it was left.
+  const shownScans = () => browser.$$(SCANS + " [data-source-index]").map(row => row.getAttribute("data-source-index"));
+  const reads = async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").map(call => call.args.index);
+  async function goToScan(text: string) {
+    await browser.$("#scan-go-to").setValue(text);
+    await browser.keys("Enter");
+  }
+  async function setRtRange(words: typeof en | typeof zhCN, low: string, high: string) {
+    await choosePlotMenuItem(".chromatogram-panel", words.rangeSet);
+    await browser.$("#plot-range-rt-low").setValue(low); await browser.$("#plot-range-rt-high").setValue(high);
+    await browser.$(".chromatogram-panel .plot-range-form button[type=submit]").click();
+  }
+  for (const scenario of [
+    { width: 1366, height: 768, dpr: 1, language: "en", words: en },
+    { width: 1366, height: 768, dpr: 1, language: "zh-CN", words: zhCN },
+    { width: 960, height: 640, dpr: 1, language: "en", words: en },
+    { width: 960, height: 640, dpr: 1, language: "zh-CN", words: zhCN },
+  ] as const) it("goes to a scan and follows the range, " + scenario.language + " at " + scenario.width + "x" + scenario.height, async () => {
+    const { words } = scenario;
+    const label = (state: string) => "nav-" + state + "-" + scenario.language + "-" + scenario.width;
+    await open("complete", scenario);
+    await preferences(scenario.language, "comfortable");
+    await revealScans();
+    // A number not in the table is refused in place, and reads nothing.
+    const already = (await reads()).length;
+    await goToScan("99");
+    const refused = words.scanGoToRefused.replace("{{value}}", "99");
+    expect(await browser.$(".scan-go-to-refusal").getText()).toBe(refused);
+    expect(await browser.$("#scan-go-to").getAttribute("aria-invalid")).toBe("true");
+    expect((await reads()).length).toBe(already);
+    await capture(label("refused"));
+    // Filters that hide the scan go; focus stays for the next number.
+    await browser.$(SCANS + ' input[type="search"]').setValue("rare-");
+    expect(await shownScans()).toEqual(["3", "7"]);
+    await goToScan("5");
+    await browser.waitUntil(async () => (await reads()).at(-1) === 4);
+    expect(await browser.$(SCANS + ' input[type="search"]').getValue()).toBe("");
+    expect(await browser.$(row(4)).getAttribute("aria-selected")).toBe("true");
+    expect(await browser.execute(() => document.activeElement?.id)).toBe("scan-go-to");
+    await capture(label("went"));
+    // The list follows the committed range, and the count says how many of how many.
+    await setRtRange(words, "1", "2.5");
+    await browser.waitUntil(async () => (await shownScans()).join() === "1,2", { timeoutMsg: "the list never followed the range" });
+    expect(await browser.$(".scan-result-count").getProperty("textContent")).toContain("2");
+    // The selected scan is outside it: said so, recoverable, with nothing read.
+    const outside = words.scanSelectedOutsideRange.replace("{{name}}", "5");
+    expect(await browser.$("#scan-hidden-selection-reason").getText()).toBe(outside);
+    await capture(label("selected-outside"));
+    const before = (await reads()).length;
+    await browser.$(".scan-hidden-selection button").click();
+    await browser.waitUntil(async () => (await shownScans()).includes("4"), { timeoutMsg: "the range never moved to the scan" });
+    expect((await reads()).length).toBe(before);
+    // A narrow range holding no scan names the range, not the filters.
+    await setRtRange(words, "2.2", "2.8");
+    await browser.waitUntil(async () => (await browser.$(SCANS).getText()).includes(words.scanNoMatchesInRange), { timeoutMsg: "the empty range never said so" });
+    expect(await browser.$(SCANS + ' [role="grid"]').getAttribute("aria-rowcount")).toBe("1");
+    await capture(label("empty-range"));
+    // Going to a scan the range hides brings the range to it.
+    await goToScan("8");
+    await browser.waitUntil(async () => (await reads()).at(-1) === 7);
+    await browser.waitUntil(async () => (await shownScans()).includes("7"), { timeoutMsg: "the scan never came into the list" });
+    await capture(label("went-into-range"));
+    expect(await consoleEntries()).toEqual([]);
+  });
+  it("comes back to a file as it was left, and to a scan's own zoom", async () => {
+    await installIpcBoundary({ ...answers("complete"), get_workspace_roster: { capacity: 1024, datasets: [selectedFile, secondFile] } });
+    await metrics(1366, 768, 1);
+    await browser.url("/");
+    await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').waitForExist();
+    await sourceBoundary(1);
+    // Each open's reply is its own object, as one crossing the real boundary is.
+    await browser.execute(() => {
+      const internals = Reflect.get(window, "__TAURI_INTERNALS__") as { invoke: (command: string, args: unknown) => Promise<unknown> };
+      const invoke = internals.invoke;
+      internals.invoke = (command, args) => command === "open_mzml_preview" ? invoke(command, args).then(reply => structuredClone(reply)) : invoke(command, args);
+    });
+    const openRow = async (handle: string) => {
+      const opens = (await ipcCalls()).filter(call => call.command === "open_mzml_preview").length;
+      await revealRosterRow(handle);
+      await browser.$('.grouped-roster [data-handle="' + handle + '"]').click();
+      await browser.waitUntil(async () => (await ipcCalls()).filter(call => call.command === "open_mzml_preview").length === opens + 1);
+      await browser.$(SCANS).waitForExist();
+    };
+    const windows = async () => (await scientificCalls()).filter(call => call.command === "project_selected_spectrum").map(call => [call.args.low, call.args.high]);
+    await openRow(selectedFile.handle);
+    await revealScans();
+    await goToScan("4");
+    await browser.waitUntil(async () => (await reads()).at(-1) === 3);
+    await browser.$(MZ).waitForDisplayed();
+    await choosePlotMenuItem(".spectrum-panel", "Set range…");
+    await browser.$("#plot-range-mz-low").setValue("200"); await browser.$("#plot-range-mz-high").setValue("400");
+    await browser.$(".spectrum-panel .plot-range-form button[type=submit]").click();
+    await browser.waitUntil(async () => (await windows()).at(-1)?.join() === "200,400");
+    await revealScans();
+    await browser.$(SCANS + " select").selectByAttribute("value", "2");
+    await openRow(secondFile.handle);
+    expect(await browser.$(SCANS + " select").getValue()).toBe("all");
+    await openRow(selectedFile.handle);
+    expect(await browser.$(SCANS + " select").getValue()).toBe("2");
+    await browser.waitUntil(async () => (await reads()).at(-1) === 3);
+    await browser.$(MZ).waitForDisplayed();
+    await browser.waitUntil(async () => (await windows()).at(-1)?.join() === "200,400", { timeoutMsg: "the scan's zoom never came back" });
+    await revealScans();
+    expect(await browser.$(row(3)).getAttribute("aria-selected")).toBe("true");
+    await capture("nav-back-to-file");
+    expect(await consoleEntries()).toEqual([]);
   });
 });

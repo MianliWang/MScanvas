@@ -28,6 +28,12 @@ one horizontal track. Whole-row activation names a source index; roving focus
 and persistent selection remain separate. Search/filter/sort affect loaded rows
 only and expose hidden-selection recovery without replacing the plotted scan.
 
+*2026-11-04 (N-V3):* the list also follows the chromatogram's committed range
+(V-2), and its recovery moves that range to the selected scan. Go to scan selects
+by declared scan number beside the search, and a number no loaded row declares is
+refused in place. Reopening a file brings back its selected scan, filters and
+place in the list for as long as the workspace lives.
+
 Plot text remains 12 CSS px as the available width changes. Existing scientific
 export controls and detailed source explanations use reachable disclosures;
 their state and source authority remain above the presentation. Constrained

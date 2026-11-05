@@ -206,12 +206,12 @@ export const SpectrumTable = memo(function SpectrumTable({
   const rowCount = rows.length;
   const focusRow = (focusIndex === null ? undefined : view.projection.positions.get(focusIndex)) ?? 0;
   const selectedOutside = selectedIndex !== null && !view.projection.positions.has(selectedIndex);
+  const hiddenRow = useMemo(() => selectedOutside ? table.rows.find(row => row.index === selectedIndex) : undefined,
+    [selectedOutside, selectedIndex, table.rows]);
   /** Hidden by the chromatogram's range alone, so "clear the filters" would be the wrong thing to say. */
-  const hiddenOnlyByRange = useMemo(() => {
-    if (!selectedOutside) return false;
-    const row = table.rows.find(candidate => candidate.index === selectedIndex);
-    return row !== undefined && matchesScanFilters(row, view.options);
-  }, [selectedOutside, selectedIndex, table.rows, view.options]);
+  const hiddenOnlyByRange = hiddenRow !== undefined && matchesScanFilters(hiddenRow, view.options);
+  /** The number the Scan column and Go to scan use, where the row declares one. */
+  const hiddenName = String(hiddenRow?.scanNumber ?? selectedIndex);
   /** What the viewport has left for rows once the header has its row. */
   const rowsHeight = Math.max(ROW_HEIGHT, viewportHeight - HEADER_HEIGHT);
   const visibleCount = Math.ceil(rowsHeight / ROW_HEIGHT) + OVERSCAN * 2;
@@ -429,7 +429,7 @@ export const SpectrumTable = memo(function SpectrumTable({
         {goToRefused === null ? null : t("scanGoToRefused", { value: goToRefused })}
       </p>
       {selectedOutside ? <p className="scan-hidden-selection" aria-live="polite">
-        <span id={HIDDEN_SELECTION_ID}>{t(hiddenOnlyByRange ? "scanSelectedOutsideRange" : "scanSelectedOutside", { name: String(selectedIndex) })}</span>{" "}
+        <span id={HIDDEN_SELECTION_ID}>{t(hiddenOnlyByRange ? "scanSelectedOutsideRange" : "scanSelectedOutside", { name: hiddenName })}</span>{" "}
         <Button onClick={onRevealSelected} size="sm" variant="quiet">{t(hiddenOnlyByRange ? "scanRevealInRange" : "scanReveal")}</Button>
       </p> : null}
       {rowCount === 0 ? <p className="empty-state">{t(table.rows.length === 0 ? "scanEmpty" : view.rtDomain !== null ? "scanNoMatchesInRange" : "scanNoMatches")}</p> : null}

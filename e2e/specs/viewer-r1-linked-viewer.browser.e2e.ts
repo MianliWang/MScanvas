@@ -904,8 +904,10 @@ describe("the linked viewer, rendered", () => {
       const span = await visibleSpan();
       const before = await visibleDomain();
 
-      // Commit the same scan again from the table.
-      await browser.$('div.spectrum-table-row[data-row-position="0"]').click();
+      // Commit the same scan again. The list follows the range now (V-2), so its
+      // row has gone from the table, and Go to scan is what reaches it.
+      await browser.$("#scan-go-to").setValue("1");
+      await browser.keys("Enter");
 
       await browser.waitUntil(async () => (await visibleDomain()).low < before.low, {
         timeout: 10_000,
@@ -931,6 +933,8 @@ describe("the linked viewer, rendered", () => {
       const range = await rangeCaption();
       const marker = await readout();
       const before = viewerReads(await ipcCalls());
+      // Where the list has it under the zoomed range (V-2), if it has it at all.
+      const position = await selectedRowPosition();
 
       // The grouped roster's row (M7.2); at 1366 the roster is not folded.
       await browser.$(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`).click();
@@ -938,7 +942,7 @@ describe("the linked viewer, rendered", () => {
       expect(await browser.$(PLOT).isDisplayed()).toBe(true);
       expect(await rangeCaption()).toBe(range);
       expect(await readout()).toBe(marker);
-      expect(await selectedRowPosition()).toBe(1);
+      expect(await selectedRowPosition()).toBe(position);
       // Focusing a row is a real workspace action with its own command. What
       // must not happen is the viewer being re-read: the chromatogram's source,
       // its range and its selected scan all belong to the preview that is
