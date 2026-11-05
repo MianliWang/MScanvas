@@ -347,6 +347,15 @@ section 4).
 | X4 | Runtime: the Tauri command, generation checks, the lane per spectrum, cancellation, supersession, the retained result, the DTO, error codes and resources; the gap-aware series in the shared plot specification; the XIC panel; exports if X-3 includes them | 2–3 | An admitted outcome, X-3 answered, its own authorization |
 | X5 | Interface: the input, every ADR 0037 state, keyboard, linked selection, gap and disclosure copy, rendered QA | 2 | X4 published, `ui/v511-rebuild` merged, its own authorization |
 
+*Note, 2026-11-04, a status and not an owner decision:* the table speaks of
+2026-10-30. X2 has run: one build, 77 of 77 rows over 153 invocations, and 17 of 17
+new integer rows beside them
+([X2](../../spikes/XIC_X2_CANDIDATE_EVIDENCE.md)). X3 is
+[ADR 0072](0072-xic-candidate-decision-x3.md), Proposed. It proposes admitting C′, and
+the owner has not answered it, so X4 and X5 have no admitted outcome and no
+authorization. Only the evidence example calls the library, no product code does, and
+VIEW-007 stays unavailable.
+
 **Total: 9–12 slices (L–XL).**
 
 **X4 and X5 carry ADR 0046's PX.5 and PX.6 obligations**, by citation:
