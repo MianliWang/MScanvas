@@ -193,6 +193,9 @@ its table row reports each spectrum's polarity. It states no scan type yet.
   measured files the stated observed range left a few points outside it (1, 1
   and 16 points; the 16 are all in the LTQ Velos file's profile map), so the
   first view says how many points it does not show.
+  *2026-11-05, #226, as built, not an owner decision:* the LTQ Velos profile map's
+  first view now leaves 30 points outside, not 16, because the zoom scans no longer
+  set its range (Evidence, the rerun of this date).
 
 ### 3. Profile and centroid
 
@@ -509,18 +512,30 @@ zoomed: 1 spectra, 1 narrow scans left out; 2039 points binned, 18360 outside m/
   above and reads no MSCanvas code, gives 15 full and 14 zoom profile spectra, 7,000
   zoom points, and over the full scans 305,955 points inside, 15 below and 15 above.
   Each is one full scan's end sample, at most 2.27e-13 m/z outside: the stated range is
-  a shorter decimal than the stored value. The script, the other script below and the
-  console output are in `D:\tmp\public-data\map2d\scan-type-20261105\`.
+  a shorter decimal than the stored value.
 - The Orbitrap files have no narrow scan, and their full-extent counts did not change:
   positive profile, 2,748 spectra, 24,766,275 points, 726,465 cells; positive centroid
   (`TE1`), 2,748 spectra, 1,724,215 points, 670,590 cells.
-- No undeclared narrow scan was found. A read-only script read the filter string
-  (MS:1000512) of each MS1 spectrum beside its terms, in the 16 local public files
-  where it found MS1 spectra: the LTQ Velos conversions, the PXD081190 and `TE`
-  conversions, the `TQ` conversions, `mzdata-small` and MTBLS1861's
-  `IROA_retest_pos_Mix23`. Every spectrum that states neither term has a `Full ms`
-  filter, and all 14 `d Z ms` per LTQ Velos file state `zoom scan`, on the spectrum. This
-  reads the filter for evidence only; the reader stays away from it (R-1-ANALYZER).
+- No undeclared narrow scan was found in the 27 mzML files under
+  `D:\tmp\public-data\`, by two read-only scripts: one reads line by line, the other is
+  an XML parse that follows param groups. They agree on every file's MS1 counts.
+  - 18 files hold MS1 spectra. The other 9 hold only MS2 or MS3 spectra and say nothing
+    about this: six `thermo-ms2/ref` files, the calibrated PXD081190 files in
+    `pxd081190` and `work/r0`, and `r0/pxd.version-diagnostic`.
+  - 17 of the 18 state a filter string (MS:1000512): the 7 LTQ Velos files, the 5
+    PXD081190 and `TE` conversions (one is the `work/r0` copy), the 3 `TQ` conversions,
+    `mzdata-small` and MTBLS1861's `IROA_retest_pos_Mix23`. Every spectrum that states
+    neither term has a `Full ms` filter, and all 14 `d Z ms` per LTQ Velos file state
+    `zoom scan`, on the spectrum.
+  - The filter says nothing about the 18th. MTBLS1785's `20180413_Plasma_POS_PPT1`
+    (X500R QTOF) has 10,960 MS1 spectra that state neither term, no filter string and no
+    observed m/z range. Each has one scan window, 50.0–1100.0 m/z.
+  - This reads the filter and the scan windows for evidence only. The reader reads
+    neither, and stays away from the filter (R-1-ANALYZER).
+- The scripts and their console output are in
+  `D:\tmp\public-data\map2d\scan-type-20261105\`: `evidence.txt` is the example's,
+  `ltq_counts-output.txt` the independent decoder's, and `scan_terms-all-27.txt` and
+  `ms1_census-all-27.txt` the two scripts' above.
 - `SIM spectrum` and a term inside `<scan>` are tested on synthetic documents only:
   no local file holds either.
 
