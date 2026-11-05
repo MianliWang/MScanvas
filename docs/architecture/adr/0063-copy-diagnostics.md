@@ -332,6 +332,10 @@ Owner decision, 2026-11-03: the sentence is not shown; #202 as built stands
   cover it. The alternative is a box that grows with the text, so that only the body
   scrolls. Its cost: the text reaches about 1920 px with a full ring, and **Copy**, at
   the top of the box, scrolls away while the end is read. This is unanswered.
+  Owner decision, 2026-11-04 (P202-BOX, option `keep`): the box stays a fixed 200 px.
+  The costs the page names: about ten lines show at once, so the vendor and time lines
+  are reached by scrolling inside the box, and the box and the page scroll separately
+  ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 - Closing Settings drops the text. The clipboard's refusal is shown above the text,
   because the text stays selectable by hand. Support is the last section, below
   anything a save or the stored record has to say, because the text makes it tall.

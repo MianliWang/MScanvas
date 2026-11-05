@@ -263,6 +263,8 @@ functional base, with the export palette reverted), FE-2 (the owner's own v5.11
 demo is the frontend's target, one real screen first), G1 (the governance
 wording, applied by N-10), M161 and A0060 (ADR 0060's open questions 1 and 8).
 The other 32 decisions there stay open, each asked before the slice it gates.
+*2026-11-04:* those 32 were answered on 2026-11-03, and what stays open is listed in
+[sections 1d and 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04).
 The roadmap and the decisions document are therefore no longer drafts.
 
 ## 3. Parallel execution rules
@@ -346,11 +348,18 @@ Section 1.
   (1–2), then a narrow local MCP adapter (2–3), then closure and
   qualification. Estimate 1.5–3 calendar weeks, mostly bound by decisions and
   validation windows.
+  *2026-11-04 ([M10-START](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)):* CLI
+  segment 1 starts after the in-flight chain merges, not by this phase's weeks. Not
+  built, and no brief exists yet. HR-1.8's window is asked for at the closure.
 - **Selected features** (section 6), about four slices each, in parallel lanes
   disjoint from the M10 CLI.
 - **P1 capabilities:** WSP-010 restore workspace, FIG-007 saved FigureSpec,
   ENV-004 copy diagnostics.
 - **Beta 2:** signed if SignPath has approved the project by then.
+  *2026-11-04 ([NEXT-RELEASE](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)):* this
+  phase's weeks do not set the next release. It comes when the conversion and viewing
+  batch is done and one-click view has run on a real machine. That sets conditions and
+  approves no release and no window, and it says nothing about signing.
 
 **Phase 3 — week 5 onward, as external inputs arrive.** The evidence-gated
 items of section 7.5 and the P2 capabilities of section 7.4.
@@ -374,6 +383,9 @@ promotion gate in the
 - **Imported feature tables (G2).** An imported table is a project artifact
   with its own digest, import record and lineage. MZmine-2-style CSV comes
   first, up to the 64 MiB payload cap in v1.
+  *2026-11-04 ([A0067-D6](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)):*
+  the owner replaced the storage this implies: an imported table is a chunked
+  matrix, and 64 MiB is the CSV's limit. Not built.
 - **What stays refused (G3).** C17 (CWT centroiding), C28 (a custom output
   extension), C50 (ETA; live elapsed time, C51, is in progress), C41
   (built-in templates), the explanation texts removed on 2026-10-28 (RO-26,
@@ -382,6 +394,7 @@ promotion gate in the
   and a method text in Python or R (EXP-20) stay outside this roadmap. The
   rows decided separately stay open under their own decisions: VW-14 (V-4),
   VW-33 (V-1), VW-47 (V-5), C15 (HR-1) and VW-02's exports and panel (X-3).
+  *2026-11-03:* each of those has its answer ([section 1d](OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 - **Navigation (G4).** Each analysis page enters the navigation when its first
   working function ships, with no placeholder pages. The new look (FE-2)
   leaves room for five page tabs at 960 px.
@@ -574,12 +587,18 @@ writer and Rust's ownership of files.
     imported by project code and is not shipped; bumping it changes the pinned
     runtime manifest digest, so update it when that runtime is next provisioned
     and before any release ships the runtime;
+    *2026-11-04 ([B-3.3](OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03),
+    [D1, ask 2](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)):* that route is left.
+    The shipped runtime carries no Pillow, and the experiment lock goes in the same
+    change that commits A-07's lock. Not built. #168, the Pillow bump, is closed;
   - `glib` (Rust) is only in Tauri's Linux GTK backend, not in the Windows
     dependency tree; the fix needs gtk-rs 0.20 and the cargo batch keeps glib
     0.18.5;
   - owner decision, 2026-10-30: these 44 alerts (Pillow 41, extract-zip 2,
     glib 1) are not dismissed; they stay open and are fixed later as above (see
     [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md)).
+    *2026-11-04:* still none is dismissed. For Pillow's 41, "as above" now means the
+    dated note on the Pillow line.
 - The `PM9.7-I2 … zh-CN-1366x768` flake (the browser spec's scrolled-to-end
   check, 2 px short in CI on `main` at `7c2c774` and on PRs #167 and #169;
   reruns passed on #167 and #169, and the next push to `main` passed) is fixed
@@ -704,6 +723,12 @@ writer and Rust's ownership of files.
     (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not changed; read with
     that run, not run itself: with the box checked, a junction under that folder
     loses its target's contents.
+    Owner decision, 2026-11-04 (P211-2, option `doc`): write it on the next install
+    page and do not change this step. The costs the page names: with a junction there
+    and the box checked, the target's contents are still deleted, and someone who has
+    not read the page does not know. That page is not written. A report to Tauri
+    upstream is outbound contact and is not asked
+    ([section 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
   - *2026-11-03, run on that runner and read from `view_cache.rs`, not an owner
     decision:* with the box checked and a file locked, that `RmDir /r` takes the
     marker first and leaves the locked file in a root with no marker. The hook then
@@ -713,6 +738,11 @@ writer and Rust's ownership of files.
     the box again with nothing locked. Clear view cache is in the next slice
     (A0060-split). Only converted copies are at stake, and no one has been asked
     about this state.
+    Owner decision, 2026-11-04 (P211-3, option `accept`): accepted, and written on the
+    next install page. The costs the page names: the refusal says the folder was not
+    created by MSCanvas when it was, and a person must move or rename it, or unlock it
+    and uninstall again with the box checked. That page is not written
+    ([section 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
   - *2026-11-03, read from `PageLeaveReinstall` and run on that runner (the same
     build, with the recorded version set to 0.0.1), not an owner decision:* no
     installer passes `/UPDATE` to the old uninstaller. One given `/UPDATE` jumps
@@ -726,6 +756,12 @@ writer and Rust's ownership of files.
     `/P` over the same version runs the uninstaller and the cache goes; `/P` over
     an older version runs none and the cache stays. The hook cannot tell these
     apart by its switches.
+    Owner decision, 2026-11-04 (P211-1, option `accept`): accepted, and written on the
+    next install page. The costs the page names: after a manual upgrade each file
+    converts again before it can be viewed, and "except on `/UPDATE`" does nothing for
+    an ordinary upgrade. Do not uninstall, or a silent upgrade with `/S`, keeps the
+    cache. That page is not written
+    ([section 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
   - *2026-11-03, run on that runner and read from `MUI_UNGETLANGUAGE`, not an owner
     decision:* a `/P` uninstall after a silent install had not finished when the
     job stopped it after five minutes. A silent install records no language, so
@@ -831,7 +867,7 @@ None can be delivered by engineering alone; each waits for one input.
 | Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
 | Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |
 | Untargeted single-file feature detection (U1) and its worker limits | A measurement of `MassTraceDetection` → `ElutionPeakDetection` → `FeatureFindingMetabo` time and memory on realistic public data, against today's 600 s and 4 GiB. *2026-10-30: measured on two public centroided runs of 0.53 and 0.89 GiB ([evidence](../spikes/U1_FEATURE_DETECTION_MEASUREMENT.md)). At noise 1e4 and 1e5 the engine's peak commit was at most 0.95 GiB and the longest run 94.8 s; memory is modelled per MS1 peak, an inference these two files cannot test against encoding. Recommended U1 limits: 600 s; a 4 GiB cap plus a refusal before the load above 150 M MS1 peaks at noise 1e4 or more and above 80 M below 1e4, provided U1's source check keeps no copy of the MS1 spectra as the M9 adapter's does; one thread, as in M9; and a noise floor of 1e3. They are the owner's to set in the U1 recipe record. 2026-11-03: the owner answered these limits, replacing the one-thread and noise-floor recommendations; below 1e3 stays refused until measured, the record's reading, not an owner decision (the record's section 7), and A-13's remainder is still owed* | M–L |
-| pyOpenMS 3.6.0 as the first runtime (B-2.1, B-2.2) | The owner's reading of the libiconv lines of A-03's probe. *2026-11-04: approved by the owner ("批准 A-03") and run ([evidence](../spikes/RUNTIME_360_PROBE.md)). In the shape that would ship, on synthetic data, all 26 planned classes ran without the Thermo folder. That libiconv is not linked is NOT SHOWN and its terms are not answered, so the rule of the roadmap's section 7 gives neither a pass nor a failure yet, and which branch of B-2 applies stays open. *2026-11-04, later:* the owner accepted libiconv's terms (LIB-1, option A), so the condition holds and B-2.1 and B-2.2 apply; nothing ships. On one fixture and two targets, ANA-004 completes unedited with the same outcomes and different numbers; on a variant of another fixture, one target's outcome changes when its mass comes from its formula, and with its declared mass its `rawArea` changes, and its model status too in the seven-target batch only. A-07 takes both* | A-03: M; the 3.6.0 half ran, and the 3.5.0 half can run if the owner reads NOT SHOWN as a failure. A-07: L (3–5) |
+| pyOpenMS 3.6.0 as the first runtime (B-2.1, B-2.2) | The owner's reading of the libiconv lines of A-03's probe. *2026-11-04: approved by the owner ("批准 A-03") and run ([evidence](../spikes/RUNTIME_360_PROBE.md)). In the shape that would ship, on synthetic data, all 26 planned classes ran without the Thermo folder. That libiconv is not linked is NOT SHOWN and its terms are not answered, so the rule of the roadmap's section 7 gives neither a pass nor a failure yet, and which branch of B-2 applies stays open. *2026-11-04, later:* the owner accepted libiconv's terms (LIB-1, option A), so the condition holds and B-2.1 and B-2.2 apply; nothing ships. On one fixture and two targets, ANA-004 completes unedited with the same outcomes and different numbers; on a variant of another fixture, one target's outcome changes when its mass comes from its formula, and with its declared mass its `rawArea` changes, and its model status too in the seven-target batch only. A-07 takes both* | A-03: M; the 3.6.0 half ran, and the 3.5.0 half can run if the owner reads NOT SHOWN as a failure. A-07: L (3–5). *2026-11-04 (LIB-1):* the owner did not read it as a failure, so that half does not run. |
 
 ### 7.6 Refused or not adopted
 
@@ -843,6 +879,13 @@ None can be delivered by engineering alone; each waits for one input.
   outside the admitted catalog, in-place spreadsheet-formula neutralization,
   rerun to replace a damaged result, diagnostics upload. "Terminal" means
   closed for the route that decided it, not impossible.
+  - *2026-11-04:* mzXML output does not stay refused. It returns as a labelled
+    advanced format through the two-run route, under
+    [ADR 0055](../architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)
+    decision 6, accepted on 2026-10-29, with the comparison against the intermediate
+    that gate asks for. The owner answered how on 2026-11-03
+    ([XML-1](OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)). Not built: the
+    desktop still refuses it (N-C2).
 - **Reversible, not selected:** explicit overwrite (needs a new finalization
   contract), pause/resume (needs a measured need), the settings summary and the
   steppers (kept by PM9's freeze), target-file import (overlaps M10), on-screen
@@ -935,3 +978,8 @@ None can be delivered by engineering alone; each waits for one input.
 - *Answered 2026-10-30* (section 2): those 21, as recommended. This answers
   the frontend's target and ADR 0060's open question 8 in the first item
   above (FE-2 and A0060). The other 32 stay open.
+- *Answered 2026-11-03 and 2026-11-04:* those 32, then round two of the decision
+  page, A-03, the open-PR cleanup, LIB-1 and ask 2
+  ([sections 1d and 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)). NEXT-RELEASE
+  sets the next release's conditions and approves no release, and each window is
+  asked for when its step comes.

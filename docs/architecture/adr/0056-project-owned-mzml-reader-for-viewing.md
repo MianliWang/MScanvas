@@ -18,6 +18,8 @@ only, with PR #182's five choices (the library-extension note under decision
 3).
 Amended 2026-11-04 by the owner (P216): decision 1's selected-spectrum refusals
 gain `payload_stated_twice` and `element_in_payload` (a note there).
+Amended 2026-11-03 by the owner (MAP-1.9): decision 1 is widened again, not built
+(a note at its end).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -232,6 +234,16 @@ today.
 The reader is for viewing only. Conversion, the conversion-integrity
 inspector and targeted MS1 are unchanged; the targeted-MS1 worker still reads
 its own source.
+
+> **Amended 2026-11-03 by the owner's decision (MAP-1.9)**, not built. The reader's
+> row will state whether a spectrum declares a narrow scan: zoom scan (MS:1000497)
+> or SIM spectrum (MS:1000582). R-1's widening does not include this reading, so it
+> is a widening of its own. The MS1 map leaves such spectra out and states how many
+> ([ADR 0068](0068-rt-mz-map.md) decision 1,
+> [section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+> The work is not estimated and has no roadmap item yet. The answer says "a scan type
+> or window" and gives no width; reading "narrow" by those two terms is this record's
+> reading, not an owner decision.
 
 ### 2. A sibling of the bounded inspector
 
@@ -470,10 +482,23 @@ Both need a follow-up decision. It must:
 >      recorded `msaccess` run summary of a public mzML, under a ProteoWizard
 >      hold release (HR-1, still open). If they cannot be matched, they stay
 >      `msaccess`'s.
+>      *Owner decision, 2026-11-03 (HR-1.6):* one run is granted in principle, on a
+>      public mzML, and kept with the file's digest. The window is asked for when
+>      this step is reached (HR-1.7), and no run starts on this answer alone
+>      ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 >   3. **#154's scan-context terms.** Polarity and charge now. The analyzer and
 >      the filter string are read only if #154's columns stay in the rebuilt
 >      scan table. Scan event and ion injection time are not answered and stay
 >      open.
+>      *Owner decision, 2026-11-04 (R-1-ANALYZER, option `file`):* for B-4.6's noise
+>      default only, the product reads the file-level analyzer the library already
+>      reads, in A-20-UI, not a per-scan term. The filter string stays unread, the
+>      scan table gains no column, and a file whose declaration is unclear is entered
+>      by hand. The costs the page names: the rule must be written on CV terms; where
+>      MS1 and MS2 use different analyzers, the file level cannot say which MS1 used;
+>      wiring the read is not estimated
+>      ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
+>      Not built. Scan event and ion injection time stay open.
 >   4. **The pull request's five choices are accepted as stated:** decision 1
 >      widened for the library only; MS-level buckets lowest level first;
 >      polarity read at spectrum level only; charge kept off the shared
@@ -717,6 +742,15 @@ read values, not a computation.
 > one per computation, for projections of stored values only, never a
 > reimplemented mature algorithm. Until a computation's record is accepted,
 > this decision applies to it unchanged.
+
+> *Owner decision, 2026-11-04 (A0070-MAX, option `record_both`):* one short record
+> covers both picking the MS1 at the TIC apex on open (V-1) and the base of a relative
+> intensity (V-3), because ADR 0070 decision 1 lists selection and extremes as
+> computation. ADR 0075 is reserved for it and is not written. The parts of N-V3 and
+> N-V4 it covers merge only after the owner accepts that record; their other parts do
+> not wait. The question did not ask about the preview's range above, so that sentence
+> stands as written; that is a reading, not an owner decision
+> ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 
 ### 8. Re-measure before implementing
 
@@ -1125,6 +1159,20 @@ keeps today's row-capped state (decision 5). Two other ways:
 - raise `MAX_SPECTRUM_TABLE_ROWS`, which sends more rows through React;
 - send the chromatogram itself from Rust's retained rows, bounded like any
   list, which is a viewer decision amending ADR 0033 and ADR 0034.
+
+*Owner decision, 2026-11-03 (R-2):* the second way. Rust sends the chromatogram, so
+every run length gets a TIC/BPC and a chromatogram export, and the scan rows need not
+all pass through React. The list stays a prefix, so a scan picked on the chromatogram
+may not be in the table
+([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+Not built until lane `viewer-n-b2-rework-154` (N-B2) merges.
+
+*Owner decision, 2026-11-04 (R-2-CAP, option `all_points`):* no decimation: Rust sends
+every retained point, and the screen's existing per-column reduction stays. The
+transfer and drawing of 1,000,000 points are not measured. If the measurement cannot
+carry it, that part stops and the owner is asked again
+([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
+Not built.
 
 ## What this amends, on acceptance
 

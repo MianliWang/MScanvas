@@ -393,6 +393,9 @@ VIEW-007 stays unavailable.
 - **[ADR 0037](0037-viewer-completion-route.md)** is not edited. Decision 4
   answers XIC-D1 for the product with option (d), and decision 6 answers
   XIC-D2 with MS1. XIC-D5 stays open under X-3.
+  *2026-11-04:* X-3.2 answers where the trace is drawn and against which value axis
+  (question 1 below). Its height stays open, as question 3 of
+  [ADR 0072](0072-xic-candidate-decision-x3.md), Proposed and unanswered.
 - **[The feature catalogue](../../product/FEATURE_CATALOG.md)**, VIEW-007, and
   **[the after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md#75-evidence-gated-items)**,
   section 7.5, carry dated notes.
@@ -446,6 +449,17 @@ which ADR 0070 records.
    - §11.13, the preview and engine divergences: kept, each with its reason
      stated in the interface, and aligned in ADR 0056's follow-up. The default
      stands.
+
+   *Owner decision, 2026-11-03 (X-3.1 to X-3.3):* all of CSV, TSV, SVG, PNG and
+   `Copy plot`; its own panel under the chromatogram sharing the retention-time
+   axis, with that height measurement; the differences kept, with a refusal stating
+   the reason
+   ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+   Not built. X4 and X5 still need the slice table's admitted outcome and their own
+   authorization, and these answers give neither.
+   *2026-11-04, a status:* the height measurement is in
+   [ADR 0072](0072-xic-candidate-decision-x3.md), Proposed and unanswered, and the
+   panel's height in X4 is its question 3.
 2. **Integer arrays** (before X1's fixtures). The reader widens 32- and 64-bit
    integers up to 2^53 exactly and refuses larger ones. Either that refusal
    maps to `Unreadable`, which stretches "could not be decoded", or the
@@ -469,3 +483,13 @@ which ADR 0070 records.
    returned with typed coverage or refused, and whether the in-place-rewrite
    window is closed by a digest revalidated after the read or stated as a
    residual.
+
+   *Owner decision, 2026-11-04 (A0071-Q3, option `refuse_digest`):* a truncated file
+   is refused whole, and a digest closes the in-place-rewrite window: taken before
+   the read and compared after it. The costs the page names: each XIC reads the file
+   more than it does now, by a time not measured; the XIC is stricter than the
+   chromatogram beside it, and the viewer still takes no digest; the work is not
+   estimated
+   ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
+   Not built. X4 still needs X3's admitted outcome and its own authorization, which
+   this answer does not give.
