@@ -1,7 +1,7 @@
 # ADR 0066 — Releasing the analysis runtime (CPython and pyOpenMS)
 
-Status: **Accepted**, 2026-11-04, by this record's reading of B-1 and the roadmap and
-no wider than the owner's answers, both in the block of that date below. Engine:
+Status: **Accepted**, 2026-11-05, by the owner (ADR66-STATUS) and no wider than the
+owner's answers, both in the block of 2026-11-04 below. Engine:
 pyOpenMS 3.6.0 without Qt on CPython 3.14
 ([decision 8](#8-engine-and-interpreter-the-owners-rule-on-cpython-314)). Proposed
 2026-10-30. Not implemented: nothing here is built, and this status approves no
@@ -67,11 +67,11 @@ not an owner decision: it is the text of 2026-10-30 or a later note.
 > source build), decision 9 and decision 11 were not asked: they are the text of
 > 2026-10-30, not an owner decision.
 
-> **Accepted, 2026-11-04, and no wider than the answers.** B-1 says B-2 is decided
-> before this record is accepted, and the roadmap's phase 0 exit says it is accepted
-> with its engine version. Both now hold, so the status follows those two lines: a
-> reading, not an owner decision. The owner wrote no separate "accepted" for this
-> record. The ids of 2026-11-04 are in
+> **Accepted, and no wider than the answers.** B-1 says B-2 is decided before this
+> record is accepted, and the roadmap's phase 0 exit says it is accepted with its engine
+> version. Both held on 2026-11-04. The owner saw the word and took it on 2026-11-05
+> (ADR66-STATUS, option A, "批准，全部按推荐"): Accepted as it is scoped here, approving
+> nothing beyond these answers. The ids of 2026-11-04 are in
 > [section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04). What the owner decided:
 >
 > - **B-1 (2026-10-30):** the block above: decisions 1 and 2, every fix to a shipped
@@ -1117,6 +1117,10 @@ shape. The probe's numbers above replace it wherever they differ.
 - Stored results stay readable after the runtime is removed (M9 contract).
 
 ### 10. Dependency approval and provisioning
+
+> *2026-11-05 (A07-CELL):* the owner also approved
+> `nanobind_backend-1.0.0-cp313-cp313-win_amd64.whl`, in a temporary directory, for separating
+> interpreter from engine in A-07 only. No lock holds it and it does not ship.
 
 Shipping makes the shipped wheels production dependencies, so the owner
 approves them with this record's rationale: they are the versions ANA-004 was
