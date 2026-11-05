@@ -1199,6 +1199,24 @@ const STOPS: readonly Stop[] = [
     anchor: "#workbench-conversion",
   },
   {
+    // Rows in the workspace, none checked: the page's first look, with nothing in scope.
+    name: "conversion-empty-scope",
+    table: (locale) => conversionWorld(locale, { status: "idle" }),
+    drive: () => go(2),
+    anchor: "#conversion-scope-summary",
+  },
+  {
+    // The plan's question unanswered: the rail while Rust describes the queue.
+    name: "conversion-plan-loading",
+    table: (locale) => conversionWorld(locale, { status: "idle" }),
+    hold: ["describe_workspace_conversion_queue"],
+    drive: async () => {
+      await checkMembers([FIRST.handle, SECOND.handle]);
+      await go(2);
+    },
+    anchor: ".conversion-rail-foot .notice",
+  },
+  {
     // Advanced open under Basic, with its changed count in the head (C7).
     name: "conversion-advanced",
     table: (locale) => conversionWorld(locale, { status: "idle" }),
@@ -2680,8 +2698,9 @@ async function layoutFacts() {
         .map((button) => (button.textContent ?? "").trim() || button.getAttribute("aria-label") || "?"),
       // Beyond buttons: any visible text cut by an ellipsis or overflow
       // (headers, heads, names), and any placeholder wider than its field.
-      // A middle ellipsis's head is listed too: it is a deliberate cut.
-      clippedText: [...document.querySelectorAll<HTMLElement>("h1, h2, h3, th, [role='columnheader'] span, .plot-head span, .plot-head p, .ui-middle-ellipsis__head, .viewer-file-name, .roster-selection-context")]
+      // A middle ellipsis's head is listed too: it is a deliberate cut. Its box
+      // listed means more than its head gave way: a name cut with no ellipsis.
+      clippedText: [...document.querySelectorAll<HTMLElement>("h1, h2, h3, th, [role='columnheader'] span, .plot-head span, .plot-head p, .ui-middle-ellipsis, .ui-middle-ellipsis__head, .viewer-file-name, .roster-selection-context")]
         // A name hidden by clipping (a rail's title while its status titles it) is not cut text.
         .filter((node) => node.offsetParent !== null && !node.closest(".visually-hidden") && getComputedStyle(node).clipPath === "none" && node.scrollWidth > node.clientWidth + 1)
         .map((node) => `${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0] ?? ""}: ${(node.textContent ?? "").trim().slice(0, 60)}`),
