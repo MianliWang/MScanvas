@@ -1031,7 +1031,7 @@ impl WorkspaceRestoreStore {
     /// next save records the result. A row that left brings its stored label, on
     /// the same proof, to the row admission answered with and to the table a
     /// reference asks (owner decision P201-RESTORE, 2026-11-04; onto a row already
-    /// there, as built, not an owner decision).
+    /// there, as built on 2026-11-04, not an owner decision).
     ///
     /// # Errors
     ///

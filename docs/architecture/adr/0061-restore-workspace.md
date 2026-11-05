@@ -158,9 +158,18 @@ row.
   does, so decision 6 refuses that one whole. No build writes one.
 - Restore workspace over a row already in the Workbench gives that row the stored
   label, merged with any it has, on the same object proof.
-- The label is a flag and a bounded, redacted release: it adds no path (decision 7).
+- As a build writes it, the label is a flag and a bounded, redacted release, which
+  add no path (decision 7). A read checks the release only by the project record's
+  bounds and does not redact it, as a project's reference does not, so a hand-edited
+  document can put a path on the row and on its figures.
 - A row that gains a label without moving is recorded by the next save, which the
   webview now owes it.
+- The accepted cost names Add files. Three more paths lose the label, none changed
+  here: a reference registered from the file picker while the row still waits
+  records `null`, and the press that later labels the row does not change it; the
+  same file added in a later session by another route (Add mzML folder…, a drop) has
+  none, as with Add files; and a row decision 10 no longer offers leaves the document
+  with its label.
 
 ### 2. Where it is stored
 

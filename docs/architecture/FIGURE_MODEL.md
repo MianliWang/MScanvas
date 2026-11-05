@@ -259,7 +259,8 @@ It is apart from the title, so an edited title cannot remove it.
   decision P201-RESTORE, 2026-11-04).
 - Not covered: the same file added with Add files in a later session instead of
   being put back. It has no label, so its figures draw no note, the cost that
-  decision accepted.
+  decision accepted. By another route it is the same (as built on 2026-11-04, not
+  an owner decision).
 
 ## The saved figure — FIG-007, Rust side
 

@@ -1659,8 +1659,11 @@ impl PreviewService {
     /// the label follows the object whatever route the user registers it by, as
     /// far as this process knows it: a row Restore workspace put back has the label
     /// its stored row held, so that is recorded (owner decision P201-RESTORE,
-    /// 2026-11-04), and a file added by another route in a later session has none,
-    /// so none is recorded, the cost that decision accepted.
+    /// 2026-11-04). The same file added with Add files in a later session has none,
+    /// so none is recorded, the cost that decision accepted. Added by another route,
+    /// or registered from the file picker while its row still waits, none is recorded
+    /// either, and a later press does not change it: as built on 2026-11-04, not an
+    /// owner decision.
     /// A row's identity is one its lease holds, so a match is that row's own
     /// object. The row is asked first because where a finalized output holds no
     /// identity, as off Windows, the table never hears of it. With no row the
@@ -1694,9 +1697,10 @@ impl PreviewService {
     /// process that finalized an output, or that a project's reference brought a
     /// label to, a route cannot lose the label. The table ends with that process.
     /// A row Restore workspace puts back in a later session is given its stored
-    /// label, and the same file added here instead has none, the cost owner decision
-    /// P201-RESTORE (2026-11-04) accepted. By object identity and never
-    /// by name: an output moved on its volume keeps it, and a copy under any name
+    /// label. The same file added with Add files instead has none, the cost owner
+    /// decision P201-RESTORE (2026-11-04) accepted; by another route it has none
+    /// either, as built on 2026-11-04, not an owner decision. By object identity and
+    /// never by name: an output moved on its volume keeps it, and a copy under any name
     /// is a new object without it. The slot is asked first and let go of, as
     /// everywhere that needs both.
     fn register_admitted(
