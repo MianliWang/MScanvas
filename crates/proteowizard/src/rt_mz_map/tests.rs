@@ -19,6 +19,8 @@ const COUNTS: &str = "MS:1000131";
 const MZ: &str = "MS:1000040";
 const POSITIVE: &str = "MS:1000130";
 const NEGATIVE: &str = "MS:1000129";
+const ZOOM_SCAN: &str = "MS:1000497";
+const SIM_SPECTRUM: &str = "MS:1000582";
 
 /// The map of `ms1`'s spectra: profile, stating no polarity.
 const UNSTATED_PROFILE: MapKind = kind(None, MzmlRepresentation::Profile);
@@ -514,6 +516,249 @@ fn a_partly_declared_representation_is_refused_whichever_map_is_asked_for() {
         ms1_extent(&table(&across_polarities)),
         Err(MapError::PartlyDeclaredRepresentation)
     );
+}
+
+#[test]
+fn narrow_scans_stay_out_unread_and_are_counted_and_full_scans_do_not_change() {
+    let full = |index, minutes, intensity| {
+        stating(
+            index,
+            minutes,
+            PROFILE,
+            &[POSITIVE],
+            &format!(
+                "{}{}{}",
+                cv("MS:1000528", "100", MZ),
+                cv("MS:1000527", "200", MZ),
+                arrays(&[100.0, 200.0], &[intensity, 1.0])
+            ),
+        )
+        .replace("defaultArrayLength=\"1\"", "defaultArrayLength=\"2\"")
+    };
+    // Numpress refuses a map if it is read, so the two narrow scans in the window
+    // prove they are not. Their stated ranges are outside the full scans', and the
+    // last of them is outside the full scans' retention times too.
+    let narrow = |index, minutes, term| {
+        stating(
+            index,
+            minutes,
+            PROFILE,
+            &[POSITIVE, term],
+            &format!(
+                "{}{}{}",
+                cv("MS:1000528", "50", MZ),
+                cv("MS:1000527", "60", MZ),
+                arrays_with(&[55.0], &[9.0], (MZ, COUNTS), NUMPRESS)
+            ),
+        )
+    };
+    let beside = document(&[
+        full(0, "1", 5.0),
+        narrow(1, "2", ZOOM_SCAN),
+        narrow(2, "3", SIM_SPECTRUM),
+        full(3, "4", 7.0),
+        narrow(4, "9", ZOOM_SCAN),
+    ]);
+    let alone = document(&[full(0, "1", 5.0), full(1, "4", 7.0)]);
+
+    // The first view is the full scans': not m/z 50, and not minute 9.
+    let extents = ms1_extent(&table(&beside)).expect("has a map");
+    assert_eq!(extents, ms1_extent(&table(&alone)).expect("has a map"));
+    assert_eq!(extents.len(), 1);
+    assert_eq!(extents[0].kind(), POSITIVE_PROFILE);
+    assert_eq!(extents[0].spectra(), 2);
+    assert_eq!(extents[0].retention_time(), (1.0, 4.0));
+    assert_eq!(extents[0].mz(), Some((100.0, 200.0)));
+    assert_eq!(narrow_ms1_scans(&table(&beside)), 3);
+    assert_eq!(narrow_ms1_scans(&table(&alone)), 0);
+
+    let view = MapRequest {
+        kind: POSITIVE_PROFILE,
+        ..request((0.0, 8.0), 8, (0.0, 400.0), 4)
+    };
+    let mut heard = Vec::new();
+    let left = bin_rt_mz_map_from(
+        Cursor::new(&beside),
+        &table(&beside),
+        view,
+        &CancellationToken::new(),
+        |done, total| heard.push((done, total)),
+    )
+    .expect("maps");
+    let right = map(&alone, view).expect("maps");
+    assert_eq!(heard, [(1, 2), (2, 2)], "progress counts the map's spectra");
+    assert_eq!(
+        left.narrow_scans_left_out(),
+        2,
+        "the one at minute 9 is out"
+    );
+    assert_eq!(right.narrow_scans_left_out(), 0);
+    assert_eq!(left.spectra(), 2);
+    assert_eq!(left.points_binned(), right.points_binned());
+    assert_eq!(left.points_outside_mz(), right.points_outside_mz());
+    for time_bin in 0..view.retention_time_bins {
+        assert_eq!(row(&left, time_bin), row(&right, time_bin));
+    }
+    assert_eq!(left.cell(1, 1), Some(5.0));
+    assert_eq!(left.cell(4, 1), Some(7.0));
+    assert_eq!(row(&left, 2), [None; 4], "no stripe at a zoom scan's time");
+    assert_eq!(
+        row(&left, 3),
+        [None; 4],
+        "no stripe at a SIM spectrum's time"
+    );
+
+    // A window around only the last counts it and reads nothing.
+    let late = map(
+        &beside,
+        MapRequest {
+            retention_time: (8.0, 10.0),
+            ..view
+        },
+    )
+    .expect("maps");
+    assert_eq!(late.narrow_scans_left_out(), 1);
+    assert_eq!(late.spectra(), 0);
+}
+
+#[test]
+fn a_narrow_scan_on_its_scan_stays_out_like_one_on_its_spectrum() {
+    let on_scan = spectrum(
+        1,
+        1,
+        PROFILE,
+        ("2", MINUTE),
+        1,
+        &arrays_with(&[100.0], &[9.0], (MZ, COUNTS), NUMPRESS),
+    )
+    .replacen("</scan>", &format!("{}</scan>", cv(ZOOM_SCAN, "", "")), 1);
+    let document = document(&[ms1(0, "1", &[100.0], &[5.0]), on_scan]);
+
+    assert_eq!(narrow_ms1_scans(&table(&document)), 1);
+    let mapped = map(&document, request((0.0, 4.0), 4, (99.0, 101.0), 1)).expect("maps");
+    assert_eq!(mapped.narrow_scans_left_out(), 1);
+    assert_eq!(mapped.cell(1, 0), Some(5.0));
+    assert_eq!(mapped.cell(2, 0), None);
+}
+
+#[test]
+fn only_narrow_ms1_spectra_have_no_map_and_keep_their_count() {
+    let one_point = arrays(&[100.0], &[5.0]);
+    let document = document(&[
+        stating(0, "1", PROFILE, &[ZOOM_SCAN], &one_point),
+        stating(1, "2", PROFILE, &[SIM_SPECTRUM], &one_point),
+    ]);
+    assert_eq!(
+        ms1_extent(&table(&document)),
+        Err(MapError::OnlyNarrowMs1Spectra)
+    );
+    assert_eq!(
+        map(&document, request((0.0, 4.0), 4, (99.0, 101.0), 1)),
+        Err(MapError::OnlyNarrowMs1Spectra)
+    );
+    assert_eq!(narrow_ms1_scans(&table(&document)), 2);
+}
+
+#[test]
+fn a_kind_holding_only_narrow_scans_has_no_map_and_keeps_its_count() {
+    let one_point = arrays(&[100.0], &[5.0]);
+    let document = document(&[
+        stating(0, "1", PROFILE, &[POSITIVE], &one_point),
+        stating(1, "2", PROFILE, &[NEGATIVE, SIM_SPECTRUM], &one_point),
+        stating(2, "3", PROFILE, &[POSITIVE], &one_point),
+    ]);
+    let extents = ms1_extent(&table(&document)).expect("has a map");
+    assert_eq!(extents.len(), 1);
+    assert_eq!(extents[0].kind(), POSITIVE_PROFILE);
+    // Every MS1 spectrum is on one map or in this count.
+    assert_eq!(
+        extents[0].spectra() + narrow_ms1_scans(&table(&document)),
+        3
+    );
+
+    let view = request((0.0, 4.0), 4, (99.0, 101.0), 1);
+    assert_eq!(
+        map(
+            &document,
+            MapRequest {
+                kind: NEGATIVE_PROFILE,
+                ..view
+            }
+        ),
+        Err(MapError::MapNotInTable)
+    );
+    // The negative SIM spectrum is another kind's, so this map does not count it.
+    let positive = map(
+        &document,
+        MapRequest {
+            kind: POSITIVE_PROFILE,
+            ..view
+        },
+    )
+    .expect("maps");
+    assert_eq!(positive.narrow_scans_left_out(), 0);
+}
+
+#[test]
+fn the_file_wide_checks_still_cover_narrow_scans() {
+    let one_point = arrays(&[100.0], &[5.0]);
+    // The narrow scan alone breaks each rule, wherever it stands in the file.
+    let polarity = stating(1, "2", PROFILE, &[ZOOM_SCAN], &one_point);
+    let representation = stating(1, "2", "", &[POSITIVE, ZOOM_SCAN], &one_point);
+    let seconds = spectrum(
+        1,
+        1,
+        PROFILE,
+        ("2", SECOND),
+        1,
+        &format!("{}{one_point}", cv(POSITIVE, "", "")),
+    )
+    .replacen(
+        "<scanList",
+        &format!("{}<scanList", cv(ZOOM_SCAN, "", "")),
+        1,
+    );
+    let full = stating(0, "1", PROFILE, &[POSITIVE], &one_point);
+    for (narrow, refusal) in [
+        (polarity, MapError::PartlyDeclaredPolarity),
+        (representation, MapError::PartlyDeclaredRepresentation),
+        (seconds, MapError::MixedRetentionTimeUnits),
+    ] {
+        assert_eq!(
+            ms1_extent(&table(&document(&[full.clone(), narrow.clone()]))),
+            Err(refusal)
+        );
+        let first = narrow
+            .replacen("index=\"1\"", "index=\"0\"", 1)
+            .replacen("scan=1", "scan=0", 1);
+        let second = full
+            .replacen("index=\"0\"", "index=\"1\"", 1)
+            .replacen("scan=0", "scan=1", 1);
+        assert_eq!(
+            ms1_extent(&table(&document(&[first, second]))),
+            Err(refusal)
+        );
+    }
+}
+
+#[test]
+fn a_narrow_term_on_a_later_ms_level_counts_nothing() {
+    let one_point = arrays(&[100.0], &[5.0]);
+    let document = document(&[
+        ms1(0, "1", &[100.0], &[5.0]),
+        spectrum(
+            1,
+            2,
+            PROFILE,
+            ("2", MINUTE),
+            1,
+            &format!("{}{one_point}", cv(SIM_SPECTRUM, "", "")),
+        ),
+    ]);
+    assert!(table(&document).rows()[1].declares_narrow_scan());
+    assert_eq!(narrow_ms1_scans(&table(&document)), 0);
+    let mapped = map(&document, request((0.0, 4.0), 4, (99.0, 101.0), 1)).expect("maps");
+    assert_eq!(mapped.narrow_scans_left_out(), 0);
 }
 
 #[test]
@@ -1043,6 +1288,7 @@ fn the_stable_ids_decision_5_lists_do_not_change() {
         (MapError::InvalidBins, "map_bins_invalid"),
         (MapError::AllocationRefused, "allocation_refused"),
         (MapError::NoMs1Spectra, "no_ms1_spectra"),
+        (MapError::OnlyNarrowMs1Spectra, "only_narrow_ms1_spectra"),
         (
             MapError::MixedRetentionTimeUnits,
             "mixed_retention_time_units",

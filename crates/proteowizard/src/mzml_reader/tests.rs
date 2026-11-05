@@ -2013,6 +2013,112 @@ fn conflicting_polarity_is_not_reported_and_the_open_stands() {
     assert_eq!(rows[0].polarity(), MzmlDeclared::NotDeclared);
 }
 
+const ZOOM_SCAN: (&str, &str) = ("MS:1000497", "zoom scan");
+const SIM_SPECTRUM: (&str, &str) = ("MS:1000582", "SIM spectrum");
+
+/// `ms1_default(0)` with `extra` inside its scan.
+fn ms1_scan_stating(extra: &str) -> String {
+    ms1_default(0).replacen("<scanWindowList", &format!("{extra}<scanWindowList"), 1)
+}
+
+/// `document` with a second param group, `narrow`, that states `stated`.
+fn document_with_narrow_group(stated: &str, spectrum: &str) -> String {
+    let groups = groups()
+        .replace("count=\"1\"", "count=\"2\"")
+        .replace(
+            "</referenceableParamGroupList>",
+            &format!(
+                "<referenceableParamGroup id=\"narrow\">{stated}</referenceableParamGroup></referenceableParamGroupList>"
+            ),
+        );
+    document_with(&groups, &[spectrum.to_owned()])
+}
+
+#[test]
+fn a_narrow_scan_is_either_term_on_the_spectrum_or_its_scan_or_their_groups() {
+    let narrow = |document: &str| rows(document)[0].declares_narrow_scan();
+
+    assert!(!narrow(&base()));
+    assert!(!rows(&base())[1].declares_narrow_scan());
+    // Each term alone, both together, and where `msconvert` writes them.
+    assert!(narrow(&document(&[ms1_stating(&term(ZOOM_SCAN))])));
+    assert!(narrow(&document(&[ms1_stating(&term(SIM_SPECTRUM))])));
+    assert!(narrow(&document(&[ms1_stating(&format!(
+        "{}{}",
+        term(ZOOM_SCAN),
+        term(SIM_SPECTRUM)
+    ))])));
+    // Where the mzML mapping puts a scan attribute. Polarity is not read there.
+    assert!(narrow(&document(&[ms1_scan_stating(&term(ZOOM_SCAN))])));
+    assert!(narrow(&document(&[ms1_scan_stating(&term(SIM_SPECTRUM))])));
+
+    // Through a group, referred to from either.
+    let reference = "<referenceableParamGroupRef ref=\"narrow\"/>";
+    for stated in [term(ZOOM_SCAN), term(SIM_SPECTRUM)] {
+        assert!(narrow(&document_with_narrow_group(
+            &stated,
+            &ms1_stating(reference)
+        )));
+        assert!(narrow(&document_with_narrow_group(
+            &stated,
+            &ms1_scan_stating(reference)
+        )));
+    }
+    // A group nothing refers to states nothing about a spectrum.
+    assert!(!narrow(&document_with_narrow_group(
+        &term(ZOOM_SCAN),
+        &ms1_default(0)
+    )));
+
+    // A selected read states what the table states.
+    let zoom = document(&[ms1_stating(&term(ZOOM_SCAN))]);
+    assert_eq!(selected(&zoom, 0).expect("decodes").row(), &rows(&zoom)[0]);
+}
+
+#[test]
+fn a_narrow_scan_term_elsewhere_marks_no_spectrum() {
+    let narrow = |document: &str| rows(document)[0].declares_narrow_scan();
+
+    // The file's aggregate list really would hold it for a SIM run.
+    let aggregate = base().replacen(
+        "</fileContent>",
+        &format!("{}</fileContent>", term(SIM_SPECTRUM)),
+        1,
+    );
+    assert!(!narrow(&aggregate));
+    // On the scan's window, and on a precursor's selected ion.
+    let in_window = ms1_default(0).replacen(
+        "</scanWindow>",
+        &format!("{}</scanWindow>", term(ZOOM_SCAN)),
+        1,
+    );
+    assert_ne!(in_window, ms1_default(0), "the fixture has a scan window");
+    assert!(!narrow(&document(&[in_window])));
+    let on_ion = document(&[ms1_default(0), ms2_first_ion_stating(&term(ZOOM_SCAN))]);
+    assert!(!rows(&on_ion)[1].declares_narrow_scan());
+}
+
+#[test]
+fn stating_a_narrow_scan_never_refuses_the_open() {
+    // Restated with different values: as a `Term` this would refuse the open.
+    let restated = document(&[ms1_stating(&format!(
+        "{}{}",
+        cv(ZOOM_SCAN.0, ZOOM_SCAN.1, "one"),
+        cv(ZOOM_SCAN.0, ZOOM_SCAN.1, "two")
+    ))]);
+    let table = table(&restated).expect("opens");
+    assert!(table.rows()[0].declares_narrow_scan());
+    assert_eq!(table.rows()[0].ms_level(), 1);
+    selected(&restated, 0).expect("the spectrum still decodes");
+}
+
+#[test]
+fn the_xic_pass_shares_no_narrow_scan_fact() {
+    // `fact` decides what the XIC pass captures, so these terms stay out of it.
+    assert_eq!(fact(ZOOM_SCAN.0, ""), None);
+    assert_eq!(fact(SIM_SPECTRUM.0, ""), None);
+}
+
 #[test]
 fn charge_is_the_first_selected_ion_s_as_declared() {
     let ms2_charge = |document: &str| {
@@ -2580,7 +2686,7 @@ fn metadata_debug_shows_counts_only() {
 #[test]
 fn every_new_reading_is_the_same_under_a_namespace_prefix() {
     let document = described(&[
-        ms1_stating(&term(POSITIVE)),
+        ms1_stating(&format!("{}{}", term(POSITIVE), term(ZOOM_SCAN))),
         ms2_first_ion_stating(&charge("2")),
     ]);
     let plain = table(&document).expect("opens");
@@ -2591,6 +2697,7 @@ fn every_new_reading_is_the_same_under_a_namespace_prefix() {
         plain.rows()[0].polarity(),
         MzmlDeclared::Value(MzmlPolarity::Positive)
     );
+    assert!(plain.rows()[0].declares_narrow_scan());
     assert_eq!(
         plain.rows()[1]
             .first_precursor()
