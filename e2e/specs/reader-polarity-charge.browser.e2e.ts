@@ -31,7 +31,7 @@ const POINTS = 1_234;
 
 type Locale = "en" | "zh-CN";
 type Facts = Pick<SelectedSpectrum, "polarity" | "charge">
-  & Partial<Pick<SelectedSpectrum, "totalPrecursorCount" | "representation" | "msLevel" | "precursors">>;
+  & Partial<Pick<SelectedSpectrum, "totalPrecursorCount" | "representation" | "msLevel" | "precursors" | "scanNumber" | "index">>;
 
 function answers(locale: Locale, facts: Facts) {
   const table: Record<string, unknown> = ipcTable();
@@ -199,7 +199,8 @@ describe("a spectrum's polarity and charge", () => {
         // One fact, so "Charge 3" never stands without whose it is.
         const head = await soundHead();
         expect(head.facts).toEqual(["MS2", words.viewerRepresentationCentroid, words.viewerPolarityPositive, chargeOf("3", "3"), points]);
-        expect(head.dropped.filter(fact => fact !== points && !(narrowEn && fact === chargeOf("3", "3")))).toEqual([]);
+        // At 960 px en "MS2 Centroid Positive" fills the first line and the charge the second.
+        expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
         await shot("three-precursors");
 
         await openDetails();
@@ -226,6 +227,36 @@ describe("a spectrum's polarity and charge", () => {
         expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, charge("2"), words.viewerPolarityNotReported, points]);
         expect(head.dropped).not.toContain(charge("2"));
         await shot("charge-only");
+      });
+
+      it(`gives way from its end where a spectrum has no scan number, ${label}`, async () => {
+        // A native ID without a scan number: the head is named by the index,
+        // which leaves en 97 px at 960 px. The index is not a row of this
+        // table, so no retention time is linked; the head reads none.
+        const noScan = (index: number, facts: Facts): Facts => ({ ...facts, scanNumber: null, index: SCAN - 1 + index });
+        await openOn(locale, size, noScan(1, { polarity: "negative", charge: 2, representation: "profile" }));
+        expect(await browser.$("#selected-spectrum-scan").getText()).toBe(words.viewerSpectrumIndex.replace("{{index}}", "36,319"));
+
+        // As built: en at 960 px keeps the stated polarity and leaves the charge after it to Details.
+        let head = await soundHead();
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, words.viewerPolarityNegative, charge("2"), points]);
+        expect(head.dropped.filter(fact => fact !== points)).toEqual(narrowEn ? [charge("2")] : []);
+        await shot("no-scan-number");
+
+        // A charge only: it keeps the charge and leaves "Polarity not reported" to Details.
+        const chargeOnly = noScan(2, { polarity: null, charge: 2, representation: "profile" });
+        await setInvokeResult("load_selected_spectrum", spectrumAnswer(answers(locale, chargeOnly), 2, chargeOnly));
+        await chooseScan(2);
+        await browser.waitUntil(async () => (await headFacts()).facts.includes(words.viewerPolarityNotReported), {
+          timeoutMsg: "the head never followed the selected spectrum",
+        });
+        head = await soundHead();
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, charge("2"), words.viewerPolarityNotReported, points]);
+        expect(head.dropped.filter(fact => fact !== points)).toEqual(narrowEn ? [words.viewerPolarityNotReported] : []);
+
+        await openDetails();
+        expect(await detailsValue(words.viewerPolarity)).toBe(words.viewerNotReported);
+        expect(await detailsValue(words.viewerCharge)).toBe("2");
       });
 
       for (const representation of ["profile", "centroid"] as const) {
