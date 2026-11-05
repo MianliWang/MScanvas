@@ -2120,6 +2120,11 @@ fn a_label_lasts_through_a_save_a_put_back_and_the_save_after_it() {
         );
     }
     assert_eq!(stored(&scratch).groups[0].rows[0].label(), both_halves());
+    // The key is the document's contract, the schema version having stayed 1: under
+    // another name a document holding this one would be refused whole.
+    let text = String::from_utf8(stored_bytes(&scratch)).expect("UTF-8");
+    let stored_label = format!("\"notVerifiedByMscanvas\":{}", both_halves_as_stored());
+    assert!(text.contains(&stored_label), "{text}");
 
     let (store, service, answer) = put_back_in_a_later_session(&scratch);
     assert_eq!(the_rows_label(&service), both_halves());
