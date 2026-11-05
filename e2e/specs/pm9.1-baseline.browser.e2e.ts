@@ -50,6 +50,8 @@ import {
   type IpcCall,
 } from "../support/harness";
 import { showBackendBanner } from "../support/backendBanner";
+import { answerPlans } from "../support/conversion";
+import type { SelectedFile } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { cdp, metrics } from "../support/cdp";
 import {
   EMPTY_ROSTER,
@@ -2450,6 +2452,210 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           await focusOn(`[data-targeted-member="${LAYERS[0]}"]`);
           await focusWalk(`fe2-ring-members-${locale}-${String(width)}`, 4, "[data-targeted-members]", { wholeRing: true });
         }
+        expect(await unexpectedConsole()).toEqual([]);
+      });
+    }
+
+    for (const locale of ["en", "zh-CN"] as const) {
+      it(`FE-2: Conversion and Settings in the v5.11 look, every name whole and one scroller, in ${locale}`, async () => {
+        const SIZES = [
+          [1366, 768],
+          [960, 640],
+        ] as const;
+        // The two names main cut at 960x640: a short name's one text node, and a long name's tail.
+        const SHIMADZU: SelectedFile = { handle: "fe2-lcd", fileName: "Shimadzu_run_01.lcd", byteLength: 8_388_608, sourceKind: "shimadzu_lcd", relativeContext: null };
+        const LONG: SelectedFile = { handle: "fe2-long", fileName: "Plasma_QC_batch_08_replicate_04_long_acquisition.raw", byteLength: 8_388_608, sourceKind: "thermo_raw", relativeContext: null };
+        const ROWS = [SHIMADZU, LONG];
+        const withRows = () => ({ ...scenario("populated", locale), get_workspace_roster: { datasets: ROWS, capacity: 1024 } });
+        // MiddleEllipsis's head gives way first, so what its box cannot hold is a name cut with no ellipsis (C11).
+        const cutNames = () =>
+          browser.execute(() =>
+            [...document.querySelectorAll<HTMLElement>("#workbench-conversion .ui-middle-ellipsis")]
+              .filter((name) => name.getClientRects().length > 0 && name.scrollWidth > name.clientWidth + 1)
+              .map((name) => name.title),
+          );
+        const allRows = async () => {
+          await browser.$('label.conversion-segment:has(input[name="conversion-scope"][value="all"])').click();
+          await frames();
+        };
+
+        // A plan: the form and the rail.
+        await metrics(1366, 768);
+        await openTable(withRows());
+        await readBackSavedPreferences();
+        await answerPlans(ROWS);
+        await navigate([en.conversionTask, zh.conversionTask]);
+        await allRows();
+        await browser.$(".conversion-plan-list").waitForExist();
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await frames();
+          const look = await browser.execute(() => {
+            const style = (css: string) => getComputedStyle(document.querySelector(css)!);
+            const type = (css: string) => `${style(css).fontSize}/${style(css).fontWeight}`;
+            const head = style(".conversion-section-head");
+            const track = style(".conversion-settings .conversion-segments-track");
+            const chosen = style(".conversion-settings .conversion-segment:has(input:checked)");
+            const tile = style(".conversion-setting-choice:has(input:checked)");
+            const lossy = style(".conversion-lossy");
+            const refused = style('.conversion-segment[data-choice-state="unavailable"]');
+            return {
+              section: type(".conversion-section-head > h3"),
+              sectionRule: head.borderBottomColor,
+              inset: head.paddingLeft,
+              rail: style(".conversion-side").backgroundColor,
+              field: type(".conversion-form-label"),
+              track: [track.paddingTop, track.borderTopColor, track.backgroundColor],
+              // One line with the longer option chosen at these two sizes, so pressing it moves nothing below; at the rail's 300 px floor the English option wraps.
+              scope: Math.round(document.querySelector(".conversion-scope .conversion-segments-track")!.getBoundingClientRect().height),
+              chosen: [chosen.backgroundColor, chosen.color, chosen.fontWeight],
+              // An unchosen option has the same ink, so ink says nothing here.
+              refused: [refused.textDecorationLine, refused.outlineStyle, refused.outlineOffset],
+              tile: [tile.borderTopColor, tile.borderTopLeftRadius, tile.backgroundColor],
+              lossy: [lossy.borderTopWidth, lossy.backgroundColor, lossy.fontWeight],
+            };
+          });
+          evidence.push({ label: `fe2-conversion-plan-${locale}-${String(width)}`, ...look });
+          expect(look).toEqual({
+            section: "14px/650",
+            sectionRule: "rgb(220, 227, 235)",
+            inset: "16px",
+            rail: "rgb(255, 255, 255)",
+            field: "13px/550",
+            track: ["2px", "rgb(220, 227, 235)", "rgb(247, 248, 250)"],
+            scope: 32,
+            chosen: ["rgb(255, 255, 255)", "rgb(23, 105, 209)", "650"],
+            refused: ["line-through", "dashed", "-3px"],
+            tile: ["rgb(159, 191, 235)", "6px", "rgb(237, 244, 255)"],
+            lossy: ["0px", "rgb(255, 241, 202)", "550"],
+          });
+          expect(await cutNames()).toEqual([]);
+        }
+
+        // The arrow keys reach a refused option, where the focus ring replaces the dashes.
+        await browser.execute(() => {
+          document.querySelector<HTMLInputElement>('.conversion-segments-track:has([data-choice-state="unavailable"]) input:checked')!.focus();
+        });
+        await browser.keys("ArrowRight");
+        await frames();
+        expect(
+          await browser.execute(() => {
+            const option = document.activeElement!.closest<HTMLElement>(".conversion-segment")!;
+            const ring = getComputedStyle(option);
+            return [option.dataset["choiceState"], ring.outlineStyle, ring.outlineWidth];
+          }),
+        ).toEqual(["unavailable", "solid", "2px"]);
+
+        // Refused, with its reason on screen, in a note with v5.11's tinted edge.
+        await metrics(1366, 768);
+        await openTable({
+          ...withRows(),
+          describe_workspace_conversion_queue: { __reject: { kind: "dataset_not_convertible", summary: "That row cannot be converted.", detail: null, retryable: false } },
+        });
+        await navigate([en.conversionTask, zh.conversionTask]);
+        await allRows();
+        await browser.$(".conversion-rail-foot .notice-warning").waitForExist();
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await frames();
+          const refusal = await browser.execute(() => {
+            const note = document.querySelector<HTMLElement>(".conversion-rail-foot .notice-warning")!;
+            const box = note.getBoundingClientRect();
+            const listed = [...document.querySelectorAll<HTMLElement>(".conversion-requested-list .conversion-queue-name")];
+            return {
+              edge: getComputedStyle(note).borderTopColor,
+              shown: box.height > 0 && box.bottom <= innerHeight && box.top >= 0,
+              refused: document.querySelector(".conversion-rail-foot .ui-button--primary, .conversion-rail-foot .conversion-wide-action")?.getAttribute("aria-disabled"),
+              // The plain names in the list beside it: whole, so the extension stays.
+              listed: listed.length,
+              cut: listed.filter((name) => name.scrollWidth > name.clientWidth + 1).map((name) => name.title),
+            };
+          });
+          evidence.push({ label: `fe2-conversion-refused-${locale}-${String(width)}`, ...refusal });
+          expect(refusal).toEqual({ edge: "rgb(235, 212, 165)", shown: true, refused: "true", listed: ROWS.length, cut: [] });
+        }
+
+        // A queue running: the status, the bar, the tags, and the same two names.
+        const running = withRows() as Record<string, unknown>;
+        running["get_workspace_conversion_state"] = conversionSlot(1, {
+          status: "running",
+          operationId: "fe2-running",
+          queue: queueOf([
+            queueItem(LONG.handle, LONG.fileName, { state: "running", attempts: 1 }),
+            queueItem(SHIMADZU.handle, SHIMADZU.fileName, { sourceKind: "shimadzu_lcd" }),
+            queueItem("fe2-long-2", `${LONG.fileName.slice(0, -4)}_02.raw`),
+          ]),
+        });
+        await metrics(1366, 768);
+        await openTable(running);
+        await navigate([en.conversionTask, zh.conversionTask]);
+        await browser.$(".conversion-running").waitForExist();
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await frames();
+          const look = await browser.execute(() => {
+            const tag = document.querySelector<HTMLElement>('.conversion-run-list > li[data-item-state="pending"] .conversion-queue-status')!;
+            const tagStyle = getComputedStyle(tag);
+            const bar = getComputedStyle(document.querySelector(".conversion-progress-bar")!);
+            const status = getComputedStyle(document.querySelector(".conversion-run-status")!);
+            return {
+              status: `${status.fontSize}/${status.fontWeight}`,
+              bar: [bar.height, bar.borderTopLeftRadius],
+              tag: [tagStyle.fontSize, tagStyle.fontWeight, tagStyle.paddingTop, tagStyle.paddingLeft, tagStyle.borderTopLeftRadius],
+              tagHeight: Math.round(tag.getBoundingClientRect().height),
+              sideways: document.documentElement.scrollWidth - innerWidth,
+            };
+          });
+          evidence.push({ label: `fe2-conversion-running-${locale}-${String(width)}`, ...look });
+          expect(look).toEqual({
+            status: "14px/650",
+            bar: ["5px", "3px"],
+            tag: ["12px", "550", "2px", "6px", "4px"],
+            tagHeight: 24,
+            sideways: 0,
+          });
+          expect(await cutNames()).toEqual([]);
+        }
+
+        // Settings: the body alone scrolls, between a head and a foot that stay put.
+        await browser.$("[data-settings-entry]").click();
+        await browser.$("[data-settings-dialog]").waitForDisplayed();
+        for (const [width, height] of SIZES) {
+          await metrics(width, height);
+          await frames();
+          const settings = await browser.execute(() => {
+            const dialog = document.querySelector<HTMLElement>("[data-settings-dialog]")!;
+            const body = dialog.querySelector<HTMLElement>(".settings-dialog-body")!;
+            const inside = [...dialog.querySelectorAll<HTMLElement>("*")].filter((node) => node.getClientRects().length > 0 && !node.closest(".visually-hidden"));
+            const name = (node: HTMLElement) => `${node.tagName.toLowerCase()}.${String(node.className).split(" ")[0] ?? ""}`;
+            const edges = () => [dialog.querySelector(".settings-dialog-header")!, dialog.querySelector(".settings-dialog-footer")!].map((part) => Math.round(part.getBoundingClientRect().top));
+            const before = edges();
+            body.scrollTop = 0;
+            body.scrollTop = body.scrollHeight;
+            const label = getComputedStyle(dialog.querySelector(".setting-field-label")!);
+            return {
+              scrollers: inside.filter((node) => ["auto", "scroll"].includes(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight + 1).map(name),
+              sideways: inside.filter((node) => ["auto", "scroll"].includes(getComputedStyle(node).overflowX) && node.scrollWidth > node.clientWidth + 1).map(name),
+              cut: inside.filter((node) => node.tagName === "BUTTON" && node.scrollWidth > node.clientWidth + 1).map(name),
+              scrolled: body.scrollTop > 0,
+              headAndFootStay: JSON.stringify(before) === JSON.stringify(edges()),
+              field: `${label.fontSize}/${label.fontWeight}`,
+              row: getComputedStyle(dialog.querySelector(".settings-fields > .setting-field")!).paddingTop,
+            };
+          });
+          evidence.push({ label: `fe2-settings-${locale}-${String(width)}`, ...settings });
+          expect(settings).toEqual({
+            scrollers: ["div.settings-dialog-body"],
+            sideways: [],
+            cut: [],
+            scrolled: true,
+            headAndFootStay: true,
+            field: "14px/600",
+            row: "12px",
+          });
+          await focusWalk(`fe2-settings-focus-${locale}-${String(width)}`, 16, "[data-settings-dialog]");
+        }
+        await browser.keys("Escape");
         expect(await unexpectedConsole()).toEqual([]);
       });
     }
