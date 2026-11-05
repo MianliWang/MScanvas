@@ -5,7 +5,7 @@ import { joinSentences, type UiMessage } from "../preferences/i18n";
 
 import type { ProjectionSample, SpectrumRepresentation, ValueUnit } from "./contracts";
 import { formatIntensity, formatMz } from "./format";
-import { niceTicks, paintTicks, withHeadroom } from "./viewer/plotAxes";
+import { niceTicks, paintTicks, withHeadroom, xAt, xBand } from "./viewer/plotAxes";
 
 /**
  * The drawing area, in viewBox units. The element scales to its container, so
@@ -30,12 +30,13 @@ const STICK_BLEED = 4;
  * A second copy of these numbers in the adapter is how a wheel comes to anchor
  * somewhere other than where the cursor is: the element scales to its
  * container, so the only way from a client x to an m/z is through this viewBox
- * and this padding. `preserveAspectRatio="none"` and `width: 100%` are what
+ * and this band. `preserveAspectRatio="none"` and `width: 100%` are what
  * make that mapping linear.
  */
+const BAND = xBand(PLOT_PADDING_LEFT, PLOT_WIDTH - PLOT_PADDING_RIGHT);
 export const SPECTRUM_PLOT_VIEWBOX_WIDTH = PLOT_WIDTH;
-export const SPECTRUM_PLOT_PADDING_LEFT = PLOT_PADDING_LEFT;
-export const SPECTRUM_PLOT_DRAWN_WIDTH = PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT;
+export const SPECTRUM_PLOT_BAND_LEFT = BAND.left;
+export const SPECTRUM_PLOT_DRAWN_WIDTH = BAND.drawnWidth;
 
 /**
  * The part of the drawing an interaction adapter moves directly.
@@ -61,10 +62,8 @@ export const SPECTRUM_STICKS_LAYER = "spectrum-sticks-layer";
 export function paintMzAxis(plot: SVGSVGElement | null, low: number, high: number): void {
   const frame = plot?.closest(".spectrum-frame");
   if (plot === null || plot === undefined || frame === null || frame === undefined) return;
-  const span = high - low;
   paintTicks(frame.querySelector<HTMLElement>(".plot-x-ticks"), niceTicks(low, high),
-    value => ((PLOT_PADDING_LEFT + (span > 0 ? (value - low) / span : 0.5) * SPECTRUM_PLOT_DRAWN_WIDTH) / PLOT_WIDTH) * 100,
-    "x");
+    value => (xAt(value, { low, high }, BAND) / PLOT_WIDTH) * 100, "x");
   plot.setAttribute("data-mz-low", formatMz(low));
   plot.setAttribute("data-mz-high", formatMz(high));
 }
@@ -412,7 +411,6 @@ function reduce(
     }
   }
 
-  const usableWidth = PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT;
   const usableHeight = BASELINE_Y - PLOT_PADDING_TOP;
   // The zero line sits where zero falls on the value axis, so a negative
   // stick hangs below it and a positive one rises above it. The axis is the
@@ -428,7 +426,7 @@ function reduce(
   let negativesDrawn = 0;
   let negativesDrawnFlat = 0;
   const toPoint = (value: number, height: number): Stick => ({
-    x: PLOT_PADDING_LEFT + (span > 0 ? (value - domainLow) / span : 0.5) * usableWidth,
+    x: xAt(value, { low: domainLow, high: domainHigh }, BAND),
     y: PLOT_PADDING_TOP + (valueSpan > 0 ? (axis.high - height) / valueSpan : 1) * usableHeight,
   });
   const place = (height: number | null | undefined, value: number) => {
@@ -742,8 +740,8 @@ export function StickSpectrum({
             <clipPath id={STICKS_CLIP}>
               <rect
                 height={BASELINE_Y}
-                width={PLOT_WIDTH - PLOT_PADDING_LEFT - PLOT_PADDING_RIGHT + 2 * (line === null ? STICK_BLEED : 0)}
-                x={PLOT_PADDING_LEFT - (line === null ? STICK_BLEED : 0)}
+                width={BAND.drawnWidth + 2 * (line === null ? STICK_BLEED : 0)}
+                x={BAND.left - (line === null ? STICK_BLEED : 0)}
                 y={0}
               />
             </clipPath>

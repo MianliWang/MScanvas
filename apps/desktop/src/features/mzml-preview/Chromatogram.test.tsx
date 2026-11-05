@@ -18,7 +18,7 @@ import { useLayoutEffect, useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import appStyles from "../../app/app.css?raw";
-import { Chromatogram } from "./Chromatogram";
+import { Chromatogram, CHROMATOGRAM_PLOT_BAND } from "./Chromatogram";
 import type { RetentionTimeUnit, SpectrumRow } from "./contracts";
 import type { TraceVisibility } from "./usePreviewWorkspace";
 import type { ViewerInteractionState } from "./viewer/interactionState";
@@ -40,8 +40,7 @@ const NEITHER: TraceVisibility = { tic: false, bpc: false };
 
 /** The plot's own width, in client pixels, so viewBox units are 1:1 with them. */
 const PLOT_PIXELS = 1_000;
-const PADDING_LEFT = 64;
-const DRAWN_WIDTH = PLOT_PIXELS - PADDING_LEFT - 12;
+const { left: PADDING_LEFT, drawnWidth: DRAWN_WIDTH } = CHROMATOGRAM_PLOT_BAND;
 
 interface Scan {
   readonly rt: number;
@@ -785,11 +784,88 @@ describe("choosing a scan", () => {
     const after = document.querySelector("g.chromatogram-selected line")?.getAttribute("x1");
     expect(after).not.toBe(before);
     // 0.25 falls at the middle of a 0.2-0.3 range, which is the middle of the
-    // drawing area: 64 + 924 / 2.
+    // drawing area: 72 + 908 / 2.
     expect(Number(after)).toBeCloseTo(526, 0);
     // The label moves with its rule.
     expect(parseFloat(document.querySelector<HTMLElement>(".chromatogram-cursor-label")?.style.left ?? ""))
       .toBeCloseTo((Number(after) / 1000) * 100, 2);
+  });
+
+  it("stands a scan at the first retention time on its own rule, beside the value axis", () => {
+    renderChromatogram();
+    send({ type: "selection-committed", index: 0, retentionTime: 0 });
+
+    const axis = document.querySelectorAll("g.chromatogram-axes line")[1];
+    expect(axis).toHaveAttribute("x1", "64");
+    const rule = document.querySelector("g.chromatogram-selected");
+    expect(rule).toHaveAttribute("visibility", "visible");
+    expect(rule?.querySelector("line")).toHaveAttribute("x1", "72");
+    expect(document.querySelector(".chromatogram-cursor-label")).toBeVisible();
+    // The trace starts on the same place.
+    expect(document.querySelector(".chromatogram-trace-tic")?.getAttribute("d")).toMatch(/^M 72\.00 /u);
+    // So does the tick that names it.
+    expect(parseFloat(document.querySelector<HTMLElement>(".plot-x-ticks .plot-tick")?.style.left ?? "")).toBeCloseTo(7.2, 6);
+  });
+
+  it("keeps the frame's clip and rules, so a mark at either end of the band is drawn whole", () => {
+    renderChromatogram();
+
+    const clip = document.querySelector("#chromatogram-clip rect");
+    expect(clip).toHaveAttribute("x", "64");
+    expect(clip).toHaveAttribute("width", "924");
+    for (const rule of [document.querySelector(".plot-gridlines line"), document.querySelector("g.chromatogram-axes line")]) {
+      expect(rule).toHaveAttribute("x1", "64");
+      expect(rule).toHaveAttribute("x2", "988");
+    }
+  });
+
+  it("keeps the last scan's rule and label on a range that ends a unit in the last place short of it", () => {
+    // What the reducer's clamp can leave when a drag reaches the run's end.
+    const last = 0.0125 * 49;
+    const high = last * (1 - Number.EPSILON);
+    expect(high).toBeLessThan(last);
+    renderChromatogram();
+    send({ type: "selection-committed", index: 49, retentionTime: last });
+    send({ type: "viewport-step", domain: { low: 0.2, high } });
+
+    const rule = document.querySelector("g.chromatogram-selected");
+    expect(Number(rule?.querySelector("line")?.getAttribute("x1"))).toBeGreaterThan(980);
+    expect(rule).toHaveAttribute("visibility", "visible");
+    expect(document.querySelector(".chromatogram-cursor-label")).toBeVisible();
+  });
+
+  it("hides the rule and its label for a scan off the range on screen, even one that would land in the inset", () => {
+    renderChromatogram();
+    send({ type: "selection-committed", index: 20, retentionTime: 20 * 0.0125 });
+    // A hair past the scan on either side: without the check each would draw in the inset.
+    for (const domain of [{ low: 0.2501, high: 0.3 }, { low: 0.2, high: 0.2499 }]) {
+      send({ type: "viewport-step", domain });
+      expect(document.querySelector("g.chromatogram-selected")).toHaveAttribute("visibility", "hidden");
+      expect(document.querySelector(".chromatogram-cursor-label")).not.toBeVisible();
+    }
+
+    send({ type: "viewport-step", domain: { low: 0.25, high: 0.3 } });
+    expect(document.querySelector("g.chromatogram-selected")).toHaveAttribute("visibility", "visible");
+    expect(document.querySelector("g.chromatogram-selected line")).toHaveAttribute("x1", "72");
+    expect(document.querySelector(".chromatogram-cursor-label")).toBeVisible();
+  });
+
+  it("hides the rule of a hovered scan off the range on screen, even one that would land in the inset", () => {
+    renderChromatogram();
+    const rule = () => document.querySelector("g.chromatogram-hover");
+    // The nearest scan is asked of the whole run, so a pointer at the range's edge can name one a hair past it.
+    for (const [domain, x] of [[{ low: 0.2501, high: 0.3 }, 72], [{ low: 0.2, high: 0.2499 }, 980]] as const) {
+      send({ type: "viewport-step", domain });
+      fireEvent.pointerMove(plot(), { clientX: x });
+      expect(state().hover?.spectrumIndex).toBe(20);
+      expect(rule()).toHaveAttribute("visibility", "hidden");
+    }
+
+    send({ type: "viewport-step", domain: { low: 0.25, high: 0.3 } });
+    fireEvent.pointerMove(plot(), { clientX: 72 });
+    expect(state().hover?.spectrumIndex).toBe(20);
+    expect(rule()).toHaveAttribute("visibility", "visible");
+    expect(rule()?.querySelector("line")).toHaveAttribute("x1", "72");
   });
 
   it("draws no marker while nothing is selected", () => {

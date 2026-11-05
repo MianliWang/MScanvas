@@ -2,7 +2,9 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
+import { CHROMATOGRAM_PLOT_BAND } from "../features/mzml-preview/Chromatogram";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
+import { SPECTRUM_PLOT_DRAWN_WIDTH, SPECTRUM_PLOT_BAND_LEFT } from "../features/mzml-preview/StickSpectrum";
 import { buildPreview, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, selectedFile } from "../test/previewFixtures";
 import { UI_RESOURCES } from "../features/preferences/i18n";
 
@@ -47,7 +49,9 @@ function plotIn(panel: HTMLElement) {
     right: 1000, bottom: 260, width: 1000, height: 260, toJSON: () => ({}) });
   return plot;
 }
-const point = (axis: "rt" | "mz", fraction: number) => axis === "rt" ? 64 + 924 * fraction : 8 + 984 * fraction;
+const point = (axis: "rt" | "mz", fraction: number) => axis === "rt"
+  ? CHROMATOGRAM_PLOT_BAND.left + CHROMATOGRAM_PLOT_BAND.drawnWidth * fraction
+  : SPECTRUM_PLOT_BAND_LEFT + SPECTRUM_PLOT_DRAWN_WIDTH * fraction;
 function pointer(plot: HTMLElement, name: "pointerDown" | "pointerMove" | "pointerUp", x: number) {
   fireEvent[name](plot, { button: 0, pointerId: 1, isPrimary: true, pointerType: "mouse", clientX: x, clientY: 80 });
 }

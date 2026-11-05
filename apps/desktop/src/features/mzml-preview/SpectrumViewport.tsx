@@ -13,7 +13,7 @@ import type { SpectrumDrawing } from "./StickSpectrum";
 import {
   paintMzAxis,
   SPECTRUM_PLOT_DRAWN_WIDTH,
-  SPECTRUM_PLOT_PADDING_LEFT,
+  SPECTRUM_PLOT_BAND_LEFT,
   SPECTRUM_PLOT_VIEWBOX_WIDTH,
   SPECTRUM_STICKS_LAYER,
   StickSpectrum,
@@ -190,7 +190,7 @@ export function SpectrumViewport({
         // drawn at lands where the range on screen now puts it.
         const scale = painted / wanted;
         const shift =
-          SPECTRUM_PLOT_PADDING_LEFT * (1 - scale) +
+          SPECTRUM_PLOT_BAND_LEFT * (1 - scale) +
           (SPECTRUM_PLOT_DRAWN_WIDTH * (base.low - target.low)) / wanted;
         nodes.layer.setAttribute(
           "transform",
@@ -233,7 +233,7 @@ export function SpectrumViewport({
    */
   const inputPort = mzInput(readState, dispatch);
   const input = usePlotInput({ port: inputPort,
-    geometry: { width: SPECTRUM_PLOT_VIEWBOX_WIDTH, left: SPECTRUM_PLOT_PADDING_LEFT, drawnWidth: SPECTRUM_PLOT_DRAWN_WIDTH },
+    geometry: { width: SPECTRUM_PLOT_VIEWBOX_WIDTH, left: SPECTRUM_PLOT_BAND_LEFT, drawnWidth: SPECTRUM_PLOT_DRAWN_WIDTH },
     paintFrame: () => paintTransientFrame(readState()) });
   const attachPlot = useCallback((node: SVGSVGElement | null) => {
     plotRef.current = node; input.attachPlot(node);
