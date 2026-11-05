@@ -408,10 +408,10 @@
 /* One line at every width. The search gives way first; the count and the MS
    filter hold on longest, and the count's tooltip has what its ellipsis cuts. */
 .scan-head .scan-result-count { flex: 0 1 auto; max-width: 40%; margin: 0 auto 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.plot-search { position: relative; flex: 0 4 180px; min-width: 56px; }
+.plot-search { position: relative; flex: 0 4 180px; min-width: 48px; }
 .plot-search > .ui-icon { position: absolute; top: 7px; left: 8px; color: var(--color-text-secondary); pointer-events: none; }
 .scan-head input, .scan-head select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-input); padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
-.scan-head select { flex: 0 1 auto; min-width: 64px; max-width: 40%; }
+.scan-head select { flex: none; max-width: 40%; }
 .scan-head .plot-search > input { width: 100%; padding-left: 28px; }
 .scan-head .scan-go-to { flex: 0 4 64px; width: 64px; min-width: 44px; padding-inline: 6px; }
 .scan-head .scan-go-to[aria-invalid="true"] { border-color: var(--color-danger); }

@@ -671,6 +671,13 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     const outside = words.scanSelectedOutsideRange.replace("{{name}}", "5");
     expect(await browser.$("#scan-hidden-selection-reason").getText()).toBe(outside);
     await capture(label("selected-outside"));
+    // The Scans tab draws no chromatogram, and the range still holds there.
+    const onTab = async (position: number) => { await browser.$('.viewer-tabs [role="tab"]:nth-child(' + position + ")").click(); await browser.$(SCANS).waitForExist(); };
+    await onTab(2);
+    expect(await browser.$(RT).isExisting()).toBe(false);
+    expect(await shownScans()).toEqual(["1", "2"]);
+    await capture(label("scans-tab-selected-outside"));
+    await onTab(1);
     const before = (await reads()).length;
     await browser.$(".scan-hidden-selection button").click();
     await browser.waitUntil(async () => (await shownScans()).includes("4"), { timeoutMsg: "the range never moved to the scan" });
@@ -680,6 +687,10 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.waitUntil(async () => (await browser.$(SCANS).getText()).includes(words.scanNoMatchesInRange), { timeoutMsg: "the empty range never said so" });
     expect(await browser.$(SCANS + ' [role="grid"]').getAttribute("aria-rowcount")).toBe("1");
     await capture(label("empty-range"));
+    await onTab(2);
+    expect(await browser.$(SCANS).getText()).toContain(words.scanNoMatchesInRange);
+    await capture(label("scans-tab-empty-range"));
+    await onTab(1);
     // Going to a scan the range hides brings the range to it.
     await goToScan("8");
     await browser.waitUntil(async () => (await reads()).at(-1) === 7);

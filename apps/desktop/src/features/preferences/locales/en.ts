@@ -574,6 +574,7 @@ export const en = {
   scanGoToHelp: "Enter selects the scan with this number and clears the filters that hide it.",
   scanGoToRefused: "No scan {{value}} in the loaded rows.",
   scanAllLevels: "All MS levels",
+  scanAllLevelsShort: "All MS",
   scanHelpText: "Searches identifiers, indices and scan numbers in loaded rows (case-sensitive). Headers and Sort scans sort; Previous/Next follow the results. Arrow/Page/Home/End move focus; Enter/Space opens. Intensity units are not reported.",
   scanSelectedOutside: "Selected scan {{name}} is hidden by the filters.",
   scanReveal: "Clear filters and reveal",

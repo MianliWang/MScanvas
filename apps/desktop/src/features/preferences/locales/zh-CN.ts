@@ -574,6 +574,7 @@ export const zhCN = {
   scanGoToHelp: "按 Enter 选中该编号的扫描，并清除隐藏它的筛选。",
   scanGoToRefused: "已加载的行中没有扫描 {{value}}。",
   scanAllLevels: "全部 MS 级别",
+  scanAllLevelsShort: "全部 MS",
   scanHelpText: "在已加载的行中搜索标识符、索引和扫描编号（区分大小写）。点击表头或“扫描排序”排序；上一项/下一项按当前结果导航。方向键、Page、Home、End 移动焦点；Enter 或空格打开。强度的单位未报告。",
   scanSelectedOutside: "选中的扫描 {{name}} 被筛选隐藏。",
   scanReveal: "清除筛选并显示",

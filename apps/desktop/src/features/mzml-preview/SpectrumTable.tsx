@@ -418,7 +418,8 @@ export const SpectrumTable = memo(function SpectrumTable({
         <label className="visually-hidden" htmlFor="scan-ms-level">{t("scanMsLevel")}</label>
         <select id="scan-ms-level" value={view.options.msLevel === null ? "all" : String(view.options.msLevel)}
           onChange={event => view.setMsLevel(event.target.value === "all" ? null : Number(event.target.value))}>
-          <option value="all">{t("scanAllLevels")}</option>
+          {/* Short beside the spectrum, where the go-to input took the room it had. */}
+          <option value="all">{t(layout === "compact" ? "scanAllLevelsShort" : "scanAllLevels")}</option>
           {view.msLevels.map(level => <option key={level} value={level}>MS{level}</option>)}
         </select>
         <p className="visually-hidden" id="scan-view-help">{t("scanHelpText")}</p>
