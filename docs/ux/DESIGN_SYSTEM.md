@@ -477,8 +477,8 @@ Project block states:
   plan, long ones too, which `main` ends with an ellipsis that takes the extension. A
   settled row can then take two lines while the queue runs.
 - **Progress.** v5.11's `.progress-track`, a 5 px bar on `#e6edf7`. It is one rule, so
-  the view bar on the Workbench went from 8 px to 5 px with it. That bar landed on
-  2026-11-03, after the Workbench's acceptance, and no accepted text fixes its height.
+  the view bar on the Workbench went from 8 px to 5 px with it. That bar merged in #203
+  on 2026-11-04, after the Workbench's acceptance, and no accepted text fixes its height.
   Added 2026-11-05; not an owner decision.
 - **History rows.** They stay bordered buttons, where v5.11's `.history-item` is a
   hairline row, and the chosen one takes the fill and 3 px edge of v5.11's selected row.
