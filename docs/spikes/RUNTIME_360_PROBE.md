@@ -20,6 +20,14 @@ for the owner's reading of the libiconv lines. Whether libiconv's terms are
 accepted, and whether NOT SHOWN counts as a pass, are the owner's. Which branch of
 B-2 applies is not decided here.
 
+*Owner decision, 2026-11-04 (LIB-1, option A), after this record's verdict:* "选A". The owner
+accepts libiconv's terms, treating it as possibly linked. So "or its terms are accepted" now
+holds and the pass condition holds: B-2.1 and B-2.2 apply, 3.6.0 without Qt, and CK-2's branch
+is not taken. The table and the paragraph above stay as measured. How a static link's relink
+term is met is settled before a release. This approves no release and no message to upstream;
+the owner approved these four artefacts for development, with a committed lock, the same day
+and separately ("批准", ask 2, A-07).
+
 Five other results size later work:
 
 - **ANA-004 completes on 3.6.0 with no edit, and its numbers change.** The
@@ -123,8 +131,8 @@ Left out of the wheels:
 | `*.pyi` | 320 | 3,386,731 | tier 2 |
 | `*.cpp` (one file, in a numpy `tests/` folder) | 1 | 6,012 | tier 2 |
 | every `tests/` folder | 383 | 6,456,159 | tier 3 |
-| `pyopenms/plotting.py` | 1 | 21,046 | **a reading:** ADR 0066's tier 1 removes it, and `pyopenms/__init__.py` does not import it |
-| the three wheels' `.dist-info/RECORD` | 3 | 125,373 | **a reading:** a RECORD names the removed files, and the provisioning script takes no wheel RECORD |
+| `pyopenms/plotting.py` | 1 | 21,046 | **a reading, not an owner decision (2026-11-04):** ADR 0066's tier 1 removes it, and `pyopenms/__init__.py` does not import it |
+| the three wheels' `.dist-info/RECORD` | 3 | 125,373 | **a reading, not an owner decision (2026-11-04):** a RECORD names the removed files, and the provisioning script takes no wheel RECORD |
 
 Kept: `CV/brenda.obo` (932,031 B, the mzML reader needs it on 3.5.0 and on 3.6.0: on a scratch
 copy without it, `call_forms.py` gets `the file '/CV/brenda.obo' could not be found`) and the rest
@@ -341,7 +349,8 @@ ANA-004's adapter completes unedited. The `getPolarity()` and `getType()` row is
 `check_source` reads both and compares them with the binding's own `SpectrumType.CENTROID` and
 `Polarity.POSITIVE`, so it needs no edit, and section 6.3's `dom_profile` and `dom_mixed_polarity`
 refusals fire on both engines. `experiments/m9_0/worker_pyopenms.py` compares the same way; that was
-read and not run on 3.6.0. The other rows name calls `adapter_v1.py` does not make, and they bear on
+read and not run on 3.6.0. It also calls `Param.keys()`, at line 353, and decodes bytes, so that row
+needs no edit there either. The other rows name calls `adapter_v1.py` does not make, and they bear on
 A-20's recipe code.
 
 | 3.5.0 | 3.6.0 |
@@ -881,7 +890,7 @@ enters the repository except this record.
 | `u1_floor_cmp.py` | system Python `-I` | second review round: compares two `u1_floor.py` outputs | `c9a26f9928d4749e0edff35f54f45a161101915ae4eb6253737e55c9a95178a9` |
 | `review2_static.py` | system Python `-I` | second review round: the libxml2 names, the source paths by port and the self-stated versions | `0353346421897897ea4d4a12c7c534069e55c389a9b646456f9810dfc51db401` |
 | `review2_more.py` | system Python `-I` | second review round: the `xmlparse` strings, the embeddable's zlib-ng, the defaults compared | `5e13079f684e24674b0b357d38cd00fcc11c72ba4816dc2a229807518f59234e` |
-| `call_forms.py` | a scratch copy of the shape and `<pinned>` | third and fourth review rounds: section 5.3's second table and its count of `oms.` names, and the mzML reader with `brenda.obo` moved out of the copy | `29f9d0fbf59252059f5a9a7c44619997099b519ea842a7ffb2087278d24a3f6f` |
+| `call_forms.py` | a scratch copy of the shape and `<pinned>` | fourth review round, repeating the 17 lines of the third round's version, `39944fd4…`: section 5.3's second table and its count of `oms.` names, and the mzML reader with `brenda.obo` moved out of the copy | `29f9d0fbf59252059f5a9a7c44619997099b519ea842a7ffb2087278d24a3f6f` |
 | `list_wheels.py` | system Python `-I` | what the downloads hold, without unpacking, with any name holding `sbom` marked: section 8's `sboms` check | `ba4693ca37a5f76a85dbb25bed2d7a5dbb97a7a9471cbf2a2906afe9d2cba7ce` |
 
 The same directory holds six one-off scripts, and no result here rests on them. Five print what
