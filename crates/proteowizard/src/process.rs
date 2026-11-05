@@ -3428,12 +3428,12 @@ mod tests {
         assert!(stdout.contains("clipboard refused Some(5)"), "{stdout}");
     }
 
-    /// The worker's end of the test above. It stops before the exception if the
-    /// Job did not turn off the error dialog, so a run without that flag fails
-    /// by its exit code and never opens a dialog. It asks the clipboard only for
-    /// a private format nobody has put there, so no owner is made to render
+    /// The worker's end of the test above. It asks the clipboard only for a
+    /// private format nobody has put there, so no owner is made to render
     /// anything, and it never writes: if the restriction were gone, a write here
-    /// would be the user's clipboard.
+    /// would be the user's clipboard. It does not ask `GetErrorMode` about the
+    /// dialog: that read 0 in a Job with the flag when measured, and a harness
+    /// can have the bit anyway. `a_workers_job_carries_...` is what pins the flag.
     #[cfg(windows)]
     #[test]
     #[ignore = "controlled subprocess entry point"]
@@ -3443,8 +3443,6 @@ mod tests {
 
         #[link(name = "kernel32")]
         unsafe extern "system" {
-            #[link_name = "GetErrorMode"]
-            fn get_error_mode() -> u32;
             #[link_name = "RaiseException"]
             fn raise_exception(code: u32, flags: u32, count: u32, arguments: *const usize);
         }
@@ -3466,7 +3464,6 @@ mod tests {
             #[link_name = "CloseClipboard"]
             fn close_clipboard() -> i32;
         }
-        const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
         const DESKTOP_CREATEWINDOW: u32 = 0x0002;
         const CF_PRIVATELAST: u32 = 0x02FF;
 
@@ -3509,11 +3506,6 @@ mod tests {
             println!("clipboard refused {clipboard_error:?}");
         }
 
-        // SAFETY: Takes no arguments.
-        if unsafe { get_error_mode() } & SEM_NOGPFAULTERRORBOX == 0 {
-            println!("the Job left the error dialog on");
-            return;
-        }
         io::stdout().flush().expect("flush the worker's report");
         // SAFETY: A software exception with no arguments, which nothing in this
         // process has a handler for. Ending the process is its purpose.
