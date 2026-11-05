@@ -54,6 +54,12 @@ in a fixed CPython 3.13.15 + pyOpenMS 3.5.0 runtime. What it settled:
   every launch, and the modules the worker reports loading are checked against
   it after.
 - **Not enforced:** filesystem read confinement and network confinement.
+  *2026-11-05:* the worker's Job now also refuses it new or switched desktops, display
+  settings, exit Windows, global atoms, other processes' user handles, clipboard read
+  and write and changes to system parameters, and an unhandled exception ends it with
+  that exception's code instead of waiting on an error dialog; its environment sets
+  `OPENMS_DISABLE_UPDATE_CHECK=1`. None of this stops a socket or a file read, so the
+  line above stands ([ADR 0066 decision 7](adr/0066-analysis-runtime-release.md#7-confinement)).
 - **Execution view (M9.3):** the worker is only ever given an ASCII name in its
   own attempt directory: a hard link to the held source on the work area's
   volume, or elsewhere a copy made in one read through the held handle and

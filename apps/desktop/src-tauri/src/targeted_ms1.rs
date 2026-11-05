@@ -375,6 +375,10 @@ impl Supervisor {
                     directory.path.join("home").into_os_string(),
                 ),
                 (OsString::from("OMP_NUM_THREADS"), OsString::from("1")),
+                (
+                    OsString::from("OPENMS_DISABLE_UPDATE_CHECK"),
+                    OsString::from("1"),
+                ),
             ],
             WorkerLimits {
                 job_memory_bytes: JOB_MEMORY_BYTES,

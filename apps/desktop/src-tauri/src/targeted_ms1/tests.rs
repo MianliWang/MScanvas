@@ -2582,6 +2582,26 @@ fn the_worker_vocabulary_maps_onto_closed_codes_and_nothing_else() {
     );
 }
 
+/// A worker refused its Job, as a host in a Job with UI restrictions is,
+/// failed to launch; unless its suspended root was not reclaimed, which is a
+/// process the run cannot account for.
+#[test]
+fn a_worker_refused_its_job_is_a_launch_failure_or_unaccounted() {
+    use super::process_failure;
+    let refused = |owned_root_reclaimed| mscanvas_proteowizard::ProcessError::AssignToOwnedJob {
+        detail: String::new(),
+        owned_root_reclaimed,
+    };
+    assert_eq!(
+        process_failure(&refused(true)),
+        (FailureCode::WorkerLaunchFailed, FailureStage::Runtime)
+    );
+    assert_eq!(
+        process_failure(&refused(false)),
+        (FailureCode::WorkerNotAccountedFor, FailureStage::Runtime)
+    );
+}
+
 #[test]
 fn a_row_page_and_an_evidence_read_are_bounded_and_checked() {
     let scratch = Scratch::new("m91-bounded");
@@ -4382,6 +4402,20 @@ out = Path(sys.argv[2])\n\
 time.sleep(120)\n";
 const SILENT_EXIT: &[u8] = b"import sys\nsys.exit(0)\n";
 const EXIT_SEVEN: &[u8] = b"import sys\nsys.exit(7)\n";
+/// Dies of an access violation nothing handles. A thread with a bad start
+/// address, because ctypes wraps its own calls in SEH and `ctypes.string_at(0)`
+/// is only a Python `OSError`. The sleep outlasts the budget these adapters
+/// run under, so nothing but the crash ends this one in time.
+const CRASHES: &[u8] = b"import ctypes, time\n\
+ctypes.windll.kernel32.CreateThread(None, 0, ctypes.c_void_p(8), None, 0, None)\n\
+time.sleep(120)\n";
+/// Refuses, which reads as `SourceNotCentroid`, only with the update check off.
+const NEEDS_THE_UPDATE_CHECK_OFF: &[u8] = b"import json, os, sys\n\
+from pathlib import Path\n\
+if os.environ.get('OPENMS_DISABLE_UPDATE_CHECK') != '1':\n    sys.exit(7)\n\
+out = Path(sys.argv[2])\n\
+(out / 'outcome.json').write_text(json.dumps({'status': 'refused', 'code': 'SOURCE_NOT_CENTROID', 'message': 'x', 'elapsedS': 0.0}))\n\
+sys.exit(3)\n";
 const GARBAGE_RESULT: &[u8] = b"import json, sys\n\
 from pathlib import Path\n\
 out = Path(sys.argv[2])\n\
@@ -4419,9 +4453,11 @@ fn the_time_budget_stops_the_worker_and_records_a_failure_not_a_cancel() {
 #[test]
 #[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
 fn a_worker_whose_output_is_missing_malformed_or_unknown_publishes_nothing() {
-    let cases: [(&[u8], FailureCode); 5] = [
+    let cases: [(&[u8], FailureCode); 7] = [
         (SILENT_EXIT, FailureCode::WorkerExitedAbnormally),
         (EXIT_SEVEN, FailureCode::WorkerExitedAbnormally),
+        (CRASHES, FailureCode::WorkerExitedAbnormally),
+        (NEEDS_THE_UPDATE_CHECK_OFF, FailureCode::SourceNotCentroid),
         (GARBAGE_RESULT, FailureCode::ResultInvalid),
         (REFUSES_PROFILE, FailureCode::SourceNotCentroid),
         (UNKNOWN_CODE, FailureCode::ResultInvalid),
@@ -4436,6 +4472,58 @@ fn a_worker_whose_output_is_missing_malformed_or_unknown_publishes_nothing() {
         }
         assert!(!staged, "case {index}");
     }
+}
+
+/// A worker that dies of an exception exits with the exception's code, and that
+/// code is never one the worker's own outcome can make good: not with no outcome
+/// at all, and not after a crash at shutdown behind a completed one.
+#[test]
+fn an_exception_status_is_an_abnormal_exit_whatever_outcome_the_worker_left() {
+    let area = WorkArea::new("exception-status");
+    let scratch = super::development_scratch().expect("a development build");
+    let adapter = recipe::ADAPTER_SOURCE;
+    let supervisor =
+        Supervisor::at(&scratch, adapter, Duration::from_secs(60)).expect("supervisor");
+    let (plan, source, store) = order_parts(&area, adapter);
+    let artifact = ArtifactId::new();
+    let order = AttemptOrder {
+        plan: &plan,
+        source: &source,
+        store: &store,
+        artifact,
+    };
+    let out = area.join("out");
+    fs::create_dir_all(&out).expect("out");
+    let judged = |exit_code| match supervisor.judge(
+        &order,
+        &out,
+        Some(exit_code),
+        Vec::new(),
+        fake_facts(),
+        &std::collections::BTreeMap::new(),
+    ) {
+        AttemptEnd::Failed { failure, .. } => failure.code,
+        other => panic!("not a failure: {other:?}"),
+    };
+    const ACCESS_VIOLATION: i32 = 0xC000_0005_u32 as i32;
+
+    assert_eq!(
+        judged(ACCESS_VIOLATION),
+        FailureCode::WorkerExitedAbnormally
+    );
+
+    fs::write(
+        out.join("outcome.json"),
+        br#"{"status":"completed","code":"OK","message":"","elapsedS":0.0}"#,
+    )
+    .expect("outcome");
+    assert_eq!(
+        judged(ACCESS_VIOLATION),
+        FailureCode::WorkerExitedAbnormally
+    );
+    // The same outcome with a clean exit gets past this gate, so it was read.
+    assert_eq!(judged(0), FailureCode::ResultInvalid);
+    assert!(!store.join(".staging").join(artifact.to_string()).exists());
 }
 
 /// The pinned adapter with its one occurrence of `from` replaced by `to`.
@@ -4488,19 +4576,11 @@ fn a_worker_whose_signal_summary_contradicts_its_evidence_publishes_nothing() {
     assert_eq!(outcomes, ["refused", "refused"]);
 }
 
-#[test]
-#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
-fn the_workers_job_refuses_it_a_second_process() {
+/// The interpreter with `script`, supervised the way a worker is.
+fn in_the_workers_job(area: &WorkArea, script: &Path) -> mscanvas_proteowizard::ProcessOutput {
     use mscanvas_proteowizard::{
         CancellationToken, CommandSpec, WorkerLimits, execute_cancellable,
     };
-    let area = WorkArea::new("child");
-    let script = area.write(
-        "spawn.py",
-        b"import subprocess, sys\n\
-try:\n    subprocess.run([sys.executable, '-I', '-c', 'pass'], check=True)\n    print('started')\n\
-except OSError as error:\n    print('refused', getattr(error, 'winerror', None))\n",
-    );
     let scratch = super::development_scratch().expect("a development build");
     let runtime = scratch.join("m91-runtime").join("cpython-3.13.15-embed");
     let python = runtime.join("python.exe");
@@ -4511,7 +4591,7 @@ except OSError as error:\n    print('refused', getattr(error, 'winerror', None))
         ["-I", "-B", "-X", "utf8"]
             .into_iter()
             .map(std::ffi::OsString::from)
-            .chain([script.into_os_string()])
+            .chain([script.as_os_str().to_owned()])
             .collect(),
         area.join(""),
         Vec::new(),
@@ -4519,7 +4599,20 @@ except OSError as error:\n    print('refused', getattr(error, 'winerror', None))
             job_memory_bytes: 4 * 1024 * 1024 * 1024,
         },
     );
-    let output = execute_cancellable(&spec, &CancellationToken::new()).expect("ran");
+    execute_cancellable(&spec, &CancellationToken::new()).expect("ran")
+}
+
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn the_workers_job_refuses_it_a_second_process() {
+    let area = WorkArea::new("child");
+    let script = area.write(
+        "spawn.py",
+        b"import subprocess, sys\n\
+try:\n    subprocess.run([sys.executable, '-I', '-c', 'pass'], check=True)\n    print('started')\n\
+except OSError as error:\n    print('refused', getattr(error, 'winerror', None))\n",
+    );
+    let output = in_the_workers_job(&area, &script);
     let stdout = String::from_utf8_lossy(&output.stdout);
     eprintln!(
         "child attempt: {stdout:?}, total owned processes {:?}",
@@ -4527,6 +4620,18 @@ except OSError as error:\n    print('refused', getattr(error, 'winerror', None))
     );
     assert!(stdout.starts_with("refused"), "{stdout}");
     assert_eq!(output.total_owned_processes, Some(1));
+}
+
+/// The real interpreter really does die of it, so `CRASHES` is not some other
+/// abnormal exit: an access violation's own code, with every process gone.
+#[test]
+#[ignore = "runs the pinned runtime under .tmp/m91-runtime"]
+fn an_interpreter_that_crashes_in_the_workers_job_exits_with_the_access_violation() {
+    let area = WorkArea::new("crash");
+    let script = area.write("crash.py", CRASHES);
+    let output = in_the_workers_job(&area, &script);
+    assert_eq!(output.exit_code, Some(0xC000_0005_u32 as i32));
+    assert!(output.owned_tree_confirmed_gone());
 }
 
 // ---------------------------------------------------------------------------
