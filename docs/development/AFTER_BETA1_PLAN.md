@@ -920,8 +920,11 @@ None can be delivered by engineering alone; each waits for one input.
   and two targets), CPython 3.14 in place of the pinned 3.13.15 (its
   OpenSSL 3.0 is unsupported) and an AppContainer measurement. Owner decision
   B-1 (2026-10-30) answered its questions 1, 2, 6, 8 and 9; the answers of
-  2026-11-03 (RT-1, B-2, B-3) took 3, 4, 5, 7 and 10. It stays Proposed until
-  the 3.6.0 probe names its engine.
+  2026-11-03 (RT-1, B-2, B-3) took 3, 4, 5, 7 and 10. *Accepted 2026-11-04,* no
+  wider than those answers: the [3.6.0 probe](../spikes/RUNTIME_360_PROBE.md) and
+  LIB-1 name pyOpenMS 3.6.0 without Qt on CPython 3.14 (measured in the shape that
+  would ship: 621 files, 131 MB). Not built. Shipping (ask 3) stays open, and the
+  record lists what still blocks a release.
 - *Answered 2026-11-03:* the study model for cross-sample analysis:
   [ADR 0067](../architecture/adr/0067-study-model-for-cross-sample-analysis.md)
   is accepted with the owner's answers to its ten questions. It supersedes ADR
