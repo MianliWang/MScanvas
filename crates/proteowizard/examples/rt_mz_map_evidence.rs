@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use mscanvas_proteowizard::{
     CancellationToken, MapRequest, MzmlScanLimits, MzmlSpectrumTable, bin_rt_mz_map, ms1_extent,
-    read_selected_spectrum, read_spectrum_table,
+    narrow_ms1_scans, read_selected_spectrum, read_spectrum_table,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -32,8 +32,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let table = read_spectrum_table(path, MzmlScanLimits::default())?;
     println!(
-        "table: {} rows, {:.0} ms",
+        "table: {} rows, {} narrow MS1 scans on no map, {:.0} ms",
         table.rows().len(),
+        narrow_ms1_scans(&table),
         started.elapsed().as_secs_f64() * 1e3
     );
     for extent in ms1_extent(&table)? {
@@ -85,9 +86,10 @@ fn measure(
         .filter(|&(time, mz)| map.cell(time, mz).is_some())
         .count();
     println!(
-        "{label}: {} spectra; {} points binned, {} outside m/z; \
+        "{label}: {} spectra, {} narrow scans left out; {} points binned, {} outside m/z; \
          {filled} of {} cells hold a value; {elapsed:.0} ms",
         map.spectra(),
+        map.narrow_scans_left_out(),
         map.points_binned(),
         map.points_outside_mz(),
         u64::from(request.retention_time_bins) * u64::from(request.mz_bins),

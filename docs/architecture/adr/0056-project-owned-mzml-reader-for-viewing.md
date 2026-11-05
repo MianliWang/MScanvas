@@ -20,6 +20,7 @@ Amended 2026-11-04 by the owner (P216): decision 1's selected-spectrum refusals
 gain `payload_stated_twice` and `element_in_payload` (a note there).
 Amended 2026-11-03 by the owner (MAP-1.9): decision 1 is widened again, not built
 (a note at its end).
+Built 2026-11-05 by #226: that widening, in the library (the note after it).
 Related: [0002](0002-external-proteowizard.md),
 [0003](0003-msaccess-preview-spike.md),
 [0005](0005-mzml-preview-boundary.md),
@@ -244,6 +245,22 @@ its own source.
 > The work is not estimated and has no roadmap item yet. The answer says "a scan type
 > or window" and gives no width; reading "narrow" by those two terms is this record's
 > reading, not an owner decision.
+
+> **2026-11-05, #226, a status: built.** How it is built is as built, not an owner
+> decision. The row answers `declares_narrow_scan()`: whether, not which of the two
+> terms, because nothing asks which. It is read on the spectrum, on its scan, or
+> through a param group of either. That is wider than polarity, where a statement
+> inside the scan is not the spectrum's, because the sources differ: `msconvert` writes
+> zoom scan on the spectrum, while PSI-MS makes it a `scan attribute` (MS:1000503), and
+> the mzML mapping's `scan_may` rule puts those on the scan (`psi-ms.obo` data-version
+> 4.2.14, HUPO-PSI/psi-ms-CV `2a23fc56e6a05de0466cec89e346fd1cfa81dcea`, and
+> `validator/src/main/resources/ms-mapping.xml`, HUPO-PSI/mzML
+> `8befb99200f9d9e120bd456cba30044d01148ecc`). Reading one place only would leave a
+> writer that follows the mapping drawing its zoom scans on the map, uncounted. SIM
+> spectrum is a spectrum type, read in the same places, since that can only leave a
+> spectrum out. Presence only: the value is not read, it is not a `Term`, and stating
+> it never refuses the open. It is not in `fact`, so the XIC pass reads nothing new. No
+> array is read for it and no width is measured.
 
 ### 2. A sibling of the bounded inspector
 

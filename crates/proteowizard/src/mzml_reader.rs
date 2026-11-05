@@ -36,7 +36,8 @@
 //! the open stands as it did before they were read. A polarity or charge
 //! stated two ways, or in a form that cannot be read, is not reported.
 //! Metadata parameters are carried as stated, in document order, and never
-//! judged, so conflicting ones are all kept.
+//! judged, so conflicting ones are all kept. Whether a spectrum declares a
+//! narrow scan is read the same way, and only from its two terms.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -430,6 +431,7 @@ pub struct MzmlSpectrumRow {
     ms_level: u32,
     representation: MzmlRepresentation,
     polarity: MzmlDeclared<MzmlPolarity>,
+    declares_narrow_scan: bool,
     retention_time: MzmlRetentionTime,
     base_peak_mz: f64,
     base_peak_intensity: f64,
@@ -463,6 +465,16 @@ impl MzmlSpectrumRow {
     #[must_use]
     pub const fn polarity(&self) -> MzmlDeclared<MzmlPolarity> {
         self.polarity
+    }
+
+    /// Whether the spectrum states zoom scan (MS:1000497) or SIM spectrum
+    /// (MS:1000582), on itself, on its scan or through a param group of either.
+    /// `msconvert` writes zoom scan on the spectrum and the mzML mapping puts it
+    /// on the scan. It is the statement alone: no width is measured, and a narrow
+    /// scan that states neither term reads as `false`.
+    #[must_use]
+    pub const fn declares_narrow_scan(&self) -> bool {
+        self.declares_narrow_scan
     }
 
     #[must_use]
@@ -1570,6 +1582,8 @@ pub(crate) fn stated_term(
 pub(crate) struct Facts {
     pub(crate) polarity: MzmlDeclared<MzmlPolarity>,
     charge: MzmlDeclared<i32>,
+    /// Presence only, so it cannot conflict.
+    narrow_scan: bool,
 }
 
 impl Facts {
@@ -1577,8 +1591,18 @@ impl Facts {
         Self {
             polarity: self.polarity.and(other.polarity),
             charge: self.charge.and(other.charge),
+            narrow_scan: self.narrow_scan || other.narrow_scan,
         }
     }
+}
+
+/// The fact a narrow-scan term states. Apart from [`fact`], which the XIC pass
+/// shares: that pass does not read these terms. The term's value is not read.
+fn narrow_scan_fact(accession: &str) -> Option<Facts> {
+    matches!(accession, "MS:1000497" | "MS:1000582").then(|| Facts {
+        narrow_scan: true,
+        ..Facts::default()
+    })
 }
 
 /// The fact one term states, if it is one. A polarity term's value is not
@@ -2154,7 +2178,8 @@ impl<'t> Pass<'t> {
         let Some(accession) = attributes.accession.as_deref() else {
             return Ok(());
         };
-        if let Some(facts) = fact(accession, attributes.value.as_deref().unwrap_or_default()) {
+        let value = attributes.value.as_deref().unwrap_or_default();
+        if let Some(facts) = narrow_scan_fact(accession).or_else(|| fact(accession, value)) {
             // An array's terms are judged for its payload; a fact is not one.
             return match self.target() {
                 Some(Target::Array(_)) | None => Ok(()),
@@ -2799,8 +2824,9 @@ fn spectrum_row(spectrum: &mut SpectrumParse) -> Result<MzmlSpectrumRow, Fail> {
         identity: SpectrumIdentity::from_native_identifier(index, id),
         ms_level,
         representation,
-        // The spectrum's own terms and groups; the scan's facts are not read.
+        // The spectrum's own terms and groups; a polarity inside the scan is not read.
         polarity: terms.facts.polarity,
+        declares_narrow_scan: terms.facts.narrow_scan || spectrum.scan_terms.facts.narrow_scan,
         retention_time,
         base_peak_mz: required(Term::BasePeakMz, RequiredValue::BasePeakMz)?,
         base_peak_intensity: required(Term::BasePeakIntensity, RequiredValue::BasePeakIntensity)?,

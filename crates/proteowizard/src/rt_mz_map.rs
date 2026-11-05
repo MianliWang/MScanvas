@@ -6,7 +6,8 @@
 //! is read by the viewing reader's selected read (ADR 0056), so it is checked
 //! against the table and decoded under the same caps and typed refusals, and
 //! this module decodes nothing itself. Spectra of another map, or outside the
-//! requested retention-time window, are never read.
+//! requested retention-time window, are never read. Nor is an MS1 spectrum that
+//! declares a narrow scan: it is on no map, and the result counts it.
 //!
 //! Each cell holds the greatest stored intensity of the points that fall in it;
 //! a cell no point fell in holds no value, which is not zero. Nothing is
@@ -79,6 +80,8 @@ pub enum MapError {
     AllocationRefused,
     #[error("the spectrum table has no MS1 spectrum")]
     NoMs1Spectra,
+    #[error("every MS1 spectrum declares a narrow scan")]
+    OnlyNarrowMs1Spectra,
     #[error("the MS1 spectra state different retention-time units, or only some state one")]
     MixedRetentionTimeUnits,
     #[error("only some MS1 spectra declare a polarity")]
@@ -108,6 +111,7 @@ impl MapError {
             Self::InvalidBins => "map_bins_invalid",
             Self::AllocationRefused => "allocation_refused",
             Self::NoMs1Spectra => "no_ms1_spectra",
+            Self::OnlyNarrowMs1Spectra => "only_narrow_ms1_spectra",
             Self::MixedRetentionTimeUnits => "mixed_retention_time_units",
             Self::PartlyDeclaredPolarity => "partly_declared_polarity",
             Self::PartlyDeclaredRepresentation => "partly_declared_representation",
@@ -164,26 +168,31 @@ impl Ms1Extent {
 }
 
 /// The maps a table has, in the order their first spectra appear, each with its
-/// extent. Every MS1 spectrum of the file counts, inside any window or not: a
-/// table with no MS1 spectrum, with mixed retention-time units (as ADR 0056
-/// refuses a chromatogram), or where only some MS1 spectra declare a polarity or
-/// a representation has no map at all.
+/// extent. Every MS1 spectrum of the file counts, inside any window or not, and
+/// narrow or not: a table with no MS1 spectrum, with mixed retention-time units
+/// (as ADR 0056 refuses a chromatogram), or where only some MS1 spectra declare a
+/// polarity or a representation has no map at all. The maps and their extents
+/// are of the spectra that declare no narrow scan, so a table holding only narrow
+/// scans has no map either; see [`narrow_ms1_scans`].
 pub fn ms1_extent(table: &MzmlSpectrumTable) -> Result<Vec<Ms1Extent>, MapError> {
     let mut extents: Vec<Ms1Extent> = Vec::new();
+    let mut first: Option<(MapKind, RetentionTimeUnit)> = None;
     for row in table.rows().iter().filter(|row| row.ms_level() == 1) {
         let kind = MapKind::of(row);
         let time = row.retention_time();
-        if let Some(first) = extents.first() {
-            if time.unit() != first.retention_time_unit {
-                return Err(MapError::MixedRetentionTimeUnits);
-            }
-            if kind.polarity.is_some() != first.kind.polarity.is_some() {
-                return Err(MapError::PartlyDeclaredPolarity);
-            }
-            let undeclared = MzmlRepresentation::NotDeclared;
-            if (kind.representation == undeclared) != (first.kind.representation == undeclared) {
-                return Err(MapError::PartlyDeclaredRepresentation);
-            }
+        let (first_kind, first_unit) = *first.get_or_insert((kind, time.unit()));
+        if time.unit() != first_unit {
+            return Err(MapError::MixedRetentionTimeUnits);
+        }
+        if kind.polarity.is_some() != first_kind.polarity.is_some() {
+            return Err(MapError::PartlyDeclaredPolarity);
+        }
+        let undeclared = MzmlRepresentation::NotDeclared;
+        if (kind.representation == undeclared) != (first_kind.representation == undeclared) {
+            return Err(MapError::PartlyDeclaredRepresentation);
+        }
+        if row.declares_narrow_scan() {
+            continue;
         }
         match extents.iter_mut().find(|extent| extent.kind == kind) {
             Some(extent) => {
@@ -205,9 +214,25 @@ pub fn ms1_extent(table: &MzmlSpectrumTable) -> Result<Vec<Ms1Extent>, MapError>
         }
     }
     if extents.is_empty() {
-        return Err(MapError::NoMs1Spectra);
+        return Err(match first {
+            None => MapError::NoMs1Spectra,
+            Some(_) => MapError::OnlyNarrowMs1Spectra,
+        });
     }
     Ok(extents)
+}
+
+/// How many MS1 spectra of the file declare a narrow scan, whatever their polarity
+/// and representation, including those whose kind has no other spectrum and so no
+/// map. Each MS1 spectrum of a table with maps is either one of these or in exactly
+/// one extent's [`Ms1Extent::spectra`].
+#[must_use]
+pub fn narrow_ms1_scans(table: &MzmlSpectrumTable) -> u64 {
+    table
+        .rows()
+        .iter()
+        .filter(|row| row.ms_level() == 1 && row.declares_narrow_scan())
+        .count() as u64
 }
 
 fn observed_mz(row: &MzmlSpectrumRow) -> Option<(f64, f64)> {
@@ -229,6 +254,7 @@ pub struct RtMzMap {
     /// stored value can be mistaken for it.
     cells: Vec<f64>,
     spectra: u64,
+    narrow_scans_left_out: u64,
     points_binned: u64,
     points_outside_mz: u64,
 }
@@ -288,6 +314,14 @@ impl RtMzMap {
     #[must_use]
     pub const fn spectra(&self) -> u64 {
         self.spectra
+    }
+
+    /// How many MS1 spectra of this map's polarity and representation fell inside
+    /// the window, declare a narrow scan and were left out unread.
+    /// [`narrow_ms1_scans`] counts the whole file.
+    #[must_use]
+    pub const fn narrow_scans_left_out(&self) -> u64 {
+        self.narrow_scans_left_out
     }
 
     #[must_use]
@@ -364,11 +398,12 @@ pub fn bin_rt_mz_map_from<R: BufRead + Seek>(
         .map_err(|_| MapError::AllocationRefused)?;
     cells.resize(cell_count, f64::NEG_INFINITY);
 
-    let total = map_in_window(table, request.kind, time_axis).count() as u64;
+    let total = kind_in_window(table, request.kind, time_axis, false).count() as u64;
+    let narrow_scans_left_out = kind_in_window(table, request.kind, time_axis, true).count() as u64;
     let (mut mz_unit, mut intensity_unit) = (None, None);
     let (mut points_binned, mut points_outside_mz) = (0, 0);
     let mut done = 0;
-    for (position, time_bin) in map_in_window(table, request.kind, time_axis) {
+    for (position, time_bin) in kind_in_window(table, request.kind, time_axis, false) {
         if cancel.is_cancelled() {
             return Err(MapError::Cancelled);
         }
@@ -410,23 +445,28 @@ pub fn bin_rt_mz_map_from<R: BufRead + Seek>(
         intensity_unit: intensity_unit.unwrap_or(ArrayUnit::NotDeclared),
         cells,
         spectra: done,
+        narrow_scans_left_out,
         points_binned,
         points_outside_mz,
     })
 }
 
-/// The table position and retention-time bin of each MS1 row of one map whose
-/// retention time falls in the window. Read from the table alone.
-fn map_in_window(
+/// The table position and retention-time bin of each MS1 row of one kind, narrow
+/// or not as asked, whose retention time falls in the window: with `narrow` false,
+/// the map's own. Read from the table alone.
+fn kind_in_window(
     table: &MzmlSpectrumTable,
     kind: MapKind,
     axis: Axis,
+    narrow: bool,
 ) -> impl Iterator<Item = (usize, usize)> {
     table
         .rows()
         .iter()
         .enumerate()
-        .filter(move |(_, row)| row.ms_level() == 1 && MapKind::of(row) == kind)
+        .filter(move |(_, row)| {
+            row.ms_level() == 1 && MapKind::of(row) == kind && row.declares_narrow_scan() == narrow
+        })
         .filter_map(move |(position, row)| {
             Some((position, axis.bin(row.retention_time().value())?))
         })

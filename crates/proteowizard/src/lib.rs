@@ -157,7 +157,7 @@ pub use process::{
 };
 pub use rt_mz_map::{
     MAX_MAP_CELLS, MapError, MapKind, MapRequest, Ms1Extent, RtMzMap, bin_rt_mz_map,
-    bin_rt_mz_map_from, ms1_extent,
+    bin_rt_mz_map_from, ms1_extent, narrow_ms1_scans,
 };
 pub use sciex_completeness::{
     EstablishedSampleCompleteness, SampleCompletenessRefusal, SciexSampleCompleteness,
