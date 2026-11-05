@@ -2498,6 +2498,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             const chosen = style(".conversion-settings .conversion-segment:has(input:checked)");
             const tile = style(".conversion-setting-choice:has(input:checked)");
             const lossy = style(".conversion-lossy");
+            const refused = style('.conversion-segment[data-choice-state="unavailable"]');
             return {
               section: type(".conversion-section-head > h3"),
               sectionRule: head.borderBottomColor,
@@ -2508,7 +2509,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
               // One line with the longer option chosen, so pressing it moves nothing below.
               scope: Math.round(document.querySelector(".conversion-scope .conversion-segments-track")!.getBoundingClientRect().height),
               chosen: [chosen.backgroundColor, chosen.color, chosen.fontWeight],
-              refused: style('.conversion-segment[data-choice-state="unavailable"]').textDecorationLine,
+              // An unchosen option has the same ink, so ink says nothing here.
+              refused: [refused.textDecorationLine, refused.outlineStyle, refused.outlineOffset],
               tile: [tile.borderTopColor, tile.borderTopLeftRadius, tile.backgroundColor],
               lossy: [lossy.borderTopWidth, lossy.backgroundColor, lossy.fontWeight],
             };
@@ -2523,12 +2525,26 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             track: ["2px", "rgb(220, 227, 235)", "rgb(247, 248, 250)"],
             scope: 32,
             chosen: ["rgb(255, 255, 255)", "rgb(23, 105, 209)", "650"],
-            refused: "line-through",
+            refused: ["line-through", "dashed", "-3px"],
             tile: ["rgb(159, 191, 235)", "6px", "rgb(237, 244, 255)"],
             lossy: ["0px", "rgb(255, 241, 202)", "550"],
           });
           expect(await cutNames()).toEqual([]);
         }
+
+        // The arrow keys reach a refused option, where the focus ring replaces the dashes.
+        await browser.execute(() => {
+          document.querySelector<HTMLInputElement>('.conversion-segments-track:has([data-choice-state="unavailable"]) input:checked')!.focus();
+        });
+        await browser.keys("ArrowRight");
+        await frames();
+        expect(
+          await browser.execute(() => {
+            const option = document.activeElement!.closest<HTMLElement>(".conversion-segment")!;
+            const ring = getComputedStyle(option);
+            return [option.dataset["choiceState"], ring.outlineStyle, ring.outlineWidth];
+          }),
+        ).toEqual(["unavailable", "solid", "2px"]);
 
         // Refused, with its reason on screen, in a note with v5.11's tinted edge.
         await metrics(1366, 768);
@@ -2545,14 +2561,18 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
           const refusal = await browser.execute(() => {
             const note = document.querySelector<HTMLElement>(".conversion-rail-foot .notice-warning")!;
             const box = note.getBoundingClientRect();
+            const listed = [...document.querySelectorAll<HTMLElement>(".conversion-requested-list .conversion-queue-name")];
             return {
               edge: getComputedStyle(note).borderTopColor,
               shown: box.height > 0 && box.bottom <= innerHeight && box.top >= 0,
               refused: document.querySelector(".conversion-rail-foot .ui-button--primary, .conversion-rail-foot .conversion-wide-action")?.getAttribute("aria-disabled"),
+              // The plain names in the list beside it: whole, so the extension stays.
+              listed: listed.length,
+              cut: listed.filter((name) => name.scrollWidth > name.clientWidth + 1).map((name) => name.title),
             };
           });
           evidence.push({ label: `fe2-conversion-refused-${locale}-${String(width)}`, ...refusal });
-          expect(refusal).toEqual({ edge: "rgb(235, 212, 165)", shown: true, refused: "true" });
+          expect(refusal).toEqual({ edge: "rgb(235, 212, 165)", shown: true, refused: "true", listed: ROWS.length, cut: [] });
         }
 
         // A queue running: the status, the bar, the tags, and the same two names.

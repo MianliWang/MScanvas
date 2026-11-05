@@ -463,16 +463,23 @@ Project block states:
 - **Rail.** On the card's white, as Details is, in place of a tint. Its width stays
   300 to 360 px, which `narrowLayout.test.tsx` holds, against v5.11's 292 px.
 - **Segments.** v5.11's `.seg`, as Settings draws it, 32 px tall. A refused option
-  keeps its strike-through. A chosen scope, the one file included, is lifted in
+  keeps its strike-through and takes Settings' dashed inner edge, because an unchosen
+  option now has its secondary ink. A chosen scope, the one file included, is lifted in
   white, and the one file keeps a row of its own under the pair.
 - **Tiles and labels.** v5.11's `.radio-option` edge and fill, at the tile's 5 by
   10 px. Labels are Project's 13 px at 550, in ink. The left label column stays.
 - **Tags.** `.project-tag`'s values. The Lossy tag is v5.11's `.tag.amber`. The
   not-verified tag keeps its own look, as on Project.
 - **Notices.** The shell's `.notice`, so each one has its tinted edge again.
-- **Names.** Short of room an output takes a line of its own, and a name with no
-  middle wraps, so no name is cut with no ellipsis (C11). A settled row can then
-  take two lines while the queue runs.
+- **Names.** Short of room an output takes a line of its own, and a name
+  `MiddleEllipsis` did not split wraps whole, at any width, mid-word if it must, so no
+  name is cut with no ellipsis (C11). That includes the plain names beside a refused
+  plan, long ones too, which `main` ends with an ellipsis that takes the extension. A
+  settled row can then take two lines while the queue runs.
+- **Progress.** v5.11's `.progress-track`, a 5 px bar on `#e6edf7`. It is one rule, so
+  the view bar on the Workbench went from 8 px to 5 px with it. That bar landed on
+  2026-11-03, after the Workbench's acceptance, and no accepted text fixes its height.
+  Added 2026-11-05; not an owner decision.
 - **History rows.** They stay bordered buttons, where v5.11's `.history-item` is a
   hairline row, and the chosen one takes the fill and 3 px edge of v5.11's selected row.
 - **Settings.** v5.11's `.setting-row` label at 14 px, its scrim and shadow, and its

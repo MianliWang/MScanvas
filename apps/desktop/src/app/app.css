@@ -803,11 +803,17 @@ button:disabled,
 }
 
 .conversion-segment:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 0; }
-/* Refused: secondary ink and struck through, two channels besides its reason. */
+/* Refused: struck through and dashed as Settings' Segmented is, two channels besides
+   its reason, because an unchosen option has the same secondary ink. */
 .conversion-segment[data-choice-state="unavailable"] {
   color: var(--color-text-secondary);
   text-decoration: line-through;
   cursor: not-allowed;
+}
+
+.conversion-segment[data-choice-state="unavailable"]:not(:has(input:focus-visible)) {
+  outline: 1px dashed var(--color-border-strong);
+  outline-offset: -3px;
 }
 
 .conversion-subfolder {
@@ -895,7 +901,8 @@ button:disabled,
 }
 
 /* Every line of a plan row starts at the name, however many lines the family
-   and the output take: the number hangs in the indent. */
+   and the output take: the number hangs in the indent. Rows 1,000 to 1,024 are
+   wider than the indent, so their number takes a line of its own, as on main. */
 .conversion-plan-list > li:not(.list-window-spacer) { padding-left: calc(1.6em + 6px); }
 .conversion-plan-list .conversion-queue-order { margin-left: calc(-1.6em - 6px); }
 
@@ -948,8 +955,9 @@ button:disabled,
 .conversion-plan-list .conversion-queue-output,
 .conversion-run-title > .conversion-queue-output { min-width: min(100%, 12em); }
 
-/* A name with no middle to give up (MiddleEllipsis keeps a short one whole), and
-   an ellipsis does not reach text in a flex box: whole, wrapped if it must. */
+/* Any name MiddleEllipsis did not split wraps whole, at any width, mid-word if it
+   must. A short one is text in its flex box, which an ellipsis does not reach. A
+   plain span, as in the list beside a refused plan, would lose its extension. */
 :is(.conversion-queue-name, .conversion-queue-output):not(:has(> .ui-middle-ellipsis__head)) { white-space: normal; overflow-wrap: anywhere; }
 
 /* A one-to-many output is two facts, not a name, so it wraps rather than
@@ -1136,7 +1144,7 @@ button:disabled,
    with the item in progress as its own indeterminate segment at the fill's
    edge, a light stripe sweeping across it. With reduced motion the segment
    stands still, hatched, so a queue with nothing done yet still reads as a
-   bar at work rather than a rule. */
+   bar at work rather than a rule. The Workbench's view bar is this rule too. */
 .conversion-progress-bar {
   position: relative;
   height: 5px;
