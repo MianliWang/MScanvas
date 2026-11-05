@@ -45,7 +45,7 @@
 .settings-section-title { margin: 0 0 4px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
 .settings-fields > .settings-section-title:not(:first-child) { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--color-border); }
 /* v5.11 settings rows: label left, control right, a divider between rows. */
-.settings-fields > .setting-field { padding: 15px 0; }
+.settings-fields > .setting-field { padding: 12px 0; }
 .settings-fields .setting-field-label { font-size: 14px; }
 .settings-fields > .setting-field + .setting-field { border-top: 1px solid var(--color-border); }
 .settings-fields .setting-field-copy { gap: 2px; }

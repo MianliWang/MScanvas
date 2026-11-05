@@ -475,9 +475,11 @@ Project block states:
   take two lines while the queue runs.
 - **History rows.** They stay bordered buttons, where v5.11's `.history-item` is a
   hairline row, and the chosen one takes the fill and 3 px edge of v5.11's selected row.
-- **Settings.** v5.11's `.setting-row` at 15 px with a 14 px label, its scrim and
-  shadow, and its notes for problems. One column in place of v5.11's left navigation,
-  and the diagnostics box stays 200 px (owner, 2026-11-04, P202-BOX).
+- **Settings.** v5.11's `.setting-row` label at 14 px, its scrim and shadow, and its
+  notes for problems. Rows keep 12 px and not v5.11's 15 px, because a stored record's
+  problem must show without scrolling at 960x640 (`copy-diagnostics.browser.e2e.ts`).
+  One column in place of v5.11's left navigation, and the diagnostics box stays 200 px
+  (owner, 2026-11-04, P202-BOX).
 - **Export figure.** Not changed. The dialog already has v5.11's modal chrome.
 
 ## M6.6 destination and conflict surface

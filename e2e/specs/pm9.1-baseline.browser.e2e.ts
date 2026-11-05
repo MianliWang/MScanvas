@@ -2503,7 +2503,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
               sectionRule: head.borderBottomColor,
               inset: head.paddingLeft,
               rail: style(".conversion-side").backgroundColor,
-              label: type(".conversion-form-label"),
+              field: type(".conversion-form-label"),
               track: [track.paddingTop, track.borderTopColor, track.backgroundColor],
               chosen: [chosen.backgroundColor, chosen.color, chosen.fontWeight],
               refused: style('.conversion-segment[data-choice-state="unavailable"]').textDecorationLine,
@@ -2517,7 +2517,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             sectionRule: "rgb(220, 227, 235)",
             inset: "16px",
             rail: "rgb(255, 255, 255)",
-            label: "13px/550",
+            field: "13px/550",
             track: ["2px", "rgb(220, 227, 235)", "rgb(247, 248, 250)"],
             chosen: ["rgb(255, 255, 255)", "rgb(23, 105, 209)", "650"],
             refused: "line-through",
@@ -2616,7 +2616,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
               cut: inside.filter((node) => node.tagName === "BUTTON" && node.scrollWidth > node.clientWidth + 1).map(name),
               scrolled: body.scrollTop > 0,
               headAndFootStay: JSON.stringify(before) === JSON.stringify(edges()),
-              label: `${label.fontSize}/${label.fontWeight}`,
+              field: `${label.fontSize}/${label.fontWeight}`,
               row: getComputedStyle(dialog.querySelector(".settings-fields > .setting-field")!).paddingTop,
             };
           });
@@ -2627,8 +2627,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             cut: [],
             scrolled: true,
             headAndFootStay: true,
-            label: "14px/600",
-            row: "15px",
+            field: "14px/600",
+            row: "12px",
           });
           await focusWalk(`fe2-settings-focus-${locale}-${String(width)}`, 16, "[data-settings-dialog]");
         }
