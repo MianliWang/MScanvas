@@ -71,7 +71,8 @@ not an owner decision: it is the text of 2026-10-30 or a later note.
 > before this record is accepted, and the roadmap's phase 0 exit says it is accepted
 > with its engine version. Both now hold, so the status follows those two lines: a
 > reading, not an owner decision. The owner wrote no separate "accepted" for this
-> record. What the owner decided:
+> record. The ids of 2026-11-04 are in
+> [section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04). What the owner decided:
 >
 > - **B-1 (2026-10-30):** the block above: decisions 1 and 2, every fix to a shipped
 >   component an application release, and questions 6, 8 and 9.
@@ -856,7 +857,8 @@ looked for. The licence slice settles them.
 | OpenSSL, linked into `OpenMS.dll` | listed in the notices, text in `LICENSES/vcpkg/openssl.txt`; 3.6.4 on the decision page | no `OpenSSL 3.x` banner; a bare `3.6.4` between OpenSSL's source paths, and 9 paths under `buildtrees\openssl\`; build log: 3.6.4#1 ([section 9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)) | **open**: the notice; this is apart from the embeddable's own copy, 3.5.9 (fact 8) |
 | `nanobind-backend` 1.0.0 | a new declared dependency of 3.6.0; PyPI shows no licence field, only a BSD classifier | no licence file: its `.dist-info` holds `DELVEWHEEL`, `METADATA` and `WHEEL`, and `METADATA` has only the classifier ([section 9.4](../../spikes/RUNTIME_360_PROBE.md#94-notices)) | **open**: which licence text ships with it; approved for development and not for shipping (decision 10) |
 | COIN-OR | `LICENSES/vcpkg/coin-or-clp.txt` and its neighbours; `coin-or-clp.txt` is EPL 2.0, where the 3.5.0 contrib list says EPL 1.0 | `Cbc` in `OpenMS.dll`, no version; build log: `coin-or-cbc` 2024-06-04#1, `coin-or-clp` 2023-02-01#1 ([section 9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)) | **open**: which COIN-OR libraries are linked, and the notice and source pointer their terms ask for |
-| libiconv | listed in the notices, text in `LICENSES/vcpkg/libiconv.txt`; the DLL has 0 `iconv` strings and no such import, which does not prove the absence of a static link | **NOT SHOWN:** no import, string or alias name in the 76 native files, no SBOM or link map of this build, and upstream's statements point both ways; its build installed `libiconv` 1.18 for `libxml2[core,iconv,zlib]` ([section 8](../../spikes/RUNTIME_360_PROBE.md#8-libiconv)) | **terms accepted, treated as possibly linked** (LIB-1, below). How a static link's relink term is met is open |
+| OpenMS 3.6.0 itself | — | the wheel carries `LICENSES/OpenMS-BSD-3-Clause.txt` and `dist-info/licenses/LICENSE` | **open**: the notice; the 3.5.0 row's "not in the wheel" does not apply |
+| libiconv | listed in the notices, text in `LICENSES/vcpkg/libiconv.txt`; the DLL has 0 `iconv` strings and no such import, which does not prove the absence of a static link | **NOT SHOWN:** no import or string, and no alias name in exact case, in the 76 native files, no SBOM or link map of this build, and upstream's statements point both ways; its build installed `libiconv` 1.18 for `libxml2[core,iconv,zlib]` ([section 8](../../spikes/RUNTIME_360_PROBE.md#8-libiconv)) | **terms accepted, treated as possibly linked** (LIB-1, below). How a static link's relink term is met is open |
 | The MSVC copies | not inventoried for 3.6.0 | seven files: five at 14.51.36247.0, and one `msvcp140` at 14.40.33810.0 in each of `nanobind_backend.libs` and `numpy.libs`, one digest. Two `msvcp140` versions load in one process ([section 9.3](../../spikes/RUNTIME_360_PROBE.md#93-every-msvc-runtime-copy)) | **open**: RT-3's reading applies on this branch too |
 | The other libraries | not inventoried for 3.6.0 | [section 9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)'s table, and `_arrow_zerocopy.pyd` (7,720,448 B), a static Arrow with zlib and bzip2, never loaded | **open**: the licence slice; a port missing from that table says nothing about that port |
 | `openms-thermo-bridge`'s native half | the notices' entry [25], text in `LICENSES/vcpkg/openms-thermo-bridge.txt`, which decision 4's note leaves out | its files are left out; `OpenMS.dll` keeps the bridge's code, 102 `Thermo` and 13 `hostfxr` strings ([section 7](../../spikes/RUNTIME_360_PROBE.md#7-what-loads)), with `get_hostfxr_path` from `nethost`; build log: 0.3.1 ([section 9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)) | **open**: the wheel's notices, read for this row, say "The native bridge library links nethost", and their entry for nethost adds "on Windows, nethost.dll, which it loads", while the wheel holds no `nethost.dll` and `OpenMS.dll` has 0 `nethost` strings. These statements do not settle it. That the native half is in this DLL is a reading, with no link map, and no licence conclusion. The BSD 3-Clause text's clause 2 says "Redistributions in binary form must reproduce the above copyright notice", and with that file out the text stays twice in the unedited notices file below: entry [25], headed by the `.doc`'s name and first bytes, and [T1] inside entry [47], which reproduces the left-out folder's own notices and states it for `ThermoWrapperManaged.*`, the managed files left out. If the licence slice finds it linked, the generated notices keep the BSD text, without that heading. What happens if the link stays not shown is not decided: LIB-1 covers libiconv only |
@@ -1032,8 +1034,10 @@ branch taken, A-07 stays.
   target with no `neutralMass` goes from `DETECTED_AMBIGUOUS` to `DETECTED`, and model
   status depends on which targets share the batch, on both engines
   ([section 6.3](../../spikes/RUNTIME_360_PROBE.md#63-beyond-the-adrs-request-the-protocols-other-fixtures)).
+  Whether M9.0's exact-boundary check still holds is A-07's.
 - **U1's chain** gives the same 51 features on three synthetic files, with no difference
-  in RT, m/z or intensity. The call forms changed, and four classes have new parameters
+  in RT, m/z or intensity. One difference, below U1's floor: at noise threshold 100 with
+  `fixed`, 3.6.0 adds 2 features. The call forms changed, and four classes have new parameters
   ([section 5.3](../../spikes/RUNTIME_360_PROBE.md#53-u1-on-both-engines)).
 
 The recommendation of 2026-10-30, 3.5.0 first with the bump decided before
@@ -1343,7 +1347,11 @@ this record's status answers none of it.
   slice, before a release, with the LGPL-2.1 text and notice in the package. Only a link
   map would settle whether it is linked, and only upstream can publish the map of the
   shipped DLL ([section 8](../../spikes/RUNTIME_360_PROBE.md#8-libiconv)). Asking is
-  option B, and each message needs the owner's go-ahead.
+  option B, and each message needs the owner's go-ahead. A replaced library changes the
+  manifest, and the application refuses a runtime whose manifest differs (fact 1). Whether
+  that refusal meets the relink term is part of this question: a reading, not an owner
+  decision. The options under the LGPL-3 question were written for Qt, and nothing here
+  chooses among them for libiconv.
 - **The licence slice's other items,** from the probe's sections 8 and 9:
   - whether the other listed ports are linked, which is the same question as libiconv's:
     the AWS SDK leaves no marker, and `libxml2` is the one route to libiconv that was
@@ -1364,8 +1372,14 @@ this record's status answers none of it.
   - `nanobind-backend`, which carries no licence file, and `THIRD-PARTY-NOTICES.txt`,
     which declares what the copy does not hold, while `LICENSES/` keeps 157 files
     ([section 9.4](../../spikes/RUNTIME_360_PROBE.md#94-notices)).
+- **The notices (delivery step 2).** Not built: the generator, `ANALYSIS_RUNTIME_NOTICES.md`,
+  the upstream texts and source offers, and decision 6's rows that still apply on this branch
+  (CPython, OpenMS, numpy, the OpenMS data files with terms, among them the Design Science
+  License text the wheel does not carry).
 - **`CV/brenda.obo`'s terms and the data files whose file states no terms**
   (decision 4's licence slice).
+- **The release lock and its exclusion check (delivery step 1).** Not built. The experiment
+  lock goes in the change that commits A-07's lock (ask 2).
 - **ANA-004's qualification on the new manifest (A-07, delivery step 1).** The M9.0
   protocol has not run on these binaries, and the owner has not accepted the numbers the
   probe saw move (decision 8). What happens if that qualification fails, or the owner
