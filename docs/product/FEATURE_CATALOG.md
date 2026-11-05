@@ -117,6 +117,15 @@ The acceptance table remains the target, including the parts called out below.
   panned away comes back. A reveal never takes keyboard focus from the control
   that committed the selection. The inspector half of the acceptance line is the
   selected-spectrum panel; there is no separate annotation inspector yet.
+- **VIEW-003, polarity and charge (2026-11-05).** The spectrum's head and Details
+  state its polarity (MS:1000130, MS:1000129) and the charge of its first
+  precursor's first selected ion (MS:1000041), from the project-owned reader. Not
+  stated, stated two ways, or a charge that is not an integer is not reported: the
+  wire carries `null`, never 0, and nothing is refused. The scan table gains no
+  column, and no export or figure document changes. Every row carries both for later
+  consumers; XIC, the map and analysis do not read them yet
+  ([ADR 0056](../architecture/adr/0056-project-owned-mzml-reader-for-viewing.md), the
+  2026-11-05 note under decision 3).
 - **VIEW-006 — Implemented for the loaded scan table.** Arrow, Page, Home and End
   move focus without selecting — each selection is one ProteoWizard process, and
   selection-following-focus would launch one per key press — and Enter or Space
