@@ -536,22 +536,29 @@ Both need a follow-up decision. It must:
 >   first. Both unreported share one fact. They may take a second line inside its
 >   36 px at every width, which only 1050 px and below allowed. A fact wider than the
 >   head is hidden whole, never cut, and every later fact is on a line the head
->   hides, so it still gives way from its end. Rendered with scan 36,319 and 1,234
->   points:
->   - At 1366x768 with the roster open, every fact shows, but where neither polarity
->     nor charge is stated `en` drops the size. With Details open beside the roster
->     the head is 31 px wide in `en` and shows only the MS level; Details says the
->     rest.
->   - At 960x640 in `en` the head is 126 px wide. Stated polarity and charge show.
->     "Polarity, charge not reported" and "Representation not reported" are wider
->     than the head, so they, and every fact after them, are said only in Details,
->     its drawer; ADR 0029's representation is not in the head there. So is a
->     two-digit charge beside more than one precursor, "Charge 12 (prec. 1/12)".
->   - At 960x640 in `zh-CN` every fact shows; only the size gives way.
->   - Where a spectrum has no scan number, "Spectrum 36,319" leaves `en` 97 px at
->     960x640: "Polarity not reported", "Polarity, charge not reported" and "Charge
->     3 (prec. 1/3)" are said only in Details. With Details open beside the roster
->     at 1366x768 the head is 2 px wide and shows no fact.
+>   hides, so it still gives way from its end. Which facts show depends on the
+>   head's width and on how the facts before each one fill its two lines, not on a
+>   fact alone, and Details says every fact. For example, rendered with scan 36,319
+>   and 1,234 points:
+>   - At 1366x768 with the roster open the `en` head is 222 px wide. In the states
+>     rendered every fact shows, except that the size gives way where neither
+>     polarity nor charge is stated. With Details open beside the roster the `en`
+>     head is 31 px wide and shows only the MS level.
+>   - At 960x640 in `en` the head is 126 px wide. "MS2 Centroid Positive" fills its
+>     first line and "Charge 3 (prec. 1/3)" its second. "Negative" does not fit on
+>     the first line after "MS2 Centroid", so "Charge 12 (prec. 1/12)" after it is
+>     said only in Details. "Polarity, charge not reported" (152 px) and
+>     "Representation not reported" (150 px) are wider than the head, so they, and
+>     every fact after them, stated or not, are said only in Details, its drawer;
+>     ADR 0029's representation is not in the head there.
+>   - At 960x640 the `zh-CN` head is 153 px wide. In the states rendered every fact
+>     shows, and only the size gives way.
+>   - Where a spectrum has no scan number, "Spectrum 36,319" leaves the `en` head
+>     97 px wide at 960x640. "MS2 Profile Negative" fills its two lines, so "Charge
+>     2" after it is said only in Details, and "MS2 Profile Charge 2" leaves
+>     "Polarity not reported" there. The `zh-CN` head is as wide as with a scan
+>     number. With Details open beside the roster at 1366x768 the `en` head is 2 px
+>     wide and shows no fact.
 > - **Run-level metadata** stays off the Metadata tab, for N-V6. The native text is
 >   unredacted, and it would be a second view beside `msaccess`'s.
 
