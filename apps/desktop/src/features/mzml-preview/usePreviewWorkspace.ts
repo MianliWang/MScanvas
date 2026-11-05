@@ -2127,13 +2127,17 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
   }, []);
   useEffect(() => {
     const handle = heldOpen.current;
-    if (previewBackendBusy || viewerRequests.current > 0 || handle === null) return;
+    // A read that failed or saw a newer backend starts a check as it lands, so the
+    // press also waits for that check's answer.
+    if (previewBackendBusy || backendBusy || viewerRequests.current > 0 || handle === null) return;
     heldOpen.current = null;
-    // `activateDataset` keeps its own guards, and a quarantine reaches them through
-    // the check it starts. These are the conversion and the view `canPreview` also
-    // waits for, and a row that left the list while the press waited.
+    // `activateDataset` keeps its own guards: a backend the check found unusable
+    // refuses the press, and the backend's notice says why. The conversion and the
+    // view are defensive, since neither starts while a viewer read is out, and keep
+    // this to `canPreview`'s rule. A row that left the list while the press waited
+    // does not open.
     if (!conversionBusyRef.current && !rawViewBusyRef.current && rosterRef.current.datasets.some(dataset => dataset.handle === handle)) activateDataset(handle);
-  }, [activateDataset, previewBackendBusy]);
+  }, [activateDataset, backendBusy, previewBackendBusy]);
 
   const openRawView = useCallback(
     (operation: number, handle: string) => {

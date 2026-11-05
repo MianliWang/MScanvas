@@ -486,6 +486,15 @@ describe("a spectrum on open (V-1)", () => {
     expect(api.requestedSpectra).toEqual([1]);
   });
 
+  it("scrolls the list to an apex far down it: a first open has no page to keep", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf(Array.from({ length: 400 }, (_, index) => index === 300 ? [1, 999] as const : [2, 10] as const)) });
+    await opened(api);
+    await screen.findByRole("img", { name: /^Spectrum 300,/u });
+    expect(selected()).toBe("300");
+    expect(grid().querySelector<HTMLElement>(".spectrum-table-viewport")!.scrollTop).toBeGreaterThan(0);
+  });
+
   it("selects nothing in a file with no MS1, and never an MS2 in its place (V-1-NOMS1)", async () => {
     const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
       preview: runOf([[2, 10], [2, 900], [3, 70]]) });
@@ -681,6 +690,28 @@ describe("a spectrum on open (V-1)", () => {
       await waitFor(() => expect(answers).toBe(2));
       await waitFor(() => { expect(result.current.backendBusy).toBe(false); expect(result.current.previewBackendBusy).toBe(false); });
       expect(api.openedHandles).toEqual([selectedFile.handle]);
+    });
+
+    it("opens it once the check the read's failure started comes back available", async () => {
+      let fail: () => void = () => undefined;
+      let check: () => void = () => undefined;
+      let answers = 0;
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(runOf([[1, 10], [1, 70]])),
+        availability: () => (answers += 1) === 1 ? Promise.resolve(availableBackend) : new Promise(resolve => { check = () => resolve(availableBackend); }),
+        spectrum: () => new Promise((_, reject) => { fail = () => reject({ kind: "file_identity_changed", summary: "Rust's words.", detail: null, retryable: false }); }) });
+      const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+      await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+      await waitFor(() => expect(result.current.backendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(selectedFile.handle); });
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      act(() => { result.current.holdOpen(secondFile.handle); });
+      await act(async () => { fail(); await Promise.resolve(); });
+      await waitFor(() => expect(answers).toBe(2));
+      await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+      expect(result.current.backendBusy).toBe(true);
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+      await act(async () => { check(); await Promise.resolve(); });
+      await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle, secondFile.handle]));
     });
 
     it("opens the latest press only, and not a row that has left the list", async () => {
