@@ -90,6 +90,13 @@ function headFacts() {
   }, HEAD_FACTS);
 }
 
+/** The head's facts, once they sit inside its 36 px, under no button, with no sideways scroll. */
+async function soundHead() {
+  const head = await headFacts();
+  expect([head.overHead, head.covered, head.horizontalOverflow]).toEqual([false, false, 0]);
+  return head;
+}
+
 async function openDetails() {
   await readBackSavedPreferences();
   const toggle = browser.$('[aria-controls="workbench-inspector"]');
@@ -102,11 +109,6 @@ function detailsValue(label: string) {
     .find(term => term.textContent === name)?.nextElementSibling?.textContent ?? null, label);
 }
 
-async function unexpectedConsole() {
-  return (await consoleEntries()).filter(entry => !ALLOWED_CONSOLE_SUBSTRINGS.some(allowed => entry.text.includes(allowed)))
-    .map(entry => `${entry.level}: ${entry.text}`);
-}
-
 async function capture(name: string) {
   if (EVIDENCE === undefined) return;
   mkdirSync(EVIDENCE, { recursive: true });
@@ -114,43 +116,49 @@ async function capture(name: string) {
 }
 
 describe("a spectrum's polarity and charge", () => {
+  afterEach(async () => {
+    const unexpected = (await consoleEntries()).filter(entry => !ALLOWED_CONSOLE_SUBSTRINGS.some(allowed => entry.text.includes(allowed)))
+      .map(entry => `${entry.level}: ${entry.text}`);
+    expect(unexpected).toEqual([]);
+  });
+
   for (const locale of ["en", "zh-CN"] as const) {
     const words = locale === "en" ? en : zh;
+    const charge = (value: string) => words.viewerChargeValue.replace("{{charge}}", value);
+    const points = words.viewerExportPoints.replace("{{count, number}}", "6");
+    const owner = words.viewerChargeOfPrecursor.replace("{{total, number}}", "3");
+
     for (const size of SIZES) {
       const label = `${locale} ${String(size[0])}x${String(size[1])}`;
+      const shot = (state: string) => capture(`${state}-${locale}-${String(size[0])}x${String(size[1])}`);
 
       it(`says what the file states, in the head and in Details, ${label}`, async () => {
         await openOn(locale, size, { polarity: "negative", charge: 2, representation: "profile" });
 
-        const head = await headFacts();
-        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, words.viewerChargeValue.replace("{{charge}}", "2"),
-          words.viewerPolarityNegative, words.viewerExportPoints.replace("{{count, number}}", "6")]);
+        const head = await soundHead();
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, charge("2"), words.viewerPolarityNegative, points]);
         expect(head.dropped).toEqual([]);
-        expect([head.overHead, head.covered, head.horizontalOverflow]).toEqual([false, false, 0]);
-        await capture(`stated-${locale}-${String(size[0])}x${String(size[1])}`);
+        await shot("stated");
 
         await openDetails();
         expect(await detailsValue(words.viewerPolarity)).toBe(words.viewerPolarityNegative);
         expect(await detailsValue(words.viewerCharge)).toBe("2");
-        await capture(`stated-details-${locale}-${String(size[0])}x${String(size[1])}`);
-        expect(await unexpectedConsole()).toEqual([]);
+        await shot("stated-details");
       });
 
       it(`says not reported as a value, and never 0, ${label}`, async () => {
         await openOn(locale, size, { polarity: null, charge: null, representation: "profile" });
 
-        const head = await headFacts();
+        const head = await soundHead();
         expect(head.facts).toContain(words.viewerPolarityChargeNotReported);
         expect(head.facts.join(" ")).not.toMatch(/\b0\b/u);
         expect(head.dropped).not.toContain(words.viewerPolarityChargeNotReported);
-        expect([head.overHead, head.covered, head.horizontalOverflow]).toEqual([false, false, 0]);
-        await capture(`not-reported-${locale}-${String(size[0])}x${String(size[1])}`);
+        await shot("not-reported");
 
         await openDetails();
         expect(await detailsValue(words.viewerPolarity)).toBe(words.viewerNotReported);
         expect(await detailsValue(words.viewerCharge)).toBe(words.viewerNotReported);
-        await capture(`not-reported-details-${locale}-${String(size[0])}x${String(size[1])}`);
-        expect(await unexpectedConsole()).toEqual([]);
+        await shot("not-reported-details");
       });
 
       it(`keeps the representation when a file states none of the three, ${label}`, async () => {
@@ -159,11 +167,11 @@ describe("a spectrum's polarity and charge", () => {
         // The longest head there is. At 1366 px it is whole. Narrower it drops
         // from the end, and the representation stays (ADR 0029): as built, en at
         // 960 px says polarity and charge only in Details, its drawer.
-        const head = await headFacts();
+        const head = await soundHead();
         expect(head.dropped).not.toContain(words.viewerRepresentationNotReported);
         if (size[0] >= 1366) expect(head.dropped).toEqual([]);
-        expect([head.overHead, head.covered, head.horizontalOverflow]).toEqual([false, false, 0]);
-        await capture(`none-of-three-${locale}-${String(size[0])}x${String(size[1])}`);
+        await shot("none-of-three");
+
         await openDetails();
         expect(await detailsValue(words.viewerCharge)).toBe(words.viewerNotReported);
       });
@@ -171,42 +179,54 @@ describe("a spectrum's polarity and charge", () => {
       it(`says whose charge it is beside more than one precursor, never cutting a word, ${label}`, async () => {
         await openOn(locale, size, { polarity: "positive", charge: 3, totalPrecursorCount: 3, representation: "centroid" });
 
-        const owner = words.viewerChargeOfPrecursor.replace("{{total, number}}", "3");
-        const head = await headFacts();
-        expect(head.facts).toEqual(expect.arrayContaining([words.viewerChargeValue.replace("{{charge}}", "3"), owner]));
-        expect(head.dropped).not.toContain(owner);
+        const head = await soundHead();
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationCentroid, charge("3"), owner, words.viewerPolarityPositive, points]);
+        // Only the size may give way, and it is in Details (P5).
+        expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
         if (size[0] >= 1366) expect(head.dropped).toEqual([]);
-        await capture(`three-precursors-${locale}-${String(size[0])}x${String(size[1])}`);
+        await shot("three-precursors");
 
         await openDetails();
         expect(await detailsValue(words.viewerCharge)).toBe(`3 ${owner}`);
       });
 
+      it(`says whose only beside a stated charge in the head, and always in Details, ${label}`, async () => {
+        await openOn(locale, size, { polarity: "positive", charge: null, totalPrecursorCount: 3, representation: "centroid" });
+
+        const head = await soundHead();
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationCentroid, words.viewerChargeNotReported, words.viewerPolarityPositive, points]);
+        expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
+        await shot("three-precursors-no-charge");
+
+        await openDetails();
+        expect(await detailsValue(words.viewerCharge)).toBe(`${words.viewerNotReported} ${owner}`);
+      });
+
       it(`keeps a stated charge beside a polarity not reported, ${label}`, async () => {
         await openOn(locale, size, { polarity: null, charge: 2, representation: "profile" });
 
-        const head = await headFacts();
-        expect(head.facts).toEqual(expect.arrayContaining([words.viewerPolarityNotReported, words.viewerChargeValue.replace("{{charge}}", "2")]));
-        // Only the size may give way, and it is in Details (P5).
-        expect(head.dropped.filter(fact => fact !== words.viewerExportPoints.replace("{{count, number}}", "6"))).toEqual([]);
-        await capture(`charge-only-${locale}-${String(size[0])}x${String(size[1])}`);
+        const head = await soundHead();
+        expect(head.facts).toEqual(expect.arrayContaining([words.viewerPolarityNotReported, charge("2")]));
+        expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
+        await shot("charge-only");
       });
 
-      it(`says a stated polarity and a charge not reported, as an MS1 usually does, ${label}`, async () => {
-        await openOn(locale, size, { polarity: "positive", charge: null, representation: "profile" });
+      for (const representation of ["profile", "centroid"] as const) {
+        it(`keeps a stated polarity beside a charge not reported, as an MS1 usually has it, ${representation}, ${label}`, async () => {
+          await openOn(locale, size, { polarity: "positive", charge: null, representation });
 
-        const head = await headFacts();
-        expect(head.facts).toEqual(expect.arrayContaining([words.viewerPolarityPositive, words.viewerChargeNotReported]));
-        // Only the size may give way, and it is in Details (P5).
-        expect(head.dropped.filter(fact => fact !== words.viewerExportPoints.replace("{{count, number}}", "6"))).toEqual([]);
-        await capture(`ms1-like-${locale}-${String(size[0])}x${String(size[1])}`);
-      });
+          const head = await soundHead();
+          expect(head.facts).toEqual(expect.arrayContaining([words.viewerPolarityPositive, words.viewerChargeNotReported]));
+          expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
+          await shot(`polarity-only-${representation}`);
+        });
+      }
     }
   }
 
   it("follows the selection, and adds no scan table column", async () => {
     await openOn("en", [1366, 768], { polarity: "positive", charge: 2 });
-    expect((await headFacts()).facts).toContain("Charge 2");
+    expect((await soundHead()).facts).toContain("Charge 2");
     const columns = await browser.execute((css: string) =>
       [...document.querySelectorAll(`${css} [role="columnheader"]`)].map(header => header.textContent ?? ""), SCANS);
     expect(columns.join(" ")).not.toMatch(/polarity|charge/iu);
@@ -217,7 +237,6 @@ describe("a spectrum's polarity and charge", () => {
     await browser.waitUntil(async () => (await headFacts()).facts.includes(en.viewerPolarityChargeNotReported), {
       timeoutMsg: "the head never followed the selected scan",
     });
-    expect((await headFacts()).facts).not.toContain("Charge 2");
-    expect(await unexpectedConsole()).toEqual([]);
+    expect((await soundHead()).facts).not.toContain("Charge 2");
   });
 });

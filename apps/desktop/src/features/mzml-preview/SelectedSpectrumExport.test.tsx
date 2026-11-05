@@ -290,10 +290,13 @@ describe("what the head says the spectrum states", () => {
     expect(shown("positive", 0)).toEqual(["Charge 0", en.viewerPolarityPositive]);
   });
 
-  it("says whose charge it is where the spectrum has more than one precursor, as a fact of its own", () => {
-    renderPanel(loaded({ charge: 3, totalPrecursorCount: 2 }));
-
+  it("says whose charge it is where the spectrum has more than one precursor, only beside a stated charge", () => {
+    const { unmount } = renderPanel(loaded({ charge: 3, totalPrecursorCount: 2 }));
     expect(facts().slice(2, 4)).toEqual(["Charge 3", "(precursor 1 of 2)"]);
+    unmount();
+
+    renderPanel(loaded({ polarity: null, charge: null, totalPrecursorCount: 2 }));
+    expect(facts().join(" ")).not.toContain("precursor 1");
   });
 
   it("states neither before a spectrum has loaded", () => {

@@ -96,7 +96,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
             not reported, and says whose it is next to it. */}
         <span>{bothUnstated ? t("viewerPolarityChargeNotReported") : spectrum.charge === null ? t("viewerChargeNotReported")
           : t("viewerChargeValue", { charge: String(spectrum.charge) })}</span>
-        {spectrum.totalPrecursorCount > 1 ? <span>{t("viewerChargeOfPrecursor", { total: spectrum.totalPrecursorCount })}</span> : null}
+        {spectrum.charge !== null && spectrum.totalPrecursorCount > 1 ? <span>{t("viewerChargeOfPrecursor", { total: spectrum.totalPrecursorCount })}</span> : null}
         {bothUnstated ? null : <span>{t(spectrum.polarity === null ? "viewerPolarityNotReported" : POLARITY[spectrum.polarity])}</span>}
         <span>{t("viewerExportPoints", { count: spectrum.pointCount })}</span>
       </p>}
