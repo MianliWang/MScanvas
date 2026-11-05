@@ -263,6 +263,8 @@ functional base, with the export palette reverted), FE-2 (the owner's own v5.11
 demo is the frontend's target, one real screen first), G1 (the governance
 wording, applied by N-10), M161 and A0060 (ADR 0060's open questions 1 and 8).
 The other 32 decisions there stay open, each asked before the slice it gates.
+*2026-11-04:* those 32 were answered on 2026-11-03, and what stays open is listed in
+[sections 1d and 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04).
 The roadmap and the decisions document are therefore no longer drafts.
 
 ## 3. Parallel execution rules
@@ -346,11 +348,18 @@ Section 1.
   (1–2), then a narrow local MCP adapter (2–3), then closure and
   qualification. Estimate 1.5–3 calendar weeks, mostly bound by decisions and
   validation windows.
+  *2026-11-04 ([M10-START](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)):* CLI
+  segment 1 starts after the in-flight chain merges, not by this phase's weeks. Not
+  built, and no brief exists yet. HR-1.8's window is asked for at the closure.
 - **Selected features** (section 6), about four slices each, in parallel lanes
   disjoint from the M10 CLI.
 - **P1 capabilities:** WSP-010 restore workspace, FIG-007 saved FigureSpec,
   ENV-004 copy diagnostics.
 - **Beta 2:** signed if SignPath has approved the project by then.
+  *2026-11-04 ([NEXT-RELEASE](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)):* this
+  phase's weeks do not set the next release. It comes when the conversion and viewing
+  batch is done and one-click view has run on a real machine. That sets conditions and
+  approves no release and no window, and it says nothing about signing.
 
 **Phase 3 — week 5 onward, as external inputs arrive.** The evidence-gated
 items of section 7.5 and the P2 capabilities of section 7.4.
@@ -578,12 +587,18 @@ writer and Rust's ownership of files.
     imported by project code and is not shipped; bumping it changes the pinned
     runtime manifest digest, so update it when that runtime is next provisioned
     and before any release ships the runtime;
+    *2026-11-04 ([B-3.3](OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03),
+    [D1, ask 2](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)):* that route is left.
+    The shipped runtime carries no Pillow, and the experiment lock goes in the same
+    change that commits A-07's lock. Not built. #168, the Pillow bump, is closed;
   - `glib` (Rust) is only in Tauri's Linux GTK backend, not in the Windows
     dependency tree; the fix needs gtk-rs 0.20 and the cargo batch keeps glib
     0.18.5;
   - owner decision, 2026-10-30: these 44 alerts (Pillow 41, extract-zip 2,
     glib 1) are not dismissed; they stay open and are fixed later as above (see
     [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md)).
+    *2026-11-04:* still none is dismissed. For Pillow's 41, "as above" now means the
+    dated note on the Pillow line.
 - The `PM9.7-I2 … zh-CN-1366x768` flake (the browser spec's scrolled-to-end
   check, 2 px short in CI on `main` at `7c2c774` and on PRs #167 and #169;
   reruns passed on #167 and #169, and the next push to `main` passed) is fixed
@@ -963,7 +978,7 @@ None can be delivered by engineering alone; each waits for one input.
   the frontend's target and ADR 0060's open question 8 in the first item
   above (FE-2 and A0060). The other 32 stay open.
 - *Answered 2026-11-03 and 2026-11-04:* those 32, then round two of the decision
-  page, A-03 and the open-PR cleanup
+  page, A-03, the open-PR cleanup, LIB-1 and ask 2
   ([sections 1d and 1e](OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)). NEXT-RELEASE
   sets the next release's conditions and approves no release, and each window is
   asked for when its step comes.

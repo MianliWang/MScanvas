@@ -393,6 +393,9 @@ VIEW-007 stays unavailable.
 - **[ADR 0037](0037-viewer-completion-route.md)** is not edited. Decision 4
   answers XIC-D1 for the product with option (d), and decision 6 answers
   XIC-D2 with MS1. XIC-D5 stays open under X-3.
+  *2026-11-04:* X-3.2 answers where the trace is drawn and against which value axis
+  (question 1 below). Its height stays open, as question 3 of
+  [ADR 0072](0072-xic-candidate-decision-x3.md), Proposed and unanswered.
 - **[The feature catalogue](../../product/FEATURE_CATALOG.md)**, VIEW-007, and
   **[the after-beta-1 plan](../../development/AFTER_BETA1_PLAN.md#75-evidence-gated-items)**,
   section 7.5, carry dated notes.
@@ -454,6 +457,9 @@ which ADR 0070 records.
    ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
    Not built. X4 and X5 still need the slice table's admitted outcome and their own
    authorization, and these answers give neither.
+   *2026-11-04, a status:* the height measurement is in
+   [ADR 0072](0072-xic-candidate-decision-x3.md), Proposed and unanswered, and the
+   panel's height in X4 is its question 3.
 2. **Integer arrays** (before X1's fixtures). The reader widens 32- and 64-bit
    integers up to 2^53 exactly and refuses larger ones. Either that refusal
    maps to `Unreadable`, which stretches "could not be decoded", or the

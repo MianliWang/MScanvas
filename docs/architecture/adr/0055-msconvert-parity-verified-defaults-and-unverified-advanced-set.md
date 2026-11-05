@@ -79,6 +79,9 @@ and [ADR 0047](0047-first-windows-beta-scope-and-implementation-route.md#owner-d
 That reverses the evidence-bound rule for the advanced set. This ADR states
 how. It is about options, not builds: which builds may convert a vendor family
 is unchanged, and is left as an [open question](#open-questions-for-the-owner).
+*2026-11-04, a note:* the heading that link names left when the owner accepted this
+record (`6d5ef4fc`). The question is answered under
+[Owner decision on the build gate, 2026-10-29](#owner-decision-on-the-build-gate-2026-10-29).
 
 **The distance to parity** is the
 [option inventory](../../spikes/MSCONVERT_OPTION_INVENTORY.md). The help lists:

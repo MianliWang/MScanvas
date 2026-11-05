@@ -12,6 +12,8 @@ library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/1
 ([slice 3 notes](#slice-3-notes-2026-11-03)), without View with… and the Settings row; nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
+*2026-11-04, a status:* slice 2 merged with #181 as `52f8f794` and slice 3 with #203 as
+`07c232db`, so both are on `main`, not only on the branches named above.
 Owner decision, 2026-10-30 (A0060): Q1: a View button. Q8: slice 3 builds on #164's
 structure (FE-1 (a)), with decision 1's content, the phases, Cancel and the CNV-D8
 progress amendment as written. The pane's place moves with FE-2.
