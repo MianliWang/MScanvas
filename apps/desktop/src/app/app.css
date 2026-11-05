@@ -804,16 +804,14 @@ button:disabled,
 
 .conversion-segment:has(input:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 0; }
 /* Refused: struck through and dashed as Settings' Segmented is, two channels besides
-   its reason, because an unchosen option has the same secondary ink. */
+   its reason, because an unchosen option has the same secondary ink. The focus ring
+   above is the more specific, so it replaces the dashes. */
 .conversion-segment[data-choice-state="unavailable"] {
   color: var(--color-text-secondary);
   text-decoration: line-through;
-  cursor: not-allowed;
-}
-
-.conversion-segment[data-choice-state="unavailable"]:not(:has(input:focus-visible)) {
   outline: 1px dashed var(--color-border-strong);
   outline-offset: -3px;
+  cursor: not-allowed;
 }
 
 .conversion-subfolder {
