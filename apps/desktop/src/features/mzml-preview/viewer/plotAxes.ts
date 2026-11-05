@@ -5,17 +5,58 @@
  * of it changes what is drawn, which range is on screen or what a value is.
  *
  * The range rule is the exported figure's (`crates/plot-spec`, `svg.rs`
- * `value_axis` and `project`), so a screen plot and its export frame the data
- * alike: the x axis is the drawn domain exactly, with no padding at either
- * end, and the value axis gains 5% of its span above the largest value and
+ * `domain_band`, `value_axis` and `project`), so a screen plot and its export
+ * frame the data alike: each end of the x axis is drawn one inset inside the
+ * frame, and the value axis gains 5% of its span above the largest value and
  * below the deepest negative one, never across zero. Both value ranges hold
  * zero before the headroom, as the figure's do (`chromatogram.rs` and
- * `export.rs` `visible_value_extent`).
+ * `export.rs` `visible_value_extent`). `fixtures/plot-ticks/axis-geometry.json`
+ * holds both sides to one table.
  */
 
 export interface AxisTick {
   readonly value: number;
   readonly label: string;
+}
+
+type Range = { readonly low: number; readonly high: number };
+
+/** How far inside its frame a plot draws each end of its x axis, in viewBox units: plot-spec's `DOMAIN_INSET`. */
+export const DOMAIN_INSET = 8;
+
+/** The part of a plot's viewBox its x axis is drawn over. */
+export interface XBand {
+  readonly left: number;
+  readonly drawnWidth: number;
+}
+
+/** `svg.rs` `domain_band`. The frame's rules still run its whole width. */
+export function xBand(frameLeft: number, frameRight: number): XBand {
+  const left = frameLeft + DOMAIN_INSET;
+  return { left, drawnWidth: frameRight - DOMAIN_INSET - left };
+}
+
+/** `svg.rs` `project`: where a position on the x axis is drawn. A range with no width is drawn down the middle. */
+export function xAt(value: number, domain: Range, band: XBand): number {
+  const span = domain.high - domain.low;
+  return band.left + (Number.isFinite(span) && span > 0 ? (value - domain.low) / span : 0.5) * band.drawnWidth;
+}
+
+/** How far along its band a viewBox x is, held to the band: a pointer in the inset is at the end beside it. */
+export function bandFraction(x: number, band: XBand): number {
+  return Math.min(1, Math.max(0, (x - band.left) / band.drawnWidth));
+}
+
+/**
+ * The inverse of {@link xAt} over {@link bandFraction}: the position at a fraction
+ * of the true range, never of the inset. Each end is the range's own number:
+ * `low + 1 × span` can miss `high` by a bit either way, and Rust refuses a range
+ * that reaches outside the run.
+ */
+export function positionAt(fraction: number, domain: Range): number {
+  if (fraction <= 0) return domain.low;
+  if (fraction >= 1) return domain.high;
+  return domain.low + fraction * (domain.high - domain.low);
 }
 
 /** The share of the visible value span left empty beyond its extremes: plot-spec's `HEADROOM`. */
@@ -24,13 +65,16 @@ export const VALUE_HEADROOM = 0.05;
 /**
  * The value range the axis spans: the visible extent, widened by the headroom
  * on each side that holds a value. Zero stays where it is, so an all-positive
- * plot still starts at zero.
+ * plot still starts at zero. No headroom at all where it, or the distance it
+ * would leave between the ends, would pass the largest number there is, as
+ * `svg.rs` `value_axis`.
  */
-export function withHeadroom(low: number, high: number): { readonly low: number; readonly high: number } {
+export function withHeadroom(low: number, high: number): Range {
   const span = high - low;
   if (!Number.isFinite(span) || !(span > 0)) return { low, high };
   const pad = span * VALUE_HEADROOM;
-  return { low: low < 0 ? low - pad : low, high: high > 0 ? high + pad : high };
+  const axis = { low: low < 0 ? low - pad : low, high: high > 0 ? high + pad : high };
+  return Number.isFinite(axis.high - axis.low) ? axis : { low, high };
 }
 
 /** How many ticks an axis aims for: plot-spec's `TARGET_TICKS`. */

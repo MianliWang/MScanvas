@@ -41,9 +41,10 @@ import { formatMz } from "./format";
 import { SpectrumViewport, SpectrumZoomControls } from "./SpectrumViewport";
 import {
   SPECTRUM_PLOT_DRAWN_WIDTH,
-  SPECTRUM_PLOT_PADDING_LEFT,
+  SPECTRUM_PLOT_BAND_LEFT,
   SPECTRUM_PLOT_VIEWBOX_WIDTH,
 } from "./StickSpectrum";
+import { xAt } from "./viewer/plotAxes";
 import type { SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
 import { mzDomain, renderedMzDomain } from "./viewer/spectrumViewport";
 import type { SpectrumViewportAction } from "./viewer/spectrumViewportAction";
@@ -78,7 +79,7 @@ const REFUSED: SpectrumViewportDomain = { state: "refused", reason: "sourceNotOr
 const PLOT_PIXELS = SPECTRUM_PLOT_VIEWBOX_WIDTH;
 
 /** The middle of the drawn band, which is where a wheel anchors by default. */
-const CENTRE_X = SPECTRUM_PLOT_PADDING_LEFT + SPECTRUM_PLOT_DRAWN_WIDTH / 2;
+const CENTRE_X = SPECTRUM_PLOT_BAND_LEFT + SPECTRUM_PLOT_DRAWN_WIDTH / 2;
 
 const HEADING_ID = "selected-spectrum-heading";
 const HEADING = "Spectrum";
@@ -453,7 +454,7 @@ function cancelPointer(clientX: number, pointerId = 1): void {
 
 /** Where a fraction of the drawn band falls, in client pixels. */
 function clientXFor(fraction: number): number {
-  return SPECTRUM_PLOT_PADDING_LEFT + fraction * SPECTRUM_PLOT_DRAWN_WIDTH;
+  return SPECTRUM_PLOT_BAND_LEFT + fraction * SPECTRUM_PLOT_DRAWN_WIDTH;
 }
 
 function rangeText(): string {
@@ -471,6 +472,20 @@ function captionText(): string {
 /** The one path every stick is emitted into, or `null` when nothing is drawn. */
 function sticks(): Element | null {
   return document.querySelector("path.spectrum-sticks");
+}
+
+/**
+ * That a gesture's transform lands each m/z where the range on screen now puts
+ * it, on the band the sticks are drawn over. Answers with the transform's scale.
+ */
+function expectTheLayerOnTheLiveRange(): number {
+  const transform = plot().querySelector("g.spectrum-sticks-layer")?.getAttribute("transform") ?? "";
+  const [shift, scale] = [...transform.matchAll(/\((-?[\d.e+-]+) /gu)].map((match) => Number(match[1]));
+  const band = { left: 16, drawnWidth: 968 };
+  for (const mz of [200, 250, 300]) {
+    expect(scale * xAt(mz, shown(), band) + shift, `m/z ${String(mz)}`).toBeCloseTo(xAt(mz, liveShown(), band), 6);
+  }
+  return scale;
 }
 
 beforeEach(() => {
@@ -1604,6 +1619,7 @@ describe("panning the spectrum with a press", () => {
     // Nothing was published for that frame, and the drawing moved anyway.
     expect(ownerRenders, "no render for the frame").toBe(publishedRenders);
     expect(layer()?.getAttribute("transform"), "the sticks moved").toMatch(/translate/u);
+    expectTheLayerOnTheLiveRange();
     expect(rangeText(), "the range line moved").not.toBe(startedAt);
     expect(axisLow(), "the axis moved").toBe(formatMz(liveShown().low));
     // And its ticks with it: every one inside the range on screen now.
@@ -1617,6 +1633,25 @@ describe("panning the spectrum with a press", () => {
     // committed to -- so the transform left over from the gesture is gone.
     releasePointer(CENTRE_X - 200);
     expect(layer()?.getAttribute("transform"), "after the settle").toBeNull();
+  });
+
+  it("keeps the sticks on the axis through a wheel zoom, where the layer scales as well as moves", () => {
+    renderViewport();
+    drawProjection(DRAWN);
+    send({ type: "viewport-step", domain: mzDomain(200, 300) });
+    drawProjection({ ...DRAWN, low: 200, high: 300 });
+
+    // The first notch opens the gesture and is drawn; the second is a frame over it.
+    wheel({ deltaY: IN, clientX: clientXFor(0.25) });
+    wheel({ deltaY: IN, clientX: clientXFor(0.25) });
+
+    // A pan's scale is 1, and there the band's left edge drops out of the sum.
+    expect(Math.abs(expectTheLayerOnTheLiveRange() - 1), "the layer scaled").toBeGreaterThan(0.1);
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(plot().querySelector("g.spectrum-sticks-layer")?.getAttribute("transform"), "after the settle").toBeNull();
   });
 
   it("starts no gesture for a drag pushed outward at an edge it already rests on", () => {

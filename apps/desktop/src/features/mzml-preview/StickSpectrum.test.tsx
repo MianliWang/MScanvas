@@ -159,6 +159,33 @@ describe("what a window's caption may claim about it", () => {
     expect(document.querySelectorAll(".plot-y-ticks .plot-tick")).toHaveLength(0);
   });
 
+  it("stands a stick at either end clear of the frame, with its tick under it and its stroke whole", () => {
+    render(<StickSpectrum drawing={{ kind: "viewport", low: 300, high: 302.5, sourcePoints: 2, reduced: false }}
+      intensity={[1_000, 2_000]} labelledBy="caption-under-test" mz={[300, 302.5]} surface={{ kind: "static" }} />);
+
+    const sticks = [...(document.querySelector(".spectrum-sticks")?.getAttribute("d") ?? "").matchAll(/M([\d.]+) /gu)].map(match => match[1]);
+    expect(sticks).toEqual(["16.00", "984.00"]);
+    // The frame's rules still run its width, and the ticks stand on the sticks.
+    expect(document.querySelector(".plot-gridlines line")).toHaveAttribute("x1", "8");
+    expect(document.querySelector(".plot-gridlines line")).toHaveAttribute("x2", "992");
+    const ticks = [...document.querySelectorAll<HTMLElement>(".plot-x-ticks .plot-tick")];
+    expect(parseFloat(ticks[0]?.style.left ?? "")).toBeCloseTo(1.6, 6);
+    expect(parseFloat(ticks.at(-1)?.style.left ?? "")).toBeCloseTo(98.4, 6);
+    // A stick keeps its whole stroke at the band's edge, inside the frame.
+    const clip = document.querySelector("#spectrum-plot-clip rect");
+    expect(clip).toHaveAttribute("x", "12");
+    expect(clip).toHaveAttribute("width", "976");
+  });
+
+  it("cuts a joined line at the band, where the figure cuts it, not at the frame", () => {
+    render(<StickSpectrum drawing={{ kind: "viewport", low: 300, high: 302.5, sourcePoints: 2, reduced: false, outside: [null, null] }}
+      intensity={[1_000, 2_000]} labelledBy="caption-under-test" mz={[300, 302.5]} representation="profile" surface={{ kind: "static" }} />);
+
+    const clip = document.querySelector("#spectrum-plot-clip rect");
+    expect(clip).toHaveAttribute("x", "16");
+    expect(clip).toHaveAttribute("width", "968");
+  });
+
   it("titles each axis with what is known of its unit and ticks it at round values outside the drawing", () => {
     render(<StickSpectrum drawing={{ kind: "viewport", low: 300, high: 302.5, sourcePoints: 3, reduced: false }}
       intensity={[1_000, 2_850, 400]} labelledBy="caption-under-test" mz={[300.4, 301.2, 302.1]} surface={{ kind: "static" }} />);

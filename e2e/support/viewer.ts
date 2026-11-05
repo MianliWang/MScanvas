@@ -6,6 +6,7 @@
  * area starts would be testing its own arithmetic.
  */
 
+import { xBand } from "../../apps/desktop/src/features/mzml-preview/viewer/plotAxes";
 import { IPC_TABLE_KEY, installIpcBoundary } from "./harness";
 import { MZML_ROW, ipcTable } from "./fixtures";
 
@@ -34,22 +35,18 @@ export const SPECTRUM_ACTIONS = ".spectrum-panel .plot-tools";
 export const SPECTRUM_RANGE = "#spectrum-viewport-range";
 export const SPECTRUM_STATUS = "#spectrum-viewport-status";
 
-/** The plot's own viewBox, which its drawing area is a fraction of. */
-const PLOT_VIEWBOX_WIDTH = 1_000;
-const PADDING_LEFT = 64;
-const PADDING_RIGHT = 12;
-
 /**
- * The spectrum plot's own viewBox and padding, from `StickSpectrum.tsx`.
+ * Each plot's own viewBox and the band its x axis is drawn over, inside its
+ * frame, from `Chromatogram.tsx` and `StickSpectrum.tsx`.
  *
  * The element scales to its container and sets `preserveAspectRatio="none"`, so
  * the only way from a client x to a fraction of the drawn band is through these
- * three numbers -- which is exactly why the component exports them to its
- * adapter rather than letting it guess.
+ * numbers -- which is exactly why a component gives them to its adapter rather
+ * than letting it guess.
  */
-const SPECTRUM_VIEWBOX_WIDTH = 1_000;
-const SPECTRUM_PADDING_LEFT = 8;
-const SPECTRUM_PADDING_RIGHT = 8;
+export const PLOT_VIEWBOX_WIDTH = 1_000;
+export const PLOT_BAND = xBand(64, 988);
+export const SPECTRUM_BAND = xBand(8, 992);
 
 /** `buildRows` places scan n at n × 0.0125, and the seeded run below matches. */
 export const RT_STEP = 0.0125;
@@ -319,9 +316,8 @@ export async function visiblePlotBox(selector: string = PLOT): Promise<Box> {
 /** Where a fraction of the drawn width falls, in page pixels. */
 export async function pointAt(fraction: number): Promise<{ readonly x: number; readonly y: number }> {
   const box = await plotBox();
-  const left = box.left + (PADDING_LEFT / PLOT_VIEWBOX_WIDTH) * box.width;
-  const drawn =
-    ((PLOT_VIEWBOX_WIDTH - PADDING_LEFT - PADDING_RIGHT) / PLOT_VIEWBOX_WIDTH) * box.width;
+  const left = box.left + (PLOT_BAND.left / PLOT_VIEWBOX_WIDTH) * box.width;
+  const drawn = (PLOT_BAND.drawnWidth / PLOT_VIEWBOX_WIDTH) * box.width;
   return { x: Math.round(left + fraction * drawn), y: Math.round(box.top + box.height / 2) };
 }
 
@@ -453,11 +449,8 @@ export async function spectrumPointAt(
   // horizontal one comes from the layout box, because that is the mapping the
   // adapter itself uses and nothing clips this plot sideways.
   const visible = await visiblePlotBox(SPECTRUM_PLOT);
-  const left = box.left + (SPECTRUM_PADDING_LEFT / SPECTRUM_VIEWBOX_WIDTH) * box.width;
-  const drawn =
-    ((SPECTRUM_VIEWBOX_WIDTH - SPECTRUM_PADDING_LEFT - SPECTRUM_PADDING_RIGHT) /
-      SPECTRUM_VIEWBOX_WIDTH) *
-    box.width;
+  const left = box.left + (SPECTRUM_BAND.left / PLOT_VIEWBOX_WIDTH) * box.width;
+  const drawn = (SPECTRUM_BAND.drawnWidth / PLOT_VIEWBOX_WIDTH) * box.width;
   return {
     x: Math.round(left + fraction * drawn),
     y: Math.round(visible.top + visible.height / 2),

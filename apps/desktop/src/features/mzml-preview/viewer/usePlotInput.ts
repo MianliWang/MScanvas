@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { isViewportKeyboardModifierOwnedByHost, isViewportWheelModifierOwnedByHost } from "./hostInputOwnership";
+import { bandFraction, positionAt, xAt, type XBand } from "./plotAxes";
 import type { PlotInputPort, PlotInputSnapshot } from "./plotInputAdapters";
 import { sameRange, sameTransaction, usableRange, type RangeSelection, type RangeTransaction } from "./rangeSelection";
 import { normalizeWheelDelta } from "./wheelInput";
@@ -7,7 +8,7 @@ import { normalizeWheelDelta } from "./wheelInput";
 const SLOP = 4;
 const SETTLE_MS = 120;
 type Domain = { readonly low: number; readonly high: number };
-export interface PlotGeometry { readonly width: number; readonly left: number; readonly drawnWidth: number }
+export interface PlotGeometry extends XBand { readonly width: number }
 
 /** Source coordinates stay in the axis reducer; only pointer/capture bookkeeping lives here. */
 export function usePlotInput<A extends "rt" | "mz", D extends Domain>({ port, geometry, onInspect, onHover, onLeave, paintFrame }: {
@@ -58,19 +59,19 @@ export function usePlotInput<A extends "rt" | "mz", D extends Domain>({ port, ge
   };
   const fraction = (x: number, box: DOMRect): number => {
     const g = latest.current.geometry;
-    return Math.min(1, Math.max(0, ((x - box.left) / box.width * g.width - g.left) / g.drawnWidth));
+    return bandFraction((x - box.left) / box.width * g.width, g);
   };
-  const coordinate = (x: number, box: DOMRect, domain: D): number => domain.low + fraction(x, box) * (domain.high - domain.low);
+  const coordinate = (x: number, box: DOMRect, domain: D): number => positionAt(fraction(x, box), domain);
   const paintBand = useCallback(() => {
     const node = plot.current;
     const band = node?.querySelector<SVGRectElement>(".plot-range-band");
     const snapshot = latest.current.port.current();
     if (band === null || band === undefined) return;
     if (snapshot?.range === null || snapshot === null || !usableRange(snapshot.shown)) { band.setAttribute("visibility", "hidden"); return; }
-    const { left, drawnWidth } = latest.current.geometry;
-    const span = snapshot.shown.high - snapshot.shown.low;
-    band.setAttribute("x", String(left + (snapshot.range.domain.low - snapshot.shown.low) / span * drawnWidth));
-    band.setAttribute("width", String((snapshot.range.domain.high - snapshot.range.domain.low) / span * drawnWidth));
+    const g = latest.current.geometry;
+    const from = xAt(snapshot.range.domain.low, snapshot.shown, g);
+    band.setAttribute("x", String(from));
+    band.setAttribute("width", String(xAt(snapshot.range.domain.high, snapshot.shown, g) - from));
     band.setAttribute("visibility", "visible");
   }, []);
   useLayoutEffect(paintBand);

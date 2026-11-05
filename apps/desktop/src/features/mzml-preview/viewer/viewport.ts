@@ -151,8 +151,8 @@ export function revealDomain(
     return visible;
   }
   const span = visible.high - visible.low;
-  // A margin, so the marker arrives inside the plot rather than exactly on the
-  // edge where the rule and the axis line coincide.
+  // A margin, so the marker arrives inside the range rather than exactly on its
+  // edge, where the next step would take it out of view again.
   const margin = span * 0.1;
   const low =
     retentionTime < visible.low
