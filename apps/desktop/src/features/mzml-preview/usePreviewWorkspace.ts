@@ -101,7 +101,7 @@ import {
 } from "./viewer/selectionAvailability";
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
 import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
-import { adjacentDisplayedScan } from "./viewer/scanTableView";
+import { adjacentDisplayedScan, apexMs1Row } from "./viewer/scanTableView";
 import { revealDomain } from "./viewer/viewport";
 import { fileMemoryIn, forgetScanZooms, rememberScanZoom, scanZoomKey, type FileViewMemory, type ScanPage } from "./viewer/scanMemory";
 import { useScanTableView, type ScanTableView } from "./viewer/useScanTableView";
@@ -2946,10 +2946,18 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
   useLayoutEffect(() => {
     if (preview.status !== "loaded" || enteredPreview.current === preview.preview) return;
     enteredPreview.current = preview.preview;
+    if (readViewerInteraction().selection !== null) return;
+    const { rows, truncated } = preview.preview.spectrumTable;
     const left = openHandle.current === null ? null : fileViewMemory.current.get(openHandle.current)?.selected ?? null;
-    if (left === null || readViewerInteraction().selection !== null) return;
-    const row = preview.preview.spectrumTable.rows.find(candidate => candidate.index === left.index);
-    if (row?.identifier === left.identifier) selectSpectrum(row.index);
+    if (left !== null) {
+      const row = rows.find(candidate => candidate.index === left.index);
+      if (row?.identifier === left.identifier) selectSpectrum(row.index);
+      return;
+    }
+    // First time here: the apex of the declared TIC (V-1). Not on a truncated
+    // table, whose largest value is a prefix's and not the run's.
+    const apex = truncated ? null : apexMs1Row(rows);
+    if (apex !== null) selectSpectrum(apex.index);
   }, [preview, readViewerInteraction, selectSpectrum]);
 
   const toggleChromatogramTrace = useCallback((trace: TraceKind) => {

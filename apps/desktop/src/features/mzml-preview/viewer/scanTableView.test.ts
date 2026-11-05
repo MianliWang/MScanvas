@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildRows } from "../../../test/previewFixtures";
-import { adjacentDisplayedScan, findScanByNumber, indexScanTable, INITIAL_SCAN_TABLE_OPTIONS, matchesScanFilters, projectScanTable, toggleScanSort } from "./scanTableView";
+import { adjacentDisplayedScan, apexMs1Row, findScanByNumber, indexScanTable, INITIAL_SCAN_TABLE_OPTIONS, matchesScanFilters, projectScanTable, toggleScanSort } from "./scanTableView";
 
 const rows = buildRows(5).map((row, position) => ({ ...row,
   index: [70, 20, 90, 30, 40][position]!, identifier: ["z9", "a10", "a2", "a2", "中文"][position]!,
@@ -98,5 +98,24 @@ describe("the list following the chromatogram's committed range", () => {
     const empty = projectScanTable(index, INITIAL_SCAN_TABLE_OPTIONS, range(6, 7));
     expect(empty.rows).toEqual([]);
     expect(empty.positions.size).toBe(0);
+  });
+});
+
+describe("the scan an open selects", () => {
+  const run = (scans: readonly (readonly [number, number])[]) => buildRows(scans.length).map((row, position) =>
+    ({ ...row, msLevel: scans[position]![0], totalIonCurrent: scans[position]![1] }));
+  it("takes the MS1 declaring the largest TIC, whatever an MS2 declares", () => {
+    expect(apexMs1Row(run([[1, 5], [2, 900], [1, 70], [1, 30]]))?.index).toBe(2);
+  });
+  it("gives a tie to the first in file order", () => {
+    expect(apexMs1Row(run([[2, 70], [1, 70], [1, 70]]))?.index).toBe(1);
+  });
+  it("has nothing to say for a file with no MS1, or no rows", () => {
+    expect(apexMs1Row(run([[2, 70], [3, 80]]))).toBeNull();
+    expect(apexMs1Row([])).toBeNull();
+  });
+  it("skips a declared value that is not a number, and keeps a negative one as a value", () => {
+    expect(apexMs1Row(run([[1, Number.NaN], [1, -5], [1, Number.POSITIVE_INFINITY]]))?.index).toBe(1);
+    expect(apexMs1Row(run([[1, Number.NaN]]))).toBeNull();
   });
 });

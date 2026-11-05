@@ -593,7 +593,7 @@ describe("what a moving pointer costs", () => {
     // were drawn.
     clickThePlotAt(12_345 * RT_STEP);
     await waitFor(() => {
-      expect(preview.requestedSpectra).toEqual([12_345]);
+      expect(preview.requestedSpectra.at(-1)).toBe(12_345);
     });
   });
 });

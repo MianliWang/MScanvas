@@ -483,8 +483,12 @@ export function buildRows(count: number): SpectrumRow[] {
   return rows;
 }
 
+/**
+ * A run of MS2 scans only, so an open selects nothing (V-1-NOMS1) and each test
+ * chooses its own scan. A test about the selection on open states its MS1 rows.
+ */
 export function buildPreview(rowCount = 6, truncated = false, receipt = 1): Preview {
-  const rows = buildRows(rowCount);
+  const rows = buildRows(rowCount).map(row => ({ ...row, msLevel: 2 }));
   return {
     authority: settledAt(receipt, receipt),
     // Issued exactly where Rust issues one: for a run the viewer would draw. A
@@ -517,8 +521,7 @@ export function buildPreview(rowCount = 6, truncated = false, receipt = 1): Prev
     runSummary: {
       totalSpectrumCount: truncated ? 250_000 : rowCount,
       msLevels: [
-        { msLevel: 1, spectrumCount: Math.ceil(rowCount / 4) },
-        { msLevel: 2, spectrumCount: rowCount - Math.ceil(rowCount / 4) },
+        { msLevel: 2, spectrumCount: rowCount },
       ],
       totalMsLevelCount: 2,
       msLevelsTruncated: false,

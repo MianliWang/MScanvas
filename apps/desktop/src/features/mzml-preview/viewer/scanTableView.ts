@@ -58,6 +58,22 @@ export function findScanByNumber(rows: readonly SpectrumRow[], text: string): Sp
   return rows.find(row => row.scanNumber === scanNumber) ?? null;
 }
 
+/**
+ * The scan an open shows (V-1): the MS1 row declaring the largest TIC, ties going
+ * to the first in file order, read from the table and computing no array. `null`
+ * for a file with no MS1 (V-1-NOMS1), and never an MS2 scan in its place.
+ *
+ * The caller refuses a truncated table: the largest value of a prefix is not the
+ * run's apex.
+ */
+export function apexMs1Row(rows: readonly SpectrumRow[]): SpectrumRow | null {
+  let apex: SpectrumRow | null = null;
+  for (const row of rows) {
+    if (row.msLevel === 1 && Number.isFinite(row.totalIonCurrent) && (apex === null || row.totalIonCurrent > apex.totalIonCurrent)) apex = row;
+  }
+  return apex;
+}
+
 /** Raw, case-sensitive substring search; raw identifiers compare by UTF-16 code units.
  * Missing scalars stay last in either direction. Ties keep original table order.
  * No formatted or translated value is an input, and source rows are never mutated.

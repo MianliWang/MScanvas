@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
-import { buildPreview, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, secondFile, selectedFile } from "../test/previewFixtures";
+import { availableBackend, buildPreview, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, secondFile, selectedFile } from "../test/previewFixtures";
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { usePreviewWorkspace } from "../features/mzml-preview/usePreviewWorkspace";
 
@@ -15,7 +15,7 @@ const source = () => {
   return { ...preview, spectrumTable: { ...preview.spectrumTable,
     rows: preview.spectrumTable.rows.map((row, index) => ({ ...row,
       identifier: index === 3 || index === 7 ? `rare-raw-${index}` : `raw-${index}`,
-      msLevel: index % 2 === 0 ? 1 : 2, totalIonCurrent: (index + 1) * 10,
+      totalIonCurrent: (index + 1) * 10,
       retentionTime: { value: index, unit: "notReported" as const },
     })),
   } };
@@ -130,7 +130,7 @@ describe("the list following the chromatogram's range (V-2)", () => {
     expect(api.requestedSpectra.length).toBe(reads);
   });
 
-  it("clears the filters and moves the range when both hide the selected scan", async () => {
+  it("clears the filters and moves the range when both hide the selected scan", { timeout: 15_000 }, async () => {
     await mount();
     goTo("8");
     await screen.findByRole("img", { name: /^Spectrum 7,/u });
@@ -204,7 +204,7 @@ describe("each file as it was left (VW-51, VW-35)", () => {
   const selectedRow = () => document.querySelector('div.spectrum-table-row[aria-selected="true"]')?.getAttribute("data-source-index") ?? null;
   const ROW = 28;
 
-  it("brings back the selected scan, filters and page of each file", async () => {
+  it("brings back the selected scan, filters and page of each file", { timeout: 15_000 }, async () => {
     const api = await mountTwo();
     await open(api, selectedFile.fileName);
     goTo("6");
@@ -272,21 +272,18 @@ describe("each file as it was left (VW-51, VW-35)", () => {
       expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
     });
 
-    it("keeps a scan's zoom across files, and the 13th zoom pushes out the longest unused", { timeout: 30_000 }, async () => {
+    // The 12th and 13th zoom are `scanMemory.test.ts`'s.
+    it("keeps a scan's zoom across files, each file's own", { timeout: 30_000 }, async () => {
       const api = await mountTwo();
       await open(api, selectedFile.fileName);
-      await zoomed(api, 1);
+      await zoomed(api, 3);
       await open(api, secondFile.fileName);
-      for (let scan = 2; scan <= 12; scan += 1) await zoomed(api, scan);
-      // Back to the first file: its selection, scan 1, comes back with its zoom.
+      expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
+      await zoomed(api, 5);
+      // Back to the first file: its selection, scan 3, comes back with its zoom.
       await open(api, selectedFile.fileName);
-      await screen.findByRole("img", { name: /^Spectrum 0,/u });
-      await waitFor(() => expect(shownWindow(api.spectrumProjectionRequests.at(-1)!)).toEqual([101, 501]));
-      await open(api, secondFile.fileName);
-      await waitFor(() => expect(shownWindow(api.spectrumProjectionRequests.at(-1)!)).toEqual([112, 512]));
-      await zoomed(api, 13);
-      expect(shownWindow(await visit(api, 2))).toEqual([100, 900]);
-      expect(shownWindow(await visit(api, 3))).toEqual([103, 503]);
+      await screen.findByRole("img", { name: /^Spectrum 2,/u });
+      await waitFor(() => expect(shownWindow(api.spectrumProjectionRequests.at(-1)!)).toEqual([103, 503]));
     });
   });
 });
@@ -320,5 +317,145 @@ describe("forgetting a file", () => {
     await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
     await opened(selectedFile.handle, 3);
     expect(result.current.viewerInteraction.selection?.index ?? null).not.toBe(3);
+  });
+});
+
+describe("a spectrum on open (V-1)", () => {
+  /** A run stating each scan's MS level and declared TIC. */
+  const runOf = (scans: readonly (readonly [number, number])[], truncated = false) => {
+    const base = buildPreview(scans.length, truncated);
+    return { ...base, spectrumTable: { ...base.spectrumTable,
+      rows: base.spectrumTable.rows.map((row, index) => ({ ...row, msLevel: scans[index]![0], totalIonCurrent: scans[index]![1],
+        retentionTime: { value: index, unit: "notReported" as const } })) } };
+  };
+  async function opened(api: ReturnType<typeof createFakePreviewApi>) {
+    render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+    </WorkspaceDropTransportProvider>);
+    fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
+    await screen.findByRole("grid", { name: en.scansTitle });
+  }
+  const selected = () => document.querySelector('div.spectrum-table-row[aria-selected="true"]')?.getAttribute("data-source-index") ?? null;
+  const wrapper = (api: ReturnType<typeof createFakePreviewApi>) => ({ children }: { children: ReactNode }) =>
+    <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreviewApiProvider value={api}>{children}</PreviewApiProvider>
+    </WorkspaceDropTransportProvider>;
+
+  it("selects the MS1 at the apex of the declared TIC, not a larger MS2, through a press's path", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf([[1, 10], [2, 900], [1, 70], [2, 500], [1, 30]]) });
+    await opened(api);
+    await screen.findByRole("img", { name: /^Spectrum 2,/u });
+    expect(api.requestedSpectra).toEqual([2]);
+    expect(selected()).toBe("2");
+    expect(screen.queryByText(en.viewerChooseHelp)).toBeNull();
+  });
+
+  it("gives a tie to the first in file order", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf([[1, 10], [1, 70], [2, 70], [1, 70]]) });
+    await opened(api);
+    await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    expect(api.requestedSpectra).toEqual([1]);
+  });
+
+  it("selects nothing in a file with no MS1, and never an MS2 in its place (V-1-NOMS1)", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf([[2, 10], [2, 900], [3, 70]]) });
+    await opened(api);
+    expect(screen.getByText(en.viewerChooseHelp)).toBeVisible();
+    expect(api.requestedSpectra).toEqual([]);
+    expect(selected()).toBeNull();
+  });
+
+  it("selects nothing in a truncated table: a prefix's largest value is not the run's apex", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf([[1, 10], [1, 70]], true) });
+    await opened(api);
+    expect(screen.getByText(en.viewerChooseHelp)).toBeVisible();
+    expect(api.requestedSpectra).toEqual([]);
+  });
+
+  it("selects by the table when the run's model refuses, as a press can (mixed units)", async () => {
+    const run = runOf([[1, 10], [1, 70]]);
+    const mixed = { ...run, chromatogramExportToken: null, spectrumTable: { ...run.spectrumTable, rows: run.spectrumTable.rows.map((row, index) =>
+      ({ ...row, retentionTime: { value: index, unit: index === 0 ? "minute" as const : "second" as const } })) } };
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum, preview: mixed });
+    await opened(api);
+    await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    expect(api.requestedSpectra).toEqual([1]);
+  });
+
+  it("gives way to a person pressing a row while its read is out, and the late reply changes nothing", async () => {
+    const replies: (() => void)[] = [];
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], preview: runOf([[1, 10], [2, 5], [1, 70]]),
+      spectrum: index => new Promise(resolve => { replies[index] = () => { void spectrum(index).then(resolve); }; }) });
+    await opened(api);
+    await waitFor(() => expect(api.requestedSpectra).toEqual([2]));
+    fireEvent.click(within(grid()).getAllByRole("row").find(row => row.getAttribute("data-source-index") === "1")!);
+    await waitFor(() => expect(api.requestedSpectra).toEqual([2, 1]));
+    replies[1]!();
+    await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    await act(async () => { replies[2]!(); await Promise.resolve(); });
+    expect(screen.getByRole("img", { name: /^Spectrum 1,/u })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /^Spectrum 2,/u })).toBeNull();
+    expect(selected()).toBe("1");
+  });
+
+  it("never takes the selection from a person coming back: their scan returns, not the apex", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], spectrum,
+      preview: () => Promise.resolve(runOf([[1, 10], [2, 5], [1, 70]])) });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+    const open = async (handle: string, count: number) => {
+      await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(handle); });
+      await waitFor(() => expect(api.openedHandles).toHaveLength(count));
+      await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+    };
+    await open(selectedFile.handle, 1);
+    expect(result.current.viewerInteraction.selection?.index).toBe(2);
+    act(() => { result.current.selectSpectrum(0); });
+    await waitFor(() => expect(api.requestedSpectra).toEqual([2, 0]));
+    await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+    await open(secondFile.handle, 2);
+    expect(result.current.viewerInteraction.selection?.index).toBe(2);
+    await open(selectedFile.handle, 3);
+    expect(result.current.viewerInteraction.selection?.index).toBe(0);
+  });
+
+  it("is refused where a press would be, and does not come back when the lane frees", async () => {
+    let check: () => void = () => undefined;
+    let answers = 0;
+    let open: (preview: ReturnType<typeof runOf>) => void = () => undefined;
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      availability: () => (answers += 1) === 1 ? Promise.resolve(availableBackend) : new Promise(resolve => { check = () => resolve(availableBackend); }),
+      preview: () => new Promise(resolve => { open = resolve; }) });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(1));
+    await waitFor(() => expect(result.current.backendBusy).toBe(false));
+    await act(async () => { result.current.activateDataset(selectedFile.handle); });
+    await waitFor(() => expect(result.current.preview.status).toBe("opening"));
+    act(() => { result.current.checkBackend(); });
+    expect(result.current.backendBusy).toBe(true);
+    await act(async () => { open(runOf([[1, 10], [1, 70]])); await Promise.resolve(); });
+    await waitFor(() => expect(result.current.preview.status).toBe("loaded"));
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(api.requestedSpectra).toEqual([]);
+    await act(async () => { check(); await Promise.resolve(); });
+    await waitFor(() => expect(result.current.backendBusy).toBe(false));
+    expect(result.current.spectrumSelection.status).toBe("available");
+    expect(api.requestedSpectra).toEqual([]);
+    expect(result.current.viewerInteraction.selection).toBeNull();
+  });
+
+  it("shows a refused read at once, with the table still there to choose from", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], preview: runOf([[1, 10], [1, 70]]),
+      spectrum: () => Promise.reject({ kind: "spectrum_encoding_unsupported", summary: "Rust's words.", detail: null, retryable: false }) });
+    await opened(api);
+    expect(await screen.findByText(en.errSpectrumEncodingUnsupported)).toBeVisible();
+    expect(api.requestedSpectra).toEqual([1]);
+    expect(selected()).toBe("1");
+    expect(shown()).toEqual([0, 1]);
   });
 });

@@ -34,6 +34,10 @@ by declared scan number beside the search, and a number no loaded row declares i
 refused in place. Reopening a file brings back its selected scan, filters and
 place in the list for as long as the workspace lives.
 
+*2026-11-04 (N-V3, V-1):* a first open selects the MS1 at the apex of the declared
+TIC, so the viewer's entry state shows a spectrum. A file with no MS1, or a truncated
+table, selects nothing and keeps the empty spectrum's prompt.
+
 Plot text remains 12 CSS px as the available width changes. Existing scientific
 export controls and detailed source explanations use reachable disclosures;
 their state and source authority remain above the presentation. Constrained

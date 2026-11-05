@@ -11,7 +11,7 @@ const source = () => {
   return { ...preview, spectrumTable: { ...preview.spectrumTable,
     rows: preview.spectrumTable.rows.map((row, index) => ({ ...row,
       identifier: index === 3 || index === 7 ? `rare-raw-${index}` : `raw-${index}`,
-      msLevel: index % 2 === 0 ? 1 : 2, totalIonCurrent: (index + 1) * 10,
+      totalIonCurrent: (index + 1) * 10,
       retentionTime: { value: index, unit: "notReported" as const },
     })),
   } };

@@ -82,7 +82,8 @@ export async function seedARunOf(rowCount: number): Promise<void> {
           index,
           identifier: `controllerType=0 controllerNumber=1 scan=${String(index + 1)}`,
           scanNumber: index + 1,
-          msLevel: index % 4 === 0 ? 1 : 2,
+          // MS2 only, so an open selects nothing (V-1-NOMS1) and a test chooses its scan.
+          msLevel: 2,
           retentionTime: { value: index * 0.0125, unit: "notReported" },
           basePeakMz: 400 + (index % 500),
           // Deterministic and shaped, so a reduction that dropped an extreme

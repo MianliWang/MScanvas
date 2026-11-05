@@ -17,7 +17,7 @@ import { UI_RESOURCES } from "../features/preferences/i18n";
 import { ProjectApiProvider, type ProjectState } from "../features/project/projectApi";
 import { chooseRosterAction, rosterActionRefused } from "../test/rosterActions";
 import { showBackendBanner } from "../test/backendBanner";
-import { availableBackend, buildPreview, chosenBackend, createFakePreviewApi, createFakeWorkspaceDropTransport, queueItem, queueOf, selectedFile, shippedIntent, unavailableBackend, type FakePreviewApiOptions } from "../test/previewFixtures";
+import { availableBackend, buildPreview, buildSpectrum, chosenBackend, createFakePreviewApi, createFakeWorkspaceDropTransport, queueItem, queueOf, selectedFile, shippedIntent, unavailableBackend, type FakePreviewApiOptions } from "../test/previewFixtures";
 import { createFakeProjectApi, openProject, projectInput, projectLayer } from "../test/projectFixtures";
 import { openProjectSurface } from "../test/projectMenu";
 
@@ -52,7 +52,7 @@ const failed = (code: string, retryable: boolean, extra: Partial<RawViewState> =
 } as RawViewState);
 
 /** A session whose view the test moves by hand. */
-function session(initial: { state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; checkingInstallation?: boolean; project?: ProjectState; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"]; chosenInstallation?: FakePreviewApiOptions["chosenInstallation"]; initialConversion?: FakePreviewApiOptions["initialConversion"]; conversionConfiguration?: FakePreviewApiOptions["conversionConfiguration"] } = {}) {
+function session(initial: { viewPreview?: ReturnType<typeof buildPreview>; state?: RawViewState; availability?: RawViewAvailability; datasets?: readonly SelectedFile[]; available?: boolean; checkingInstallation?: boolean; project?: ProjectState; planWorkspaceClear?: FakePreviewApiOptions["planWorkspaceClear"]; preview?: FakePreviewApiOptions["preview"]; spectrum?: FakePreviewApiOptions["spectrum"]; chosenInstallation?: FakePreviewApiOptions["chosenInstallation"]; initialConversion?: FakePreviewApiOptions["initialConversion"]; conversionConfiguration?: FakePreviewApiOptions["conversionConfiguration"] } = {}) {
   const world = { state: initial.state ?? ({ state: "idle" } as RawViewState), availability: initial.availability ?? ({ available: true, unverifiedBuildRelease: null } as RawViewAvailability) };
   const begun: string[] = [];
   const cancelled: number[] = [];
@@ -76,7 +76,7 @@ function session(initial: { state?: RawViewState; availability?: RawViewAvailabi
     openRawView: (operation) => {
       opened.push(operation);
       world.state = ready({ openable: false });
-      return Promise.resolve({ ...buildPreview(), file: RAW, qcSnapshotToken: null, qcProducerIdentified: false, viewSource: SOURCE });
+      return Promise.resolve({ ...(initial.viewPreview ?? buildPreview()), file: RAW, qcSnapshotToken: null, qcProducerIdentified: false, viewSource: SOURCE });
     },
   });
   const app = <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
@@ -115,6 +115,20 @@ describe("viewing a Thermo RAW row", () => {
     expect(begun).toEqual([]);
     expect(api.openCount()).toBe(0);
     expect(read).toHaveBeenCalledWith(RAW.handle);
+  });
+
+  it("selects a viewed row's apex MS1, as any other open does (V-1)", async () => {
+    const preview = buildPreview(4);
+    const rows = preview.spectrumTable.rows.map((scan, index) => ({ ...scan, msLevel: index % 2 + 1, totalIonCurrent: (index + 1) * 10 }));
+    const { world, api, opened } = session({ viewPreview: { ...preview, spectrumTable: { ...preview.spectrumTable, rows } },
+      spectrum: (index) => Promise.resolve({ outcome: "spectrum", spectrum: buildSpectrum(index, 12) }) });
+    await highlight();
+    await waitFor(() => expect(viewButton()).not.toHaveAttribute("aria-disabled"));
+    await act(async () => { fireEvent.click(viewButton()); });
+    world.state = ready();
+    await waitFor(() => expect(opened).toEqual([1]));
+    await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "loaded"));
+    await waitFor(() => expect(api.requestedSpectra).toEqual([2]));
   });
 
   it("runs every phase, opens a ready view of the highlighted row once, and shows its source", async () => {

@@ -6,6 +6,9 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
+- **A spectrum on open.** Opening a file, or a viewed RAW file, selects the MS1 scan
+  at the highest point of the file's declared TIC, so the first view has signal. A file
+  with no MS1, or a table too long to load whole, selects nothing, as before.
 - **Go to a scan number.** An input beside the scan search: Enter selects the scan
   with that number and clears the search or MS-level filter if it hides it. A number
   no loaded row declares is refused beside the input, and nothing changes.
