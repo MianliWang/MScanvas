@@ -281,6 +281,12 @@ default.
 >   The owner has not been asked.*
 >   *2026-11-04: asked (P201-RESTORE), not yet answered; still not an owner
 >   decision.*
+>   *Owner decision, 2026-11-04 (P201-RESTORE): "全部按推荐" ("all as recommended"),
+>   keep the label. ADR 0061's document now records it (its decision 1's note), so
+>   a row put back in a later session says it, figures included, and a reference
+>   registered from it records it, not `null`. The same file added with Add files in
+>   a later session instead of being put back still has none, the cost that answer
+>   accepted.*
 >   *As built in PR #201, 2026-11-03, not an owner decision: a label a reference
 >   carried back goes into the same table, so it outlives that row in this process.
 >   The object added back by any route carries it, and the next reference records

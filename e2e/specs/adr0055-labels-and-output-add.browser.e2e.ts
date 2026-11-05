@@ -283,6 +283,52 @@ describe("A0055 and ADR 0052, rendered", () => {
     });
   }
 
+  // Owner decision P201-RESTORE: the row is not in the roster until the put-back's
+  // answer brings it, so the label can only have come through Restore workspace.
+  for (const [locale, width, height] of EVERY_SIZE) {
+    it(`says a put-back row's label on the row and in Details, ${locale} ${String(width)}x${String(height)}`, async () => {
+      const table = labelledViewerWorld(locale, "QC_converted.mzML");
+      const full = table.get_workspace_roster as { datasets: SelectedFile[]; capacity: number };
+      const labelled = full.datasets.find((row) => row.handle === MZML_ROW.handle)!;
+      table.get_workspace_roster = { ...full, datasets: full.datasets.filter((row) => row !== labelled) };
+      table.read_workspace_restore = {
+        outcome: "restored", expired: 0, leftoverCopies: 0,
+        groups: [{ name: null, rows: [{ handle: "restored-0", sourceKind: "mzml", displayName: labelled.fileName, context: null, checked: false, state: "matching" }] }],
+      };
+      table.restore_workspace = {
+        workspace: { roster: full, outcomes: [{ outcome: "added", dataset: labelled }] },
+        placed: [{ handle: labelled.handle, group: 0, checked: false, added: true }],
+      };
+      await open(table, locale, width, height);
+      const action = browser.$("[data-restore-action]");
+      await action.waitForDisplayed();
+      expect(await browser.$(`.grouped-roster [data-handle="${labelled.handle}"]`).isExisting()).toBe(false);
+      await setInvokeResult("read_workspace_restore", { outcome: "restored", expired: 0, leftoverCopies: 0, groups: [{ name: null, rows: [] }] });
+      await setInvokeResult("get_workspace_roster", full);
+      await action.click();
+
+      await revealRosterRow(labelled.handle);
+      const rowTag = browser.$(`.grouped-roster [data-handle="${labelled.handle}"] [data-not-verified]`);
+      expect(await rowTag.getText()).toBe(buildLabel(locale));
+      // The list scrolls, so the shot and the check are of the tag on the screen.
+      await rowTag.scrollIntoView({ block: "center" });
+      expect(await rowTag.isDisplayed({ withinViewport: true })).toBe(true);
+      await shot(`restored-row-${locale}-${String(width)}`);
+
+      await browser.$(`.grouped-roster [data-handle="${labelled.handle}"]`).click();
+      await selectTheSpectrum(0);
+      const details = browser.$('.workbench-header [aria-controls="workbench-inspector"]');
+      if ((await details.getAttribute("aria-expanded")) !== "true") await details.click();
+      const detailsTag = browser.$(".workbench-inspector .inspector-panel [data-not-verified]");
+      await detailsTag.waitForDisplayed({ timeout: 30_000 });
+      expect(await detailsTag.getText()).toBe(buildLabel(locale));
+      await shot(`restored-details-${locale}-${String(width)}`);
+
+      expect(await browser.execute(() => document.documentElement.scrollWidth - innerWidth)).toBe(0);
+      expect(await unexpectedConsole()).toEqual([]);
+    });
+  }
+
   for (const [locale, width, height] of EVERY_SIZE) {
     it(`keeps Metadata's term on one line beside a long labelled name, ${locale} ${String(width)}x${String(height)}`, async () => {
       const name = `${"Plasma_QC_batch_08_replicate_04_".repeat(3)}long.mzML`;

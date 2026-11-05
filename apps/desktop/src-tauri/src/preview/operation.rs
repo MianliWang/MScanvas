@@ -1542,6 +1542,9 @@ pub(super) struct ConversionSlot {
     /// Also the label a project's reference brought to a row, so that row leaving
     /// does not forget it (ADR 0055: as built in PR #201, 2026-11-03, not an owner
     /// decision).
+    /// 2026-11-04: accepted by the owner (P201-SCOPE).
+    /// Also the label Restore workspace gave a row it put back (owner decision
+    /// P201-RESTORE, 2026-11-04).
     ///
     /// Nothing keeps these objects open: the user's finished file is not held
     /// for the life of the process. So an identity can outlive its file and a
