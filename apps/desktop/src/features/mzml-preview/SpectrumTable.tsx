@@ -366,6 +366,10 @@ export const SpectrumTable = memo(function SpectrumTable({
     [canCommit, moveFocus, onSelect, rowCount, rows, rowsHeight],
   );
 
+  const countText = !table.truncated && view.rtDomain === null && view.options.query.trim() === "" && view.options.msLevel === null
+    ? t("scanCountAll", { count: table.totalRowCount })
+    : t("scanCounts", { visible: rowCount, total: table.totalRowCount, count: table.rows.length }) + (table.truncated ? ` · ${t("scanPrefix")}` : "");
+
   /**
    * Enter in Go to scan: the same commit a row press makes, so the same reducer
    * brings the scan into a range that hid it. Filters hiding it are cleared here,
@@ -398,10 +402,7 @@ export const SpectrumTable = memo(function SpectrumTable({
         {/* One number while every row is loaded and none is filtered out;
             the three counts, and the loaded-prefix disclosure, only where
             they differ. */}
-        <p className="scan-result-count" aria-live="polite">{!table.truncated && view.rtDomain === null && view.options.query.trim() === "" &&
-          view.options.msLevel === null ? t("scanCountAll", { count: table.totalRowCount }) : t("scanCounts", {
-          visible: rowCount, total: table.totalRowCount, count: table.rows.length,
-        }) + (table.truncated ? ` · ${t("scanPrefix")}` : "")}</p>
+        <p className="scan-result-count" aria-live="polite" title={countText}>{countText}</p>
         <div className="plot-search">
           <Icon name="search" />
           <label className="visually-hidden" htmlFor="scan-search">{t("scanSearch")}</label>

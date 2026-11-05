@@ -1110,7 +1110,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await browser.$(`${SCANS} input[type="search"]`).setValue("raw-1");
       await browser.$(`${SCANS} .scan-hidden-selection`).waitForDisplayed();
       expect(await browser.$(`${SCANS} .scan-hidden-selection`).getText()).toContain(
-        fill(en.scanSelectedOutside, { name: "3" }),
+        fill(en.scanSelectedOutside, { name: "4" }),
       );
       // Refused, not disabled: still Tab stops, with the hidden selection as
       // the reason. The steps are the spectrum head's (direction A).
