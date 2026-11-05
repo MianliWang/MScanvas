@@ -267,6 +267,41 @@ describe("selected spectrum export actions", () => {
   });
 });
 
+describe("what the head says the spectrum states", () => {
+  const facts = () => [...document.querySelectorAll(".spectrum-head-facts > span")].map(fact => fact.textContent);
+
+  it("states polarity and charge as values, before the size, which drops first", () => {
+    renderPanel(loaded({ representation: "profile", polarity: "negative", charge: 2 }));
+
+    expect(facts()).toEqual(["MS2", en.viewerRepresentationProfile, en.viewerPolarityNegative, "Charge 2", "4 points"]);
+  });
+
+  it("says not reported for each, in one fact for both, never 0, and shows a stated 0 as stated", () => {
+    const shown = (polarity: SelectedSpectrum["polarity"], charge: number | null) => {
+      const { unmount } = renderPanel(loaded({ polarity, charge }));
+      const said = facts().slice(2, -1);
+      unmount();
+      return said;
+    };
+
+    expect(shown(null, null)).toEqual([en.viewerPolarityChargeNotReported]);
+    expect(shown(null, 2)).toEqual([en.viewerPolarityNotReported, "Charge 2"]);
+    expect(shown("positive", null)).toEqual([en.viewerPolarityPositive, en.viewerChargeNotReported]);
+    expect(shown("positive", 0)).toEqual([en.viewerPolarityPositive, "Charge 0"]);
+  });
+
+  it("says whose charge it is where the spectrum has more than one precursor, as a fact of its own", () => {
+    renderPanel(loaded({ charge: 3, totalPrecursorCount: 2 }));
+
+    expect(facts().slice(3, 5)).toEqual(["Charge 3", "(precursor 1 of 2)"]);
+  });
+
+  it("states neither before a spectrum has loaded", () => {
+    renderPanel({ status: "loading", index: 3 });
+    expect(facts()).toEqual([]);
+  });
+});
+
 describe("opening the file again from a refused spectrum", () => {
   it.each(["preview_not_open", "spectrum_not_as_recorded", "source_changed_since_preview"])(
     "offers it for %s, and refuses it with the visible reason while a read cannot start", kind => {

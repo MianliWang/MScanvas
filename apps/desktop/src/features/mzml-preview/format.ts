@@ -10,7 +10,7 @@
  */
 
 import type { MessageKey, UiMessage } from "../preferences/i18n";
-import type { RetentionTime, RetentionTimeUnit, SelectedFile, SpectrumRepresentation, ValueUnit } from "./contracts";
+import type { RetentionTime, RetentionTimeUnit, SelectedFile, SpectrumPolarity, SpectrumRepresentation, ValueUnit } from "./contracts";
 
 /**
  * Names one dataset without deriving or exposing any more location than Rust
@@ -83,6 +83,10 @@ export function formatRetentionTimeIn(value: number, unit: RetentionTimeUnit, t:
 export const REPRESENTATION = {
   centroid: "viewerRepresentationCentroid", profile: "viewerRepresentationProfile", notReported: "viewerNotReported",
 } as const satisfies Record<SpectrumRepresentation, MessageKey>;
+
+export const POLARITY = {
+  positive: "viewerPolarityPositive", negative: "viewerPolarityNegative",
+} as const satisfies Record<SpectrumPolarity, MessageKey>;
 
 /** A declared unit is its accession, as the exported figure's axis states it. */
 export function unitText(unit: ValueUnit, t: UiMessage): string {

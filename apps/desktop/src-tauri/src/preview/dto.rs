@@ -2861,6 +2861,15 @@ pub enum SpectrumRepresentationDto {
     NotReported,
 }
 
+/// The polarity a spectrum states. Not reported is `None` beside it, never a
+/// third value: the webview reads `null`.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SpectrumPolarityDto {
+    Positive,
+    Negative,
+}
+
 /// The unit one array's values are stated in.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "state", rename_all = "camelCase")]
@@ -2901,6 +2910,12 @@ pub struct SpectrumRowDto {
     pub base_peak_intensity: f64,
     pub total_ion_current: f64,
     pub precursor_mz: Option<f64>,
+    /// `None` where the spectrum states none, or states it two ways.
+    pub polarity: Option<SpectrumPolarityDto>,
+    /// The charge of the first precursor's first selected ion, the rule
+    /// `precursor_mz` follows, as the file states it. `None` where it states
+    /// none, states it two ways, or states what is not an integer; never zero.
+    pub charge: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -3002,6 +3017,10 @@ pub struct SelectedSpectrumDto {
     pub precursors_truncated: bool,
     /// From the spectrum's own terms; never guessed.
     pub representation: SpectrumRepresentationDto,
+    /// As on the row: from the spectrum's own terms, `None` where not reported.
+    pub polarity: Option<SpectrumPolarityDto>,
+    /// As on the row: the first precursor's, `None` where not reported.
+    pub charge: Option<i32>,
     pub mz_unit: ValueUnitDto,
     pub intensity_unit: ValueUnitDto,
     pub truncated: bool,

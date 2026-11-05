@@ -8,7 +8,7 @@ import type { UiMessage } from "../preferences/i18n";
 import type { CopiedFigure, ExportedFigure, ExportedSpectrumRange, PreviewError, SelectedSpectrum,
   SpectrumExportFormat } from "./contracts";
 import type { FigureSettingsValidation } from "./figureSettingsValidation";
-import { formatCount, REPRESENTATION } from "./format";
+import { formatCount, POLARITY, REPRESENTATION } from "./format";
 import { SpectrumViewport, SpectrumZoomControls } from "./SpectrumViewport";
 import type { SpectrumExportState, SpectrumState } from "./usePreviewWorkspace";
 import type { SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
@@ -60,7 +60,7 @@ const REOPEN_KINDS = new Set(["preview_not_open", "spectrum_not_as_recorded", "s
 
 /**
  * The selected spectrum (direction A): a head with the title, the scan and its
- * steps, the scan's MS level and size, and one toolbar (m/z range, then the
+ * steps, the scan's MS level, representation, polarity, charge and size, and one toolbar (m/z range, then the
  * figure); the plot; and over the plot's corner, what the last export did.
  * Range, size and theme are the figure dialog's; the spectrum's facts are in
  * Details.
@@ -89,6 +89,13 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
         <span>{`MS${spectrum.msLevel}`}</span>
         {/* What the file declares (P5): profile is drawn as a line, the rest as sticks. */}
         <span>{t(spectrum.representation === "notReported" ? "viewerRepresentationNotReported" : REPRESENTATION[spectrum.representation])}</span>
+        {/* What the file states; not reported is a value here too, never 0 (R-1).
+            Both unstated take one fact, which keeps the head whole at 1366 px. */}
+        {spectrum.polarity === null && spectrum.charge === null ? <span>{t("viewerPolarityChargeNotReported")}</span> : <>
+          <span>{t(spectrum.polarity === null ? "viewerPolarityNotReported" : POLARITY[spectrum.polarity])}</span>
+          <span>{spectrum.charge === null ? t("viewerChargeNotReported") : t("viewerChargeValue", { charge: String(spectrum.charge) })}</span>
+        </>}
+        {spectrum.totalPrecursorCount > 1 ? <span>{t("viewerChargeOfPrecursor", { total: spectrum.totalPrecursorCount })}</span> : null}
         <span>{t("viewerExportPoints", { count: spectrum.pointCount })}</span>
       </p>}
       {/* The plot's accessible name, in one sentence. */}

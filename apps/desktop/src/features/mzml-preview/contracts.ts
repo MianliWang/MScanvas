@@ -605,6 +605,9 @@ export type RetentionTimeRange =
 /** Whether a spectrum is centroid or profile, as the file declares it. */
 export type SpectrumRepresentation = "centroid" | "profile" | "notReported";
 
+/** The polarity a spectrum states. Not reported is `null` beside it, never a third word. */
+export type SpectrumPolarity = "positive" | "negative";
+
 /** The unit one array's values are stated in: the declared accession, or none. */
 export type ValueUnit =
   | { readonly state: "declared"; readonly accession: string }
@@ -632,6 +635,14 @@ export interface SpectrumRow {
   readonly basePeakIntensity: number;
   readonly totalIonCurrent: number;
   readonly precursorMz: number | null;
+  /** `null` where the spectrum states none, or states it two ways. */
+  readonly polarity: SpectrumPolarity | null;
+  /**
+   * The first precursor's charge as the file states it, the rule `precursorMz`
+   * follows. `null` is not reported: none stated, stated two ways, or not an
+   * integer. It is never 0, and a stated 0 stays 0.
+   */
+  readonly charge: number | null;
 }
 
 export interface SpectrumTable {
@@ -876,6 +887,10 @@ export interface SelectedSpectrum {
   readonly precursorsTruncated: boolean;
   /** From the spectrum's own terms; never guessed. */
   readonly representation: SpectrumRepresentation;
+  /** As on the row: from the spectrum's own terms, `null` where not reported. */
+  readonly polarity: SpectrumPolarity | null;
+  /** As on the row: the first precursor's, `null` where not reported. */
+  readonly charge: number | null;
   readonly mzUnit: ValueUnit;
   readonly intensityUnit: ValueUnit;
   /** `mz` and `intensity` are a prefix; `pointCount` is the total. */
