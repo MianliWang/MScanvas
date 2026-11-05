@@ -224,6 +224,7 @@ describe("N-C3: Convert this file converts this file", () => {
   const checked = () => [...document.querySelectorAll<HTMLElement>(".grouped-roster [data-handle]")]
     .filter((row) => within(row).getByRole<HTMLInputElement>("checkbox").checked).map((row) => row.dataset["handle"]);
   const radio = (name: string) => screen.getByRole("radio", { name });
+  const HELD_ROW_GONE = "The row this scope held has left Acquisitions. Adding the file again with Add files… makes a new row: select it and press Convert this file… or Open in Conversion. Or choose Checked rows or All workspace rows.";
 
   /** The way a reader gets there: Home, the row, its pane's Convert this file…. */
   async function convertThisFile(handle: string) {
@@ -328,7 +329,8 @@ describe("N-C3: Convert this file converts this file", () => {
     expect(button()).toHaveTextContent("Convert 0 eligible");
     expect(radio("sample-3.raw")).toBeChecked();
     expect(screen.getByText(/0 requested · 0 eligible · 0 excluded/)).toBeVisible();
-    expect(document.getElementById("conversion-availability-no-convertible-target")).toHaveTextContent("No supported vendor acquisitions in this scope.");
+    expect(document.getElementById("conversion-availability-no-convertible-target")).toHaveTextContent(HELD_ROW_GONE);
+    expect(button()).toHaveAccessibleDescription(HELD_ROW_GONE);
     fireEvent.click(button());
     expect(api.beginRequests()).toEqual([]);
     expect(api.planRequests()).toHaveLength(asked);
@@ -339,6 +341,65 @@ describe("N-C3: Convert this file converts this file", () => {
     expect(api.planRequests().at(-1)?.handles).toEqual(["raw-2"]);
     expect(radio("sample-2.raw")).toBeChecked();
     expect(screen.queryByRole("radio", { name: "sample-3.raw" })).toBeNull();
+  });
+
+  it("does not follow a file added again, and says what to do instead", async () => {
+    const again: SelectedFile = { ...vendor(3), handle: "raw-33" };
+    const api = createFakePreviewApi({ initialDatasets: [vendor(1), vendor(3)], pickedFiles: [again], availability: availableBackend });
+    render(<App />, { wrapper: wrapper(api) });
+    await waitFor(() => expect(document.querySelector('[data-handle="raw-3"]')).not.toBeNull());
+    await convertThisFile("raw-3");
+    await ready();
+
+    fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
+    await chooseRosterAction("removeHighlighted");
+    await waitFor(() => expect(document.querySelector('[data-handle="raw-3"]')).toBeNull());
+    fireEvent.click(within(document.querySelector<HTMLElement>(".roster-head")!).getByRole("button", { name: "Add files…" }));
+    await waitFor(() => expect(document.querySelector('[data-handle="raw-33"]')).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
+
+    // The same name in the roster is a new row, and same names are not the same file.
+    await waitFor(() => expect(button()).toHaveAttribute("aria-disabled", "true"));
+    expect(radio("sample-3.raw")).toBeChecked();
+    expect(screen.getByText(/0 requested · 0 eligible · 0 excluded/)).toBeVisible();
+    expect(document.getElementById("conversion-availability-no-convertible-target")).toHaveTextContent(HELD_ROW_GONE);
+    expect(api.planRequests().filter((request) => request.handles.includes("raw-33"))).toEqual([]);
+
+    // Both routes the sentence names are real. An added row arrives checked.
+    fireEvent.click(radio("Checked rows"));
+    await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-33"]);
+    expect(document.getElementById("conversion-availability-no-convertible-target")).toBeNull();
+    await convertThisFile("raw-33");
+    await ready();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-33"]);
+    expect(radio("sample-3.raw")).toBeChecked();
+  });
+
+  it("says which of two same-named rows it holds, wherever the highlight is, as the live roster names it", async () => {
+    const same = (n: number): SelectedFile => ({ ...vendor(n), fileName: "QC.raw" });
+    const api = createFakePreviewApi({ initialDatasets: [{ file: same(1), parents: ["batch_a"] }, { file: same(2), parents: ["batch_b"] }, vendor(3)], availability: availableBackend });
+    render(<App />, { wrapper: wrapper(api) });
+    await waitFor(() => expect(document.querySelector('[data-handle="raw-2"]')).not.toBeNull());
+    await convertThisFile("raw-2");
+    await ready();
+    expect(radio("QC.raw, batch_b")).toBeChecked();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-2"]);
+
+    // Back to the Workbench, the other one highlighted, and in through the header.
+    fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
+    fireEvent.click(document.querySelector('.grouped-roster [data-handle="raw-1"]')!);
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
+    expect(radio("QC.raw, batch_b")).toBeChecked();
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-2"]);
+
+    // The row it collided with leaves, so the roster needs no context, and neither does the button.
+    fireEvent.click(screen.getByRole("button", { name: "Home — MSCanvas workbench" }));
+    await chooseRosterAction("removeHighlighted");
+    await waitFor(() => expect(document.querySelector('[data-handle="raw-1"]')).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /^Conversion(\s|$)/ }));
+    await waitFor(() => expect(radio("QC.raw")).toBeChecked());
+    expect(api.planRequests().at(-1)?.handles).toEqual(["raw-2"]);
   });
 
   it("holds a row that cannot convert as excluded, and asks no plan for it", async () => {

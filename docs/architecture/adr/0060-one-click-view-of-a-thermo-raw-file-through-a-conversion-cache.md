@@ -1437,12 +1437,17 @@ unless it carries "Owner decision, 2026-11-03".
      before and after the run. One function, so the vendor rows' Open in Conversion
      does the same. The scope stays in the webview; Rust revalidates the one handle
      like any other.
-     As built, not an owner decision: the third button is named for the file, is there
-     only while that scope is current and takes a row of its own under the other two,
-     so that a name is not cut; Checked rows, All workspace rows or the Workbench's
-     Convert… leaves it and forgets the file; a later press replaces the file; a
-     removed row leaves the scope empty with the existing refusal, and the button still
-     names the file. Pressed over a running or finished queue, the page shows that
+     As built, not an owner decision: the third button reads as the live roster names
+     that row, with its context where Rust gives one (ADR 0006), whole and wrapped, and
+     without a middle ellipsis, whose tail stays on one line; it is there only while
+     that scope is current and takes a row of its own under the other two. Checked
+     rows, All workspace rows or the Workbench's Convert… leaves it and forgets the
+     file; a later press replaces the file. A removed row leaves the scope empty and
+     refused for the existing reason, and the button reads the name it saved. The scope
+     does not follow that file if it is added again: Rust gives it a new handle, and one
+     name is not one file. So here the refusal has its own sentence, which says the row
+     has left and names the ways out; the shared sentence's Add files… would not bring
+     this scope back. Pressed over a running or finished queue, the page shows that
      queue first, and the scope is the next conversion's, as it was before.
 7. **Deferred, each with its reason.**
    - **View with…** (`begin_raw_view_with`, `rawViewIntents`) and the **Settings

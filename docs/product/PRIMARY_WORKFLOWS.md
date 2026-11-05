@@ -296,10 +296,12 @@ availability, queue, adoption and export contracts.
    **A third scope holds one file (N-C3, 2026-11-04).** Convert this file…, in a RAW
    row's pane, a viewed file's row and a failed open, and Open in Conversion, on a
    Shimadzu or SCIEX row, hold the page to that file and leave every check as it was,
-   before and after the run. A third button, named for the file, is there only while
-   that scope is current. Checked rows or All workspace rows leaves it for good, a
-   later press replaces the file, and a removed row leaves the scope empty, with the
-   usual refusal and its reason.
+   before and after the run. A third button, named as the roster names that row, is
+   there only while that scope is current. Like the other two, it excludes an unsupported
+   row and shows its counts. Checked rows, All workspace rows or the Workbench's Convert…
+   leaves it for good, and a later press replaces the file. A removed row leaves the
+   scope empty and refused, with a sentence saying so and naming the ways out: a file
+   added again is a new row, which the scope does not follow.
 3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
    groups — peak processing, spectra included, numeric precision, array
    compression — edit one dimension each, over one combination. A choice either

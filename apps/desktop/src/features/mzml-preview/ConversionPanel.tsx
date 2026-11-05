@@ -535,7 +535,8 @@ export function ConversionPanel({
         {/* The rail's last child, pinned to the bottom of whatever scrolls
             (the rail, or the whole page in a short window). */}
         <div className="conversion-rail-foot" data-start-offered={planShown || undefined}>
-          <AvailabilityNotice refusals={refusals} rawViewHolder={rawViewHolder} />
+          <AvailabilityNotice refusals={refusals} rawViewHolder={rawViewHolder}
+            heldRowGone={resolvedScope.scope === "file" && resolvedScope.requestedCount === 0} />
           {!planShown ? null : (
             <PlanStart
               conversion={conversion}
@@ -576,10 +577,13 @@ export function ConversionPanel({
 function AvailabilityNotice({
   refusals,
   rawViewHolder,
+  heldRowGone,
 }: {
   /** One entry per action, `null` for each action not on screen. */
   readonly refusals: readonly (ConversionRefusal | null)[];
   readonly rawViewHolder: ConversionRawViewHolder | null;
+  /** The one-file scope's row has left the roster, which changes the way out of an empty scope. */
+  readonly heldRowGone: boolean;
 }): ReactElement {
   const t = useUiMessages();
   return (
@@ -597,7 +601,7 @@ function AvailabilityNotice({
         </div>
       ) : (
         <p className="notice notice-warning" id={notice.id} key={notice.reason}>
-          {conversionNoticeMessage(notice.reason, t)}
+          {conversionNoticeMessage(notice.reason, t, heldRowGone)}
         </p>
       ))}
     </div>
@@ -1114,11 +1118,13 @@ function PlanSummary(props: PlanProps & {
             </label>
           ))}
           {/* Only while it is the scope: already checked, it has nothing to
-              change to, and pressing either of the others leaves it for good. */}
-          {resolvedScope.file === null ? null : (
+              change to, and pressing either of the others leaves it for good.
+              All of it, wrapped: the context is what tells two same-named rows
+              apart, and a middle ellipsis keeps a tail that long on one line. */}
+          {resolvedScope.fileLabel === null ? null : (
             <label className="conversion-segment">
               <input className="visually-hidden" type="radio" name="conversion-scope" value="file" checked readOnly />
-              <MiddleEllipsis text={resolvedScope.file.fileName} />
+              {resolvedScope.fileLabel}
             </label>
           )}
         </div>

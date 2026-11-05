@@ -37,7 +37,8 @@ table remains the target, including the unsupported portions called out below:
   workspace row, including rows outside search. Focus never supplies a fallback.
   **Convert this file… (N-C3, 2026-11-04)** is a third scope, the one file, reached
   from a RAW row's pane, a viewed file's row, a failed open and a vendor row; no check
-  changes, and its button is there only while it is current.
+  changes, and its button is there only while it is current. What follows of "both
+  scopes" holds for it too.
   Requested, eligible and excluded counts are visible. Both scopes use the
   complete roster's chosen sort, with added order breaking ties, and show every
   resolved queue member in order. Rust's current capacity is displayed and an

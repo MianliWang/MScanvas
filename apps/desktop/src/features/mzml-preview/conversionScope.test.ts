@@ -65,15 +65,27 @@ describe("the one-file scope (N-C3)", () => {
   const two = { handle: "two", fileName: "Run-2.raw" };
 
   it("holds exactly that file, whatever is checked", () => {
-    expect(resolveConversionScope("file", facts, two)).toMatchObject({ scope: "file", file: two, requestedCount: 1, excludedCount: 0, handles: ["two"] });
+    expect(resolveConversionScope("file", facts, two)).toMatchObject({ scope: "file", fileLabel: "Run-2.raw", requestedCount: 1, excludedCount: 0, handles: ["two"] });
     expect(resolveConversionScope("file", { ...facts, conversionMembership: new Set() }, two).handles).toEqual(["two"]);
     expect(resolveConversionScope("file", { ...facts, conversionMembership: new Set(["one", "three"]) }, two).handles).toEqual(["two"]);
   });
 
   it("is empty once the row is gone, and still says which file it was", () => {
     const removed = { ...facts, datasets: rows.filter((row) => row.handle !== "two") };
-    expect(resolveConversionScope("file", removed, two)).toMatchObject({ file: two, requestedCount: 0, excludedCount: 0, handles: [] });
-    expect(resolveConversionScope("file", facts, null)).toMatchObject({ file: null, requestedCount: 0, handles: [] });
+    expect(resolveConversionScope("file", removed, two)).toMatchObject({ fileLabel: "Run-2.raw", requestedCount: 0, excludedCount: 0, handles: [] });
+    expect(resolveConversionScope("file", facts, null)).toMatchObject({ fileLabel: null, requestedCount: 0, handles: [] });
+  });
+
+  it("names the file as the live roster does, and never by a context the press saw", () => {
+    const withContext = (relativeContext: string | null) => ({ ...facts, datasets: rows.map((row) => row.handle === "two" ? { ...row, relativeContext } : row) });
+    // convertRow hands over a whole row, and a viewed file's is the preview's older copy.
+    const pressed = { ...two, relativeContext: "batch_old" };
+    expect(resolveConversionScope("file", withContext("batch_b"), pressed).fileLabel).toBe("Run-2.raw, batch_b");
+    // Its context goes when the row it collided with goes (ADR 0006).
+    expect(resolveConversionScope("file", withContext(null), pressed).fileLabel).toBe("Run-2.raw");
+    expect(resolveConversionScope("file", { ...facts, datasets: rows.filter((row) => row.handle !== "two") }, pressed).fileLabel).toBe("Run-2.raw");
+    // Which row a scope holds is the question; what it is called is not.
+    expect(sameConversionScope(resolveConversionScope("file", withContext("batch_b"), two), resolveConversionScope("file", withContext(null), two))).toBe(true);
   });
 
   it("puts a row that cannot convert in the excluded list", () => {

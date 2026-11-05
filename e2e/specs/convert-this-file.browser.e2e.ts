@@ -14,6 +14,8 @@ import { NO_PROJECT, scenario, type Locale } from "../support/pm9Scenarios";
 import { revealRosterRow } from "../support/viewer";
 import { availableBackend, completeCatalog, queueItem, queueOf, settledAt, shippedIntent } from "../../apps/desktop/src/test/previewFixtures";
 import type { SelectedFile } from "../../apps/desktop/src/features/mzml-preview/contracts";
+import { formatDatasetLabel } from "../../apps/desktop/src/features/mzml-preview/format";
+import { UI_RESOURCES } from "../../apps/desktop/src/features/preferences/i18n";
 
 const AUTHORITY = settledAt(1, 1);
 const thermo = (index: number, fileName = `QC_pool_0${String(index)}.raw`): SelectedFile => ({
@@ -24,9 +26,16 @@ const SECOND = thermo(2);
 const THIRD = thermo(3);
 const LONG = thermo(4, "20261012_QE_HFX_Plasma_QC_batch_08_replicate_04_long_acquisition_gradient_90min_column_C18_250mm_positive_mode.raw");
 const LCD: SelectedFile = { handle: "lcd", fileName: "Shimadzu_run_01.lcd", byteLength: 8_388_608, sourceKind: "shimadzu_lcd", relativeContext: null };
-/** Short enough for one text node, and with no break in it: it has to wrap. */
+/** Short, and with no break in it: it has to wrap. */
 const WIDE = thermo(5, "血浆质控批次零八重复零四长时间采集结果.raw");
-const ROWS = [FIRST, SECOND, THIRD, LONG, WIDE, LCD];
+/** Two rows of one name: the context Rust gave each is all that tells them apart. */
+const BATCH_A: SelectedFile = { ...thermo(6, "QC.raw"), relativeContext: "batch_a" };
+const BATCH_B: SelectedFile = { ...thermo(7, "QC.raw"), relativeContext: "batch_b" };
+/** A context at Rust's bound (MAX_RELATIVE_CONTEXT_CHARS), with no break in it. */
+const DEEP: SelectedFile = { ...thermo(8), relativeContext: `…${"批次目录".repeat(32).slice(1)}` };
+const ROWS = [FIRST, SECOND, THIRD, LONG, WIDE, BATCH_A, BATCH_B, DEEP, LCD];
+/** FIRST added again after its removal: the same file, and a handle Rust has never used. */
+const AGAIN: SelectedFile = { ...FIRST, handle: "raw-again" };
 
 const DESCRIBE = "describe_workspace_conversion_queue";
 const SCOPE = 'input[name="conversion-scope"]';
@@ -80,7 +89,7 @@ async function open([width, height]: readonly [number, number], table: Record<st
   await browser.url("/");
   await browser.$(".workbench-header").waitForDisplayed({ timeout: 60_000 });
   // The boundary answers each plan question for the rows it names.
-  await answerPlans(ROWS);
+  await answerPlans([...ROWS, AGAIN]);
 }
 
 async function pressRow(row: SelectedFile) {
@@ -107,25 +116,44 @@ async function foldNarrowRoster() {
   }
 }
 
-/** The third button's name, as drawn: whole in its text, and cut by nothing but its own ellipsis. */
+/** The third button's name, as drawn: whole in its text, and cut by nothing. */
 const thirdButton = () => browser.execute((css: string) => {
   const label = document.querySelector(css)!.closest("label")!;
-  const name = label.querySelector(".ui-middle-ellipsis")!;
   const track = label.parentElement!;
   return {
-    text: name.textContent,
-    title: name.getAttribute("title"),
-    clipped: label.scrollWidth > label.clientWidth + 1 || track.scrollWidth > track.clientWidth + 1,
+    text: label.textContent,
+    clipped: label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > label.clientHeight + 1 ||
+      track.scrollWidth > track.clientWidth + 1 || track.scrollHeight > track.clientHeight + 1,
     pair: [...track.querySelectorAll("label")].map((node) => Math.round(node.getBoundingClientRect().top)),
   };
 }, FILE_SCOPE);
+
+const HOME = ".workbench-navigation > button:nth-child(1)";
+const CONVERSION = ".workbench-navigation > button:nth-child(2)";
+
+async function pressPaneConvert() {
+  await browser.$(PANE_CONVERT).waitForExist({ timeout: 30_000 });
+  await browser.$(PANE_CONVERT).click();
+  await browser.$(SURFACE).waitForExist({ timeout: 15_000 });
+  await waitUntilOffered(CONVERT);
+}
+
+/** The highlighted row leaves, and the roster that answers is the one named. */
+async function removeHighlighted(row: SelectedFile, left: readonly SelectedFile[]) {
+  await revealRosterRow(row.handle);
+  await setInvokeResult("remove_workspace_datasets", { roster: { datasets: left, capacity: 1024 }, removedHandles: [row.handle], unknownHandles: [] });
+  await setInvokeResult("get_workspace_roster", { datasets: left, capacity: 1024 });
+  await browser.$("[data-roster-list-menu]").click();
+  await browser.$("[data-roster-remove]").click();
+  await browser.$(`.grouped-roster [data-handle="${row.handle}"]`).waitForExist({ reverse: true, timeout: 15_000 });
+}
 
 /** What every route must end in: this file alone, checks unchanged, Checked rows brings them back. */
 async function expectOneFile(row: SelectedFile) {
   await browser.$(SURFACE).waitForExist({ timeout: 15_000 });
   await waitUntilOffered(CONVERT);
   expect(await browser.$(FILE_SCOPE).isSelected()).toBe(true);
-  expect(await thirdButton()).toMatchObject({ text: row.fileName, title: row.fileName, clipped: false });
+  expect(await thirdButton()).toMatchObject({ text: row.fileName, clipped: false });
   expect(await lastPlanHandles()).toEqual([row.handle]);
   expect(await browser.$$(`${SCOPE}`).length).toBe(3);
   expect((await browser.$(SUMMARY).getText()).match(/\d+/gu)).toEqual(["1", "1", "0"]);
@@ -218,18 +246,81 @@ describe("Convert this file converts this file", () => {
           expect(await checks()).toEqual([SECOND.handle]);
         });
 
-        for (const [what, row] of [["a long name loses its middle", LONG], ["a wide name with no break wraps", WIDE]] as const) it(`${what}, under the other two, and nothing is cut`, async () => {
+        for (const [what, row] of [["a long name wraps", LONG], ["a wide name with no break wraps", WIDE], ["a context at its bound wraps", DEEP]] as const) it(`${what}, under the other two, and nothing is cut`, async () => {
           await open(viewport, world(locale));
           await pressRow(row);
-          await browser.$(PANE_CONVERT).waitForExist({ timeout: 30_000 });
-          await browser.$(PANE_CONVERT).click();
-          await browser.$(SURFACE).waitForExist({ timeout: 15_000 });
-          await waitUntilOffered(CONVERT);
+          await pressPaneConvert();
           const button = await thirdButton();
-          expect(button).toMatchObject({ text: row.fileName, title: row.fileName, clipped: false });
+          expect(button).toMatchObject({ text: formatDatasetLabel(row), clipped: false });
           expect(button.pair[0]).toBe(button.pair[1]);
           expect(button.pair[2]).toBeGreaterThan(button.pair[0]!);
           await noSideScroll();
+        });
+
+        it("of two rows with one name, it says which, wherever the highlight is, and the context leaves with the other", async () => {
+          await open(viewport, world(locale));
+          await pressRow(BATCH_B);
+          await pressPaneConvert();
+          const held = { text: formatDatasetLabel(BATCH_B), clipped: false };
+          expect(await thirdButton()).toMatchObject(held);
+          expect(await lastPlanHandles()).toEqual([BATCH_B.handle]);
+
+          // Back, the other one highlighted, and in through the header.
+          await browser.$(HOME).click();
+          await pressRow(BATCH_A);
+          await browser.$(CONVERSION).click();
+          await browser.$(SURFACE).waitForExist({ timeout: 15_000 });
+          expect(await thirdButton()).toMatchObject(held);
+          expect(await lastPlanHandles()).toEqual([BATCH_B.handle]);
+
+          await browser.$(HOME).click();
+          await removeHighlighted(BATCH_A, ROWS.filter((row) => row !== BATCH_A).map((row) => row === BATCH_B ? { ...row, relativeContext: null } : row));
+          await browser.$(CONVERSION).click();
+          await browser.$(SURFACE).waitForExist({ timeout: 15_000 });
+          await browser.waitUntil(async () => (await thirdButton()).text === BATCH_B.fileName, { timeoutMsg: "the context never left the button" });
+          expect(await lastPlanHandles()).toEqual([BATCH_B.handle]);
+        });
+
+        it("a file added again is a new row: the scope does not follow it, the refusal says so, and both its routes work", async () => {
+          const left = ROWS.filter((row) => row !== FIRST);
+          await open(viewport, world(locale));
+          await pressRow(FIRST);
+          await pressPaneConvert();
+
+          await browser.$(HOME).click();
+          await removeHighlighted(FIRST, left);
+          await setInvokeResult("choose_workspace_files", { roster: { datasets: [...left, AGAIN], capacity: 1024 }, outcomes: [{ outcome: "added", dataset: AGAIN }] });
+          await setInvokeResult("get_workspace_roster", { datasets: [...left, AGAIN], capacity: 1024 });
+          await revealRosterRow(SECOND.handle);
+          await browser.$(".roster-head [data-add-files]").click();
+          await browser.$(`.grouped-roster [data-handle="${AGAIN.handle}"]`).waitForExist({ timeout: 15_000 });
+
+          await browser.$(CONVERSION).click();
+          await browser.$(SURFACE).waitForExist({ timeout: 15_000 });
+          await browser.waitUntil(() => isRefused(CONVERT), { timeoutMsg: "Convert was never refused" });
+          expect(await browser.$(FILE_SCOPE).isSelected()).toBe(true);
+          expect(await thirdButton()).toMatchObject({ text: FIRST.fileName, clipped: false });
+          expect((await browser.$(SUMMARY).getText()).match(/\d+/gu)).toEqual(["0", "0", "0"]);
+          const said = await browser.$("#conversion-availability-no-convertible-target").getText();
+          const words = UI_RESOURCES[locale];
+          for (const label of [words.rosterToggle, words.addFiles, words.rawViewConvert, words.openInConversion, words.m74CnvSelected, words.m74CnvAll]) expect(said).toContain(label);
+          await browser.$(CONVERT).click();
+          expect((await ipcCalls()).filter((call) => call.command === "begin_workspace_conversion_queue")).toEqual([]);
+          expect((await ipcCalls()).filter((call) => call.command === DESCRIBE && JSON.stringify(call.args).includes(AGAIN.handle))).toEqual([]);
+          await noSideScroll();
+
+          // An added row arrives checked, so Checked rows is a way out.
+          await browser.$(CHECKED_ROWS).parentElement().click();
+          await waitUntilOffered(CONVERT);
+          expect(await lastPlanHandles()).toEqual([AGAIN.handle]);
+          expect(await browser.$(FILE_SCOPE).isExisting()).toBe(false);
+
+          // And so is its own press, which holds the new row.
+          await browser.$(HOME).click();
+          await pressRow(AGAIN);
+          await pressPaneConvert();
+          expect(await lastPlanHandles()).toEqual([AGAIN.handle]);
+          expect(await thirdButton()).toMatchObject({ text: AGAIN.fileName, clipped: false });
         });
 
         it("while a queue runs: the queue stays on screen, nothing starts, and no check moves", async () => {
@@ -249,21 +340,12 @@ describe("Convert this file converts this file", () => {
           await open(viewport, world(locale));
           await checkMembers([SECOND.handle]);
           await pressRow(FIRST);
-          await browser.$(PANE_CONVERT).waitForExist({ timeout: 30_000 });
-          await browser.$(PANE_CONVERT).click();
-          await browser.$(SURFACE).waitForExist({ timeout: 15_000 });
-          await waitUntilOffered(CONVERT);
+          await pressPaneConvert();
 
-          await browser.$(".workbench-navigation > button:nth-child(1)").click();
-          await revealRosterRow(SECOND.handle);
-          const left = ROWS.filter((row) => row !== FIRST);
-          await setInvokeResult("remove_workspace_datasets", { roster: { datasets: left, capacity: 1024 }, removedHandles: [FIRST.handle], unknownHandles: [] });
-          await setInvokeResult("get_workspace_roster", { datasets: left, capacity: 1024 });
-          await browser.$("[data-roster-list-menu]").click();
-          await browser.$("[data-roster-remove]").click();
-          await browser.$(`.grouped-roster [data-handle="${FIRST.handle}"]`).waitForExist({ reverse: true, timeout: 15_000 });
+          await browser.$(HOME).click();
+          await removeHighlighted(FIRST, ROWS.filter((row) => row !== FIRST));
 
-          await browser.$(".workbench-navigation > button:nth-child(2)").click();
+          await browser.$(CONVERSION).click();
           await browser.$(SURFACE).waitForExist({ timeout: 15_000 });
           await browser.waitUntil(() => isRefused(CONVERT), { timeoutMsg: "Convert was never refused" });
           await browser.$("#conversion-availability-no-convertible-target").waitForDisplayed({ timeout: 15_000 });
@@ -273,14 +355,11 @@ describe("Convert this file converts this file", () => {
           expect((await ipcCalls()).filter((call) => call.command === "begin_workspace_conversion_queue")).toEqual([]);
           expect(await checks()).toEqual([SECOND.handle]);
 
-          await browser.$(".workbench-navigation > button:nth-child(1)").click();
+          await browser.$(HOME).click();
           await pressRow(THIRD);
-          await browser.$(PANE_CONVERT).waitForExist({ timeout: 30_000 });
-          await browser.$(PANE_CONVERT).click();
-          await browser.$(SURFACE).waitForExist({ timeout: 15_000 });
-          await waitUntilOffered(CONVERT);
+          await pressPaneConvert();
           expect(await lastPlanHandles()).toEqual([THIRD.handle]);
-          expect(await thirdButton()).toMatchObject({ title: THIRD.fileName, clipped: false });
+          expect(await thirdButton()).toMatchObject({ text: THIRD.fileName, clipped: false });
         });
       });
     }

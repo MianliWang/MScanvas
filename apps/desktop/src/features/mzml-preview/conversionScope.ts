@@ -1,11 +1,14 @@
 import { isConvertibleSourceKind, type SelectedFile } from "./contracts";
+import { formatDatasetLabel } from "./format";
 import { orderRoster, type SortMode } from "./rosterView";
 
 export type ConversionScope = "selected" | "all" | "file";
 
 /**
  * The one row "Convert this file…" named. Its name stays with its handle, so
- * the scope can still say which file it holds after that row has been removed.
+ * the scope can still say which file it held after that row has been removed.
+ * Not its context: Rust recomputes that with every roster, so only the live row's
+ * is true (ADR 0006).
  */
 export type ConversionFile = Pick<SelectedFile, "handle" | "fileName">;
 
@@ -17,8 +20,8 @@ export interface ConversionScopeFacts {
 
 export interface ResolvedConversionScope {
   readonly scope: ConversionScope;
-  /** The file this scope is held to; `null` under the other two scopes. */
-  readonly file: ConversionFile | null;
+  /** What says which file this scope is held to; `null` under the other two scopes. */
+  readonly fileLabel: string | null;
   readonly requestedCount: number;
   readonly excludedCount: number;
   /** The requested rows this scope cannot convert, in execution order, to name them (PM9.4 O2). */
@@ -41,9 +44,10 @@ export function resolveConversionScope(
   const requested = orderRoster(facts.datasets, facts.sort).filter((row) =>
     scope === "all" || (scope === "file" ? row.handle === file?.handle : facts.conversionMembership.has(row.handle)));
   const members = requested.filter((row) => isConvertibleSourceKind(row.sourceKind));
+  const held = requested[0];
   return {
     scope,
-    file: scope === "file" ? file : null,
+    fileLabel: scope !== "file" ? null : held === undefined ? file?.fileName ?? null : formatDatasetLabel(held),
     requestedCount: requested.length,
     excludedCount: requested.length - members.length,
     excluded: requested.filter((row) => !isConvertibleSourceKind(row.sourceKind)),
