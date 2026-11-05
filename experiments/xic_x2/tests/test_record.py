@@ -157,6 +157,9 @@ class RetainedRuns(unittest.TestCase):
         self.assertIn(f"`{identity['source_manifest_sha256']}`", X2_TEXT)
         self.assertIn(f"the scored build is at `{identity['built_at_commit'][:8]}`", X2)
         self.assertIn(identity["rustc"].splitlines()[0], X2_TEXT)
+        self.assertIn(identity["binary_sha256"], ADR)
+        self.assertIn(identity["source_manifest_sha256"], ADR)
+        self.assertIn(pathlib.Path(EVIDENCE, "final-5/ledger-table.md").read_text(encoding="utf-8"), X2_TEXT)
         scored = [path for folder in ("main", "supplement", "integer-scored") for path in pathlib.Path(EVIDENCE, "final-5", folder).glob("*/science.json")]
         self.assertEqual(len(scored), 187)
         for path in scored:

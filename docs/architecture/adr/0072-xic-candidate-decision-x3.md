@@ -118,10 +118,10 @@ idle. These are observations of one host, never thresholds.
 
 The processor figures are each set's mean load over the 7, 9 and 20 samples taken inside its
 run, so they are rough. Neither build is the scored one. Their `crates/proteowizard/src` is the
-same, and `73266bea…` differs from `a7c6705c…` also in the example: how it exits on a read
+same, and `73266bea…` differs from `a7c6705c…` only in the example: how it exits on a read
 failure, and one helper's body. The scored build's library differs from both, in seven manifest
-lines, and its machine code differs too, while `mzml_xic.rs` and the example are the same, so the
-same command ran again on it:
+lines, and its machine code differs too, while `mzml_xic.rs` is the same in all three and the
+example is `a7c6705c…`'s, so the same command ran again on it:
 
 | Source | Scored build `2d4a00c7…`, processor at 52% | At 41% | At 24% | Peak working set (MB) |
 | --- | --- | --- | --- | --- |
@@ -182,8 +182,8 @@ and none of it is merged.
 | 960×640 | 499 | 220 | 221 | 279 → 240 | 198 → 160 | 7 | 39 | 183 |
 
 CSS pixels. Without the panel the column does not scroll at any of the three, and the
-whole spectrum plot is on screen. No size overflows horizontally. PR #203 merged after this
-was measured. It leaves an mzML file's rows as they were, and it gives a viewed Thermo RAW
+whole spectrum plot is on screen. No size overflows horizontally. PRs #203, #204 and #201 merged
+after this was measured, and it was not measured again. #203 leaves an mzML file's rows as they were, and it gives a viewed Thermo RAW
 file's row one more line, so that case has less room than this table, by an amount not
 measured.
 
