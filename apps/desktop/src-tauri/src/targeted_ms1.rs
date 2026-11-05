@@ -84,6 +84,9 @@ use crate::project::record::{
     ObservedMember, OutcomeSummary, RunFailure, SourceView, StopFacts, StopReason, TargetId,
     TargetedMs1Plan, TargetedMs1ResultV1,
 };
+use crate::project::runtime_pins::{
+    DEVELOPMENT_RUNTIME_DIR, DEVELOPMENT_RUNTIME_ROOT, REQUIRED_MODULES,
+};
 
 /// The wall-clock budget one attempt gets, from launch.
 const BUDGET: Duration = Duration::from_secs(600);
@@ -104,13 +107,6 @@ const LINK_NAME: &str = "source.mzML";
 /// tells a copy, which is only ever the attempt's, from a link, which may be
 /// the last name of a user's bytes, by it.
 const SNAPSHOT_NAME: &str = "snapshot.mzML";
-/// The modules whose files must be among those the worker reports loaded.
-const REQUIRED_MODULES: [&str; 4] = [
-    "python313.dll",
-    "site-packages/pyopenms/openms.dll",
-    "site-packages/pyopenms/openswathalgo.dll",
-    "site-packages/pyopenms/qt6core.dll",
-];
 
 /// The recipe's executor in a build that has a runtime location, and a refusal
 /// in one that does not.
@@ -174,8 +170,12 @@ impl Supervisor {
         }
         let adapter_sha256 = Sha256Digest::calculate(adapter).ok()?.to_string();
         Some(Self {
-            runtime: scratch.join("m91-runtime").join("cpython-3.13.15-embed"),
-            manifest: scratch.join("m91-runtime").join("runtime-manifest.json"),
+            runtime: scratch
+                .join(DEVELOPMENT_RUNTIME_ROOT)
+                .join(DEVELOPMENT_RUNTIME_DIR),
+            manifest: scratch
+                .join(DEVELOPMENT_RUNTIME_ROOT)
+                .join("runtime-manifest.json"),
             attempts: scratch.join("m91-jobs").join("attempts"),
             adapter,
             adapter_sha256,
