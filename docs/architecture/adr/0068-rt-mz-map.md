@@ -507,8 +507,10 @@ zoomed: 1 spectra, 1 narrow scans left out; 2039 points binned, 18360 outside m/
 - Points outside went from 16 to 30 because the range moved. An independent count, a
   read-only Python standard-library decoder over the same file that takes the range
   above and reads no MSCanvas code, gives 15 full and 14 zoom profile spectra, 7,000
-  zoom points, and over the full scans 305,955 points inside, 15 below and 15 above:
-  the stated range misses the end points of the full scans by rounding.
+  zoom points, and over the full scans 305,955 points inside, 15 below and 15 above.
+  Each is one full scan's end sample, at most 2.27e-13 m/z outside: the stated range is
+  a shorter decimal than the stored value. The script, the other script below and the
+  console output are in `D:\tmp\public-data\map2d\scan-type-20261105\`.
 - The Orbitrap files have no narrow scan, and their full-extent counts did not change:
   positive profile, 2,748 spectra, 24,766,275 points, 726,465 cells; positive centroid
   (`TE1`), 2,748 spectra, 1,724,215 points, 670,590 cells.
