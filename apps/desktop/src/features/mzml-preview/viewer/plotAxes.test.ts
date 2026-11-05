@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import geometry from "../../../../../../fixtures/plot-ticks/axis-geometry.json";
 import table from "../../../../../../fixtures/plot-ticks/nice-ticks.json";
-import { niceTicks, withHeadroom } from "./plotAxes";
+import { bandFraction, DOMAIN_INSET, niceTicks, positionAt, VALUE_HEADROOM, withHeadroom, xAt, xBand } from "./plotAxes";
 
 /** One range and what `crates/plot-spec/src/ticks.rs` gives it, `null` where it gives nothing. */
 interface Row {
@@ -81,5 +82,85 @@ describe("plot axis ticks", () => {
     expect(withHeadroom(0, 9000)).toEqual({ low: 0, high: 9450 });
     expect(withHeadroom(-40, 60)).toEqual({ low: -45, high: 65 });
     expect(withHeadroom(0, 0)).toEqual({ low: 0, high: 0 });
+  });
+});
+
+/** One frame and domain, and where `crates/plot-spec/src/svg.rs` draws three places on it. */
+interface XRow {
+  readonly frame: readonly [number, number];
+  readonly low: number;
+  readonly high: number;
+  readonly at: readonly (readonly [number, number])[];
+}
+/** One value range and the axis and ticks the figure gives it; `null` for a range the screen never has. */
+interface ValueRow {
+  readonly low: number;
+  readonly high: number;
+  readonly axis: readonly [number, number];
+  readonly ticks: readonly (readonly [number, string])[] | null;
+}
+
+describe("one geometry with the figure", () => {
+  const xRows = geometry.x as unknown as readonly XRow[];
+  const valueRows = geometry.values as unknown as readonly ValueRow[];
+
+  it("has the figure's inset and headroom", () => {
+    expect(DOMAIN_INSET).toBe(geometry.domain_inset);
+    expect(VALUE_HEADROOM).toBe(geometry.headroom);
+  });
+
+  it("draws every place in the shared table where the figure does, to the last bit", () => {
+    expect(xRows.length).toBeGreaterThan(0);
+    for (const { frame, low, high, at } of xRows) {
+      for (const [value, x] of at) {
+        expect(xAt(value, { low, high }, xBand(frame[0], frame[1])), `${value} on ${low} to ${high}`).toBe(x);
+      }
+    }
+  });
+
+  it("reads every drawn place back as itself, each end to the last bit", () => {
+    for (const { frame, low, high, at } of xRows) {
+      const band = xBand(frame[0], frame[1]);
+      const domain = { low, high };
+      const back = (value: number) => positionAt(bandFraction(xAt(value, domain, band), band), domain);
+      expect(back(low), `${low} to ${high}`).toBe(low);
+      expect(back(high), `${low} to ${high}`).toBe(high);
+      for (const [value] of at) {
+        const slack = 4 * Number.EPSILON * Math.max(Math.abs(low), Math.abs(high));
+        expect(Math.abs(back(value) - value), `${value} on ${low} to ${high}`).toBeLessThanOrEqual(slack);
+      }
+    }
+  });
+
+  it("reads a place in the inset as the end beside it, never as a place past the range", () => {
+    const band = xBand(64, 988);
+    const domain = { low: 0.3, high: 0.9 };
+    expect(band).toEqual({ left: 72, drawnWidth: 908 });
+    for (const x of [0, 64, 71.5]) expect(positionAt(bandFraction(x, band), domain)).toBe(0.3);
+    for (const x of [980.5, 988, 1000]) expect(positionAt(bandFraction(x, band), domain)).toBe(0.9);
+    // A fraction just short of the end stays inside the range.
+    expect(positionAt(1 - Number.EPSILON / 2, domain)).toBeLessThanOrEqual(0.9);
+  });
+
+  it("draws a range with no width down the middle, and reads it back as its one value", () => {
+    const band = xBand(64, 988);
+    const domain = { low: 250, high: 250 };
+    expect(xAt(250, domain, band)).toBe(526);
+    for (const x of [64, 526, 988]) expect(positionAt(bandFraction(x, band), domain)).toBe(250);
+  });
+
+  it("gives every value range in the shared table the figure's axis, and the figure's ticks", () => {
+    expect(valueRows.length).toBeGreaterThan(0);
+    for (const { low, high, axis, ticks } of valueRows) {
+      const name = `${low} to ${high}`;
+      const shown = withHeadroom(low, high);
+      expect([shown.low, shown.high], name).toEqual(axis);
+      if (ticks !== null) expect(niceTicks(shown.low, shown.high).map(tick => [tick.value, tick.label]), name).toEqual(ticks);
+    }
+  });
+
+  it("leaves off the headroom that would pass the largest number there is", () => {
+    expect(withHeadroom(0, 1.79e308)).toEqual({ low: 0, high: 1.79e308 });
+    expect(withHeadroom(-1.79e308, 0)).toEqual({ low: -1.79e308, high: 0 });
   });
 });

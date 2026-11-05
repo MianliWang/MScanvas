@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
+import { CHROMATOGRAM_PLOT_BAND } from "../features/mzml-preview/Chromatogram";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
 import {
   FAKE_COMPLETE_SCAN_COUNT,
@@ -35,8 +36,7 @@ const en = UI_RESOURCES.en;
 const SCAN_COUNT = 200;
 const RT_STEP = 0.0125;
 const PLOT_PIXELS = 1_000;
-const PADDING_LEFT = 64;
-const DRAWN_WIDTH = PLOT_PIXELS - PADDING_LEFT - 12;
+const { left: PADDING_LEFT, drawnWidth: DRAWN_WIDTH } = CHROMATOGRAM_PLOT_BAND;
 const SETTLING = { timeout: 15_000 } as const;
 
 const VENDOR_ROW = shimadzuDataset(1);

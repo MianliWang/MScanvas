@@ -767,6 +767,14 @@ load the complete table, and that drawing the rows it did load would be a
 chromatogram of part of the run presented as the whole of it. **No partial trace
 is ever drawn.**
 
+*Owner decision, 2026-11-03 (R-2), not built:* Rust sends the chromatogram from its
+retained rows, so every run length gets a TIC/BPC, a run above 100,000 spectra
+included, and the scan list stays a prefix. It takes effect when lane
+`viewer-n-b2-rework-154` (N-B2) merges, and that lane writes what landed; until then
+this section holds
+([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03),
+[ADR 0056](0056-project-owned-mzml-reader-for-viewing.md#consequences)).
+
 The scan table beside it says, in the same situation, that Previous scan and Next
 scan stop at the end of the loaded rows, which is not the end of the run.
 

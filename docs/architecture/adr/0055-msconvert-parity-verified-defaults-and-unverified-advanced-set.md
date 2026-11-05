@@ -79,6 +79,9 @@ and [ADR 0047](0047-first-windows-beta-scope-and-implementation-route.md#owner-d
 That reverses the evidence-bound rule for the advanced set. This ADR states
 how. It is about options, not builds: which builds may convert a vendor family
 is unchanged, and is left as an [open question](#open-questions-for-the-owner).
+*2026-11-04, a note:* the heading that link names left when the owner accepted this
+record (`6d5ef4fc`). The question is answered under
+[Owner decision on the build gate, 2026-10-29](#owner-decision-on-the-build-gate-2026-10-29).
 
 **The distance to parity** is the
 [option inventory](../../spikes/MSCONVERT_OPTION_INVENTORY.md). The help lists:
@@ -263,6 +266,12 @@ default.
 >   (over 81 characters) refuses the figure, and a row that has left by the claim
 >   or during a copy refuses it as stale, rather than drawing it unlabelled. A
 >   reopened `.msfigure`, which no command reaches yet, carries no note.
+>   *Owner decision, 2026-11-04 (P201-BAND, option `accept`):* accepted as built. At
+>   a window width of 1051 to about 1095 px with both side panels open, the tag beside
+>   the title is cut, reading "Not verified by M…" at 1051 px. Accepted cost: at that
+>   width the title does not hold the whole sentence, so it is read on the row, in
+>   Details or by resting the pointer on the tag
+>   ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 > - (b) The session keeps the label of every labelled output it finalized, by
 >   volume serial and file ID, for the life of the process. Add files… and Add
 >   mzML folder… consult it, and a reference registered from such a row records
@@ -293,6 +302,11 @@ default.
 >   it, not `null`. It still ends with the process. The owner has not been asked.*
 >   *2026-11-04: asked, with the first of these notes (P201-SCOPE), not yet
 >   answered; still not an owner decision.*
+>   *Owner decision, 2026-11-04 (P201-SCOPE, option `accept`):* the wider scope of
+>   this note and of the first of these notes is accepted as built. The costs the page
+>   names: it is wider than the scope of 2026-10-31, so it is written here; and a
+>   reused file ID can label a file that needs no label
+>   ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 > - (c) `Describe again` is offered only after a failure Rust calls retryable.
 >
 > **Owner decision, 2026-11-03:** asked whether to draw "Not verified by MSCanvas"
@@ -453,6 +467,21 @@ a different algorithm fails. `-g` waits for a dependency decision, because the
 checks would have to read through gzip and the conversion crate has no gzip
 reader.
 
+*Owner decision, 2026-11-03 (C-1.1), answered, not built:* `-g` goes in the advanced
+settings, labelled "not verified". The output check reads through gzip with the
+existing `flate2`, so validation does not relax and no dependency is new. It waits for
+the advanced editor (N-C7, after N-04)
+([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+
+*Owner decision, 2026-11-03 (C-1.2), answered, not built:* a `.mzML.gz` output cannot
+be added in the first version, and Open folder works. The reader is untouched, so
+viewing it means decompressing it and adding it by hand.
+
+*Owner decision, 2026-11-03 (V-5), answered, not built:* after a confirmation, a
+plot's current RT range fills the chain's RT step; the summary marks it as dropping
+scans, and the item carries this record's label. A file with an undeclared RT unit can
+only be refused. It waits for the advanced editor (N-C5, after N-04).
+
 > **Implemented 2026-10-30 on `be/integrate`.** No check runs, and nothing is
 > finalized, while the run's owned process tree is not confirmed gone, even
 > after exit 0: the attempt settles as `backend_not_terminated`, or
@@ -532,6 +561,20 @@ intermediate, that format blocks both until it can.
    and prediction among them, and the terms the mzMLb writer leaves: with zlib,
    a predicted array carries both a prediction term and the zlib term
    (`IO.cpp:1939-1952`).
+
+   *Owner decision, 2026-11-03 (C-2), answered, not built:* a deep check of the final
+   file is added through an HDF5 reader, comparing it with the intermediate. N-C2
+   ships with the label meanwhile
+   ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+
+   *Owner decision, 2026-11-03 (CK-8), answered, not built:* it reads every data block
+   and compares counts and IDs, mzMLb first, with Fletcher-32 on the way. It compares
+   no values, so the label changes only in part. No answer approves its dependency,
+   `hdf5-reader` 0.12.1 (11 crates): it is asked for when lane `viewer-c2-hdf5-check`
+   starts. *2026-11-04 (CK-8-WINDOW, option `bounded`):* one bounded ProteoWizard
+   window, a public mzML converted to the two formats, asked for when the deep check
+   reaches that step
+   ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 4. **The intermediates are discarded** with the staging area and never
    finalized.
 
@@ -599,6 +642,12 @@ previewable**, because the viewer reads mzML only, and the queue item says so.
 > - **Not built:**
 >   - mzXML stays refused (`intent_not_checkable`). Its comparison exists in
 >     the output inspectors but is not wired into a run;
+>     *Owner decision, 2026-11-03 (XML-1), answered, not built:* wire the comparison
+>     and open mzXML as an advanced format (N-C2). It compares the spectrum count with
+>     the intermediate, not values or chromatograms, and is labelled a legacy format;
+>     it cannot be added to the workspace or previewed, a multi-source file is refused,
+>     and it has not run on a real `msconvert`
+>     ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03));
 >   - a SCIEX output set's 1 + N runs;
 >   - the desktop, which still refuses every format but mzML before planning.
 >     The queue's output name and the not-adoptable label are interface work.
@@ -873,6 +922,8 @@ Each later in its own slice:
   >   so within the process neither records `null` for a labelled output, or for an
   >   object a reference brought a label to. A later session's restored row is
   >   decision 3 (b)'s note.*
+  >   *Owner decision, 2026-11-04 (P201-SCOPE, option `accept`):* accepted as built;
+  >   see decision 3 (b)'s note.
   > - ~~**A schema-4 document is refused as `unsupportedVersion`**, like every
   >   other version, and nothing migrates. Beta 1's projects therefore do not
   >   open in this build.~~ Replaced the same day by the read-and-upgrade

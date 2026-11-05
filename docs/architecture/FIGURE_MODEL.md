@@ -209,7 +209,7 @@ and the axis changes are the renderer's alone.
 | Tick labels | the step's own decimals (`0.0, 0.5, 1.0`); exponents (`2e6`, `1e-20`) from 10^6 up, below 10^-3, or past twelve characters. Where no exact tick exists -- a zero span, or a span narrow beside its magnitude -- the axis falls back to the end labels it always had |
 | Ticks on screen | the same rule in `plotAxes.ts` `niceTicks`, with both sides held to `fixtures/plot-ticks/nice-ticks.json`, and the same end labels where no tick exists. It has no collision check, so a figure can keep fewer ticks than the screen where its labels would collide or leave the page; on screen, an x label that would leave its frame moves back inside it |
 | Value axis | labels outside the plotting area, right-aligned against outward ticks; light gridlines at the ticks, in the axis colour at 18% opacity; 5% headroom past the data, never across zero. A range that excludes zero labels its floor, so it cannot read as zero-based |
-| Domain axis | labels centred under outward ticks; the data's own ends are not labelled |
+| Domain axis | labels centred under outward ticks; the data's own ends are not labelled. Each end of the domain is drawn 8 figure units inside the frame; see below |
 | Axis titles | `label (unit)` for a reported unit, `label (unit not reported)` for an unreported one, the bare label for a dimensionless one. No unit is ever inferred |
 | Edited titles | `FigureSpec::x_axis_title` / `y_axis_title`, `None` meaning the default; an edited title replaces the label and never the unit state. One title for panels whose axes differ (the linked figure's retention time and m/z) is refused as `AxisTitleAmbiguous`. The figure title is the existing `title`. At the DTO layer an empty field means the default (`export::edited_text`) |
 | Printed size | `FigureSize::printed(PrintSize { width_mm, height_mm, text_pt, line_pt })`; presets `SINGLE_COLUMN_WIDTH_MM` = 85 and `DOUBLE_COLUMN_WIDTH_MM` = 175; edges 20–600 mm, text 4–24 pt (default 7), lines 0.1–4 pt (default 0.75) |
@@ -229,6 +229,33 @@ axis titles for a multi-panel figure are not representable; tick labels use
 The three golden documents were regenerated for this change: they are the old
 figures with the new axes, titles and text, and their descriptions are
 byte-identical.
+
+## One geometry with the screen
+
+A mark at the end of a run sat on the frame, and a selected scan at the first
+retention time shared the value axis. Since 2026-11-04 the figure and both
+screen plots draw the domain's two ends one inset inside the frame.
+
+| | |
+| --- | --- |
+| The inset | `DOMAIN_INSET`: 8 figure units in `svg.rs`, 8 viewBox units in `plotAxes.ts`, past each end. About as large as the largest mark drawn at a position (as built 2026-11-04, not an owner decision) |
+| What stays on the frame | the axis rule, the zero line, the gridlines and the captions (as built 2026-11-04, not an owner decision). On the screen's spectrum the zero line runs 8 units past the frame at each end, as it did before this |
+| What moves with the band | every position on the domain axis: marks, ticks, marker rules and intervals. The legend and a marker label also end 4 units short of the band's end, so a rule at the last position stands beside them and not through them. A label too wide for that keeps the frame. A rule near the end but not at it can still cross its own label or the legend's words, as it could before the inset (as built 2026-11-04, not an owner decision) |
+| Which ticks | fitted to the band, so the inset can change which round ticks fit, and so what a tick says: `1000..1000.1` at 1200 wide reads `1000.00` to `1000.10` in six ticks where it read `1000.0` and `1000.1`, and `1e6..3.5e6` at 208 wide reads `1e6`, `2e6`, `3e6` where it read six (as built 2026-11-04, not an owner decision) |
+| The domain | still the data's. No tick lands in the inset, the inset adds no label to the ends and the description states the same range. A domain with no width is drawn down the middle (as built 2026-11-04, not an owner decision) |
+| Pointer to position | a place in the band reads back through `bandFraction` and `positionAt`, the inverse of `xAt`. A place in the inset is the end beside it, that end's own number, and a range commit never reaches past the run. A drag across a whole run keeps its span, so it can end a unit in the last place short of the run, as it could before the inset (as built 2026-11-04, not an owner decision) |
+| Off the range | the screen hides a rule and its label by whether the place is in the band, since the frame's clip no longer hides what lands in the inset. The figure draws no marker outside its window (as built 2026-11-04, not an owner decision) |
+| Headroom | `withHeadroom` and `value_axis`, 5% past the data and never across zero, and the ticks over that axis. One rule, including its one edge: no headroom at all where it, or the distance it leaves between the ends, would pass the largest number there is (as built 2026-11-04, not an owner decision) |
+| One table | `fixtures/plot-ticks/axis-geometry.json`, written by `svg.rs` and read by `plotAxes.test.ts`, holds the inset, the headroom and each side's answers to the last bit (as built 2026-11-04, not an owner decision) |
+| Schema | unchanged. Geometry is the renderer's, so a `FigureSpec` is the same value, a saved figure's data digest does not move and its pinned `.msfigure` is byte-identical. Reopening one draws it with the inset (as built 2026-11-04, not an owner decision) |
+
+Every exported SVG and PNG changed by this inset, and every golden document with
+it. No colour or height changed: the export already had this headroom. A tick's
+words can change where the band changes which ticks fit, though no golden's did.
+
+Known difference: a value range with no width, where every drawn value is zero,
+puts the zero line in the middle of a figure's panel and at the foot of a screen
+plot (as built 2026-11-04, not an owner decision).
 
 ## The source note — schema 5
 

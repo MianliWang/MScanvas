@@ -212,6 +212,10 @@ is rather than removed in a slice that is about something else.
   > refused, because the open still runs `msaccess`. Parallel conversion would
   > be the first exception to this rule; it waits for ADR 0057's throughput
   > measurement and its own amendment of this paragraph.
+
+  > *Owner decision, 2026-11-03 (R-3), not built:* allowed once the open runs no
+  > process, subject to the BPI match (HR-1.6). The refusal stands until then; see
+  > [ADR 0057 decision 2](0057-conversion-capacity-and-viewing-during-conversion.md#2-opening-a-new-preview-during-a-conversion-stays-refused).
 - The three operations of one open action read the file separately, and
   combining results from two generations of it would describe an acquisition
   that never existed. The file's length and modification time are therefore

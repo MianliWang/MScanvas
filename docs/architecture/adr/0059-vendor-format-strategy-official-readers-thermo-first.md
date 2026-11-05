@@ -9,6 +9,8 @@ Related: [0002](0002-external-proteowizard.md),
 [0055](0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md),
 [0056](0056-project-owned-mzml-reader-for-viewing.md);
 ADR 0051 (proposed in PR #155).
+*2026-11-04, a status:* PR #155 is closed as superseded, with its branch kept, and ADR
+0051 is not on `main`. N-S3 reworks that work, and it is not built.
 Evidence: a research report of 2026-10-29 on vendor readers, their licences
 and the law on reverse engineering (written for the owner, not committed;
 summarized below with its public sources);
@@ -223,6 +225,7 @@ The Thermo work the owner selected on 2026-10-30
   destination and never overwriting, then opens the result. It is to be
   designed and implemented later.
 - **Folder and drop** propose Thermo RAW (ADR 0051, PR #155).
+  *2026-11-04, a status:* not built. PR #155 is closed as superseded, and N-S3 reworks it.
 
 **Later options, not decided here:**
 
