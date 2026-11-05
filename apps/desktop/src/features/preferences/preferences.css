@@ -4,7 +4,7 @@
   position: fixed;
   z-index: 100;
   inset: 0;
-  background: rgb(23 32 51 / 0.31);
+  background: rgb(18 30 48 / 0.32);
 }
 
 /* v5.11's modal chrome: a fixed head and foot, and a body that owns the
@@ -24,7 +24,7 @@
   border-radius: 10px;
   background: var(--color-surface);
   color: var(--color-text-primary);
-  box-shadow: 0 24px 80px rgb(23 32 51 / 0.19);
+  box-shadow: 0 16px 60px rgb(18 36 58 / 0.19);
 }
 
 .settings-dialog-header {
@@ -45,7 +45,8 @@
 .settings-section-title { margin: 0 0 4px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
 .settings-fields > .settings-section-title:not(:first-child) { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--color-border); }
 /* v5.11 settings rows: label left, control right, a divider between rows. */
-.settings-fields > .setting-field { padding: 12px 0; }
+.settings-fields > .setting-field { padding: 15px 0; }
+.settings-fields .setting-field-label { font-size: 14px; }
 .settings-fields > .setting-field + .setting-field { border-top: 1px solid var(--color-border); }
 .settings-fields .setting-field-copy { gap: 2px; }
 .setting-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; }
@@ -70,7 +71,8 @@
 .settings-dialog-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 /* Reset defaults' reason, on its row (B4). */
 .settings-reset-reason { color: var(--color-text-secondary); font-size: 12px; }
-.settings-resource-error { margin: 16px 0 0; padding: 12px; border: 1px solid var(--color-danger); border-radius: 6px; font-size: 13px; line-height: 1.5; }
+/* v5.11's .note.error. */
+.settings-resource-error { margin: 16px 0 0; padding: 10px 12px; border: 1px solid #e8bbb5; border-radius: var(--radius-sm); background: var(--color-danger-soft); color: var(--color-danger); font-size: 12px; line-height: 1.5; }
 .settings-resource-error p { margin: 0 0 8px; }
 .spectrum-figure-settings .setting-field { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .spectrum-figure-settings .setting-field-copy { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 4px; }
@@ -103,21 +105,22 @@
 .dataset-roster-panel[data-density] .dataset-roster-list { min-height: 88px; }
 .dataset-roster-panel[data-density="compact"] .dataset-roster-list { min-height: 64px; }
 
-/* Storage states. A problem that needs a decision is a bordered block with its
-   own actions; a fact about this session is quieter, because nothing is wrong. */
+/* Storage states, v5.11's .note. A problem that needs a decision is an amber note
+   with its own actions; a fact about this session is quieter, because nothing is
+   wrong. */
 .settings-storage-problem,
 .settings-storage-note {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin: 16px 0 0;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
   line-height: 1.5;
 }
-.settings-storage-problem { border-color: #d9a441; background: #fdf7ec; }
+.settings-storage-problem { border-color: #ebd4a5; background: var(--color-warning-soft); }
 .settings-storage-note { background: var(--color-surface-subtle); color: var(--color-text-secondary); }
 .settings-storage-problem p, .settings-storage-note p { margin: 0; overflow-wrap: anywhere; }
 /* Wraps rather than shrinking, so a long Chinese or English action label keeps

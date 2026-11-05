@@ -53,6 +53,9 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **Conversion and Settings have the Workbench's look.** The same heads, segmented
+  controls, tags and notes, and no behaviour changes. A file name in the plan or the
+  queue now takes another line where it was cut with no ellipsis at 960x640.
 - **Convert this file… converts this file.** The Conversion page holds that one
   file, named on a third scope button, and your checked rows stay as they were,
   before and after the run. **Checked rows** brings them back. **Open in Conversion**

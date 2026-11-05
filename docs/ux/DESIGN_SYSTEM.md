@@ -450,6 +450,36 @@ uses its value, and elsewhere v5.11's final value:
 - **The inspected row.** Told by its pressed Details. It does not take the
   roster's bar and fill.
 
+### Conversion and Settings in the v5.11 look (2026-11-04): interim, not owner decisions
+
+Draft PR `ui/fe2-conversion-settings` ports both stylesheets, so the line above,
+"reach them through the shell and tokens until those screens are ported", no longer
+describes Conversion or Settings once it lands. The owner has not seen them and none of these is an owner decision. They
+are the answers the draft ships with, for the owner to change, by the rule the
+Project block states:
+
+- **Insets and heads.** 16 px in from the card, and a 36 px head with a 14 px title
+  at 650 over the hairline, as on Project. The rail's title sits on the same line.
+- **Rail.** On the card's white, as Details is, in place of a tint. Its width stays
+  300 to 360 px, which `narrowLayout.test.tsx` holds, against v5.11's 292 px.
+- **Segments.** v5.11's `.seg`, as Settings draws it, 32 px tall. A refused option
+  keeps its strike-through. A chosen scope, the one file included, is lifted in
+  white, and the one file keeps a row of its own under the pair.
+- **Tiles and labels.** v5.11's `.radio-option` edge and fill, at the tile's 5 by
+  10 px. Labels are Project's 13 px at 550, in ink. The left label column stays.
+- **Tags.** `.project-tag`'s values. The Lossy tag is v5.11's `.tag.amber`. The
+  not-verified tag keeps its own look, as on Project.
+- **Notices.** The shell's `.notice`, so each one has its tinted edge again.
+- **Names.** Short of room an output takes a line of its own, and a name with no
+  middle wraps, so no name is cut with no ellipsis (C11). A settled row can then
+  take two lines while the queue runs.
+- **History rows.** They stay bordered buttons, where v5.11's `.history-item` is a
+  hairline row, and the chosen one takes the fill and 3 px edge of v5.11's selected row.
+- **Settings.** v5.11's `.setting-row` at 15 px with a 14 px label, its scrim and
+  shadow, and its notes for problems. One column in place of v5.11's left navigation,
+  and the diagnostics box stays 200 px (owner, 2026-11-04, P202-BOX).
+- **Export figure.** Not changed. The dialog already has v5.11's modal chrome.
+
 ## M6.6 destination and conflict surface
 
 This is a focused continuation of the accepted v5.11 organization using the
