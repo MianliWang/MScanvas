@@ -73,3 +73,5 @@ satisfies the packaging gate below. See the
 ## Packaging gate
 
 Before bundling a Python environment, evaluate download size, Windows installation, security updates, licenses, offline behavior and support cost. A user-managed environment can be an early development route but not an unexplained consumer requirement.
+
+*2026-11-05:* [ADR 0066](adr/0066-analysis-runtime-release.md), accepted by the owner on that date and no wider than the owner's answers, answers this gate for the analysis runtime. It is not built, and it approves no shipping: its [list of what still blocks a release](adr/0066-analysis-runtime-release.md#what-still-blocks-a-release) stays open.

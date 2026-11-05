@@ -955,6 +955,19 @@ None can be delivered by engineering alone; each waits for one input.
 - *Answered 2026-10-30* (section 2): the vendor format strategy (ADR 0059),
   the mzML version rule, the remembered ProteoWizard folder, the `tiff`
   dependency, one-click view RAW and Thermo vendor centroiding.
+- Releasing the analysis runtime (CPython and pyOpenMS), which every pyOpenMS
+  function waits on: [ADR 0066](../architecture/adr/0066-analysis-runtime-release.md),
+  proposed 2026-10-30, recommends a separate per-machine runtime package, a
+  slimmed runtime (measured on today's cp313 runtime: 1,790 files, 150 MB;
+  ANA-004 within 1e-6 relative of the full runtime on one synthetic fixture
+  and two targets), CPython 3.14 in place of the pinned 3.13.15 (its
+  OpenSSL 3.0 is unsupported) and an AppContainer measurement. Owner decision
+  B-1 (2026-10-30) answered its questions 1, 2, 6, 8 and 9; the answers of
+  2026-11-03 (RT-1, B-2, B-3) took 3, 4, 5, 7 and 10. *Accepted 2026-11-05,* by the owner and no wider than the owner's answers: the
+  [3.6.0 probe](../spikes/RUNTIME_360_PROBE.md) and
+  LIB-1 name pyOpenMS 3.6.0 without Qt on CPython 3.14 (measured in the shape that
+  would ship: 621 files, 131 MB). Not built. Shipping (ask 3) stays open, and the
+  record lists what still blocks a release.
 - *Answered 2026-11-03:* the study model for cross-sample analysis:
   [ADR 0067](../architecture/adr/0067-study-model-for-cross-sample-analysis.md)
   is accepted with the owner's answers to its ten questions. It supersedes ADR
