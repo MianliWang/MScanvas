@@ -1411,5 +1411,9 @@ this record's status answers none of it.
   the code, for a worker's Job and environment only. ProteoWizard's Jobs, the adapter, the
   recipe, the runtime pin and every stored result are as they were, and no release user has
   them until a runtime ships. One limit comes with them: a host that is itself in a Job with
-  UI restrictions cannot start a worker, which is the typed `WorkerLaunchFailed` and never a
-  run without them (`ERROR_NOT_SUPPORTED`, measured on Windows build 26300).
+  UI restrictions cannot start a worker. The run fails as `WorkerLaunchFailed`, or as
+  `WorkerNotAccountedFor` if the suspended worker was not reclaimed, and is never retried
+  without them (`ERROR_NOT_SUPPORTED`, measured on Windows builds 26100 in CI and 26300).
+  The documentation of `AssignProcessToJobObject` says a Job with UI restrictions cannot
+  take a process that is already in any Job. On a build that follows it, a host in any Job
+  would fail every worker the same way; that is unmeasured.

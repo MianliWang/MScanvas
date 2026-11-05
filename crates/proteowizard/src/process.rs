@@ -1738,9 +1738,9 @@ mod windows_job {
         /// All of it is set before the child joins, and any failure is this
         /// function's failure: a worker never runs in a lesser Job. That covers
         /// a host already in a Job with UI restrictions, where a second such Job
-        /// is refused with `ERROR_NOT_SUPPORTED` (measured on Windows build
-        /// 26300, which does nest it under a plain Job, though the documentation
-        /// of `AssignProcessToJobObject` rules that out too).
+        /// is refused with `ERROR_NOT_SUPPORTED` (measured on Windows builds
+        /// 26100 and 26300, which do nest it under a plain Job, though the
+        /// documentation of `AssignProcessToJobObject` rules that out too).
         pub(super) fn assign_with(
             child: &Child,
             limits: Option<&crate::WorkerLimits>,
