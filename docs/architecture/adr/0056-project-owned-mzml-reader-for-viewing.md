@@ -530,8 +530,8 @@ Both need a follow-up decision. It must:
 >   judged.
 > - **An unreadable polarity cannot come from a file.** The reader never reads the
 >   polarity term's value, so only the mapping is tested for that state.
-> - **The head.** Its facts run MS level, representation, polarity, charge, "precursor
->   1 of N" and size, and may take a second line inside its 36 px at every width,
+> - **The head.** Its facts run MS level, representation, charge, "precursor 1 of N",
+>   polarity and size, and may take a second line inside its 36 px at every width,
 >   which only 1050 px and below allowed. Both unreported share one fact. At 960x640
 >   in `en`, a file stating none of the three says polarity and charge only in
 >   Details, because the head keeps the representation (ADR 0029).
