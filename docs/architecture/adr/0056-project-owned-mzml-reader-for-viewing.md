@@ -520,8 +520,8 @@ Both need a follow-up decision. It must:
 >
 > - **Whose charge.** A spectrum's `charge` is its first precursor's first selected
 >   ion, the rule the row's `precursor_mz` follows. Where a spectrum has more than one
->   precursor, the head and Details say "precursor 1 of N". The other precursors'
->   charges are not shown.
+>   precursor, Details says "precursor 1 of N", and so does the head beside a stated
+>   charge. The other precursors' charges are not shown.
 > - **One `null`.** Not stated, stated two ways and a charge that is not an integer
 >   all reach the webview as `null`, shown as not reported, with no reason given. An
 >   MS1, having no precursor, says charge not reported.
