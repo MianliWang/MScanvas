@@ -850,8 +850,9 @@ button:disabled,
 .conversion-scope.conversion-segments { flex-direction: column; align-items: stretch; }
 .conversion-scope > legend { float: none; margin: 0 0 6px; color: var(--color-text-primary); font-size: 12px; font-weight: 600; line-height: 1.5; }
 .conversion-scope .conversion-segments-track { display: flex; }
-/* Narrower than the other tracks' options, so the longer one chosen, in its heavier
-   weight, stays on one line at the rail's 300 px and pressing it moves nothing. */
+/* Narrower than the other tracks' options. The longer one chosen, in its heavier
+   weight, stays on one line down to a rail of about 315 px; at its 300 px floor the
+   English "All workspace rows" wraps when chosen, and what is below moves 8 px. */
 .conversion-scope .conversion-segment { flex: 1 1 0; min-width: 0; padding-inline: 6px; justify-content: center; text-align: center; white-space: normal; }
 /* The one file (N-C3) is a name and maybe its context, too long for a third of
    the rail: a third option on a row of its own under the pair, in the same

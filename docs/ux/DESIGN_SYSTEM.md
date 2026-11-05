@@ -472,10 +472,14 @@ Project block states:
   not-verified tag keeps its own look, as on Project.
 - **Notices.** The shell's `.notice`, so each one has its tinted edge again.
 - **Names.** Short of room an output takes a line of its own, and a name
-  `MiddleEllipsis` did not split wraps whole, at any width, mid-word if it must, so no
-  name is cut with no ellipsis (C11). That includes the plain names beside a refused
-  plan, long ones too, which `main` ends with an ellipsis that takes the extension. A
-  settled row can then take two lines while the queue runs.
+  `MiddleEllipsis` did not split wraps whole, at any width, mid-word if it must. That
+  includes the plain names beside a refused plan, long ones too, which `main` ends with
+  an ellipsis that takes the extension. A settled row can then take two lines while the
+  queue runs. *As built 2026-11-05, not an owner decision:* where a queue column is
+  narrower than a `MiddleEllipsis` name's tail, as with a long Chinese name, both side
+  panels open and a window about 1050 to 1130 px wide, the tail is cut with its
+  extension and no ellipsis (C11 does not hold there). `main` cuts far more in that
+  state.
 - **Progress.** v5.11's `.progress-track`, a 5 px bar on `#e6edf7`. It is one rule, so
   the view bar on the Workbench went from 8 px to 5 px with it. That bar merged in #203
   on 2026-11-04, after the Workbench's acceptance, and no accepted text fixes its height.

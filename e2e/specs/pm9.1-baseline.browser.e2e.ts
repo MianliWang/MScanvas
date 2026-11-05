@@ -2506,7 +2506,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
               rail: style(".conversion-side").backgroundColor,
               field: type(".conversion-form-label"),
               track: [track.paddingTop, track.borderTopColor, track.backgroundColor],
-              // One line with the longer option chosen, so pressing it moves nothing below.
+              // One line with the longer option chosen at these two sizes, so pressing it moves nothing below; at the rail's 300 px floor the English option wraps.
               scope: Math.round(document.querySelector(".conversion-scope .conversion-segments-track")!.getBoundingClientRect().height),
               chosen: [chosen.backgroundColor, chosen.color, chosen.fontWeight],
               // An unchosen option has the same ink, so ink says nothing here.
