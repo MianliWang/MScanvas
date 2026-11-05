@@ -10,6 +10,8 @@ is decided and not built yet (decision 1). ADR 0070's table of records keeps its
 accepted row, and a dated note under it says this record is Accepted. ADR
 0057's amendment (MAP-1.7) and ADR 0056's widening (MAP-1.9) come after it, in the
 second records PR.
+*2026-11-05:* #226 builds MAP-1.9 in the library (the note in decision 1). No command,
+screen or export uses it, so no person sees the count yet.
 Related: [0005](0005-mzml-preview-boundary.md),
 [0028](0028-figure-renderer-and-semantic-specification.md),
 [0030](0030-png-copy-plot-and-figure-settings.md),
@@ -66,6 +68,32 @@ its table row reports each spectrum's polarity. It states no scan type yet.
     spectrum that declares `zoom scan` (MS:1000497) or `SIM spectrum`
     (MS:1000582). No width threshold is set, and a numeric definition of narrow
     is not decided.
+  - *2026-11-05, #226, built in the library.* An MS1 spectrum that declares either
+    term is on no map: the pass does not read it, and progress does not count it.
+    `RtMzMap::narrow_scans_left_out` counts those of the map's polarity and
+    representation inside the view's window, and `narrow_ms1_scans` those of the
+    whole file. So the LTQ Velos conversion's profile map is now of 15 spectra, not
+    the 29 that decision 3 and the rerun of 2026-11-04 give, which counted the 14
+    zoom scans. MAP-1.9 says they stay out and their count is stated. How the
+    library does it, below, is as built, not an owner decision:
+    - The term is read on the spectrum, on its scan, or through a param group of
+      either, which is wider than polarity's rule (ADR 0056, its note of this date).
+    - The maps and their first views are of the spectra left in, so a zoom scan's
+      window sets no extent. The LTQ Velos profile map's lowest m/z moves from
+      297.02 to 300.08.
+    - The file-wide checks still cover a narrow scan: MAP-1.6 and MAP-1.8 speak of
+      "only some MS1 spectra", and a narrow scan is one. A narrow scan that alone
+      breaks a rule refuses the file.
+    - A file whose MS1 spectra are all narrow has no map
+      (`only_narrow_ms1_spectra`, decision 5). A polarity and representation held
+      only by narrow scans have no map either, and a request for one is refused
+      (`map_not_in_table`). `narrow_ms1_scans` still counts them, so each MS1 spectrum of
+      a table with maps is in one extent's `spectra` or in that count.
+    - A view's count is of its window, as `spectra` is. A narrow scan beyond the
+      window is in the file's count, not the view's.
+    - A narrow scan that states neither term stays on the map, as the terms are all
+      that is read. The public files with MS1 show no such scan (Evidence), and the
+      reader cannot see one.
 - **Each cell holds the greatest stored intensity** (MAP-1.2) of the points that
   fall in it (maximum, not sum). The caption, the legend and the data document say
   "greatest intensity per cell". Why not a sum: see decision 3.
@@ -251,6 +279,7 @@ Nothing falls back to `msaccess` or another reader (2026-11-04, ADR 0070 decisio
 | An axis with no bins, or more than 2^21 cells | `map_bins_invalid` |
 | The allocator refuses the raster | `allocation_refused` |
 | The table has no MS1 spectrum | `no_ms1_spectra` |
+| Every MS1 spectrum declares a narrow scan (as built 2026-11-05, not an owner decision: `no_ms1_spectra` would say they are not there) | `only_narrow_ms1_spectra` |
 | MS1 retention-time units differ | `mixed_retention_time_units` |
 | Only some MS1 spectra declare a polarity (MAP-1.6) | `partly_declared_polarity` |
 | Only some MS1 spectra declare a representation (MAP-1.8) | `partly_declared_representation` |
@@ -362,6 +391,8 @@ no sum, XIC, summed spectrum, peak picking or feature detection.
    2026-11-04, because #207 edits the reader: a small field on the table row, no array read
    for it, and no width threshold (decision 1). Not in R-1's scope; its effort
    is not estimated.
+   *2026-11-05:* #226 is that change, on that branch. Steps 2 and 3 still owe the
+   count on screen and in the exports (decision 7).
 
 ## Evidence
 
@@ -452,6 +483,45 @@ zoomed: 2 spectra; 2044 points binned, 18855 outside m/z; 2044 of 2097152 cells 
   change: positive profile, 2,748 spectra, 24,766,275 points, 726,465 cells;
   positive centroid (`TE1`), 2,748 spectra, 1,724,215 points, 670,590 cells.
 
+### Rerun 2026-11-05: narrow scans left out
+
+Release build of the example at commit `cd698276`, on the same three files, whose
+SHA-256 were read again and match the digests above. These are counts, not timings:
+the times they print are not a measurement. No ProteoWizard program ran. The table and
+map lines of the LTQ Velos file's console output, verbatim; the example's four lines
+on the largest spectrum's m/z spacing, which follow them, are left out:
+
+```text
+table: 85 rows, 14 narrow MS1 scans on no map, 4 ms
+map MapKind { polarity: Some(Positive), representation: Centroid }: 15 MS1 spectra, retention time (0.002538333333, 0.266686666667) Minute, m/z (400.500793457031, 1399.789672851563)
+full: 15 spectra, 0 narrow scans left out; 13385 points binned, 0 outside m/z; 13385 of 2097152 cells hold a value; 5 ms
+zoomed: 1 spectra, 0 narrow scans left out; 100 points binned, 867 outside m/z; 100 of 2097152 cells hold a value; 3 ms
+map MapKind { polarity: Some(Positive), representation: Profile }: 15 MS1 spectra, retention time (0.004721666667, 0.268703333333) Minute, m/z (300.083334721625, 1999.94498642534)
+full: 15 spectra, 14 narrow scans left out; 305955 points binned, 30 outside m/z; 30720 of 2097152 cells hold a value; 25 ms
+zoomed: 1 spectra, 1 narrow scans left out; 2039 points binned, 18360 outside m/z; 2039 of 2097152 cells hold a value; 5 ms
+```
+
+- The centroid map's counts did not change. The profile map lost the 14 zoom scans'
+  7,000 points: 312,969 binned and 16 outside on 2026-11-04 is 312,985 points, and
+  305,955 and 30 now is 305,985.
+- Points outside went from 16 to 30 because the range moved. An independent count, a
+  read-only Python standard-library decoder over the same file that takes the range
+  above and reads no MSCanvas code, gives 15 full and 14 zoom profile spectra, 7,000
+  zoom points, and over the full scans 305,955 points inside, 15 below and 15 above:
+  the stated range misses the end points of the full scans by rounding.
+- The Orbitrap files have no narrow scan, and their full-extent counts did not change:
+  positive profile, 2,748 spectra, 24,766,275 points, 726,465 cells; positive centroid
+  (`TE1`), 2,748 spectra, 1,724,215 points, 670,590 cells.
+- No undeclared narrow scan was found. A read-only script read the filter string
+  (MS:1000512) of each MS1 spectrum beside its terms, in the 16 local public files
+  where it found MS1 spectra: the LTQ Velos conversions, the PXD081190 and `TE`
+  conversions, the `TQ` conversions, `mzdata-small` and MTBLS1861's
+  `IROA_retest_pos_Mix23`. Every spectrum that states neither term has a `Full ms`
+  filter, and all 14 `d Z ms` per LTQ Velos file state `zoom scan`, on the spectrum. This
+  reads the filter for evidence only; the reader stays away from it (R-1-ANALYZER).
+- `SIM spectrum` and a term inside `<scan>` are tested on synthetic documents only:
+  no local file holds either.
+
 ## Alternatives
 
 - **Sum per cell.** It counts how the spectra were stored as much as the
@@ -496,6 +566,10 @@ zoomed: 2 spectra; 2044 points binned, 18855 outside m/z; 2044 of 2097152 cells 
 - Until `be/map-scan-type` lands, the library maps zoom or SIM scans with the
   full scans of their representation and states nothing about them, so MAP-1.9
   is not met yet. analysis-ms1-map waits for it.
+  *2026-11-05:* #226 meets it in the library. The figure and the data document still
+  have to state the count (analysis-ms1-map).
+- A file whose MS1 spectra all declare a narrow scan has no map (decision 1's note of
+  2026-11-05, as built, not an owner decision).
 - A zoom on m/z alone costs as much as the window's full pass.
 - The figure needs a plot-spec schema step (slice 3).
 
@@ -578,6 +652,12 @@ record does not state yet.
 | 9. Provenance | The result carries the map's polarity and representation, bounds, bins, units and counts of spectra and points. The pass resolves no operand, so the request is both as typed and as resolved. Spectra excluded: the other maps' counts, and the map's own beyond the window, from `ms1_extent`. Refused: none, because a refused spectrum refuses the map. Decision 9, step 2: the command's result also names the source, its generation and this record. Decision 7: both exports carry the same | The source, its generation and this record's name (slice 2); the count of narrow scans left out (`be/map-scan-type`); the exports (slice 3) |
 | 10. Export | Decision 7, through the shared specification and the existing no-overwrite export path, with a data document that carries item 9. Decision 2: only the raster crosses to the webview, never the arrays | All of it (slice 3) |
 | 11. Evidence | Evidence: time and memory on real files, release build, judged with no threshold set in advance. The tests' fixtures are hand-computed; `ltq_check.py` is an independent reference for the LTQ Velos counts it made | |
+
+*2026-11-05, #226, a reading, not an owner decision:* in the table, item 1's "Leaving
+narrow scans out" and item 9's "the count of narrow scans left out" are built in the
+library. Item 9's spectra excluded now also has `narrow_ms1_scans` for the whole file
+and `RtMzMap::narrow_scans_left_out` for the view. Stating them to a person stays with
+slices 2 and 3.
 
 ## Open questions for the owner
 
