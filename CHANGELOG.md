@@ -68,6 +68,11 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **Conversion and Settings have the Workbench's look.** The same heads, segmented
+  controls, tags and notes, and no behaviour changes. The progress bar is thinner,
+  here and on the Workbench while a RAW file opens. A file name in the plan or the queue
+  now takes another line where it was cut, and the list beside a refused plan shows
+  each name whole, breaking it mid-word if it must, where it lost its extension.
 - **A mark at the end of a run stands clear of the frame.** On screen and in
   every exported figure, each end of the x axis is drawn a small inset inside the
   plot's frame, so the first and last marks no longer sit on it and a selected
