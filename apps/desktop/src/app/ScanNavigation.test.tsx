@@ -402,6 +402,30 @@ describe("a spectrum on open (V-1)", () => {
     expect(selected()).toBe("1");
   });
 
+  it("holds another file's open until its read lands, as any spectrum read does", async () => {
+    let reply: () => void = () => undefined;
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: runOf([[1, 10], [1, 70]]),
+      spectrum: index => new Promise(resolve => { reply = () => { void spectrum(index).then(resolve); }; }) });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+    await waitFor(() => expect(result.current.backendBusy).toBe(false));
+    await act(async () => { result.current.activateDataset(selectedFile.handle); });
+    await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+    expect(result.current.previewBackendBusy).toBe(true);
+    let accepted = true;
+    act(() => { accepted = result.current.activateDataset(secondFile.handle); });
+    expect(accepted).toBe(false);
+    expect(api.openedHandles).toEqual([selectedFile.handle]);
+    await act(async () => { reply(); await Promise.resolve(); });
+    await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+    act(() => { accepted = result.current.activateDataset(secondFile.handle); });
+    expect(accepted).toBe(true);
+    await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle, secondFile.handle]));
+    await waitFor(() => expect(api.requestedSpectra).toEqual([1, 1]));
+    await act(async () => { reply(); await Promise.resolve(); });
+    await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+  });
+
   it("never takes the selection from a person coming back: their scan returns, not the apex", async () => {
     const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], spectrum,
       preview: () => Promise.resolve(runOf([[1, 10], [2, 5], [1, 70]])) });
