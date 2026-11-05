@@ -8,6 +8,7 @@ import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTra
 import { availableBackend, buildPreview, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, secondFile, selectedFile } from "../test/previewFixtures";
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { usePreviewWorkspace } from "../features/mzml-preview/usePreviewWorkspace";
+import { mzDomain } from "../features/mzml-preview/viewer/spectrumViewport";
 
 const en = UI_RESOURCES.en;
 const source = () => {
@@ -22,8 +23,8 @@ const source = () => {
 };
 const spectrum = async (index: number) => ({ outcome: "spectrum" as const, spectrum: { ...buildSpectrum(index, 12),
   mzLow: 100, mzHigh: 900, viewportDomain: { state: "admitted" as const, low: 100, high: 900 } } });
-async function mount() {
-  const api = createFakePreviewApi({ initialDatasets: [selectedFile], preview: source(), spectrum });
+async function mount(preview = source()) {
+  const api = createFakePreviewApi({ initialDatasets: [selectedFile], preview, spectrum });
   render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
     <PreviewApiProvider value={api}><App /></PreviewApiProvider>
   </WorkspaceDropTransportProvider>);
@@ -89,7 +90,7 @@ describe("go to scan N", () => {
 
 describe("the list following the chromatogram's range (V-2)", () => {
   const chromatogram = () => screen.getByRole("region", { name: "Chromatogram" });
-  const count = () => document.querySelector(".scan-result-count")?.textContent ?? "";
+  const count = () => document.querySelector(".scan-result-count:not(:empty)")?.textContent ?? "";
   const counted = (visible: number) => `${visible} matches / 8 loaded rows / 8 reported spectra`;
   async function setRange(low: string, high: string) {
     fireEvent.keyDown(within(chromatogram()).getByRole("button", { name: en.plotMoreExports }), { key: "Enter" });
@@ -145,6 +146,45 @@ describe("the list following the chromatogram's range (V-2)", () => {
     expect(search).toHaveValue("");
   });
 
+  it("moves the range to the scan without touching a filter that does not hide it", { timeout: 15_000 }, async () => {
+    await mount();
+    const search = screen.getByRole("searchbox", { name: en.scanSearch });
+    const level = screen.getByRole("combobox", { name: en.scanMsLevel });
+    fireEvent.change(search, { target: { value: "rare" } });
+    fireEvent.change(level, { target: { value: "2" } });
+    goTo("8");
+    await screen.findByRole("img", { name: /^Spectrum 7,/u });
+    await setRange("1", "3.5");
+    await waitFor(() => expect(shown()).toEqual([3]));
+    fireEvent.click(screen.getByRole("button", { name: en.scanRevealInRange }));
+    await waitFor(() => expect(shown()).toEqual([7]));
+    expect(search).toHaveValue("rare");
+    expect(level).toHaveValue("2");
+  });
+
+  it("calls a selected row with no scan number a spectrum, and writes a number as the Scan column does", { timeout: 15_000 }, async () => {
+    const run = source();
+    await mount({ ...run, spectrumTable: { ...run.spectrumTable, rows: run.spectrumTable.rows.map(row =>
+      ({ ...row, scanNumber: row.index === 5 ? null : row.index === 6 ? 1234 : row.scanNumber })) } });
+    const press = (index: number) => fireEvent.click(within(grid()).getAllByRole("row").find(row => row.getAttribute("data-source-index") === String(index))!);
+    press(5);
+    await screen.findByRole("img", { name: /^Spectrum 5,/u });
+    await setRange("1", "3");
+    await waitFor(() => expect(shown()).toEqual([1, 2, 3]));
+    expect(screen.getByText(en.scanSelectedSpectrumOutsideRange.replace("{{name}}", "5"))).toBeVisible();
+    expect(screen.queryByText(en.scanSelectedOutsideRange.replace("{{name}}", "5"))).toBeNull();
+    const search = screen.getByRole("searchbox", { name: en.scanSearch });
+    fireEvent.change(search, { target: { value: "raw-2" } });
+    expect(screen.getByText(en.scanSelectedSpectrumOutside.replace("{{name}}", "5"))).toBeVisible();
+    fireEvent.change(search, { target: { value: "" } });
+    fitAll();
+    await waitFor(() => expect(shown()).toContain(6));
+    press(6);
+    await screen.findByRole("img", { name: /^Spectrum 6,/u });
+    await setRange("1", "3");
+    expect(await screen.findByText(en.scanSelectedOutsideRange.replace("{{name}}", "1,234"))).toBeVisible();
+  });
+
   it("names the range when a narrow one holds no scan, with the rows still loaded", async () => {
     await mount();
     await setRange("2.2", "2.8");
@@ -182,9 +222,20 @@ describe("the list following the chromatogram's range (V-2)", () => {
   });
 });
 
+/** The same file each time it is read, except that every read renumbers it. */
+const renumberedOnEachRead = () => {
+  let reads = 0;
+  return () => {
+    reads += 1;
+    const run = buildPreview(400);
+    return Promise.resolve({ ...run, spectrumTable: { ...run.spectrumTable,
+      rows: run.spectrumTable.rows.map(row => ({ ...row, identifier: `${row.identifier} read=${reads}` })) } });
+  };
+};
+
 describe("each file as it was left (VW-51, VW-35)", () => {
-  async function mountTwo() {
-    const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(buildPreview(400)), spectrum });
+  async function mountTwo(preview = () => Promise.resolve(buildPreview(400))) {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview, spectrum });
     render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
       <PreviewApiProvider value={api}><App /></PreviewApiProvider>
     </WorkspaceDropTransportProvider>);
@@ -194,7 +245,7 @@ describe("each file as it was left (VW-51, VW-35)", () => {
   /** A press on the row highlights it, and Enter on the list opens the highlighted row. */
   async function open(api: ReturnType<typeof createFakePreviewApi>, name: string) {
     const opens = api.openedHandles.length;
-    fireEvent.click(screen.getByText(name));
+    fireEvent.click(within(screen.getByRole("treegrid")).getByText(name));
     fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
     await waitFor(() => expect(api.openedHandles.length).toBe(opens + 1));
     await screen.findByRole("grid", { name: en.scansTitle });
@@ -232,6 +283,25 @@ describe("each file as it was left (VW-51, VW-35)", () => {
     await open(api, secondFile.fileName);
     expect(screen.getByRole("searchbox", { name: en.scanSearch })).toHaveValue("scan=3");
     expect(screen.getByRole("combobox", { name: en.scanMsLevel })).toHaveValue("all");
+  });
+
+  it("restores nothing from a re-read that renumbered the file, and a later go-to still reveals its row", { timeout: 15_000 }, async () => {
+    const api = await mountTwo(renumberedOnEachRead());
+    await open(api, selectedFile.fileName);
+    goTo("3");
+    await screen.findByRole("img", { name: /^Spectrum 2,/u });
+    scrollTo(200 * ROW);
+    const reads = api.requestedSpectra.length;
+    await open(api, selectedFile.fileName);
+    // Index 2 is another scan now, so it is not read and not selected.
+    expect(api.requestedSpectra.length).toBe(reads);
+    expect(selectedRow()).toBeNull();
+    expect(scroller().scrollTop).toBe(200 * ROW);
+    // A person asking for that number is a person asking: the row has to come into view.
+    goTo("3");
+    await screen.findByRole("img", { name: /^Spectrum 2,/u });
+    expect(selectedRow()).toBe("2");
+    expect(scroller().scrollTop).toBeLessThan(200 * ROW);
   });
 
   describe("per-scan zoom", () => {
@@ -272,6 +342,14 @@ describe("each file as it was left (VW-51, VW-35)", () => {
       expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
     });
 
+    it("does not put a zoom on the scan a renumbered re-read left at its index", { timeout: 15_000 }, async () => {
+      const api = await mountTwo(renumberedOnEachRead());
+      await open(api, selectedFile.fileName);
+      await zoomed(api, 3);
+      await open(api, selectedFile.fileName);
+      expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
+    });
+
     // The 12th and 13th zoom are `scanMemory.test.ts`'s.
     it("keeps a scan's zoom across files, each file's own", { timeout: 30_000 }, async () => {
       const api = await mountTwo();
@@ -289,6 +367,55 @@ describe("each file as it was left (VW-51, VW-35)", () => {
 });
 
 describe("forgetting a file", () => {
+  const zoom = mzDomain(103, 503);
+  type Api = ReturnType<typeof createFakePreviewApi>;
+  it.each<[string, (workspace: ReturnType<typeof usePreviewWorkspace>, api: Api) => unknown]>([
+    ["the row is removed", workspace => {
+      workspace.dispatchRoster({ type: "rowPressed", handle: selectedFile.handle, modifiers: { ctrl: false, shift: false } });
+      workspace.removeSelected();
+    }],
+    ["the workspace is cleared", workspace => workspace.clearList()],
+    ["a clear plan removes the row", workspace => workspace.executeActiveClear("plan", "removeNonRunning")],
+    ["the roster read back no longer has the row", async (workspace, api) => {
+      await api.removeDatasets([selectedFile.handle]);
+      workspace.reloadRoster();
+    }],
+  ])("brings back no selection and no zoom once %s and it comes back", { timeout: 15_000 }, async (_how, leave) => {
+    const api: Api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(buildPreview(8)), spectrum,
+      executeWorkspaceClear: () => api.removeDatasets([selectedFile.handle]).then(result => ({ status: "removed" as const, result })) });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={api}>{children}</PreviewApiProvider>
+      </WorkspaceDropTransportProvider>;
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper });
+    const opened = async (handle: string) => {
+      await waitFor(() => { expect(result.current.backendBusy).toBe(false); expect(result.current.previewBackendBusy).toBe(false); });
+      const opens = api.openedHandles.length;
+      await act(async () => { result.current.activateDataset(handle); });
+      await waitFor(() => expect(api.openedHandles).toHaveLength(opens + 1));
+      await waitFor(() => expect(result.current.preview.status).toBe("loaded"));
+      await waitFor(() => expect(result.current.spectrum.status).not.toBe("loading"));
+    };
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+    await opened(selectedFile.handle);
+    act(() => { result.current.selectSpectrum(3); });
+    await waitFor(() => expect(api.spectrumProjectionRequests.length).toBeGreaterThan(0));
+    act(() => { result.current.dispatchSpectrumViewportEvent({ type: "viewport-step", domain: zoom }); });
+    await waitFor(() => expect(api.spectrumProjectionRequests.at(-1)).toMatchObject(zoom));
+    await opened(secondFile.handle);
+    await act(async () => { await leave(result.current, api); });
+    await waitFor(() => expect(result.current.roster.datasets.some(row => row.handle === selectedFile.handle)).toBe(false));
+    await waitFor(() => expect(result.current.workspaceBusy).toBe(false));
+    await act(async () => { result.current.addFiles(); });
+    await waitFor(() => expect(result.current.roster.datasets.some(row => row.handle === selectedFile.handle)).toBe(true));
+    await opened(selectedFile.handle);
+    expect(result.current.viewerInteraction.selection).toBeNull();
+    const asked = api.spectrumProjectionRequests.length;
+    act(() => { result.current.selectSpectrum(3); });
+    await waitFor(() => expect(api.spectrumProjectionRequests.length).toBeGreaterThan(asked));
+    expect(api.spectrumProjectionRequests.at(-1)).toMatchObject({ low: 100, high: 900 });
+  });
+
   it("does not bring a selection back once the row was removed and added again", async () => {
     const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(buildPreview(8)), spectrum });
     const wrapper = ({ children }: { children: ReactNode }) =>

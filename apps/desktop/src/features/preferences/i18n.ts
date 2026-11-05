@@ -226,6 +226,8 @@ export interface MessageParameters {
   readonly scanSelectedOutside: { readonly name: string };
   readonly scanGoToRefused: { readonly value: string };
   readonly scanSelectedOutsideRange: { readonly name: string };
+  readonly scanSelectedSpectrumOutside: { readonly name: string };
+  readonly scanSelectedSpectrumOutsideRange: { readonly name: string };
   readonly rosterRetainedAnnouncement: { readonly count: number };
   readonly dropRelease: { readonly count: number };
   readonly restoreOffer: { readonly count: number };

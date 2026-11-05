@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Button, Icon } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { MessageKey } from "../preferences/i18n";
-import type { ScanPage } from "./viewer/scanMemory";
 import { findScanByNumber, matchesScanFilters, type ScanSortKey } from "./viewer/scanTableView";
 import type { ScanTableView } from "./viewer/useScanTableView";
 
@@ -14,11 +13,12 @@ import {
   formatRetentionTimeValue,
   retentionTimeUnitSymbol,
 } from "./format";
-import type { Selection, SelectionConsumer } from "./viewer/interactionState";
+import type { Selection, SelectionConsumer, ViewerInteractionState } from "./viewer/interactionState";
 import { consumeSelection, initialSelectionConsumer } from "./viewer/interactionState";
 import { revealScrollTop } from "./viewer/renderGeometry";
 import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
 import { SPECTRUM_SELECTION_NOTICE_ID } from "./viewer/selectionAvailability";
+import { spectrumSelectionMessage } from "./viewer/selectionMessages";
 
 /** Fixed row height keeps the windowing arithmetic exact. Mirrored in CSS. */
 const ROW_HEIGHT = 28;
@@ -119,10 +119,12 @@ export interface SpectrumTableProps {
    */
   readonly selection: Selection | null;
   readonly onSelect: (index: number) => void;
-  /** Brings a selection the filters or the range hide back, without selecting anything. */
+  /** Moves a committed range hiding the selected scan to it, without selecting anything. */
   readonly onRevealSelected: () => void;
-  /** Asked once, when the list mounts. */
-  readonly readPage?: () => ScanPage | null;
+  /** The row this file's list was left at. Asked once, when the list mounts. */
+  readonly readPage?: () => number | null;
+  /** The interaction as it stands, so the selection that came back with that row can be told from a later one. */
+  readonly readInteraction?: () => ViewerInteractionState;
   /** The source index of the row now at the top of the list, as a scroll leaves it. */
   readonly onTopRowChanged?: (topRow: number | null) => void;
   readonly onRendered: (renderedRowCount: number, milliseconds: number) => void;
@@ -153,6 +155,7 @@ export const SpectrumTable = memo(function SpectrumTable({
   onSelect,
   onRevealSelected,
   readPage,
+  readInteraction,
   onTopRowChanged,
   onRendered,
   selectionAvailability,
@@ -173,17 +176,21 @@ export const SpectrumTable = memo(function SpectrumTable({
   const [goToText, setGoToText] = useState("");
   /** The text Go to scan refused, until it is edited. */
   const [goToRefused, setGoToRefused] = useState<string | null>(null);
-  /** The page to come back to, until the selection coming back with it has arrived. */
-  const returning = useRef<ScanPage | null | undefined>(undefined);
-  if (returning.current === undefined) returning.current = readPage?.() ?? null;
+  /** Enter pressed in Go to scan while no scan could be selected, until it is edited. */
+  const [goToHeld, setGoToHeld] = useState(false);
+  /** The row to come back to. */
+  const pageTop = useRef<number | null | undefined>(undefined);
+  if (pageTop.current === undefined) pageTop.current = readPage?.() ?? null;
+  /** The commit that came back with that row, if one did; found by the first effect below. */
+  const pageRevision = useRef<number | null | undefined>(undefined);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (viewport === null) {
       return;
     }
-    const position = returning.current === null || returning.current === undefined ? undefined
-      : view.projection.positions.get(returning.current.topRow);
+    const position = pageTop.current === null || pageTop.current === undefined ? undefined
+      : view.projection.positions.get(pageTop.current);
     if (position !== undefined) {
       viewport.scrollTop = position * ROW_HEIGHT;
       setScrollTop(viewport.scrollTop);
@@ -208,10 +215,14 @@ export const SpectrumTable = memo(function SpectrumTable({
   const selectedOutside = selectedIndex !== null && !view.projection.positions.has(selectedIndex);
   const hiddenRow = useMemo(() => selectedOutside ? table.rows.find(row => row.index === selectedIndex) : undefined,
     [selectedOutside, selectedIndex, table.rows]);
-  /** Hidden by the chromatogram's range alone, so "clear the filters" would be the wrong thing to say. */
+  /** Hidden by the chromatogram's range alone, so "clear the filters" would be the wrong thing to say or do. */
   const hiddenOnlyByRange = hiddenRow !== undefined && matchesScanFilters(hiddenRow, view.options);
-  /** The number the Scan column and Go to scan use, where the row declares one. */
-  const hiddenName = String(hiddenRow?.scanNumber ?? selectedIndex);
+  /** The number the Scan column writes and Go to scan takes. A row declaring none is named by its index, as a spectrum and never as a scan. */
+  const hiddenNumber = hiddenRow?.scanNumber ?? null;
+  const hiddenName = formatCount(hiddenNumber ?? selectedIndex ?? 0);
+  const hiddenSentence = hiddenNumber === null
+    ? hiddenOnlyByRange ? "scanSelectedSpectrumOutsideRange" : "scanSelectedSpectrumOutside"
+    : hiddenOnlyByRange ? "scanSelectedOutsideRange" : "scanSelectedOutside";
   /** What the viewport has left for rows once the header has its row. */
   const rowsHeight = Math.max(ROW_HEIGHT, viewportHeight - HEADER_HEIGHT);
   const visibleCount = Math.ceil(rowsHeight / ROW_HEIGHT) + OVERSCAN * 2;
@@ -305,6 +316,10 @@ export const SpectrumTable = memo(function SpectrumTable({
   const consumer = useRef<SelectionConsumer>(initialSelectionConsumer);
   const previousProjection = useRef(view.projection);
   useEffect(() => {
+    // Asked once, on the first pass: by then the workspace's layout effect has
+    // restored what it was going to restore, so what stands now is what came back
+    // with the page, and every later commit is a person's, even of the same scan.
+    if (pageRevision.current === undefined) pageRevision.current = pageTop.current === null ? null : readInteraction?.().selection?.revision ?? null;
     const outcome = consumeSelection(consumer.current, selection);
     consumer.current = outcome.consumer;
     const changed = previousProjection.current !== view.projection;
@@ -312,12 +327,10 @@ export const SpectrumTable = memo(function SpectrumTable({
     const position = selection === null ? undefined : view.projection.positions.get(selection.index);
     // The selection coming back with a page: the person left the list where it
     // was, selected row in view or not, so only the tab stop goes to it.
-    const backToPage = outcome.consumed !== null && outcome.consumed.index === returning.current?.selectedIndex;
-    if (outcome.consumed !== null) returning.current = null;
-    if (backToPage) setFocusIndex(outcome.consumed!.index);
+    if (outcome.consumed !== null && outcome.consumed.revision === pageRevision.current) setFocusIndex(outcome.consumed.index);
     else if (position !== undefined && (outcome.consumed !== null || changed)) revealRow(position);
     else if (changed && rowCount > 0) revealRow(focusRow);
-  }, [revealRow, rowCount, focusRow, selection, view.projection]);
+  }, [readInteraction, revealRow, rowCount, focusRow, selection, view.projection]);
 
   /**
    * Arrow keys move focus without selecting. Selection is committed with Enter
@@ -386,11 +399,15 @@ export const SpectrumTable = memo(function SpectrumTable({
       setGoToRefused(goToText.trim());
       return;
     }
-    // The reason is this input's description; the number stays for the next Enter.
-    if (!canCommit) return;
+    // The reason goes beside the input; the number stays for the next Enter.
+    if (!canCommit) {
+      setGoToHeld(true);
+      return;
+    }
     if (!matchesScanFilters(row, view.options)) view.clearFilters();
     setGoToText("");
     setGoToRefused(null);
+    setGoToHeld(false);
     onSelect(row.index);
   };
 
@@ -402,8 +419,9 @@ export const SpectrumTable = memo(function SpectrumTable({
         <h2 id="spectrum-table-heading">{t("scansTitle")}</h2>
         {/* One number while every row is loaded and none is filtered out;
             the three counts, and the loaded-prefix disclosure, only where
-            they differ. */}
-        <p className="scan-result-count" aria-live="polite" data-counts={oneCount ? "one" : "three"} title={countText}>{countText}</p>
+            they differ, on their own line under this one. Both regions are
+            permanent, so each is watched before its text arrives. */}
+        <p className="scan-result-count" aria-live="polite">{oneCount ? countText : null}</p>
         <div className="plot-search">
           <Icon name="search" />
           <label className="visually-hidden" htmlFor="scan-search">{t("scanSearch")}</label>
@@ -413,7 +431,7 @@ export const SpectrumTable = memo(function SpectrumTable({
         </div>
         <label className="visually-hidden" htmlFor="scan-go-to">{t("scanGoTo")}</label>
         <input id="scan-go-to" className="scan-go-to" type="text" inputMode="numeric" autoComplete="off" value={goToText} placeholder={t("scanGoToShort")}
-          onChange={event => { setGoToText(event.target.value); setGoToRefused(null); }} onKeyDown={handleGoToKeyDown}
+          onChange={event => { setGoToText(event.target.value); setGoToRefused(null); setGoToHeld(false); }} onKeyDown={handleGoToKeyDown}
           aria-disabled={canCommit ? undefined : true} aria-invalid={goToRefused === null ? undefined : true}
           aria-describedby={[goToRefused === null ? null : GO_TO_REFUSAL_ID, canCommit ? null : SPECTRUM_SELECTION_NOTICE_ID, "scan-go-to-help"].filter(id => id !== null).join(" ")} />
         <label className="visually-hidden" htmlFor="scan-ms-level">{t("scanMsLevel")}</label>
@@ -426,14 +444,16 @@ export const SpectrumTable = memo(function SpectrumTable({
         <p className="visually-hidden" id="scan-view-help">{t("scanHelpText")}</p>
         <p className="visually-hidden" id="scan-go-to-help">{t("scanGoToHelp")}</p>
       </div>
+      <p aria-live="polite" className="scan-result-count">{oneCount ? null : countText}</p>
       {/* One permanent region, as ADR 0041 asks: watched before the refusal
           arrives, and collapsed by `:empty` while there is none. */}
       <p aria-live="polite" className="scan-go-to-refusal" id={goToRefused === null ? undefined : GO_TO_REFUSAL_ID}>
-        {goToRefused === null ? null : t("scanGoToRefused", { value: goToRefused })}
+        {goToRefused !== null ? t("scanGoToRefused", { value: goToRefused })
+          : goToHeld && selectionAvailability.status === "unavailable" ? spectrumSelectionMessage(selectionAvailability.reason, t) : null}
       </p>
       {selectedOutside ? <p className="scan-hidden-selection" aria-live="polite">
-        <span id={HIDDEN_SELECTION_ID}>{t(hiddenOnlyByRange ? "scanSelectedOutsideRange" : "scanSelectedOutside", { name: hiddenName })}</span>{" "}
-        <Button onClick={onRevealSelected} size="sm" variant="quiet">{t(hiddenOnlyByRange ? "scanRevealInRange" : "scanReveal")}</Button>
+        <span id={HIDDEN_SELECTION_ID}>{t(hiddenSentence, { name: hiddenName })}</span>{" "}
+        <Button onClick={() => { if (!hiddenOnlyByRange) view.clearFilters(); onRevealSelected(); }} size="sm" variant="quiet">{t(hiddenOnlyByRange ? "scanRevealInRange" : "scanReveal")}</Button>
       </p> : null}
       {rowCount === 0 ? <p className="empty-state">{t(table.rows.length === 0 ? "scanEmpty" : view.rtDomain !== null ? "scanNoMatchesInRange" : "scanNoMatches")}</p> : null}
 

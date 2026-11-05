@@ -18,12 +18,6 @@ export interface FileViewMemory {
   topRow: number | null;
 }
 
-/** Where a file's list was left: its top row, and the selection coming back with it. */
-export interface ScanPage {
-  readonly topRow: number;
-  readonly selectedIndex: number | null;
-}
-
 export function fileMemoryIn(memory: Map<string, FileViewMemory>, handle: string): FileViewMemory {
   let file = memory.get(handle);
   if (file === undefined) {
@@ -36,8 +30,9 @@ export function fileMemoryIn(memory: Map<string, FileViewMemory>, handle: string
 /** One list across the whole workspace, as v5.11 keeps it; the longest unused zoom goes first. */
 export const REMEMBERED_SCAN_ZOOMS = 12;
 
-export function scanZoomKey(handle: string, index: number): string {
-  return `${handle}\n${index}`;
+/** The identifier too, as `FileViewMemory.selected` keeps it: a re-read that renumbered the file finds no zoom. */
+export function scanZoomKey(handle: string, index: number, identifier: string): string {
+  return `${handle}\n${index}\n${identifier}`;
 }
 
 /** Keeps a scan's zoom as its most recent; the whole spectrum (`null`) is no zoom to keep. */

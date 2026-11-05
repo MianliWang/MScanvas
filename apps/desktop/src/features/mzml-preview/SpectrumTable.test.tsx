@@ -466,7 +466,7 @@ describe("stepping through scans from the table", () => {
   it("does not present the end of a truncated prefix as the end of the run", () => {
     renderTable({ rowCount: 40, truncated: true });
 
-    const count = document.querySelector(".scan-result-count");
+    const count = document.querySelector(".scan-result-count:not(:empty)");
     expect(count).toHaveTextContent(UI_RESOURCES.en.scanPrefix);
     expect(count).toHaveTextContent("400");
     expect(count).toBeVisible();
@@ -474,7 +474,7 @@ describe("stepping through scans from the table", () => {
 
   it("gives one number while every row is loaded and none is filtered out", () => {
     renderTable({ rowCount: 40 });
-    const count = () => document.querySelector(".scan-result-count")?.textContent ?? "";
+    const count = () => document.querySelector(".scan-result-count:not(:empty)")?.textContent ?? "";
     const all = UI_RESOURCES.en.scanCountAll.replace(/\{\{\s*count(?:,\s*number)?\s*\}\}/u, "40");
 
     expect(count()).toBe(all);
@@ -535,6 +535,36 @@ describe("the spectrum table while selection is unavailable", () => {
     expect(input).toHaveValue("2");
     expect(input).toHaveAttribute("aria-disabled", "true");
     expect(input.getAttribute("aria-describedby")).toContain(SPECTRUM_SELECTION_NOTICE_ID);
+  });
+
+  it("says why Go to scan did nothing, beside the input, for as long as that is the reason", () => {
+    const { onSelect, rerenderWithAvailability } = blocked();
+    const input = screen.getByRole("textbox", { name: UI_RESOURCES.en.scanGoTo });
+    const reason = UI_RESOURCES.en.viewerSelectionConverting;
+    expect(screen.queryByText(reason)).toBeNull();
+    fireEvent.change(input, { target: { value: "2" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByText(reason)).toBeVisible();
+    expect(onSelect).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "3" } });
+    expect(screen.queryByText(reason)).toBeNull();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByText(reason)).toBeVisible();
+    rerenderWithAvailability({ status: "available" });
+    expect(screen.queryByText(reason)).toBeNull();
+    expect(input).toHaveValue("3");
+  });
+
+  it("leaves Enter to an input method composing in Go to scan", () => {
+    const { onSelect } = renderTable();
+    const input = screen.getByRole("textbox", { name: UI_RESOURCES.en.scanGoTo });
+    fireEvent.change(input, { target: { value: "2" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(input).toHaveValue("2");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith(1);
   });
 
   it("keeps Previous and Next unavailable through the same lane rule", () => {

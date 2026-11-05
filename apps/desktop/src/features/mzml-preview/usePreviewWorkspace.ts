@@ -103,7 +103,7 @@ import { buildPreviewScanModel } from "./viewer/previewScanModel";
 import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
 import { adjacentDisplayedScan, apexMs1Row } from "./viewer/scanTableView";
 import { revealDomain } from "./viewer/viewport";
-import { fileMemoryIn, forgetScanZooms, rememberScanZoom, scanZoomKey, type FileViewMemory, type ScanPage } from "./viewer/scanMemory";
+import { fileMemoryIn, forgetScanZooms, rememberScanZoom, scanZoomKey, type FileViewMemory } from "./viewer/scanMemory";
 import { useScanTableView, type ScanTableView } from "./viewer/useScanTableView";
 import type {
   MzDomain,
@@ -567,7 +567,7 @@ export interface PreviewWorkspace {
   readonly scanModel: ScanModel;
   readonly scanTableView: ScanTableView;
   readonly revealSelectedScan: () => void;
-  readonly readScanPage: () => ScanPage | null;
+  readonly readScanPage: () => number | null;
   readonly rememberScanTopRow: (topRow: number | null) => void;
   /**
    * The one interaction state: committed viewport, transient gesture,
@@ -2514,10 +2514,6 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         if (showing !== null && result.removedHandles.includes(showing)) {
           clearVisiblePreview();
         }
-        for (const removed of result.removedHandles) {
-          fileViewMemory.current.delete(removed);
-          forgetScanZooms(scanZooms.current, removed);
-        }
         // This authoritative roster pays any reconciliation debt left by an
         // earlier failed request during the same import.
         workspaceReconcileOwed.current = false;
@@ -2597,8 +2593,6 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
           return;
         }
         clearVisiblePreview();
-        fileViewMemory.current.clear();
-        scanZooms.current.clear();
         // This authoritative roster pays any reconciliation debt left by an
         // earlier failed request during the same import.
         workspaceReconcileOwed.current = false;
@@ -2884,32 +2878,39 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
   previewRowsRef.current = previewRows;
   const scanTableView = useScanTableView(previewRows, viewer.state.committedDomain,
     openHandle.current === null ? undefined : fileViewMemory.current.get(openHandle.current)?.options);
-  const { clearFilters: clearScanFilters, options: scanTableOptions } = scanTableView;
+  const { options: scanTableOptions } = scanTableView;
   useEffect(() => {
     const handle = openHandle.current;
     if (preview.status === "loaded" && handle !== null) fileMemoryIn(fileViewMemory.current, handle).options = scanTableOptions;
   }, [preview, scanTableOptions]);
+  // What a file kept leaves with its row, however the row left: a removal, a
+  // clear, or a roster read back without it.
+  useEffect(() => {
+    const live = new Set(roster.datasets.map(dataset => dataset.handle));
+    for (const handle of fileViewMemory.current.keys()) {
+      if (live.has(handle)) continue;
+      fileViewMemory.current.delete(handle);
+      forgetScanZooms(scanZooms.current, handle);
+    }
+  }, [roster.datasets]);
 
-  /** Read when the list mounts, so it comes back to where this file last left it. */
-  const readScanPage = useCallback((): ScanPage | null => {
-    const file = openHandle.current === null ? undefined : fileViewMemory.current.get(openHandle.current);
-    return file === undefined || file.topRow === null ? null : { topRow: file.topRow, selectedIndex: file.selected?.index ?? null };
-  }, []);
+  /** Read when the list mounts: the row this file's list was left at. */
+  const readScanPage = useCallback(() =>
+    openHandle.current === null ? null : fileViewMemory.current.get(openHandle.current)?.topRow ?? null, []);
   const rememberScanTopRow = useCallback((topRow: number | null) => {
     if (openHandle.current !== null) fileMemoryIn(fileViewMemory.current, openHandle.current).topRow = topRow;
   }, []);
 
   /**
-   * Reveal: the filters go, and a committed range hiding the scan moves to it,
-   * the way a selection's own reveal moves it. Not a selection: nothing is read.
+   * A committed range hiding the selected scan moves to it, the way a selection's
+   * own reveal moves it. Not a selection: nothing is read.
    */
   const revealSelectedScan = useCallback(() => {
-    clearScanFilters();
     const { committedDomain, fullDomain, selection } = readViewerInteraction();
     if (committedDomain === null || fullDomain === null || selection === null) return;
     const revealed = revealDomain(committedDomain, fullDomain, selection.retentionTime);
     if (revealed !== committedDomain) dispatchViewerEvent({ type: "viewport-step", domain: revealed });
-  }, [clearScanFilters, dispatchViewerEvent, readViewerInteraction]);
+  }, [dispatchViewerEvent, readViewerInteraction]);
 
   /**
    * Tells the interaction which run it belongs to, once there is one to name.
@@ -3199,7 +3200,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     spectrum.status === "loaded" && spectrum.spectrum.pointCount > 0 ? spectrum.spectrum : null;
   const viewportSpectrumToken = viewportSpectrum?.exportToken ?? null;
   const viewportSpectrumDomain = viewportSpectrum?.viewportDomain ?? null;
-  const viewportScanKey = viewportSpectrum === null || openHandle.current === null ? null : scanZoomKey(openHandle.current, viewportSpectrum.index);
+  const viewportScanKey = useMemo(() => {
+    const row = viewportSpectrum === null ? undefined : previewRows.find(candidate => candidate.index === viewportSpectrum.index);
+    return row === undefined || openHandle.current === null ? null : scanZoomKey(openHandle.current, row.index, row.identifier);
+  }, [previewRows, viewportSpectrum]);
   /**
    * Whether a spectrum is being read right now.
    *
@@ -3241,8 +3245,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     // The same token arriving again is a redelivery of what is already current
     // and resets nothing; a different one is a different spectrum and therefore
     // a different viewport context. Both are the reducer's decision.
-    const before = readSpectrumViewport();
-    const selected = dispatchSpectrumViewport({
+    dispatchSpectrumViewport({
       type: "spectrum-selected",
       spectrumToken: viewportSpectrumToken,
       domain: viewportSpectrumDomain,
@@ -3250,10 +3253,9 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     // A new context opens whole, and the zoom its scan kept comes back in the
     // same breath, so the one projection this asks for is of that window.
     const zoom = viewportScanKey === null ? undefined : scanZooms.current.get(viewportScanKey);
-    if (selected !== before && zoom !== undefined) dispatchSpectrumViewport({ type: "viewport-step", domain: zoom });
+    if (zoom !== undefined) dispatchSpectrumViewport({ type: "viewport-step", domain: zoom });
   }, [
     dispatchSpectrumViewport,
-    readSpectrumViewport,
     viewportReading,
     viewportScanKey,
     viewportSpectrumDomain,

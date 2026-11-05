@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { fileMemoryIn, forgetScanZooms, REMEMBERED_SCAN_ZOOMS, rememberScanZoom, scanZoomKey, type FileViewMemory } from "./scanMemory";
+import { fileMemoryIn, forgetScanZooms, REMEMBERED_SCAN_ZOOMS, rememberScanZoom, scanZoomKey as keyOf, type FileViewMemory } from "./scanMemory";
 import { INITIAL_SCAN_TABLE_OPTIONS } from "./scanTableView";
 import { mzDomain, type MzDomain } from "./spectrumViewport";
 
 const zoom = (scan: number) => mzDomain(scan, scan + 1);
+const scanZoomKey = (handle: string, index: number) => keyOf(handle, index, `scan=${index}`);
 
 describe("per-scan zoom memory", () => {
   it("keeps the 12th zoom, and the 13th pushes out the longest unused", () => {
@@ -34,6 +35,9 @@ describe("per-scan zoom memory", () => {
     expect(zooms.get(scanZoomKey("b", 1))).toEqual(zoom(3));
     forgetScanZooms(zooms, "a");
     expect([...zooms.keys()]).toEqual([scanZoomKey("a1", 1), scanZoomKey("b", 1)]);
+  });
+  it("reads another identifier at the same index as another scan", () => {
+    expect(keyOf("a", 1, "scan=2")).not.toBe(keyOf("a", 1, "scan=9"));
   });
   it("keeps nothing for the whole spectrum, and a reset forgets the zoom", () => {
     const zooms = new Map<string, MzDomain>();

@@ -1186,6 +1186,7 @@ export function PreviewWorkspace() {
                       onSelect={workspace.selectSpectrum}
                       onRevealSelected={workspace.revealSelectedScan}
                       readPage={workspace.readScanPage}
+                      readInteraction={workspace.readViewerInteraction}
                       onTopRowChanged={workspace.rememberScanTopRow}
                       selection={workspace.viewerInteraction.selection}
                       selectionAvailability={workspace.spectrumSelection}

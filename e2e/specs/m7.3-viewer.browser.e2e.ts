@@ -626,6 +626,11 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
   // N-V3: go to a scan, the list following the range, each file as it was left.
   const shownScans = () => browser.$$(SCANS + " [data-source-index]").map(row => row.getAttribute("data-source-index"));
   const reads = async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").map(call => call.args.index);
+  /** Nothing cut: what the element holds fits the width it has. */
+  const whole = (css: string) => browser.execute((selector: string) => {
+    const node = document.querySelector<HTMLElement>(selector);
+    return node !== null && node.scrollWidth <= node.clientWidth;
+  }, css);
   async function goToScan(text: string) {
     await browser.$("#scan-go-to").setValue(text);
     await browser.keys("Enter");
@@ -654,6 +659,16 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     expect(await browser.$("#scan-go-to").getAttribute("aria-invalid")).toBe("true");
     expect((await reads()).length).toBe(already);
     await capture(label("refused"));
+    // Six digits and the input's own short name stay whole, and a pasted refusal
+    // wraps rather than running off the panel.
+    for (const text of ["123456", words.scanGoToShort]) {
+      await browser.$("#scan-go-to").setValue(text);
+      expect(await whole("#scan-go-to")).toBe(true);
+    }
+    await goToScan("1".repeat(300));
+    expect(await whole(".scan-go-to-refusal")).toBe(true);
+    expect(await whole(".spectrum-table-panel")).toBe(true);
+    await capture(label("refused-long"));
     // Filters that hide the scan go; focus stays for the next number.
     await browser.$(SCANS + ' input[type="search"]').setValue("rare-");
     expect(await shownScans()).toEqual(["3", "7"]);
@@ -666,7 +681,8 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     // The list follows the committed range, and the count says how many of how many.
     await setRtRange(words, "1", "2.5");
     await browser.waitUntil(async () => (await shownScans()).join() === "1,2", { timeoutMsg: "the list never followed the range" });
-    expect(await browser.$(".scan-result-count").getProperty("textContent")).toContain("2");
+    expect(await browser.$(".scan-result-count:not(:empty)").getText()).toContain("2");
+    expect(await whole(".scan-result-count:not(:empty)")).toBe(true);
     // The selected scan is outside it: said so, recoverable, with nothing read.
     const outside = words.scanSelectedOutsideRange.replace("{{name}}", "5");
     expect(await browser.$("#scan-hidden-selection-reason").getText()).toBe(outside);
@@ -696,6 +712,30 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.waitUntil(async () => (await reads()).at(-1) === 7);
     await browser.waitUntil(async () => (await shownScans()).includes("7"), { timeoutMsg: "the scan never came into the list" });
     await capture(label("went-into-range"));
+    expect(await consoleEntries()).toEqual([]);
+  });
+  for (const scenario of [
+    { width: 1366, height: 768, dpr: 1, language: "en" },
+    { width: 1366, height: 768, dpr: 1, language: "zh-CN" },
+    { width: 960, height: 640, dpr: 1, language: "en" },
+    { width: 960, height: 640, dpr: 1, language: "zh-CN" },
+  ] as const) it("keeps a long run's numbers whole in the scan head, " + scenario.language + " at " + scenario.width + "x" + scenario.height, async () => {
+    const label = (state: string) => "long-run-" + state + "-" + scenario.language + "-" + scenario.width;
+    // M0's public file: 36,319 spectra.
+    await open("complete", scenario, 36319);
+    await preferences(scenario.language, "comfortable");
+    await revealScans();
+    expect(await browser.$(".scan-head .scan-result-count").getText()).toBe("36,319");
+    for (const css of [".scan-head", ".scan-head .scan-result-count"]) expect(await whole(css)).toBe(true);
+    await capture(label("one-number"));
+    // Some of them match: the head stays one line with nothing cut, and the counts are whole under it.
+    await browser.$(SCANS + ' input[type="search"]').setValue("scan=1");
+    await browser.waitUntil(async () => (await browser.$(".spectrum-table-panel > .scan-result-count").getText()).includes("36,319"));
+    for (const css of [".scan-head", ".spectrum-table-panel > .scan-result-count"]) expect(await whole(css)).toBe(true);
+    expect(await browser.$(".scan-head").getSize("height")).toBe(36);
+    await browser.$("#scan-go-to").setValue("123456");
+    expect(await whole("#scan-go-to")).toBe(true);
+    await capture(label("three-counts"));
     expect(await consoleEntries()).toEqual([]);
   });
   it("comes back to a file as it was left, and to a scan's own zoom", async () => {
