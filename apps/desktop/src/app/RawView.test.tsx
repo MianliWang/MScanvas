@@ -649,6 +649,40 @@ describe("viewing a Thermo RAW row", () => {
       });
     });
 
+    describe("Convert this file… holds the Conversion page to this one file (N-C3)", () => {
+      const open = async () => { await act(async () => { fireEvent.click(await within(evidence()).findByRole("button", { name: words.rawViewOpen })); }); };
+      const routes: readonly (readonly [string, RawViewState, (api: ReturnType<typeof session>) => Promise<void>])[] = [
+        ["the pane", { state: "idle" }, async () => {}],
+        ["a viewed file's row", ready(), async () => {
+          await open();
+          await waitFor(() => expect(document.querySelector("[data-raw-view-convert]")).not.toBeNull());
+        }],
+        ["a failed open", ready(), async ({ world, api }) => {
+          api.openRawView = () => { world.state = ready({ openable: false }); return Promise.reject({ kind: "spectrum_table_refused", summary: "x", detail: null, retryable: false }); };
+          await open();
+          await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "failed"));
+        }],
+      ];
+      for (const [route, state, reach] of routes) it(`from ${route}, and every check stays as it was`, async () => {
+        const opened = session({ state });
+        const checkOf = async (file: SelectedFile) => within(await row(file)).getByRole<HTMLInputElement>("checkbox");
+        await waitFor(() => expect(screen.getByRole("button", { name: words.rosterToggle })).not.toHaveAttribute("aria-disabled"));
+        await act(async () => { fireEvent.click(await checkOf(OTHER)); });
+        await act(async () => { fireEvent.click(await checkOf(selectedFile)); });
+        await highlight();
+        await reach(opened);
+
+        await act(async () => { fireEvent.click(within(evidence()).getByRole("button", { name: words.rawViewConvert })); });
+        expect(document.querySelector(".workbench-shell")).toHaveAttribute("data-surface", "conversion");
+        expect(document.getElementById("workbench-conversion")).toHaveFocus();
+        expect(screen.getByRole("radio", { name: RAW.fileName })).toBeChecked();
+        await waitFor(() => expect(opened.api.planRequests().at(-1)?.handles).toEqual([RAW.handle]));
+        expect((await checkOf(RAW)).checked).toBe(false);
+        expect((await checkOf(OTHER)).checked).toBe(true);
+        expect((await checkOf(selectedFile)).checked).toBe(true);
+      });
+    });
+
     describe("a re-read of a row the reader has left highlighted no longer", () => {
       /** A failed open on screen, and the row no longer highlighted. */
       async function failedAndLeft() {

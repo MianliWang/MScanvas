@@ -231,7 +231,10 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
       latest.current = null;
       return;
     }
-    const key = JSON.stringify(arrangement);
+    // Rust records each row's label from its own registry, so a row that gained
+    // one without moving is a change to record too (for owner decision P201-RESTORE;
+    // as built on 2026-11-04, not an owner decision).
+    const key = JSON.stringify([arrangement, roster.datasets.map(row => row.notVerifiedByMscanvas ?? null)]);
     latest.current = { key, arrangement };
     // The first read's baseline, unless the roster has moved since it was asked.
     if (recorded.current === undefined && rosterSettlementToken !== firstRead.current) recorded.current = null;
@@ -241,7 +244,7 @@ export function useWorkspaceRestore({ roster, rosterReady, rosterSettlementToken
     }
     void flush();
     // The settlement token: a retry waits for the roster it asked for.
-  }, [arrangement, flush, mutationBusy, rosterReady, rosterSettlementToken, work]);
+  }, [arrangement, flush, mutationBusy, roster.datasets, rosterReady, rosterSettlementToken, work]);
 
   /** Runs one action, then reads again: every action changes what Rust holds. */
   const acting = useRef(false);

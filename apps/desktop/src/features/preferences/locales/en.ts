@@ -71,6 +71,7 @@ export const en = {
   m74CnvNoticeDiagnosticsExporting: "Failure diagnostics are being saved.",
   m74CnvNoticeWorkspaceSettling: "The file list is being changed.",
   m74CnvNoticeNoConvertibleTarget: "No supported vendor acquisitions in this scope. Add them with {{add}} in {{toggle}}; under Checked rows, check them.",
+  m74CnvNoticeHeldRowGone: "The row this scope held has left {{toggle}}. Adding the file again with {{add}} makes a new row: select it and press {{convert}} or {{open}}. Or choose {{checkedRows}} or {{allRows}}.",
   m74CnvNoticePlanCapacityExceeded: "Choose fewer eligible rows before converting.",
   m74CnvNoticePlanReading: "Describing this conversion…",
   m74CnvNoticePlanFailed: "This conversion could not be described.",

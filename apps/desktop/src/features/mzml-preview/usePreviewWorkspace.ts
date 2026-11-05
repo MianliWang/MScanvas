@@ -19,7 +19,7 @@ import { useConversionOperation } from "./useConversionOperation";
 import type { ConversionPlanView } from "./useConversionPlan";
 import { useConversionPlan } from "./useConversionPlan";
 import { sameDestination, sameQuestion, type ConversionPlanIdentity } from "./conversionPlanAuthority";
-import { resolveConversionScope, sameConversionScope, type ConversionScope } from "./conversionScope";
+import { resolveConversionScope, sameConversionScope, type ConversionFile, type ConversionScope } from "./conversionScope";
 import { catalogRow } from "./conversionIntentSelection";
 import type {
   BackendAuthorityProjection,
@@ -538,7 +538,10 @@ export interface PreviewWorkspace {
    */
   readonly conversionPlan: ConversionPlanView;
   readonly conversionScope: ConversionScope;
-  readonly setConversionScope: (scope: ConversionScope) => void;
+  /** The file the "file" scope is held to; `null` under the other two. */
+  readonly conversionFile: ConversionFile | null;
+  /** `file` is the "file" scope's; the other two scopes forget it. */
+  readonly setConversionScope: (scope: ConversionScope, file?: ConversionFile) => void;
   readonly backend: BackendState;
   /**
    * Whether the reading above has stopped describing the session.
@@ -1016,6 +1019,8 @@ export function usePreviewWorkspace(): PreviewWorkspace {
   const [roster, renderRosterAction] = useReducer(rosterReducer, initialRosterState);
   const [conversionScope, renderConversionScope] = useState<ConversionScope>("selected");
   const conversionScopeRef = useRef(conversionScope);
+  const [conversionFile, renderConversionFile] = useState<ConversionFile | null>(null);
+  const conversionFileRef = useRef(conversionFile);
   const invalidateScopePlan = useRef<() => void>(() => undefined);
   const [rosterLoad, setRosterLoadState] = useState<RosterLoadState>({ status: "loading" });
   /**
@@ -1061,16 +1066,19 @@ export function usePreviewWorkspace(): PreviewWorkspace {
     const before = rosterRef.current;
     const next = rosterReducer(before, action);
     if (!sameConversionScope(
-      resolveConversionScope(conversionScopeRef.current, before),
-      resolveConversionScope(conversionScopeRef.current, next),
+      resolveConversionScope(conversionScopeRef.current, before, conversionFileRef.current),
+      resolveConversionScope(conversionScopeRef.current, next, conversionFileRef.current),
     )) invalidateScopePlan.current();
     rosterRef.current = next;
     renderRosterAction(action);
   }, []);
-  const setConversionScope = useCallback((scope: ConversionScope) => {
-    if (scope !== conversionScopeRef.current) invalidateScopePlan.current();
+  const setConversionScope = useCallback((scope: ConversionScope, file: ConversionFile | null = null) => {
+    // A second file under the one-file scope is a different question too.
+    if (scope !== conversionScopeRef.current || file?.handle !== conversionFileRef.current?.handle) invalidateScopePlan.current();
     conversionScopeRef.current = scope;
+    conversionFileRef.current = file;
     renderConversionScope(scope);
+    renderConversionFile(file);
   }, []);
 
   const [backendBusy, setBackendBusy] = useState(true);
@@ -4507,6 +4515,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     conversionConfiguration: { ...conversionConfiguration, select: chooseConversionIntent },
     conversionPlan,
     conversionScope,
+    conversionFile,
     setConversionScope,
   };
 }
