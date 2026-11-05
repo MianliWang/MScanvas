@@ -111,6 +111,48 @@ describe("the Details inspector", () => {
     // The precursor's unstated m/z is said, not drawn as 0.
     expect(screen.getByText("880.00").previousElementSibling).toHaveTextContent(en.viewerNotReported);
   });
+
+  it("states polarity and charge as values, with not reported as a value, never 0 (R-1)", () => {
+    const value = (label: string) => screen.getByText(label).nextElementSibling;
+    const details = (polarity: "positive" | "negative" | null, charge: number | null, totalPrecursorCount = 1) =>
+      render(<PreviewSummary chromatogramScanCount={null} file={preview.file} spectrumViewport={initialSpectrumViewportState}
+        spectrum={{ ...buildSpectrum(3, 4), polarity, charge, totalPrecursorCount }} />);
+
+    const positive = details("positive", 2);
+    expect(value(en.viewerPolarity)?.textContent).toBe("Positive");
+    expect(value(en.viewerCharge)?.textContent).toBe("2");
+    positive.unmount();
+
+    const notReported = details(null, null);
+    expect(value(en.viewerPolarity)).toHaveTextContent(en.viewerNotReported);
+    expect(value(en.viewerCharge)?.textContent).toBe(en.viewerNotReported);
+    notReported.unmount();
+
+    // A stated 0 is a statement, and with more precursors the charge says whose it is.
+    details("negative", 0, 3);
+    expect(value(en.viewerPolarity)?.textContent).toBe("Negative");
+    expect(value(en.viewerCharge)?.textContent).toBe("0 (precursor 1 of 3)");
+  });
+
+  it("states them in zh-CN too, with no space before a full-width bracket", async () => {
+    const zh = UI_RESOURCES["zh-CN"];
+    const preferences = createFakePreferencesApi({ stored: storedRecord({ appearance: { locale: "zh-CN" } }) });
+    const details = (polarity: "positive" | "negative") => (
+      <PreferencesApiProvider value={preferences}>
+        <SessionPreferencesProvider>
+          <PreviewSummary chromatogramScanCount={null} file={preview.file} spectrumViewport={initialSpectrumViewportState}
+            spectrum={{ ...buildSpectrum(3, 4), polarity, charge: null, totalPrecursorCount: 2 }} />
+        </SessionPreferencesProvider>
+      </PreferencesApiProvider>
+    );
+    const polarity = () => screen.getByText(zh.viewerPolarity).nextElementSibling?.textContent;
+    const { rerender } = rtlRender(details("negative"));
+
+    await waitFor(() => { expect(polarity()).toBe("负离子"); });
+    expect(screen.getByText(zh.viewerCharge).nextElementSibling?.textContent).toBe("未报告（第 1 个前体，共 2 个）");
+    rerender(details("positive"));
+    expect(polarity()).toBe("正离子");
+  });
 });
 
 describe("the Metadata tab", () => {

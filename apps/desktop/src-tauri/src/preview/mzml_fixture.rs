@@ -112,6 +112,11 @@ pub(crate) struct FixtureSpectrum {
     pub(crate) intensity_unit: Option<&'static str>,
     /// `defaultArrayLength`: the point count unless a test sets another.
     pub(crate) declared_length: usize,
+    /// Polarity accessions the spectrum states, each a term of its own.
+    pub(crate) polarities: &'static [&'static str],
+    /// MS:1000041 values on the selected ion, each a term of its own. Written
+    /// only where `precursor` is set.
+    pub(crate) charges: &'static [&'static str],
 }
 
 impl FixtureSpectrum {
@@ -142,6 +147,8 @@ impl FixtureSpectrum {
             mz_unit: None,
             intensity_unit: None,
             declared_length: points.len(),
+            polarities: &[],
+            charges: &[],
         }
     }
 
@@ -150,6 +157,9 @@ impl FixtureSpectrum {
         let mut body = cv("MS:1000511", &self.ms_level.to_string());
         if let Some(representation) = self.representation {
             body.push_str(&cv(representation, ""));
+        }
+        for polarity in self.polarities {
+            body.push_str(&cv(polarity, ""));
         }
         body.push_str(&cv("MS:1000504", &self.base_peak_mz.to_string()));
         body.push_str(&cv("MS:1000505", &self.base_peak_intensity.to_string()));
@@ -171,6 +181,9 @@ impl FixtureSpectrum {
             let mut ion = mz.map_or_else(String::new, |mz| cv("MS:1000744", &mz.to_string()));
             if let Some(intensity) = intensity {
                 ion.push_str(&cv("MS:1000042", &intensity.to_string()));
+            }
+            for charge in self.charges {
+                ion.push_str(&cv("MS:1000041", charge));
             }
             body.push_str(&format!(
                 r#"<precursorList count="1"><precursor><selectedIonList count="1"><selectedIon>{ion}</selectedIon></selectedIonList></precursor></precursorList>"#

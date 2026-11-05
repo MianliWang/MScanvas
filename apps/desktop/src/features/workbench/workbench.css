@@ -272,15 +272,16 @@
 .plot-head .ui-icon-button.ui-button--sm { width: 30px; }
 /* A plot region never clips: its overlays and its controls' rings stay whole. */
 .workbench-shell .viewer-lower > .spectrum-panel { overflow: visible; }
-/* What the spectrum is: the scan between its steps, then its MS level and size,
-   which give way first so the tools keep the head's one line. */
+/* What the spectrum is: the scan between its steps, then its facts (MS level,
+   representation, polarity, charge and size), which give way first so the
+   tools keep their place. */
 .spectrum-stepper { display: flex; flex: none; align-items: center; gap: 4px; }
 .spectrum-scan { min-width: 4ch; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
-/* One line that drops whole facts from its end, never a cut word: a fact that
-   does not fit wraps onto a second line the fixed height hides (P5, the point
-   count first, then the representation). At 1050 px and below the second line
-   shows (the 1050 px block). */
-.spectrum-head-facts { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: 0 8px; min-width: 0; height: 18px; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Drops whole facts from its end, never a cut word: a fact that does not fit
+   takes a second line inside the head's 36 px, whole, and a third stays hidden
+   (P5, the point count first). A fact wider than the head the panel hides
+   (`hideCutFacts`). */
+.spectrum-head-facts { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: 0 8px; min-width: 0; max-height: 36px; margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .spectrum-head-facts > span { flex: none; }
 .plot-tools { flex: none; flex-wrap: nowrap; gap: 4px; margin-left: auto; }
 .plot-tools-divider { flex: none; width: 1px; height: 18px; margin: 0 2px; background: var(--color-border); }
@@ -533,10 +534,6 @@
   .workbench-shell .workspace-sidebar { left: 0; }
   .workbench-inspector { right: 0; }
   .viewer-lower, .workbench-shell[data-details-open="true"] .viewer-lower { grid-template-columns: 300px minmax(0, 1fr); }
-  /* Details is a drawer here, so the head is where a representation the file
-     does not report is said (ADR 0029): a fact that does not fit takes a second
-     line inside the head's 36 px, whole; a third stays hidden. */
-  .spectrum-head-facts { height: auto; max-height: 36px; }
 }
 
 /* The restore notice: the offer, and joined under it the marked rows. The list

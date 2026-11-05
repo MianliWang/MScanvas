@@ -23,11 +23,12 @@ pub(crate) mod workspace_rows;
 
 use mscanvas_proteowizard::{
     ArrayProblem, ConversionSourceKind, LocalFileWriteError, LocalFileWriteFailure, MetadataEntry,
-    MetadataResult, MetadataSectionKind, MsLevelBucket, MzmlOpenError, MzmlScanError,
-    MzmlScanLimits, MzmlSpectrumError, MzmlSpectrumTable, PreviewOutcome, PreviewValue, Redactor,
-    RetentionTimeUnitState, RunSummaryResult, SelectedSpectrumResult, Sha256Digest,
-    SpectrumIdentity, SpectrumRepresentationState, SpectrumTableRow, ValueUnitState,
-    read_selected_spectrum, read_spectrum_table, write_new_local_file,
+    MetadataResult, MetadataSectionKind, MsLevelBucket, MzmlDeclared, MzmlOpenError, MzmlPolarity,
+    MzmlScanError, MzmlScanLimits, MzmlSpectrumError, MzmlSpectrumRow, MzmlSpectrumTable,
+    PreviewOutcome, PreviewValue, Redactor, RetentionTimeUnitState, RunSummaryResult,
+    SelectedSpectrumResult, Sha256Digest, SpectrumIdentity, SpectrumRepresentationState,
+    SpectrumTableRow, ValueUnitState, read_selected_spectrum, read_spectrum_table,
+    write_new_local_file,
 };
 
 use super::chromatogram::{
@@ -98,11 +99,12 @@ use super::dto::{
     MAX_SPECTRUM_TABLE_ROWS, MetadataDto, MetadataSectionDto, MsLevelCountDto, PrecursorDto,
     PreviewDto, PreviewErrorDto, RememberedFolderDto, RetentionTimeDto, RetentionTimeRangeDto,
     RetentionTimeUnitDto, RunSummaryDto, SelectedSpectrumDto, SelectedSpectrumOutcomeDto,
-    SpectrumRepresentationDto, SpectrumRowDto, SpectrumTableDto, ValidationModeDto, ValueUnitDto,
-    WorkspaceAddOutcomeDto, WorkspaceAddResultDto, WorkspaceConversionReservationDto,
-    WorkspaceConversionUpdateDto, WorkspaceDropStateDto, WorkspaceDropSubscriptionReservationDto,
-    WorkspaceDropUpdateDto, WorkspaceRemoveResultDto, WorkspaceRosterDto, bounded_text,
-    conversion_busy, conversion_settings_not_evidenced_for_source, dataset_not_previewable,
+    SpectrumPolarityDto, SpectrumRepresentationDto, SpectrumRowDto, SpectrumTableDto,
+    ValidationModeDto, ValueUnitDto, WorkspaceAddOutcomeDto, WorkspaceAddResultDto,
+    WorkspaceConversionReservationDto, WorkspaceConversionUpdateDto, WorkspaceDropStateDto,
+    WorkspaceDropSubscriptionReservationDto, WorkspaceDropUpdateDto, WorkspaceRemoveResultDto,
+    WorkspaceRosterDto, bounded_text, conversion_busy,
+    conversion_settings_not_evidenced_for_source, dataset_not_previewable,
     invalid_conversion_reservation, queue_destination_changed, queue_is_empty,
     queue_output_name_collision, queue_too_large, redact_absolute_paths, require_finite,
     require_finite_option, workspace_full,
@@ -8012,8 +8014,13 @@ impl PreviewService {
         if changed() {
             return Err(source_changed_since_preview());
         }
-        let spectrum = match spectrum {
-            Ok(spectrum) => SelectedSpectrumResult::from_native(spectrum),
+        let (spectrum, declared) = match spectrum {
+            // Read before the shared result takes it: polarity and charge stay
+            // off that type, which the exports read (R-1).
+            Ok(spectrum) => {
+                let declared = declared_facts(spectrum.row());
+                (SelectedSpectrumResult::from_native(spectrum), declared)
+            }
             Err(MzmlSpectrumError::NotInTable) => {
                 return Ok(SelectedSpectrumOutcomeDto::Unavailable {
                     requested_index: index,
@@ -8062,6 +8069,7 @@ impl PreviewService {
             // The verdict this snapshot settled when it was retained, so the
             // panel and every later projection over it read one answer.
             snapshot.viewport_domain(),
+            declared,
         );
         match projected {
             Ok(spectrum) => Ok(SelectedSpectrumOutcomeDto::Spectrum {
@@ -8154,6 +8162,31 @@ mod native_projection_tests {
     use super::super::dto::{RetentionTimeRangeDto, RetentionTimeUnitDto};
     use super::super::mzml_fixture::{FixtureSpectrum, document};
     use super::{TableRowFacts, bounded_spectrum_table_dto, retention_time_range_dto};
+
+    /// No file reaches an unreadable polarity: the reader never reads the term's
+    /// value. The mapping still answers it, and with not reported.
+    #[test]
+    fn a_polarity_the_reader_could_not_settle_is_not_reported() {
+        use super::super::dto::SpectrumPolarityDto;
+        use super::polarity_dto;
+        use mscanvas_proteowizard::{MzmlDeclared, MzmlPolarity};
+
+        assert_eq!(
+            polarity_dto(MzmlDeclared::Value(MzmlPolarity::Positive)),
+            Some(SpectrumPolarityDto::Positive)
+        );
+        assert_eq!(
+            polarity_dto(MzmlDeclared::Value(MzmlPolarity::Negative)),
+            Some(SpectrumPolarityDto::Negative)
+        );
+        for state in [
+            MzmlDeclared::NotDeclared,
+            MzmlDeclared::Conflicting,
+            MzmlDeclared::Unreadable,
+        ] {
+            assert_eq!(polarity_dto(state), None);
+        }
+    }
 
     fn spectrum(id: &str, retention_time: f64, unit: Option<&'static str>) -> FixtureSpectrum {
         let mut spectrum =
@@ -8919,7 +8952,9 @@ fn run_summary_dto(
 /// over the native rows through the shared row type.
 //
 // One path: every row becomes a `SpectrumTableRow` (ADR 0056, decision 5), and
-// both the bounded projection and the retained facts are read from that. No
+// both the bounded projection and the retained facts are read from that, but
+// for polarity and charge, which stay off that type (R-1) and which only the
+// projection carries. No
 // intermediate vector of every row is built, so a table at the reader's limit
 // is not held three times over while this runs. The webview receives at most
 /// `MAX_SPECTRUM_TABLE_ROWS` rows with their total; Rust retains them all.
@@ -8944,7 +8979,7 @@ fn bounded_spectrum_table_dto(
     for native in table.rows() {
         let row = SpectrumTableRow::from_native(native);
         if rows.len() < bound {
-            rows.push(spectrum_row_dto(&row, redactor)?);
+            rows.push(spectrum_row_dto(&row, declared_facts(native), redactor)?);
         }
         facts.push(TableRowFacts::of(&row));
     }
@@ -8958,9 +8993,42 @@ fn bounded_spectrum_table_dto(
     ))
 }
 
+/// A spectrum's polarity and charge, one rule for the row and the panel. Read
+/// from the native row: the shared `SpectrumTableRow` leaves a native row's
+/// charge unreported until routing (ADR 0056, decision 5; R-1).
+fn declared_facts(row: &MzmlSpectrumRow) -> (Option<SpectrumPolarityDto>, Option<i32>) {
+    (
+        polarity_dto(row.polarity()),
+        row.first_precursor()
+            .and_then(|precursor| charge_dto(precursor.charge())),
+    )
+}
+
+/// A polarity the file states one way, or not reported.
+//
+// Exhaustive with no wildcard: R-1 makes every other state not reported and
+// never a refusal, so none of them reaches `contradicts`.
+const fn polarity_dto(polarity: MzmlDeclared<MzmlPolarity>) -> Option<SpectrumPolarityDto> {
+    match polarity {
+        MzmlDeclared::Value(MzmlPolarity::Positive) => Some(SpectrumPolarityDto::Positive),
+        MzmlDeclared::Value(MzmlPolarity::Negative) => Some(SpectrumPolarityDto::Negative),
+        MzmlDeclared::NotDeclared | MzmlDeclared::Conflicting | MzmlDeclared::Unreadable => None,
+    }
+}
+
+/// A charge the file states one way, as it states it, or not reported. A stated
+/// `0` stays `0`, and no sign is taken from the polarity.
+const fn charge_dto(charge: MzmlDeclared<i32>) -> Option<i32> {
+    match charge {
+        MzmlDeclared::Value(charge) => Some(charge),
+        MzmlDeclared::NotDeclared | MzmlDeclared::Conflicting | MzmlDeclared::Unreadable => None,
+    }
+}
+
 /// One row as the webview receives it, its identifier redacted and bounded.
 fn spectrum_row_dto(
     row: &SpectrumTableRow,
+    (polarity, charge): (Option<SpectrumPolarityDto>, Option<i32>),
     redactor: &Redactor,
 ) -> Result<SpectrumRowDto, PreviewErrorDto> {
     let identity = row.identity();
@@ -8977,6 +9045,8 @@ fn spectrum_row_dto(
         base_peak_intensity: require_finite(row.base_peak_intensity())?,
         total_ion_current: require_finite(row.total_ion_current())?,
         precursor_mz: require_finite_option(row.precursor_mz())?,
+        polarity,
+        charge,
     })
 }
 
@@ -9011,6 +9081,7 @@ fn selected_spectrum_dto(
     redactor: &Redactor,
     export_token: String,
     viewport_domain: projection::ViewportDomain,
+    (polarity, charge): (Option<SpectrumPolarityDto>, Option<i32>),
 ) -> Result<SelectedSpectrumDto, PreviewErrorDto> {
     let point_count = spectrum.mz_values().len();
     let truncated = point_count > MAX_SPECTRUM_POINTS;
@@ -9060,6 +9131,8 @@ fn selected_spectrum_dto(
         total_precursor_count,
         precursors_truncated: total_precursor_count > MAX_PRECURSORS,
         representation: representation_dto(spectrum.representation()),
+        polarity,
+        charge,
         mz_unit: value_unit_dto(spectrum.mz_unit()),
         intensity_unit: value_unit_dto(spectrum.intensity_unit()),
         truncated,

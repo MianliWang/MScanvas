@@ -87,6 +87,8 @@ export async function seedARunOf(rowCount: number): Promise<void> {
           basePeakIntensity: 10 + ((index * 3) % 900),
           totalIonCurrent: 5_000 + ((index * 7) % 4_000),
           precursorMz: index % 4 === 0 ? null : 500 + (index % 300),
+          polarity: null,
+          charge: null,
         };
       }
       preview.spectrumTable = { rows, totalRowCount: count, truncated: false };

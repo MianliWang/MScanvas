@@ -505,6 +505,63 @@ Both need a follow-up decision. It must:
 >      `SpectrumTableRow` until routing; conflicting or unreadable polarity and
 >      charge not reported, never refused.
 
+> **2026-11-05: polarity and charge reach the viewer.** What R-1 answered, built:
+> `SpectrumRowDto` and `SelectedSpectrumDto` carry `polarity` and `charge`, and the
+> spectrum's head and Details state them, so "Nothing reads it yet" above no longer
+> holds for these two facts. It still holds for the run-level metadata and the run
+> summary. They are read from the native row beside the shared types:
+> `SpectrumTableRow` and `SelectedSpectrumResult` are unchanged, decision 5's "a
+> native row leaves charge unreported" holds of that type, and no export or figure
+> document changes. Neither fact reaches `contradicts`, so no file that opens today
+> is refused. The scan table gains no column. `msaccess` stays in the open, and the
+> three retention times stay its own.
+>
+> As built, not an owner decision:
+>
+> - **Whose charge.** A spectrum's `charge` is its first precursor's first selected
+>   ion, the rule the row's `precursor_mz` follows. Where a spectrum has more than one
+>   precursor, Details says "precursor 1 of N". The head says it beside a stated
+>   charge, in the same fact ("Charge 3 (prec. 1/3)"), so the charge never stands
+>   without it. The other precursors' charges are not shown.
+> - **One `null`.** Not stated, stated two ways and a charge that is not an integer
+>   all reach the webview as `null`, shown as not reported, with no reason given. An
+>   MS1, having no precursor, says charge not reported.
+> - **As stated.** A stated `0` stays `0`, a negative stays negative, and no sign is
+>   taken from the polarity. Whether a file's `0` means an unknown charge is not
+>   judged.
+> - **An unreadable polarity cannot come from a file.** The reader never reads the
+>   polarity term's value, so only the mapping is tested for that state.
+> - **The head.** Its facts run MS level, representation, then what the file states
+>   (polarity, then charge), then what it does not, then the size, which gives way
+>   first. Both unreported share one fact. They may take a second line inside its
+>   36 px at every width, which only 1050 px and below allowed. A fact wider than the
+>   head is hidden whole, never cut, and every later fact is on a line the head
+>   hides, so it still gives way from its end. Which facts show depends on the
+>   head's width and on how the facts before each one fill its two lines, not on a
+>   fact alone, and Details says every fact. For example, rendered with scan 36,319
+>   and 1,234 points:
+>   - At 1366x768 with the roster open the `en` head is 222 px wide. In the states
+>     rendered every fact shows, except that the size gives way where neither
+>     polarity nor charge is stated. With Details open beside the roster the `en`
+>     head is 31 px wide and shows only the MS level.
+>   - At 960x640 in `en` the head is 126 px wide. "MS2 Centroid Positive" fills its
+>     first line and "Charge 3 (prec. 1/3)" its second. "Negative" does not fit on
+>     the first line after "MS2 Centroid", so "Charge 12 (prec. 1/12)" after it is
+>     said only in Details. "Polarity, charge not reported" (152 px) and
+>     "Representation not reported" (150 px) are wider than the head, so they, and
+>     every fact after them, stated or not, are said only in Details, its drawer;
+>     ADR 0029's representation is not in the head there.
+>   - At 960x640 the `zh-CN` head is 153 px wide. In the states rendered every fact
+>     shows, and only the size gives way.
+>   - Where a spectrum has no scan number, "Spectrum 36,319" leaves the `en` head
+>     97 px wide at 960x640. "MS2 Profile Negative" fills its two lines, so "Charge
+>     2" after it is said only in Details, and "MS2 Profile Charge 2" leaves
+>     "Polarity not reported" there. The `zh-CN` head is as wide as with a scan
+>     number. With Details open beside the roster at 1366x768 the `en` head is 2 px
+>     wide and shows no fact.
+> - **Run-level metadata** stays off the Metadata tab, for N-V6. The native text is
+>   unredacted, and it would be a second view beside `msaccess`'s.
+
 ### 4. Offsets are kept with the open preview
 
 Every open is a full pass, because no index is trusted (decision 2). In the

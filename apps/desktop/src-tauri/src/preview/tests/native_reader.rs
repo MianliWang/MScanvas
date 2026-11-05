@@ -2,6 +2,7 @@
 //! stored values reach the exports exactly, the file's own terms reach the
 //! transfer objects, and nothing the file does not state is invented.
 
+use super::super::dto::SpectrumPolarityDto;
 use super::*;
 use serde_json::json;
 
@@ -284,6 +285,125 @@ fn the_file_s_own_terms_reach_the_transfer_objects_and_the_exports() {
             &json!({ "mz": 200.25, "intensity": 40.0 })
         )
     );
+}
+
+#[test]
+fn polarity_and_charge_reach_the_row_and_the_panel_as_the_file_states_them() {
+    const POSITIVE: &str = "MS:1000130";
+    const NEGATIVE: &str = "MS:1000129";
+    type Case = (
+        &'static [&'static str],
+        &'static [&'static str],
+        Option<SpectrumPolarityDto>,
+        Option<i32>,
+    );
+    let cases: [Case; 8] = [
+        (
+            &[POSITIVE],
+            &["2"],
+            Some(SpectrumPolarityDto::Positive),
+            Some(2),
+        ),
+        (
+            &[NEGATIVE],
+            &["3"],
+            Some(SpectrumPolarityDto::Negative),
+            Some(3),
+        ),
+        // Unstated: not reported, never a default.
+        (&[], &[], None, None),
+        // Conflicting: not reported, and the open stands (R-1).
+        (&[POSITIVE, NEGATIVE], &["2", "3"], None, None),
+        // Restated the same way: one statement.
+        (
+            &[NEGATIVE, NEGATIVE],
+            &["2", " 2 "],
+            Some(SpectrumPolarityDto::Negative),
+            Some(2),
+        ),
+        // Not an integer: not reported, and the open stands.
+        (
+            &[POSITIVE],
+            &["2.5"],
+            Some(SpectrumPolarityDto::Positive),
+            None,
+        ),
+        // What the file states, as it states it: no sign from the polarity, and
+        // a stated zero is a statement, not "not reported".
+        (
+            &[NEGATIVE],
+            &["-2"],
+            Some(SpectrumPolarityDto::Negative),
+            Some(-2),
+        ),
+        (
+            &[POSITIVE],
+            &["0"],
+            Some(SpectrumPolarityDto::Positive),
+            Some(0),
+        ),
+    ];
+    for (polarities, charges, polarity, charge) in cases {
+        let file = TestFile::new("polarity-charge");
+        let mut spectra = sample_spectra();
+        spectra[1].polarities = polarities;
+        spectra[1].charges = charges;
+        file.write(&document(&spectra));
+
+        let (service, preview, ms2) = open_and_load(&file, 1);
+
+        // Whatever it states, every row of the file still opens.
+        assert_eq!(preview.spectrum_table.rows.len(), spectra.len());
+        let row = &preview.spectrum_table.rows[1];
+        assert_eq!((row.polarity, row.charge), (polarity, charge));
+        assert_eq!((ms2.polarity, ms2.charge), (polarity, charge));
+        // A neighbour states nothing, whatever this spectrum states.
+        let ms1 = loaded_spectrum(&service, &preview.file.handle, 0);
+        assert_eq!((ms1.polarity, ms1.charge), (None, None));
+    }
+}
+
+#[test]
+fn an_ms1_states_its_polarity_and_has_no_charge_to_report() {
+    let file = TestFile::new("ms1-polarity");
+    let mut spectra = sample_spectra();
+    spectra[0].polarities = &["MS:1000130"];
+    file.write(&document(&spectra));
+
+    let (_, preview, ms1) = open_and_load(&file, 0);
+
+    let expected = (Some(SpectrumPolarityDto::Positive), None);
+    assert_eq!((ms1.polarity, ms1.charge), expected);
+    let row = &preview.spectrum_table.rows[0];
+    assert_eq!((row.polarity, row.charge), expected);
+}
+
+#[test]
+fn polarity_and_charge_are_always_on_the_wire_and_null_is_their_not_reported() {
+    let wire = |polarities: &'static [&'static str], charges: &'static [&'static str]| {
+        let file = TestFile::new("polarity-charge-wire");
+        let mut spectra = sample_spectra();
+        spectra[1].polarities = polarities;
+        spectra[1].charges = charges;
+        file.write(&document(&spectra));
+        let (_, preview, spectrum) = open_and_load(&file, 1);
+        [
+            serde_json::to_value(&preview.spectrum_table.rows[1]).expect("serializes"),
+            serde_json::to_value(&spectrum).expect("serializes"),
+        ]
+    };
+    for object in wire(&["MS:1000130"], &["2"]) {
+        assert_eq!(object["polarity"], json!("positive"));
+        assert_eq!(object["charge"], json!(2));
+    }
+    for object in wire(&["MS:1000129"], &["-1"]) {
+        assert_eq!(object["polarity"], json!("negative"));
+        assert_eq!(object["charge"], json!(-1));
+    }
+    for object in wire(&[], &[]) {
+        assert_eq!(object.get("polarity"), Some(&json!(null)));
+        assert_eq!(object.get("charge"), Some(&json!(null)));
+    }
 }
 
 #[test]

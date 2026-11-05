@@ -60,6 +60,8 @@ function runOf(scans: readonly Scan[], truncated = false, unit: RetentionTimeUni
     basePeakIntensity: scan.bpc,
     totalIonCurrent: scan.tic,
     precursorMz: null,
+    polarity: null,
+    charge: null,
   }));
   return buildPreviewScanModel({
     rows,

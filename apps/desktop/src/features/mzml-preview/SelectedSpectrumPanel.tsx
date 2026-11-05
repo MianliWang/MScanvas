@@ -1,14 +1,14 @@
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import { Button, Icon, IconButton, Toolbar } from "../../components/ui";
 import { usePlotRangeEditor } from "./PlotRangeActions";
 import { figureRefusal, QuickFigureActions, type ExportWithheld } from "./QuickFigureActions";
 import { ownedErrorDetail, ownedErrorMessage } from "./ownedErrorMessages";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
-import type { UiMessage } from "../preferences/i18n";
+import type { MessageKey, UiMessage } from "../preferences/i18n";
 import type { CopiedFigure, ExportedFigure, ExportedSpectrumRange, PreviewError, SelectedSpectrum,
   SpectrumExportFormat } from "./contracts";
 import type { FigureSettingsValidation } from "./figureSettingsValidation";
-import { formatCount, REPRESENTATION } from "./format";
+import { formatCount, POLARITY, REPRESENTATION } from "./format";
 import { SpectrumViewport, SpectrumZoomControls } from "./SpectrumViewport";
 import type { SpectrumExportState, SpectrumState } from "./usePreviewWorkspace";
 import type { SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
@@ -58,9 +58,35 @@ const SCAN_ID = "selected-spectrum-scan";
 /** Spectrum refusals whose recovery is opening the file again (ADR 0056). */
 const REOPEN_KINDS = new Set(["preview_not_open", "spectrum_not_as_recorded", "source_changed_since_preview"]);
 
+/** What the head says of the polarity and charge the file does not state. */
+function notReported(spectrum: SelectedSpectrum): MessageKey | null {
+  if (spectrum.polarity === null) return spectrum.charge === null ? "viewerPolarityChargeNotReported" : "viewerPolarityNotReported";
+  return spectrum.charge === null ? "viewerChargeNotReported" : null;
+}
+
+/**
+ * Hides each head fact the head cannot hold whole, so no word is cut (P5),
+ * again whenever the head's width changes. Such a fact is wider than the head,
+ * so it sits alone on its line and every later fact below it: the head still
+ * gives way from its end.
+ */
+function hideCutFacts(head: HTMLElement | null): (() => void) | undefined {
+  if (head === null) return undefined;
+  const fit = () => {
+    const edge = head.getBoundingClientRect().right + 0.5;
+    for (const fact of head.children) {
+      if (fact instanceof HTMLElement) fact.style.visibility = fact.getBoundingClientRect().right > edge ? "hidden" : "";
+    }
+  };
+  fit();
+  const observer = new ResizeObserver(fit);
+  observer.observe(head);
+  return () => { observer.disconnect(); };
+}
+
 /**
  * The selected spectrum (direction A): a head with the title, the scan and its
- * steps, the scan's MS level and size, and one toolbar (m/z range, then the
+ * steps, the scan's MS level, representation, polarity, charge and size, and one toolbar (m/z range, then the
  * figure); the plot; and over the plot's corner, what the last export did.
  * Range, size and theme are the figure dialog's; the spectrum's facts are in
  * Details.
@@ -71,6 +97,9 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
   const reason = figureRefusal(t, props.scientificExportBusy, props.figureSettingsValidation);
   const rangeEditor = usePlotRangeEditor();
   const spectrum = state.status === "loaded" ? state.spectrum : null;
+  const unstated = spectrum === null ? null : notReported(spectrum);
+  const headFacts = useRef<HTMLParagraphElement>(null);
+  useLayoutEffect(() => hideCutFacts(headFacts.current), [spectrum, t]);
   // With no spectrum, the line between the steps ("No spectrum selected") is
   // why neither can move; otherwise the table's own sentence, where it has one.
   const stepReasonId = props.stepReasonId ?? (spectrum === null ? SCAN_ID : undefined);
@@ -85,10 +114,19 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
         <IconButton icon={<Icon name="chevronDown" />} label={t("scanNext")} onClick={props.onSelectNext}
           refused={props.canSelectNext !== true} reasonId={stepReasonId} size="sm" variant="secondary" />
       </div>
-      {spectrum === null ? null : <p className="spectrum-head-facts">
+      {spectrum === null ? null : <p className="spectrum-head-facts" ref={headFacts}>
         <span>{`MS${spectrum.msLevel}`}</span>
         {/* What the file declares (P5): profile is drawn as a line, the rest as sticks. */}
         <span>{t(spectrum.representation === "notReported" ? "viewerRepresentationNotReported" : REPRESENTATION[spectrum.representation])}</span>
+        {/* What the file states (R-1): what it states before what it does not, so a
+            narrow head keeps a stated fact, the polarity first, being shorter. The
+            charge says whose it is in the same fact, so it never stands without it. */}
+        {spectrum.polarity === null ? null : <span>{t(POLARITY[spectrum.polarity])}</span>}
+        {spectrum.charge === null ? null : <span>{spectrum.totalPrecursorCount > 1
+          ? t("viewerChargeValueOfPrecursor", { charge: String(spectrum.charge), total: spectrum.totalPrecursorCount })
+          : t("viewerChargeValue", { charge: String(spectrum.charge) })}</span>}
+        {/* Not reported is a value, never 0; both share one fact. */}
+        {unstated === null ? null : <span>{t(unstated)}</span>}
         <span>{t("viewerExportPoints", { count: spectrum.pointCount })}</span>
       </p>}
       {/* The plot's accessible name, in one sentence. */}

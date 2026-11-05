@@ -478,6 +478,8 @@ export function buildRows(count: number): SpectrumRow[] {
       basePeakIntensity: 1_000 + index,
       totalIonCurrent: 10_000 + index * 3,
       precursorMz: msLevel === 1 ? null : 500 + (index % 300),
+      polarity: null,
+      charge: null,
     });
   }
   return rows;
@@ -585,6 +587,8 @@ export function buildSpectrum(index: number, pointCount: number): SelectedSpectr
     totalPrecursorCount: precursors.length,
     precursorsTruncated: false,
     representation: "notReported",
+    polarity: null,
+    charge: null,
     mzUnit: { state: "notReported" },
     intensityUnit: { state: "notReported" },
     truncated: false,

@@ -267,6 +267,61 @@ describe("selected spectrum export actions", () => {
   });
 });
 
+describe("what the head says the spectrum states", () => {
+  const facts = () => [...document.querySelectorAll(".spectrum-head-facts > span")].map(fact => fact.textContent);
+
+  it("states polarity and charge as values, in words, before the size, which drops first", () => {
+    renderPanel(loaded({ representation: "profile", polarity: "negative", charge: 2 }));
+
+    expect(facts()).toEqual(["MS2", en.viewerRepresentationProfile, "Negative", "Charge 2", "4 points"]);
+  });
+
+  it("says what the file states before what it does not, in one fact for both, never 0, and a stated 0 as stated", () => {
+    const shown = (polarity: SelectedSpectrum["polarity"], charge: number | null) => {
+      const { unmount } = renderPanel(loaded({ polarity, charge }));
+      const said = facts().slice(2, -1);
+      unmount();
+      return said;
+    };
+
+    expect(shown(null, null)).toEqual([en.viewerPolarityChargeNotReported]);
+    expect(shown(null, 2)).toEqual(["Charge 2", en.viewerPolarityNotReported]);
+    expect(shown("positive", null)).toEqual(["Positive", en.viewerChargeNotReported]);
+    expect(shown("positive", 0)).toEqual(["Positive", "Charge 0"]);
+  });
+
+  it("says whose charge it is in the same fact where the spectrum has more than one precursor, only beside a stated charge", () => {
+    const { unmount } = renderPanel(loaded({ polarity: "positive", charge: 3, totalPrecursorCount: 2 }));
+    expect(facts().slice(2, -1)).toEqual(["Positive", "Charge 3 (prec. 1/2)"]);
+    unmount();
+
+    renderPanel(loaded({ polarity: null, charge: null, totalPrecursorCount: 2 }));
+    expect(facts().join(" ")).not.toContain("prec.");
+  });
+
+  it("hides a fact wider than the head, whole, so no word is cut (P5)", () => {
+    // jsdom has no layout: the head ends at 100 px, and only the unreported
+    // representation runs past it.
+    const box = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const right = this.classList.contains("spectrum-head-facts") ? 100 : this.textContent === en.viewerRepresentationNotReported ? 150 : 50;
+      return new DOMRect(0, 0, right, 18);
+    });
+    try {
+      renderPanel(loaded());
+      const hidden = [...document.querySelectorAll<HTMLElement>(".spectrum-head-facts > span")]
+        .filter(fact => fact.style.visibility === "hidden").map(fact => fact.textContent);
+      expect(hidden).toEqual([en.viewerRepresentationNotReported]);
+    } finally {
+      box.mockRestore();
+    }
+  });
+
+  it("states neither before a spectrum has loaded", () => {
+    renderPanel({ status: "loading", index: 3 });
+    expect(facts()).toEqual([]);
+  });
+});
+
 describe("opening the file again from a refused spectrum", () => {
   it.each(["preview_not_open", "spectrum_not_as_recorded", "source_changed_since_preview"])(
     "offers it for %s, and refuses it with the visible reason while a read cannot start", kind => {

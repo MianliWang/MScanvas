@@ -15,6 +15,7 @@ import {
   formatMz,
   formatRetentionTime,
   formatRetentionTimeIn,
+  POLARITY,
   REPRESENTATION,
   unitText,
 } from "./format";
@@ -264,6 +265,10 @@ function SpectrumFacts({ spectrum }: { readonly spectrum: SelectedSpectrum }) {
         <div><dt>{t("viewerBasePeak")}</dt><dd>{t("viewerBasePeakValue", { mz: formatMz(spectrum.basePeakMz), value: formatIntensity(spectrum.basePeakIntensity) })}</dd></div>
       </>}
       <div><dt>{t("viewerRepresentation")}</dt><dd>{t(REPRESENTATION[spectrum.representation])}</dd></div>
+      <div><dt>{t("viewerPolarity")}</dt><dd>{t(spectrum.polarity === null ? "viewerNotReported" : POLARITY[spectrum.polarity])}</dd></div>
+      <div><dt>{t("viewerCharge")}</dt><dd>{spectrum.totalPrecursorCount > 1
+        ? t("viewerChargeOfPrecursor", { value: reported(spectrum.charge, String, t), total: spectrum.totalPrecursorCount })
+        : reported(spectrum.charge, String, t)}</dd></div>
       <div><dt>{t("viewerMzUnit")}</dt><dd>{unitText(spectrum.mzUnit, t)}</dd></div>
       <div><dt>{t("viewerIntensityUnit")}</dt><dd>{unitText(spectrum.intensityUnit, t)}</dd></div>
     </dl>

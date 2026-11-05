@@ -50,6 +50,15 @@ All notable changes will be documented here once versioned releases begin.
   in its preamble which rows it holds and which of how many. Nothing is
   recomputed, and the whole table's three exports do not change. The owner's
   check of the spreadsheet CSV in Excel, LibreOffice and WPS is still pending.
+- **A spectrum's polarity and precursor charge.** Details now says what the mzML
+  file states, read by MSCanvas's own reader: positive or negative, and the charge
+  of the first precursor. The spectrum's head says it where it has room, what the
+  file states first, and leaves a fact it has no room for to Details, never cut
+  short. Where a file does not state
+  one, states it two ways or states a charge that is not an integer, they say
+  not reported, never 0, and the file opens as before. The scan table gains no
+  column, and exports and figures do not change. `msaccess` still runs at open
+  ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
 
 ### Changed
 
