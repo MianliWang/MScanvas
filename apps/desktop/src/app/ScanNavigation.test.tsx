@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
-import { availableBackend, buildPreview, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, secondFile, selectedFile } from "../test/previewFixtures";
+import { availableBackend, buildPreview, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, quarantinedBackend, secondFile, selectedFile } from "../test/previewFixtures";
 import { UI_RESOURCES } from "../features/preferences/i18n";
 import { usePreviewWorkspace } from "../features/mzml-preview/usePreviewWorkspace";
 import { mzDomain } from "../features/mzml-preview/viewer/spectrumViewport";
@@ -662,6 +662,24 @@ describe("a spectrum on open (V-1)", () => {
       pressFile(selectedFile.fileName);
       await land(replies[0]);
       await screen.findByRole("img", { name: /^Spectrum 1,/u });
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+    });
+
+    it("does not open it when the read's own failure says the backend was lost", async () => {
+      let fail: () => void = () => undefined;
+      let answers = 0;
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(runOf([[1, 10], [1, 70]])),
+        availability: () => Promise.resolve((answers += 1) === 1 ? availableBackend : quarantinedBackend),
+        spectrum: () => new Promise((_, reject) => { fail = () => reject({ kind: "backend_quarantined", summary: "Rust's words.", detail: null, retryable: false }); }) });
+      const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+      await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+      await waitFor(() => expect(result.current.backendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(selectedFile.handle); });
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      act(() => { result.current.holdOpen(secondFile.handle); });
+      await act(async () => { fail(); await Promise.resolve(); });
+      await waitFor(() => expect(answers).toBe(2));
+      await waitFor(() => { expect(result.current.backendBusy).toBe(false); expect(result.current.previewBackendBusy).toBe(false); });
       expect(api.openedHandles).toEqual([selectedFile.handle]);
     });
 

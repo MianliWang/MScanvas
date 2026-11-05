@@ -2129,8 +2129,9 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     const handle = heldOpen.current;
     if (previewBackendBusy || viewerRequests.current > 0 || handle === null) return;
     heldOpen.current = null;
-    // `activateDataset` keeps its own guards; these are the rest of `canPreview`,
-    // and a row that left the list while the press waited.
+    // `activateDataset` keeps its own guards, and a quarantine reaches them through
+    // the check it starts. These are the conversion and the view `canPreview` also
+    // waits for, and a row that left the list while the press waited.
     if (!conversionBusyRef.current && !rawViewBusyRef.current && rosterRef.current.datasets.some(dataset => dataset.handle === handle)) activateDataset(handle);
   }, [activateDataset, previewBackendBusy]);
 
