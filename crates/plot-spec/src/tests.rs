@@ -7221,6 +7221,377 @@ fn headroom_does_not_cross_zero() {
     assert!((zero_label_y - zero - 11.0 * 0.36).abs() < 0.01, "{sticks}");
 }
 
+/// Where each subpath of the first series path starts across the page.
+fn subpath_starts(document: &str) -> Vec<f64> {
+    path_data(document)
+        .split('M')
+        .skip(1)
+        .filter_map(|piece| piece.split(' ').next()?.parse().ok())
+        .collect()
+}
+
+/// A mark at either end of the domain stands clear of the frame by one inset,
+/// on any figure, and the frame itself still runs its whole width.
+#[test]
+fn a_mark_at_either_end_stands_clear_of_the_frame() {
+    let smallest = FigureSize::new(
+        MIN_FIGURE_WIDTH,
+        MIN_FIGURE_CHROME_HEIGHT + MIN_PANEL_HEIGHT,
+    )
+    .expect("the smallest figure the contract accepts");
+    for size in [
+        FigureSize::new(900.0, 500.0).expect("a size"),
+        single_column(60.0),
+        smallest,
+    ] {
+        let figure =
+            FigureSpec::new(FigureTheme::Light, size, vec![publication_panel()]).expect("a figure");
+        let document = svg::render(&figure);
+        let (left, right) = plot_edges(&document);
+        let sticks = subpath_starts(&document);
+        let (first, last) = (sticks[0], sticks[sticks.len() - 1]);
+        assert!((first - (left + 8.0)).abs() < 0.001, "{document}");
+        assert!((last - (right - 8.0)).abs() < 0.001, "{document}");
+        assert!(left < first && last < right);
+    }
+
+    // A tick stands where the data of its value is drawn, not where the frame is.
+    let document = svg::render(&figure_of(publication_panel()));
+    let sticks = subpath_starts(&document);
+    let (tick, ..) = drawn_texts(&document)
+        .into_iter()
+        .find(|(_, _, _, words)| words == "500")
+        .expect("the tick on the last stick");
+    assert!(
+        (tick - sticks[sticks.len() - 1]).abs() < 0.001,
+        "{document}"
+    );
+}
+
+/// A rule at the domain's last position stands beside the words in the plot, not
+/// through them: the legend and a marker's label both end at the band, where that
+/// rule is drawn. A line as wide as the whole frame cannot, and stays in the frame.
+#[test]
+fn a_rule_at_the_last_position_is_not_drawn_through_the_legend_or_a_label() {
+    for (width, text, beside_the_rule) in [
+        (1200.0, "Selected scan".to_owned(), true),
+        (MIN_FIGURE_WIDTH, "Selected scan".to_owned(), true),
+        (MIN_FIGURE_WIDTH, "m".repeat(MAX_LABEL_CHARS), false),
+    ] {
+        let panel = chromatogram_panel(vec![
+            chromatogram_series(
+                "TIC",
+                StyleRole::Measurement,
+                vec![10.0, 13.0],
+                vec![100.0, 300.0],
+            ),
+            chromatogram_series(
+                "BPC",
+                StyleRole::SecondaryMeasurement,
+                vec![10.0, 13.0],
+                vec![40.0, 120.0],
+            ),
+        ])
+        .with_markers(vec![
+            Marker::new(13.0, Some(label(&text))).expect("a marker"),
+        ])
+        .expect("a marker on a valid panel");
+        let size = FigureSize::new(width, MIN_FIGURE_CHROME_HEIGHT + 400.0).expect("a size");
+        let document =
+            svg::render(&FigureSpec::new(FigureTheme::Light, size, vec![panel]).expect("a figure"));
+
+        let (left, right) = plot_edges(&document);
+        let rule: f64 = document
+            .lines()
+            .find(|line| line.contains("stroke-dasharray=\"4 3\""))
+            .and_then(|line| line.split("x1=\"").nth(1))
+            .and_then(|rest| rest.split('"').next())
+            .and_then(|value| value.parse().ok())
+            .expect("the marker's rule");
+        assert!((rule - (right - 8.0)).abs() < 0.001, "{document}");
+
+        // Each legend entry is end-anchored, inside the plot.
+        let legend: Vec<f64> = drawn_texts(&document)
+            .into_iter()
+            .filter(|(_, _, _, words)| words == "TIC" || words == "BPC")
+            .map(|(x, ..)| x)
+            .collect();
+        assert_eq!(legend.len(), 2, "{document}");
+        assert!(legend.iter().all(|x| *x < rule), "{legend:?} {document}");
+
+        // The label's lines, at the width the renderer measures them.
+        let mut lines = 0;
+        for piece in document.split("<tspan x=\"").skip(1) {
+            let (x, rest) = piece.split_once('"').expect("a line's place");
+            let x: f64 = x.parse().expect("a number");
+            let words = rest
+                .split_once('>')
+                .and_then(|(_, rest)| rest.split_once("</tspan>"))
+                .expect("a line's words")
+                .0;
+            lines += 1;
+            let end = x + measured(words, 11.0);
+            assert!(x >= left, "into the value axis's gutter: {x}: {document}");
+            assert!(end <= right + 0.001, "past the frame: {end}: {document}");
+            if beside_the_rule {
+                assert!(
+                    end <= rule - 1.0,
+                    "the rule runs through {words:?}: {document}"
+                );
+            }
+        }
+        assert!(lines > 0, "{document}");
+    }
+}
+
+/// A name too long for the plot is condensed to the room its legend entry has,
+/// which ends short of the band's end, so its stroke sample stays whole inside the
+/// frame. Room measured from the frame would crowd the sample by the inset.
+#[test]
+fn a_long_legend_name_leaves_its_stroke_sample_whole() {
+    let name = "m".repeat(MAX_LABEL_CHARS);
+    let panel = chromatogram_panel(vec![
+        chromatogram_series(
+            &name,
+            StyleRole::Measurement,
+            vec![10.0, 13.0],
+            vec![100.0, 300.0],
+        ),
+        chromatogram_series(
+            "BPC",
+            StyleRole::SecondaryMeasurement,
+            vec![10.0, 13.0],
+            vec![40.0, 120.0],
+        ),
+    ]);
+    let size = FigureSize::new(MIN_FIGURE_WIDTH, MIN_FIGURE_CHROME_HEIGHT + 400.0).expect("a size");
+    let document =
+        svg::render(&FigureSpec::new(FigureTheme::Light, size, vec![panel]).expect("a figure"));
+
+    let (left, right) = plot_edges(&document);
+    let (x, _, head, _) = drawn_texts(&document)
+        .into_iter()
+        .find(|(_, _, _, words)| *words == name)
+        .expect("the name");
+    let length: f64 = head
+        .split("textLength=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .and_then(|value| value.parse().ok())
+        .expect("condensed");
+    assert!((x - (right - 12.0)).abs() < 0.01, "{document}");
+    // The entry's 18-unit sample and 4-unit gap, then the frame's left edge.
+    assert!((x - length - 22.0 - left).abs() < 0.01, "{document}");
+}
+
+/// Ticks are fitted to the band they are drawn over, not the frame, so the inset
+/// can change which of them fit. Pinned in both directions: an end tick standing
+/// further in leaves a wide label room it did not have, and a shorter axis fits
+/// fewer labels.
+#[test]
+fn domain_ticks_are_fitted_to_the_band_they_stand_on() {
+    let ticks = |width: f64, low: f64, high: f64| -> Vec<String> {
+        let panel = chromatogram_panel(vec![chromatogram_series(
+            "TIC",
+            StyleRole::Measurement,
+            vec![low, high],
+            vec![10.0, 20.0],
+        )]);
+        let size = FigureSize::new(width, 640.0).expect("a size");
+        let figure = FigureSpec::new(FigureTheme::Light, size, vec![panel]).expect("a figure");
+        drawn_texts(&svg::render(&figure))
+            .into_iter()
+            // Centred, and not an axis's caption, which states its unit.
+            .filter(|(_, _, head, words)| {
+                head.contains("text-anchor=\"middle\"") && !words.contains('(')
+            })
+            .map(|(.., words)| words)
+            .collect()
+    };
+    assert_eq!(
+        ticks(1200.0, 1000.0, 1000.1),
+        [
+            "1000.00", "1000.02", "1000.04", "1000.06", "1000.08", "1000.10"
+        ],
+    );
+    assert_eq!(ticks(208.0, 1e6, 3.5e6), ["1e6", "2e6", "3e6"]);
+}
+
+/// One sample in a wider window draws its short tick where its position is, in
+/// the band: a zero-width domain cannot tell this from the frame's middle.
+#[test]
+fn a_lone_sample_on_a_trace_stands_at_its_position_in_the_band() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Retention time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(10.0, 13.0),
+        domain(0.0, 100.0),
+        vec![series(vec![11.0], vec![70.0])],
+    )
+    .expect("a trace");
+    let document = svg::render(&figure_of(panel));
+    let (left, right) = plot_edges(&document);
+    let wanted = (left + 8.0) + (right - left - 16.0) / 3.0;
+    let path = path_data(&document);
+    let ends: Vec<f64> = path
+        .trim_start_matches('M')
+        .split('L')
+        .filter_map(|point| point.split(' ').next()?.parse().ok())
+        .collect();
+    assert_eq!(ends.len(), 2, "{path}");
+    assert!(
+        (f64::midpoint(ends[0], ends[1]) - wanted).abs() < 0.001,
+        "{path}: {wanted}",
+    );
+}
+
+/// A selected position at the first retention time is its own rule, beside the
+/// value axis rather than on it, and it starts where the trace starts.
+#[test]
+fn a_marker_at_the_first_position_does_not_share_the_value_axis() {
+    let panel = PanelSpec::new(
+        PlotKind::Chromatogram,
+        AxisSpec::new(label("Retention time"), UnitState::Unreported),
+        AxisSpec::new(label("Intensity"), UnitState::Unreported),
+        domain(10.0, 13.0),
+        domain(0.0, 100.0),
+        vec![series(vec![10.0, 11.0, 13.0], vec![10.0, 100.0, 20.0])],
+    )
+    .expect("a trace")
+    .with_markers(vec![
+        Marker::new(10.0, Some(label("Selected scan"))).expect("a marker"),
+    ])
+    .expect("a marker on a valid panel");
+    let document = svg::render(&figure_of(panel));
+    let (left, _) = plot_edges(&document);
+    let rule = document
+        .lines()
+        .find(|line| line.contains("stroke-dasharray=\"4 3\""))
+        .expect("the marker's rule");
+    let x: f64 = rule
+        .split("x1=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .and_then(|value| value.parse().ok())
+        .expect("its position");
+    assert!((x - (left + 8.0)).abs() < 0.001, "{document}");
+    assert!(
+        (subpath_starts(&document)[0] - x).abs() < 0.001,
+        "{document}"
+    );
+}
+
+/// A domain with no width is drawn down the middle of the frame, and its one
+/// label stands under its one mark.
+#[test]
+fn a_zero_width_domain_is_drawn_down_the_middle() {
+    let document = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![250.0], vec![10.0]),
+    )));
+    let (left, right) = plot_edges(&document);
+    let at = subpath_starts(&document)[0];
+    assert!(
+        (at - f64::midpoint(left, right)).abs() < 0.001,
+        "{document}"
+    );
+    let (tick, ..) = drawn_texts(&document)
+        .into_iter()
+        .find(|(_, _, _, words)| words == "250.000000")
+        .expect("the axis names its one value");
+    assert!((tick - at).abs() < 0.001, "{document}");
+}
+
+/// Where no round tick exists, each end label stands at its own tick, inside the
+/// frame by the inset.
+#[test]
+fn an_end_label_stands_at_its_own_tick() {
+    let (low, high) = (1e20, 1e20 + 65_536.0);
+    let document = svg::render(&figure_of(spectrum_panel(
+        SpectrumRepresentation::Centroid,
+        series(vec![low, high], vec![10.0, 20.0]),
+    )));
+    let (left, right) = plot_edges(&document);
+    let sticks = subpath_starts(&document);
+    let ends: Vec<f64> = drawn_texts(&document)
+        .into_iter()
+        .filter(|(_, _, _, words)| words.starts_with("10000000000000"))
+        .map(|(x, ..)| x)
+        .collect();
+    assert_eq!(ends.len(), 2, "{document}");
+    assert!((ends[0] - (left + 8.0)).abs() < 0.001, "{document}");
+    assert!((ends[1] - (right - 8.0)).abs() < 0.001, "{document}");
+    assert!((sticks[0] - ends[0]).abs() < 0.001, "{document}");
+    assert!((sticks[1] - ends[1]).abs() < 0.001, "{document}");
+
+    // Each may take half the band and no more, so on a figure too narrow for
+    // both they are condensed and still do not meet.
+    let narrow = svg::render(
+        &FigureSpec::new(
+            FigureTheme::Light,
+            FigureSize::new(MIN_FIGURE_WIDTH, 640.0).expect("a size"),
+            vec![spectrum_panel(
+                SpectrumRepresentation::Centroid,
+                series(vec![low, high], vec![10.0, 20.0]),
+            )],
+        )
+        .expect("a figure"),
+    );
+    let ends: Vec<(f64, f64)> = drawn_texts(&narrow)
+        .into_iter()
+        .filter(|(_, _, _, words)| words.starts_with("10000000000000"))
+        .map(|(x, _, head, _)| {
+            let length = head
+                .split("textLength=\"")
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .and_then(|value| value.parse().ok())
+                .expect("condensed");
+            (x, length)
+        })
+        .collect();
+    assert_eq!(ends.len(), 2, "{narrow}");
+    assert!(
+        ends[0].0 + ends[0].1 <= ends[1].0 - ends[1].1 + 0.001,
+        "{narrow}"
+    );
+}
+
+/// The precision decision asks about the band the marks are drawn on, not the
+/// wider frame: two positions a little under `1e-3` apart there would round to
+/// one coordinate at three places, however far apart they would be on the frame.
+#[test]
+fn the_precision_decision_measures_the_band() {
+    let panel = |sticks: Vec<f64>, markers: &[f64]| {
+        let values = vec![10.0; sticks.len()];
+        spectrum_panel(SpectrumRepresentation::Centroid, series(sticks, values))
+            .with_markers(
+                markers
+                    .iter()
+                    .map(|at| Marker::new(*at, None).expect("a marker"))
+                    .collect(),
+            )
+            .expect("markers on a valid panel")
+    };
+    let (left, right) = plot_edges(&svg::render(&figure_of(panel(vec![0.0, 1.0], &[]))));
+    let apart = 0.00099 / (right - left - 16.0);
+    assert!(apart * (right - left) >= 1e-3, "the frame cannot tell them");
+    for spec in [
+        panel(vec![0.0, 0.5, 0.5 + apart, 1.0], &[]),
+        panel(vec![0.0, 1.0], &[0.5, 0.5 + apart]),
+        panel(vec![0.0, 1.0], &[])
+            .with_intervals(vec![
+                IntervalSpec::new(0.5, 0.5 + apart, IntervalRole::Window, None)
+                    .expect("an interval"),
+            ])
+            .expect("an interval on a valid panel"),
+    ] {
+        let document = svg::render(&figure_of(spec));
+        assert!(document.contains("stroke-width=\"1.0000\""), "{document}");
+    }
+}
+
 /// A printed figure is written at its physical size, with its text in points.
 #[test]
 fn a_printed_figure_states_millimetres_and_sets_its_text_in_points() {

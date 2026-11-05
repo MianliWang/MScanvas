@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PreviewApi } from "../features/mzml-preview/api";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
+import { CHROMATOGRAM_PLOT_BAND } from "../features/mzml-preview/Chromatogram";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
 import type { SpectrumTableProps } from "../features/mzml-preview/SpectrumTable";
 import type { BackendAvailability } from "../features/mzml-preview/contracts";
@@ -112,8 +113,7 @@ const SCAN_COUNT = 60;
 const ROW_HEIGHT = 28;
 /** The plot's own width in client pixels, so viewBox units are 1:1 with them. */
 const PLOT_PIXELS = 1_000;
-const PADDING_LEFT = 64;
-const DRAWN_WIDTH = PLOT_PIXELS - PADDING_LEFT - 12;
+const { left: PADDING_LEFT, drawnWidth: DRAWN_WIDTH } = CHROMATOGRAM_PLOT_BAND;
 /** `buildRows` places scan n at n × 0.0125. */
 const RT_STEP = 0.0125;
 
@@ -486,7 +486,7 @@ describe("what a moving pointer costs", () => {
   it("re-renders nothing linked while the pointer stays over one scan", async () => {
     const preview = api();
     await openTheViewer(preview);
-    // A run of 60 scans over 924 drawn pixels puts roughly 15 pixels between
+    // A run of 60 scans over 908 drawn pixels puts roughly 15 pixels between
     // neighbours, so these frames all resolve to the same one.
     fireEvent.pointerMove(plot(), { clientX: clientXFor(30 * RT_STEP) });
     const settled = tableRenders;

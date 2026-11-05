@@ -67,6 +67,15 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **A mark at the end of a run stands clear of the frame.** On screen and in
+  every exported figure, each end of the x axis is drawn a small inset inside the
+  plot's frame, so the first and last marks no longer sit on it and a selected
+  scan at the first retention time no longer shares the y axis. **Every exported
+  SVG and PNG changes by this inset.** No colour or height changes. The legend and
+  a marker's label move in with it, and on some ranges and narrow figures the x
+  axis labels different round ticks, because they are fitted to the narrower axis.
+  The range itself does not change: a pointer in the inset reads as that end of
+  the range, and a range you draw never reaches past the run.
 - **Convert this file… converts this file.** The Conversion page holds that one
   file, named on a third scope button, and your checked rows stay as they were,
   before and after the run. **Checked rows** brings them back. **Open in Conversion**

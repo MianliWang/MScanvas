@@ -3,8 +3,9 @@ import { act, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithPreferences as render } from "../../../test/renderWithPreferences";
 import { PlotRangeActions } from "../PlotRangeActions";
+import { xBand } from "./plotAxes";
 import { mzInput, retentionTimeInput, type PlotInputPort, type PlotInputSnapshot } from "./plotInputAdapters";
-import { usePlotInput } from "./usePlotInput";
+import { usePlotInput, type PlotGeometry } from "./usePlotInput";
 import { useViewerInteraction } from "./useViewerInteraction";
 import { useSpectrumViewport } from "./useSpectrumViewport";
 
@@ -13,9 +14,13 @@ type Control = { readonly current: () => PlotInputSnapshot<"rt" | "mz", Domain> 
 let control: Control;
 let publications = 0;
 const inspect = vi.fn();
+const WHOLE_WIDTH: PlotGeometry = { width: 1000, left: 0, drawnWidth: 1000 };
+let geometry = WHOLE_WIDTH;
+const WHOLE_RUN: Domain = { low: 0, high: 100 };
+let run = WHOLE_RUN;
 function Surface<A extends "rt" | "mz", D extends Domain>({ port }: { readonly port: PlotInputPort<A, D> }) {
   publications += 1;
-  const { attachPlot } = usePlotInput({ port, geometry: { width: 1000, left: 0, drawnWidth: 1000 }, onInspect: inspect });
+  const { attachPlot } = usePlotInput({ port, geometry, onInspect: inspect });
   // A plot box is a section, and its range actions sit in the box's foot, so
   // they find the plot through the section as they do in the viewer.
   return <section><svg role="img" aria-label="Scientific plot" tabIndex={0} ref={attachPlot}>
@@ -24,8 +29,8 @@ function Surface<A extends "rt" | "mz", D extends Domain>({ port }: { readonly p
 function Harness({ axis }: { readonly axis: "rt" | "mz" }) {
   const rt = useViewerInteraction(); const mz = useSpectrumViewport();
   useLayoutEffect(() => {
-    rt.dispatch({ type: "preview-loaded", fullDomain: { low: 0, high: 100 } });
-    mz.dispatch({ type: "spectrum-selected", spectrumToken: "original", domain: { state: "admitted", low: 0, high: 100 } });
+    rt.dispatch({ type: "preview-loaded", fullDomain: run });
+    mz.dispatch({ type: "spectrum-selected", spectrumToken: "original", domain: { state: "admitted", ...run } });
   }, [rt.dispatch, mz.dispatch]);
   const rp = retentionTimeInput(rt.current, rt.dispatch); const mp = mzInput(mz.current, mz.dispatch);
   control = { current: axis === "rt" ? rp.current : mp.current,
@@ -55,7 +60,31 @@ function click(plot: HTMLElement, x: number, detail = 1) {
   pointer(plot, "pointerDown", x); pointer(plot, "pointerUp", x);
   fireEvent.click(plot, { clientX: x, clientY: 50, detail });
 }
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); inspect.mockClear(); publications = 0; });
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); inspect.mockClear(); publications = 0; geometry = WHOLE_WIDTH; run = WHOLE_RUN; });
+
+describe.each(["rt", "mz"] as const)("%s plot over a band inside its frame", axis => {
+  it("reads a pointer in the inset as the end beside it, and commits the true range", () => {
+    geometry = { width: 1000, ...xBand(64, 988) };
+    // Ends where `low + 1 × span` is not `high`: 0.2 + (0.9 - 0.2) reads 0.8999999999999999.
+    run = { low: 0.2, high: 0.9 };
+    const { plot } = setup(axis);
+    click(plot, 66); expect(inspect).toHaveBeenLastCalledWith(0.2);
+    click(plot, 986); expect(inspect).toHaveBeenLastCalledWith(0.9);
+    click(plot, 526); expect(inspect.mock.lastCall?.[0]).toBeCloseTo(0.55, 12);
+
+    // A drag from one inset to the other holds the run and nothing past it, and
+    // its band stands on the band the data is drawn over. The reducer's clamp
+    // keeps the span, which can cost `high` a unit in the last place.
+    pointer(plot, "pointerDown", 66); pointer(plot, "pointerMove", 986); pointer(plot, "pointerUp", 986);
+    const range = control.current()?.range?.domain;
+    expect(range?.low).toBe(0.2);
+    expect(range?.high).toBeCloseTo(0.9, 12);
+    expect(range?.high).toBeLessThanOrEqual(0.9);
+    const band = plot.querySelector(".plot-range-band");
+    expect(band).toHaveAttribute("x", "72");
+    expect(Number(band?.getAttribute("width"))).toBe(908);
+  });
+});
 
 describe.each(["rt", "mz"] as const)("%s plot event ordering", axis => {
   it("leaves modified or already-owned double activation to the host, with an ordinary reset as positive control", () => {

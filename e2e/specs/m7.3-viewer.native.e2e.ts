@@ -80,7 +80,7 @@ async function scrollPlot(selector: string) {
 async function point(selector: string, fraction: number) {
   const target = await browser.execute((css, part) => {
     const node = document.querySelector(css)!, r = node.getBoundingClientRect(), mz = node.classList.contains("spectrum-plot");
-    const x = Math.round(r.x + r.width * ((mz ? 8 : 64) + (mz ? 984 : 924) * part) / 1000), y = Math.round(r.y + r.height * .45);
+    const x = Math.round(r.x + r.width * ((mz ? 16 : 72) + (mz ? 968 : 908) * part) / 1000), y = Math.round(r.y + r.height * .45);
     const hit = document.elementFromPoint(x, y);
     return { x, y, hitPlot: hit !== null && node.contains(hit), hitClass: hit?.getAttribute("class"),
       rect: { x: r.x, y: r.y, width: r.width, height: r.height } };

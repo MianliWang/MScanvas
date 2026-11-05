@@ -1073,6 +1073,11 @@ confirmed again with its corrected cost on 2026-10-31; see
    second spelling of how the backend is started; or no console cancellation,
    so that Ctrl+C ends the CLI by Windows' default and the job object ends the
    backend, with the item's staging left behind as for a killed run.
+
+   *Owner decision, 2026-11-03 (HR-1.8):* this question's hold-release window is one
+   window, at M10's closure, asked for when reached (HR-1.7). The seven development
+   slices use a simulated backend, and only the closure waits
+   ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 8. **The MCP adapter's store.** Recommended: never deleted by the adapter,
    with a fixed cap on its files, set in MCP slice 1, beyond which `plan`
    refuses (`planStoreFull`), and its location documented. The alternative is

@@ -165,6 +165,9 @@ verbatim "其余按推荐。" ("the rest as recommended"). X-3.1, X-3.2 and X-3.
 those listed, so each stands at its recommended option: `all`, `panel`, `keep`. A0071-Q3
 is in the round-two table of 2026-11-04, answered verbatim "全部按推荐。" ("all as
 recommended").
+*2026-11-04, a note:* the records PR has written these answers since, as dated notes beside
+ADR 0071's questions 1 and 3, whose own words stay as they were. The paragraph's first
+sentence speaks of the time before that.
 
 **The rendering was thrown away.** A throwaway worktree rendered a second copy of the
 chromatogram panel in the `.viewer-view` grid, in real Chrome over Vite with the backend

@@ -56,6 +56,9 @@ import {
 import {
   CHROMATOGRAM,
   PLOT,
+  PLOT_BAND,
+  PLOT_VIEWBOX_WIDTH,
+  SPECTRUM_BAND,
   SPECTRUM_PLOT,
   SPECTRUM_RANGE,
   SPECTRUM_STATUS,
@@ -389,20 +392,23 @@ async function expectSelected(index: number) {
   });
 }
 
-/** Where a fraction of one plot's drawn band falls, with M7.3's padding. */
+/** Where a fraction of one plot's drawn band falls. */
 async function point(selector: string, fraction: number) {
   return browser.execute(
-    (css: string, part: number) => {
+    (css: string, part: number, rt: typeof PLOT_BAND, mzBand: typeof SPECTRUM_BAND, width: number) => {
       const node = document.querySelector(css)!;
       const box = node.getBoundingClientRect();
-      const mz = node.classList.contains("spectrum-plot");
+      const band = node.classList.contains("spectrum-plot") ? mzBand : rt;
       return {
-        x: Math.round(box.x + (box.width * ((mz ? 8 : 64) + (mz ? 984 : 924) * part)) / 1000),
+        x: Math.round(box.x + (box.width * (band.left + band.drawnWidth * part)) / width),
         y: Math.round(box.y + box.height * 0.45),
       };
     },
     selector,
     fraction,
+    PLOT_BAND,
+    SPECTRUM_BAND,
+    PLOT_VIEWBOX_WIDTH,
   );
 }
 
