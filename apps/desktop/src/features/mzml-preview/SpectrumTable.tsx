@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Button, Icon } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { MessageKey } from "../preferences/i18n";
+import type { ScanPage } from "./viewer/scanMemory";
 import { findScanByNumber, matchesScanFilters, type ScanSortKey } from "./viewer/scanTableView";
 import type { ScanTableView } from "./viewer/useScanTableView";
 
@@ -120,6 +121,10 @@ export interface SpectrumTableProps {
   readonly onSelect: (index: number) => void;
   /** Brings a selection the filters or the range hide back, without selecting anything. */
   readonly onRevealSelected: () => void;
+  /** Asked once, when the list mounts. */
+  readonly readPage?: () => ScanPage | null;
+  /** The source index of the row now at the top of the list, as a scroll leaves it. */
+  readonly onTopRowChanged?: (topRow: number | null) => void;
   readonly onRendered: (renderedRowCount: number, milliseconds: number) => void;
   /**
    * Whether an activation may commit a scan, from the one selection authority.
@@ -147,6 +152,8 @@ export const SpectrumTable = memo(function SpectrumTable({
   selection,
   onSelect,
   onRevealSelected,
+  readPage,
+  onTopRowChanged,
   onRendered,
   selectionAvailability,
 }: SpectrumTableProps) {
@@ -166,11 +173,20 @@ export const SpectrumTable = memo(function SpectrumTable({
   const [goToText, setGoToText] = useState("");
   /** The text Go to scan refused, until it is edited. */
   const [goToRefused, setGoToRefused] = useState<string | null>(null);
+  /** The page to come back to, until the selection coming back with it has arrived. */
+  const returning = useRef<ScanPage | null | undefined>(undefined);
+  if (returning.current === undefined) returning.current = readPage?.() ?? null;
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (viewport === null) {
       return;
+    }
+    const position = returning.current === null || returning.current === undefined ? undefined
+      : view.projection.positions.get(returning.current.topRow);
+    if (position !== undefined) {
+      viewport.scrollTop = position * ROW_HEIGHT;
+      setScrollTop(viewport.scrollTop);
     }
     const measure = () => {
       setViewportHeight(viewport.clientHeight || FALLBACK_VIEWPORT_HEIGHT);
@@ -294,7 +310,12 @@ export const SpectrumTable = memo(function SpectrumTable({
     const changed = previousProjection.current !== view.projection;
     previousProjection.current = view.projection;
     const position = selection === null ? undefined : view.projection.positions.get(selection.index);
-    if (position !== undefined && (outcome.consumed !== null || changed)) revealRow(position);
+    // The selection coming back with a page: the person left the list where it
+    // was, selected row in view or not, so only the tab stop goes to it.
+    const backToPage = outcome.consumed !== null && outcome.consumed.index === returning.current?.selectedIndex;
+    if (outcome.consumed !== null) returning.current = null;
+    if (backToPage) setFocusIndex(outcome.consumed!.index);
+    else if (position !== undefined && (outcome.consumed !== null || changed)) revealRow(position);
     else if (changed && rowCount > 0) revealRow(focusRow);
   }, [revealRow, rowCount, focusRow, selection, view.projection]);
 
@@ -434,6 +455,7 @@ export const SpectrumTable = memo(function SpectrumTable({
           className="spectrum-table-viewport"
           onScroll={(event) => {
             setScrollTop(event.currentTarget.scrollTop);
+            onTopRowChanged?.(rows[Math.floor(event.currentTarget.scrollTop / ROW_HEIGHT)]?.index ?? null);
           }}
           ref={viewportRef}
           role="presentation"

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { SpectrumRow } from "../contracts";
 import type { RetentionTimeDomain } from "./scanModel";
 import { indexScanTable, INITIAL_SCAN_TABLE_OPTIONS, projectScanTable, toggleScanSort,
@@ -21,14 +21,19 @@ export interface ScanTableView {
 /**
  * View choices belong to this loaded table; locale/hover/layout never rebuild it.
  * The range is read, never held: the interaction reducer is its one authority (V-2).
+ * A new table starts from `remembered`, what its file last chose; only the value at
+ * that moment counts, so a caller writing its memory back does not change anything.
  */
-export function useScanTableView(rows: readonly SpectrumRow[], rtDomain: RetentionTimeDomain | null = null): ScanTableView {
-  const [choice, setChoice] = useState({ rows, options: INITIAL_SCAN_TABLE_OPTIONS });
-  const options = choice.rows === rows ? choice.options : INITIAL_SCAN_TABLE_OPTIONS;
+export function useScanTableView(rows: readonly SpectrumRow[], rtDomain: RetentionTimeDomain | null = null,
+  remembered: ScanTableOptions = INITIAL_SCAN_TABLE_OPTIONS): ScanTableView {
+  const seed = useRef({ rows, options: remembered });
+  if (seed.current.rows !== rows) seed.current = { rows, options: remembered };
+  const [choice, setChoice] = useState(seed.current);
+  const options = choice.rows === rows ? choice.options : seed.current.options;
   const index = useMemo(() => indexScanTable(rows), [rows]);
   const projection = useMemo(() => projectScanTable(index, options, rtDomain), [index, options, rtDomain]);
   const update = useCallback((change: (current: ScanTableOptions) => ScanTableOptions) => {
-    setChoice(current => ({ rows, options: change(current.rows === rows ? current.options : INITIAL_SCAN_TABLE_OPTIONS) }));
+    setChoice(current => ({ rows, options: change(current.rows === rows ? current.options : seed.current.options) }));
   }, [rows]);
   const setQuery = useCallback((query: string) => update(current => ({ ...current, query })), [update]);
   const setMsLevel = useCallback((msLevel: number | null) => update(current => ({ ...current, msLevel })), [update]);
