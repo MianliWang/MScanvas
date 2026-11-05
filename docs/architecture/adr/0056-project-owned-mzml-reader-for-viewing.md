@@ -505,6 +505,39 @@ Both need a follow-up decision. It must:
 >      `SpectrumTableRow` until routing; conflicting or unreadable polarity and
 >      charge not reported, never refused.
 
+> **2026-11-05: polarity and charge reach the viewer.** What R-1 answered, built:
+> `SpectrumRowDto` and `SelectedSpectrumDto` carry `polarity` and `charge`, and the
+> spectrum's head and Details state them, so "Nothing reads it yet" above no longer
+> holds for these two facts. It still holds for the run-level metadata and the run
+> summary. They are read from the native row beside the shared types:
+> `SpectrumTableRow` and `SelectedSpectrumResult` are unchanged, decision 5's "a
+> native row leaves charge unreported" holds of that type, and no export or figure
+> document changes. Neither fact reaches `contradicts`, so no file that opens today
+> is refused. The scan table gains no column. `msaccess` stays in the open, and the
+> three retention times stay its own.
+>
+> As built, not an owner decision:
+>
+> - **Whose charge.** A spectrum's `charge` is its first precursor's first selected
+>   ion, the rule the row's `precursor_mz` follows. Where a spectrum has more than one
+>   precursor, the head and Details say "precursor 1 of N". The other precursors'
+>   charges are not shown.
+> - **One `null`.** Not stated, stated two ways and a charge that is not an integer
+>   all reach the webview as `null`, shown as not reported, with no reason given. An
+>   MS1, having no precursor, says charge not reported.
+> - **As stated.** A stated `0` stays `0`, a negative stays negative, and no sign is
+>   taken from the polarity. Whether a file's `0` means an unknown charge is not
+>   judged.
+> - **An unreadable polarity cannot come from a file.** The reader never reads the
+>   polarity term's value, so only the mapping is tested for that state.
+> - **The head.** Its facts run MS level, representation, polarity, charge, "precursor
+>   1 of N" and size, and may take a second line inside its 36 px at every width,
+>   which only 1050 px and below allowed. Both unreported share one fact. At 960x640
+>   in `en`, a file stating none of the three says polarity and charge only in
+>   Details, because the head keeps the representation (ADR 0029).
+> - **Run-level metadata** stays off the Metadata tab, for N-V6. The native text is
+>   unredacted, and it would be a second view beside `msaccess`'s.
+
 ### 4. Offsets are kept with the open preview
 
 Every open is a full pass, because no index is trusted (decision 2). In the
