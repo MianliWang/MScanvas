@@ -245,6 +245,9 @@ Each is held by a PM9.1 or PM9.3 browser case or a unit test named there.
   roster open the spectrum is as wide as before the card. At 1050 px and
   below it is 34 px narrower, and the spectrum's facts take a second line
   inside the head (ADR 0029).
+  *As built 2026-11-05, not an owner decision:* with the polarity and charge
+  (ADR 0056), the facts may take that second line at every width, and a fact wider
+  than the head is hidden whole, never cut.
 - **Refused primaries.** A refused primary action (`aria-disabled`) gives up
   the accent: subtle surface, secondary text, strong border and a not-allowed
   cursor. It does not fade, so its focus ring keeps full contrast, and it stays
