@@ -2824,7 +2824,7 @@ fn spectrum_row(spectrum: &mut SpectrumParse) -> Result<MzmlSpectrumRow, Fail> {
         identity: SpectrumIdentity::from_native_identifier(index, id),
         ms_level,
         representation,
-        // The spectrum's own terms and groups; the scan's facts are not read.
+        // The spectrum's own terms and groups; a polarity inside the scan is not read.
         polarity: terms.facts.polarity,
         declares_narrow_scan: terms.facts.narrow_scan || spectrum.scan_terms.facts.narrow_scan,
         retention_time,
