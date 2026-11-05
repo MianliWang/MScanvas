@@ -84,3 +84,98 @@ describe("go to scan N", () => {
     expect(goToInput()).not.toHaveAttribute("aria-invalid");
   });
 });
+
+describe("the list following the chromatogram's range (V-2)", () => {
+  const chromatogram = () => screen.getByRole("region", { name: "Chromatogram" });
+  const count = () => document.querySelector(".scan-result-count")?.textContent ?? "";
+  const counted = (visible: number) => `${visible} matches / 8 loaded rows / 8 reported spectra`;
+  async function setRange(low: string, high: string) {
+    fireEvent.keyDown(within(chromatogram()).getByRole("button", { name: en.plotMoreExports }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: en.rangeSet }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.change(within(chromatogram()).getByRole("textbox", { name: en.rangeLow }), { target: { value: low } });
+    fireEvent.change(within(chromatogram()).getByRole("textbox", { name: en.rangeHigh }), { target: { value: high } });
+    fireEvent.click(within(chromatogram()).getByRole("button", { name: "Apply range" }));
+  }
+  const fitAll = () => fireEvent.click(within(chromatogram()).getByRole("button", { name: en.viewerReset }));
+
+  it("follows the committed range and says how many of how many, then comes back on a reset", async () => {
+    await mount();
+    expect(count()).toBe("8");
+    await setRange("2", "4.5");
+    await waitFor(() => expect(shown()).toEqual([2, 3, 4]));
+    expect(count()).toBe(counted(3));
+    fitAll();
+    await waitFor(() => expect(shown()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]));
+    expect(count()).toBe("8");
+  });
+
+  it("says the range hides the selected scan, and moves the range to it without reading anything", async () => {
+    const { api } = await mount();
+    goTo("8");
+    await screen.findByRole("img", { name: /^Spectrum 7,/u });
+    const reads = api.requestedSpectra.length;
+    await setRange("1", "3");
+    await waitFor(() => expect(shown()).toEqual([1, 2, 3]));
+    const sentence = en.scanSelectedOutsideRange.replace("{{name}}", "7");
+    expect(screen.getByText(sentence)).toBeVisible();
+    expect(screen.getByRole("button", { name: en.scanNext })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: en.scanNext })).toHaveAccessibleDescription(sentence);
+    expect(screen.getByRole("img", { name: /^Spectrum 7,/u })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.scanRevealInRange }));
+    await waitFor(() => expect(shown()).toContain(7));
+    expect(screen.queryByText(sentence)).toBeNull();
+    expect(api.requestedSpectra.length).toBe(reads);
+  });
+
+  it("clears the filters and moves the range when both hide the selected scan", async () => {
+    await mount();
+    goTo("8");
+    await screen.findByRole("img", { name: /^Spectrum 7,/u });
+    await setRange("1", "3");
+    await waitFor(() => expect(shown()).toEqual([1, 2, 3]));
+    const search = screen.getByRole("searchbox", { name: en.scanSearch });
+    fireEvent.change(search, { target: { value: "raw-2" } });
+    await waitFor(() => expect(shown()).toEqual([2]));
+    expect(screen.getByText(en.scanSelectedOutside.replace("{{name}}", "7"))).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: en.scanReveal }));
+    await waitFor(() => expect(shown()).toContain(7));
+    expect(search).toHaveValue("");
+  });
+
+  it("names the range when a narrow one holds no scan, with the rows still loaded", async () => {
+    await mount();
+    await setRange("2.2", "2.8");
+    await waitFor(() => expect(screen.getByText(en.scanNoMatchesInRange)).toBeVisible());
+    expect(count()).toBe(counted(0));
+    fitAll();
+    await waitFor(() => expect(shown()).toHaveLength(8));
+    expect(screen.queryByText(en.scanNoMatchesInRange)).toBeNull();
+  });
+
+  it("goes to a scan the range hides, by the selection's own reveal", async () => {
+    await mount();
+    await setRange("1", "3");
+    await waitFor(() => expect(shown()).toEqual([1, 2, 3]));
+    goTo("7");
+    await screen.findByRole("img", { name: /^Spectrum 6,/u });
+    await waitFor(() => expect(shown()).toContain(6));
+    expect(within(grid()).getAllByRole("row").find(row => row.getAttribute("data-source-index") === "6")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("leaves a truncated prefix unfiltered, since it has no chromatogram to follow", async () => {
+    const preview = buildPreview(8, true);
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile],
+      preview: { ...preview, spectrumTable: { ...preview.spectrumTable, totalRowCount: 120_000 } }, spectrum });
+    render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+    </WorkspaceDropTransportProvider>);
+    fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
+    await screen.findByRole("grid", { name: en.scansTitle });
+    expect(shown()).toHaveLength(8);
+    expect(screen.queryByRole("button", { name: en.viewerReset })).toBeNull();
+    expect(count()).toContain(en.scanPrefix);
+    goTo("120000");
+    expect(screen.getByText(en.scanGoToRefused.replace("{{value}}", "120000"))).toBeVisible();
+  });
+});

@@ -81,3 +81,22 @@ describe("go to a scan number", () => {
     expect(matchesScanFilters(row, { ...INITIAL_SCAN_TABLE_OPTIONS, msLevel: 2 })).toBe(false);
   });
 });
+
+describe("the list following the chromatogram's committed range", () => {
+  const range = (low: number, high: number) => ({ low, high });
+  const within = (low: number, high: number, options = INITIAL_SCAN_TABLE_OPTIONS) =>
+    projectScanTable(index, options, range(low, high)).rows.map(row => row.index);
+  it("keeps the rows inside the range, edges included", () => {
+    expect(within(2, 5)).toEqual([20, 90, 40]);
+  });
+  it("adds to the search and the MS-level filter rather than replacing them", () => {
+    expect(within(1, 5, { ...INITIAL_SCAN_TABLE_OPTIONS, query: "a2" })).toEqual([90, 30]);
+    expect(within(1, 5, { ...INITIAL_SCAN_TABLE_OPTIONS, msLevel: 2 })).toEqual([20, 30]);
+  });
+  it("is the whole list with no range, and empty with a range holding no scan", () => {
+    expect(projectScanTable(index, INITIAL_SCAN_TABLE_OPTIONS, null).rows).toHaveLength(5);
+    const empty = projectScanTable(index, INITIAL_SCAN_TABLE_OPTIONS, range(6, 7));
+    expect(empty.rows).toEqual([]);
+    expect(empty.positions.size).toBe(0);
+  });
+});

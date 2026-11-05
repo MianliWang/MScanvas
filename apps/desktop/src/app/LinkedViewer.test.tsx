@@ -327,10 +327,12 @@ describe("the linked viewer", () => {
     expect(span).toBeGreaterThan(0);
     expect(span).toBeLessThan((SCAN_COUNT - 1) * RT_STEP);
 
-    // Commit the same scan again from the table, which is a new commit.
-    fireEvent.click(
-      grid.querySelector('[data-source-index="29"]') as HTMLElement,
-    );
+    // Commit the same scan again. The list follows the range now (V-2), so its
+    // row has gone from the table, and Go to scan is what reaches it.
+    expect(grid.querySelector('[data-source-index="29"]')).toBeNull();
+    const goTo = screen.getByRole("textbox", { name: "Go to scan number" });
+    fireEvent.change(goTo, { target: { value: "30" } });
+    fireEvent.keyDown(goTo, { key: "Enter" });
 
     await waitFor(() => {
       expect(rangeCaption()).not.toBe(zoomed);
@@ -464,13 +466,15 @@ describe("the linked viewer", () => {
     const range = rangeCaption();
     const marker = readout();
     const calls = preview.calls().length;
+    // Its position in the list as the zoomed range leaves it (V-2).
+    const position = selectedRowPosition();
 
     fireEvent.click(screen.getByText(VENDOR_ROW.fileName));
 
     expect(plot()).toBeVisible();
     expect(rangeCaption()).toBe(range);
     expect(readout()).toBe(marker);
-    expect(selectedRowPosition()).toBe(20);
+    expect(selectedRowPosition()).toBe(position);
     expect(preview.requestedSpectra).toEqual([20]);
     // Focusing a row is a workspace action with its own commands. What must not
     // happen is the viewer being re-read.

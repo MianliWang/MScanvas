@@ -118,6 +118,8 @@ export interface SpectrumTableProps {
    */
   readonly selection: Selection | null;
   readonly onSelect: (index: number) => void;
+  /** Brings a selection the filters or the range hide back, without selecting anything. */
+  readonly onRevealSelected: () => void;
   readonly onRendered: (renderedRowCount: number, milliseconds: number) => void;
   /**
    * Whether an activation may commit a scan, from the one selection authority.
@@ -144,6 +146,7 @@ export const SpectrumTable = memo(function SpectrumTable({
   view,
   selection,
   onSelect,
+  onRevealSelected,
   onRendered,
   selectionAvailability,
 }: SpectrumTableProps) {
@@ -187,6 +190,12 @@ export const SpectrumTable = memo(function SpectrumTable({
   const rowCount = rows.length;
   const focusRow = (focusIndex === null ? undefined : view.projection.positions.get(focusIndex)) ?? 0;
   const selectedOutside = selectedIndex !== null && !view.projection.positions.has(selectedIndex);
+  /** Hidden by the chromatogram's range alone, so "clear the filters" would be the wrong thing to say. */
+  const hiddenOnlyByRange = useMemo(() => {
+    if (!selectedOutside) return false;
+    const row = table.rows.find(candidate => candidate.index === selectedIndex);
+    return row !== undefined && matchesScanFilters(row, view.options);
+  }, [selectedOutside, selectedIndex, table.rows, view.options]);
   /** What the viewport has left for rows once the header has its row. */
   const rowsHeight = Math.max(ROW_HEIGHT, viewportHeight - HEADER_HEIGHT);
   const visibleCount = Math.ceil(rowsHeight / ROW_HEIGHT) + OVERSCAN * 2;
@@ -368,7 +377,7 @@ export const SpectrumTable = memo(function SpectrumTable({
         {/* One number while every row is loaded and none is filtered out;
             the three counts, and the loaded-prefix disclosure, only where
             they differ. */}
-        <p className="scan-result-count" aria-live="polite">{!table.truncated && view.options.query.trim() === "" &&
+        <p className="scan-result-count" aria-live="polite">{!table.truncated && view.rtDomain === null && view.options.query.trim() === "" &&
           view.options.msLevel === null ? t("scanCountAll", { count: table.totalRowCount }) : t("scanCounts", {
           visible: rowCount, total: table.totalRowCount, count: table.rows.length,
         }) + (table.truncated ? ` · ${t("scanPrefix")}` : "")}</p>
@@ -399,10 +408,10 @@ export const SpectrumTable = memo(function SpectrumTable({
         {goToRefused === null ? null : t("scanGoToRefused", { value: goToRefused })}
       </p>
       {selectedOutside ? <p className="scan-hidden-selection" aria-live="polite">
-        <span id={HIDDEN_SELECTION_ID}>{t("scanSelectedOutside", { name: String(selectedIndex) })}</span>{" "}
-        <Button onClick={view.clearFilters} size="sm" variant="quiet">{t("scanReveal")}</Button>
+        <span id={HIDDEN_SELECTION_ID}>{t(hiddenOnlyByRange ? "scanSelectedOutsideRange" : "scanSelectedOutside", { name: String(selectedIndex) })}</span>{" "}
+        <Button onClick={onRevealSelected} size="sm" variant="quiet">{t(hiddenOnlyByRange ? "scanRevealInRange" : "scanReveal")}</Button>
       </p> : null}
-      {rowCount === 0 ? <p className="empty-state">{t(table.rows.length === 0 ? "scanEmpty" : "scanNoMatches")}</p> : null}
+      {rowCount === 0 ? <p className="empty-state">{t(table.rows.length === 0 ? "scanEmpty" : view.rtDomain !== null ? "scanNoMatchesInRange" : "scanNoMatches")}</p> : null}
 
       <div
         aria-colcount={columns.length}

@@ -102,6 +102,7 @@ import {
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
 import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
 import { adjacentDisplayedScan } from "./viewer/scanTableView";
+import { revealDomain } from "./viewer/viewport";
 import { useScanTableView, type ScanTableView } from "./viewer/useScanTableView";
 import type {
   MzDomain,
@@ -564,6 +565,7 @@ export interface PreviewWorkspace {
    */
   readonly scanModel: ScanModel;
   readonly scanTableView: ScanTableView;
+  readonly revealSelectedScan: () => void;
   /**
    * The one interaction state: committed viewport, transient gesture,
    * persistent selection, selection revision and hover.
@@ -2867,7 +2869,20 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
   // same reason every other mirror here is: a commit arriving in the gap would
   // reconcile against the table before the last change.
   previewRowsRef.current = previewRows;
-  const scanTableView = useScanTableView(previewRows);
+  const scanTableView = useScanTableView(previewRows, viewer.state.committedDomain);
+  const { clearFilters: clearScanFilters } = scanTableView;
+
+  /**
+   * Reveal: the filters go, and a committed range hiding the scan moves to it,
+   * the way a selection's own reveal moves it. Not a selection: nothing is read.
+   */
+  const revealSelectedScan = useCallback(() => {
+    clearScanFilters();
+    const { committedDomain, fullDomain, selection } = readViewerInteraction();
+    if (committedDomain === null || fullDomain === null || selection === null) return;
+    const revealed = revealDomain(committedDomain, fullDomain, selection.retentionTime);
+    if (revealed !== committedDomain) dispatchViewerEvent({ type: "viewport-step", domain: revealed });
+  }, [clearScanFilters, dispatchViewerEvent, readViewerInteraction]);
 
   /**
    * Tells the interaction which run it belongs to, once there is one to name.
@@ -4493,6 +4508,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     selectPreviousScan,
     selectNextScan,
     scanTableView,
+    revealSelectedScan,
     spectrumSelection,
     canSelectPreviousScan: spectrumSelectionAvailable && previousScanIndex !== null,
     canSelectNextScan: spectrumSelectionAvailable && nextScanIndex !== null,

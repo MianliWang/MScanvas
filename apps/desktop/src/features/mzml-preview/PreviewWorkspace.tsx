@@ -1184,6 +1184,7 @@ export function PreviewWorkspace() {
                       view={workspace.scanTableView}
                       onRendered={handleTableRendered}
                       onSelect={workspace.selectSpectrum}
+                      onRevealSelected={workspace.revealSelectedScan}
                       selection={workspace.viewerInteraction.selection}
                       selectionAvailability={workspace.spectrumSelection}
                       table={preview.preview.spectrumTable}

@@ -657,10 +657,10 @@ interface StepProps {
  * workspace wires them: the steps walk this table's order, and point at the
  * table's sentence when its filters hide the selection.
  */
-function TestSpectrumTable({ canSelectPrevious, canSelectNext, onSelectPrevious, onSelectNext, ...props }: Omit<SpectrumTableProps, "view"> & StepProps) {
+function TestSpectrumTable({ canSelectPrevious, canSelectNext, onSelectPrevious, onSelectNext, ...props }: Omit<SpectrumTableProps, "view" | "onRevealSelected"> & StepProps) {
   const view = useScanTableView(props.table.rows);
   return <>
-    <SpectrumTable {...props} view={view} />
+    <SpectrumTable {...props} view={view} onRevealSelected={view.clearFilters} />
     <SelectedSpectrumPanel state={{ status: "none" }} onOpenFigure={() => {}} onRetry={() => {}} viewport={initialSpectrumViewportState}
       dispatchViewport={() => initialSpectrumViewportState} readViewport={() => initialSpectrumViewportState} projectionError={null}
       onRetryProjection={() => {}} exportState={{ status: "idle" }} scientificExportBusy={false} onExport={() => {}} onCopyPlot={() => {}}

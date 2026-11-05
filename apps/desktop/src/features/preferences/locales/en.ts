@@ -579,6 +579,9 @@ export const en = {
   scanReveal: "Clear filters and reveal",
   scanEmpty: "No scan rows were loaded.",
   scanNoMatches: "No matches in the loaded rows. Clear the search or MS-level filter.",
+  scanNoMatchesInRange: "No matches in the chromatogram's range. Widen the range, or clear the search or MS-level filter.",
+  scanSelectedOutsideRange: "Selected scan {{name}} is outside the chromatogram's range.",
+  scanRevealInRange: "Move the range to it",
   scanSelected: "Selected",
 
   settings: "Settings",

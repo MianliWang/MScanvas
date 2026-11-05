@@ -579,6 +579,9 @@ export const zhCN = {
   scanReveal: "清除筛选并显示",
   scanEmpty: "未加载扫描行。",
   scanNoMatches: "已加载的行中没有匹配项。请清除搜索或 MS 级别筛选。",
+  scanNoMatchesInRange: "色谱范围内没有匹配项。请放宽范围，或清除搜索或 MS 级别筛选。",
+  scanSelectedOutsideRange: "选中的扫描 {{name}} 在色谱范围之外。",
+  scanRevealInRange: "将范围移到它",
   scanSelected: "已选中",
 
   settings: "设置",

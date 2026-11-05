@@ -1,4 +1,6 @@
 import type { SpectrumRow } from "../contracts";
+import type { RetentionTimeDomain } from "./scanModel";
+import { contains } from "./viewport";
 
 export const SCAN_SORT_KEYS = ["index", "scanNumber", "identifier", "msLevel", "retentionTime",
   "basePeakMz", "basePeakIntensity", "totalIonCurrent", "precursorMz"] as const;
@@ -59,9 +61,12 @@ export function findScanByNumber(rows: readonly SpectrumRow[], text: string): Sp
 /** Raw, case-sensitive substring search; raw identifiers compare by UTF-16 code units.
  * Missing scalars stay last in either direction. Ties keep original table order.
  * No formatted or translated value is an input, and source rows are never mutated.
+ * `rtDomain` is the chromatogram's committed range (V-2), edges included; `null` is
+ * the whole run, which is also what a table with no chromatogram has.
  */
-export function projectScanTable(index: ScanTableIndex, options: ScanTableOptions): ScanTableProjection {
-  const rows = index.rows.filter(row => matchesScanFilters(row, options));
+export function projectScanTable(index: ScanTableIndex, options: ScanTableOptions, rtDomain: RetentionTimeDomain | null = null): ScanTableProjection {
+  const rows = index.rows.filter(row => matchesScanFilters(row, options) &&
+    (rtDomain === null || contains(rtDomain, row.retentionTime.value)));
   const sort = options.sort;
   if (sort !== null) rows.sort((left, right) => {
     const a = scalar(left, sort.key);

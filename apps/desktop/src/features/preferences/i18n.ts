@@ -225,6 +225,7 @@ export interface MessageParameters {
   readonly scanCounts: { readonly visible: number; readonly count: number; readonly total: number };
   readonly scanSelectedOutside: { readonly name: string };
   readonly scanGoToRefused: { readonly value: string };
+  readonly scanSelectedOutsideRange: { readonly name: string };
   readonly rosterRetainedAnnouncement: { readonly count: number };
   readonly dropRelease: { readonly count: number };
   readonly restoreOffer: { readonly count: number };
