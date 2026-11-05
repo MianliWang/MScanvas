@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Button, Icon } from "../../components/ui";
 import { useUiMessages } from "../preferences/SessionPreferencesProvider";
 import type { MessageKey } from "../preferences/i18n";
-import type { ScanSortKey } from "./viewer/scanTableView";
+import { findScanByNumber, matchesScanFilters, type ScanSortKey } from "./viewer/scanTableView";
 import type { ScanTableView } from "./viewer/useScanTableView";
 
 import type { RetentionTimeUnit, SpectrumRow, SpectrumTable as SpectrumTableModel } from "./contracts";
@@ -39,6 +39,8 @@ const OVERSCAN = 10;
 const FALLBACK_VIEWPORT_HEIGHT = 600;
 /** The sentence that says the filters hide the selected scan. */
 const HIDDEN_SELECTION_ID = "scan-hidden-selection-reason";
+/** The sentence that says Go to scan has no such scan. */
+const GO_TO_REFUSAL_ID = "scan-go-to-refusal";
 
 /** Every field the list sorts by, by its full name. */
 const SORT_LABELS = {
@@ -158,6 +160,9 @@ export const SpectrumTable = memo(function SpectrumTable({
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const pendingFocus = useRef(false);
   const selectedIndex = selection?.index ?? null;
+  const [goToText, setGoToText] = useState("");
+  /** The text Go to scan refused, until it is edited. */
+  const [goToRefused, setGoToRefused] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -331,6 +336,29 @@ export const SpectrumTable = memo(function SpectrumTable({
     [canCommit, moveFocus, onSelect, rowCount, rows, rowsHeight],
   );
 
+  /**
+   * Enter in Go to scan: the same commit a row press makes, so the same reducer
+   * brings the scan into a range that hid it. Filters hiding it are cleared here,
+   * as Reveal clears them, and only once the scan is known to be there to select.
+   * Focus stays in the input, for the next number.
+   */
+  const handleGoToKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    if (goToText.trim() === "") return;
+    const row = findScanByNumber(table.rows, goToText);
+    if (row === null) {
+      setGoToRefused(goToText.trim());
+      return;
+    }
+    // The reason is this input's description; the number stays for the next Enter.
+    if (!canCommit) return;
+    if (!matchesScanFilters(row, view.options)) view.clearFilters();
+    setGoToText("");
+    setGoToRefused(null);
+    onSelect(row.index);
+  };
+
   return (
     <section aria-labelledby="spectrum-table-heading" className="spectrum-table-panel" data-layout={layout}>
       {/* Direction A's scan head: the title and its count, then the search
@@ -351,6 +379,11 @@ export const SpectrumTable = memo(function SpectrumTable({
           <input id="scan-search" type="search" value={view.options.query} placeholder={t("scanSearchShort")}
             onChange={event => view.setQuery(event.target.value)} aria-describedby="scan-view-help" />
         </div>
+        <label className="visually-hidden" htmlFor="scan-go-to">{t("scanGoTo")}</label>
+        <input id="scan-go-to" className="scan-go-to" type="text" inputMode="numeric" autoComplete="off" value={goToText} placeholder={t("scanGoToShort")}
+          onChange={event => { setGoToText(event.target.value); setGoToRefused(null); }} onKeyDown={handleGoToKeyDown}
+          aria-disabled={canCommit ? undefined : true} aria-invalid={goToRefused === null ? undefined : true}
+          aria-describedby={[goToRefused === null ? null : GO_TO_REFUSAL_ID, canCommit ? null : SPECTRUM_SELECTION_NOTICE_ID, "scan-go-to-help"].filter(id => id !== null).join(" ")} />
         <label className="visually-hidden" htmlFor="scan-ms-level">{t("scanMsLevel")}</label>
         <select id="scan-ms-level" value={view.options.msLevel === null ? "all" : String(view.options.msLevel)}
           onChange={event => view.setMsLevel(event.target.value === "all" ? null : Number(event.target.value))}>
@@ -358,7 +391,13 @@ export const SpectrumTable = memo(function SpectrumTable({
           {view.msLevels.map(level => <option key={level} value={level}>MS{level}</option>)}
         </select>
         <p className="visually-hidden" id="scan-view-help">{t("scanHelpText")}</p>
+        <p className="visually-hidden" id="scan-go-to-help">{t("scanGoToHelp")}</p>
       </div>
+      {/* One permanent region, as ADR 0041 asks: watched before the refusal
+          arrives, and collapsed by `:empty` while there is none. */}
+      <p aria-live="polite" className="scan-go-to-refusal" id={goToRefused === null ? undefined : GO_TO_REFUSAL_ID}>
+        {goToRefused === null ? null : t("scanGoToRefused", { value: goToRefused })}
+      </p>
       {selectedOutside ? <p className="scan-hidden-selection" aria-live="polite">
         <span id={HIDDEN_SELECTION_ID}>{t("scanSelectedOutside", { name: String(selectedIndex) })}</span>{" "}
         <Button onClick={view.clearFilters} size="sm" variant="quiet">{t("scanReveal")}</Button>

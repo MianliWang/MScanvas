@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildRows } from "../../../test/previewFixtures";
-import { adjacentDisplayedScan, indexScanTable, INITIAL_SCAN_TABLE_OPTIONS, projectScanTable, toggleScanSort } from "./scanTableView";
+import { adjacentDisplayedScan, findScanByNumber, indexScanTable, INITIAL_SCAN_TABLE_OPTIONS, matchesScanFilters, projectScanTable, toggleScanSort } from "./scanTableView";
 
 const rows = buildRows(5).map((row, position) => ({ ...row,
   index: [70, 20, 90, 30, 40][position]!, identifier: ["z9", "a10", "a2", "a2", "中文"][position]!,
@@ -53,5 +53,31 @@ describe("loaded scan-table projection", () => {
       expect(adjacentDisplayedScan(projection, 70, 1)).toBeNull();
       expect(adjacentDisplayedScan(projection, 70, -1)).toBeNull();
     }
+  });
+});
+
+describe("go to a scan number", () => {
+  it("finds the row declaring the number, as typed or as the list writes it", () => {
+    expect(findScanByNumber(rows, "11")?.index).toBe(70);
+    expect(findScanByNumber(rows, " 11 ")?.index).toBe(70);
+    const thousands = buildRows(1500);
+    expect(findScanByNumber(thousands, "1,234")?.scanNumber).toBe(1234);
+  });
+  it("takes the first in file order where several rows declare one number", () => {
+    expect(findScanByNumber(rows, "2")?.index).toBe(90);
+  });
+  it("answers nothing for a number no row declares, and never reads it as a row index", () => {
+    expect(findScanByNumber(rows, "70")).toBeNull();
+    expect(findScanByNumber(rows, "3")).toBeNull();
+  });
+  it.each(["", "abc", "1.5", "-2", "1e1", "1,2", "12,34", "０"])("refuses %j as not a whole number", text => {
+    expect(findScanByNumber(buildRows(40), text)).toBeNull();
+  });
+  it("says which filters let a row through, for a row the projection dropped", () => {
+    const row = rows[0]!;
+    expect(matchesScanFilters(row, INITIAL_SCAN_TABLE_OPTIONS)).toBe(true);
+    expect(matchesScanFilters(row, { ...INITIAL_SCAN_TABLE_OPTIONS, query: "z9" })).toBe(true);
+    expect(matchesScanFilters(row, { ...INITIAL_SCAN_TABLE_OPTIONS, query: "nothing" })).toBe(false);
+    expect(matchesScanFilters(row, { ...INITIAL_SCAN_TABLE_OPTIONS, msLevel: 2 })).toBe(false);
   });
 });

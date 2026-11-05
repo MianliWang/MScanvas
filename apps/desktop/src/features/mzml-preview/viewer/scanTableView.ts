@@ -36,16 +36,32 @@ function scalar(row: SpectrumRow, key: ScanSortKey): number | string | null {
  */
 const RETENTION_UNIT_RANK = { second: 0, minute: 1, notReported: 2 } as const;
 
+/** Whether the search and the MS-level filter let a row through. */
+export function matchesScanFilters(row: SpectrumRow, options: ScanTableOptions): boolean {
+  const query = options.query.trim();
+  return (options.msLevel === null || row.msLevel === options.msLevel) &&
+    (query === "" || row.identifier.includes(query) || String(row.index).includes(query) ||
+      (row.scanNumber !== null && String(row.scanNumber).includes(query)));
+}
+
+/**
+ * The row that declares this scan number, the first in file order if several do,
+ * or `null` for anything else: text that is not a whole number (as the list writes
+ * it, or plainly), or a number no row declares. Never a row index in its place.
+ */
+export function findScanByNumber(rows: readonly SpectrumRow[], text: string): SpectrumRow | null {
+  const typed = text.trim();
+  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)$/u.test(typed)) return null;
+  const scanNumber = Number(typed.replaceAll(",", ""));
+  return rows.find(row => row.scanNumber === scanNumber) ?? null;
+}
+
 /** Raw, case-sensitive substring search; raw identifiers compare by UTF-16 code units.
  * Missing scalars stay last in either direction. Ties keep original table order.
  * No formatted or translated value is an input, and source rows are never mutated.
  */
 export function projectScanTable(index: ScanTableIndex, options: ScanTableOptions): ScanTableProjection {
-  const query = options.query.trim();
-  const rows = index.rows.filter(row =>
-    (options.msLevel === null || row.msLevel === options.msLevel) &&
-    (query === "" || row.identifier.includes(query) || String(row.index).includes(query) ||
-      (row.scanNumber !== null && String(row.scanNumber).includes(query))));
+  const rows = index.rows.filter(row => matchesScanFilters(row, options));
   const sort = options.sort;
   if (sort !== null) rows.sort((left, right) => {
     const a = scalar(left, sort.key);

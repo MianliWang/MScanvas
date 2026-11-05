@@ -412,6 +412,10 @@
 .scan-head input, .scan-head select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-input); padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
 .scan-head select { flex: none; max-width: 40%; }
 .scan-head .plot-search > input { width: 100%; padding-left: 28px; }
+.scan-head .scan-go-to { flex: 0 1 64px; width: 64px; min-width: 48px; }
+.scan-head .scan-go-to[aria-invalid="true"] { border-color: var(--color-danger); }
+.scan-go-to-refusal { margin: 0; padding: 4px 8px 4px 12px; color: var(--color-danger); font-size: 12px; }
+.scan-go-to-refusal:empty { display: none; }
 .scan-hidden-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 0; padding: 4px 8px 4px 12px; font-size: 12px; }
 .spectrum-table-panel > .empty-state { flex: none; padding: 16px; }
 /* Compact enough for the side column: short labels that ellipsize rather

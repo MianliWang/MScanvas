@@ -20,7 +20,7 @@ import { initialSpectrumViewportState } from "./viewer/spectrumViewport";
 import { renderWithPreferences as render } from "../../test/renderWithPreferences";
 import { useScanTableView } from "./viewer/useScanTableView";
 import type { Selection } from "./viewer/interactionState";
-import type { SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
+import { SPECTRUM_SELECTION_NOTICE_ID, type SpectrumSelectionAvailability } from "./viewer/selectionAvailability";
 import type { RetentionTimeUnit } from "./contracts";
 
 /** v5.11's compact scan list; the rest of a scan's facts are in Details. */
@@ -520,6 +520,21 @@ describe("the spectrum table while selection is unavailable", () => {
     fireEvent.keyDown(document.activeElement ?? document.body, { key: " " });
 
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("does not commit from Go to scan, and clears no filter, while keeping the number", () => {
+    const { onSelect } = blocked();
+    const search = screen.getByRole("searchbox", { name: "Search loaded scans" });
+    fireEvent.change(search, { target: { value: "scan=3" } });
+    const input = screen.getByRole("textbox", { name: UI_RESOURCES.en.scanGoTo });
+    fireEvent.change(input, { target: { value: "2" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(search).toHaveValue("scan=3");
+    expect(input).toHaveValue("2");
+    expect(input).toHaveAttribute("aria-disabled", "true");
+    expect(input.getAttribute("aria-describedby")).toContain(SPECTRUM_SELECTION_NOTICE_ID);
   });
 
   it("keeps Previous and Next unavailable through the same lane rule", () => {
