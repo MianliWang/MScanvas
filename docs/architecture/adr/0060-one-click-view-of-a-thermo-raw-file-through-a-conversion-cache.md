@@ -8,9 +8,13 @@ decision 5 of 2026-10-30) and asked that its details follow the
 recommendations. This record states those recommendations. Slice 1, the cache
 library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/172),
 2026-10-30). Slice 2, the operation and its commands, is implemented on `be/viewraw-op`
-([slice 2 notes](#slice-2-notes-2026-10-30)); nothing else here is. The questions still open for the owner are listed
+([slice 2 notes](#slice-2-notes-2026-10-30)). Slice 3, the interface, is implemented on `ui/view-raw-slice-3`
+([slice 3 notes](#slice-3-notes-2026-11-03)), without View with… and the Settings row; nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
+Owner decision, 2026-10-30 (A0060): Q1: a View button. Q8: slice 3 builds on #164's
+structure (FE-1 (a)), with decision 1's content, the phases, Cancel and the CNV-D8
+progress amendment as written. The pane's place moves with FE-2.
 Amended 2026-10-30 by ADR 0056 slice 2: the data documents' version numbers
 (a note under Exports).
 Related: [0005](0005-mzml-preview-boundary.md),
@@ -384,6 +388,12 @@ under the `e2e` feature it is the same task-owned QA root.
 - **The uninstaller.** Whatever it does with the application data, it does with
   the cache. What its "Delete the application data" choice removes is not yet
   observed (plan section 7.2, as ADR 0058 records for presets).
+  Owner decision, 2026-11-03 (DEF-2): option (b). Always remove the cache folder on
+  uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets and preferences
+  stay opt-in behind "Delete the application data".
+  As built, 2026-11-03, in `apps/desktop/src-tauri/installer-hooks.nsh`, and what ran
+  and did not: plan section 7.2. The cases where the hook removes nothing are not an
+  owner decision.
 
 **Ownership marker.** The marker, `.mscanvas-view-cache-owner`, holds a
 constant, `mscanvas-view-cache\n`, as the staging marker does: it proves which
@@ -1335,6 +1345,226 @@ it says so; the decisions stand otherwise.
      decision 3 and ADR 0057 decision 2. ADR 0043 (CNV-D8) and ADR 0055 take
      theirs with slice 3, whose interface shows the progress and the reuse.
 
+## Slice 3 notes (2026-11-03)
+
+Dated notes of 2026-11-03, written with slice 3 (the interface, branch
+`ui/view-raw-slice-3`). Where a note departs from a decision above, it says so;
+the decisions stand otherwise. A note is as built and not an owner decision,
+unless it carries "Owner decision, 2026-11-03".
+
+1. **What is implemented.** The pane of a highlighted Thermo RAW row
+   (`RawViewPane`) in every state of decision 3 but View with…'s; the phases read
+   by polling `get_raw_view_state` (`useRawView`, 400 ms while running, none
+   otherwise); Cancel; the open of a view that became ready while its row is
+   highlighted, and Ready with Open and the status bar's line otherwise; every
+   refusal of decision 4 from Rust's answer, each with its recovery; Enter on a
+   highlighted row (decision 1); the running view in `canAcquire`, `canPreview`,
+   the conversion lane and the scan selection (decision 5); the live region; and
+   the Metadata tab's group, from `PreviewDto.viewSource` (decision 12).
+2. **Exports are withheld, and that is the answer to slice 2 note 6.** Decision
+   11's provenance stays slice 4: it needs new spectrum and chromatogram document
+   versions, six preamble keys, a figure source line and their goldens, across
+   the single, linked and copied figures. So a viewed preview exports nothing
+   until they exist: `ScientificExportSlots` refuses every begin and copy of a
+   spectrum or chromatogram read from a cached view with `view_export_withheld`, a
+   figure preview included. The mark is on the snapshot, set where it is read, so no
+   later open can clear it: a reopen refused after its start keeps the row's cached
+   preview, and that preview's next spectrum is withheld too. The tokens
+   stay issued, because the viewport's projection reads the spectrum by its token
+   and is not an export. The interface shows Export… and every figure and data
+   item of ⋯ refused, each pointing at one visible line in the file row, beside
+   Convert this file…, which is the route to an output that can be exported.
+3. **QC capture answers `viewed_through_cache`** (decision 11), and the Project
+   surface says so before the press. Its stable id keeps this record's spelling,
+   not the project errors' camelCase.
+4. **The wire, beyond decision 12.**
+   - `get_raw_view_state` takes `{ request: { handle } }`, like the other view
+     commands.
+   - `viewSource` carries the intent's shape (`intent`), the same one the
+     conversion catalog carries, in place of `intentId` and `intentSummary`, so
+     the summary follows the locale. It also carries `unverifiedBuildRelease`.
+   - A run that fails with less than the reserve free carries `freeBytes`, with
+     the reserve as `neededBytes`, so the pane words decision 9's sentence itself.
+5. **The availability answer, as implemented.**
+   - It asks what the session already holds: the last observed binding and the
+     catalog read for it. A session that has observed nothing, or a build that
+     cannot preview, answers `backend_not_found`; the webview says "Checking the
+     installation…" first while a check runs. A catalog not read yet cannot name
+     the build, and "available" with no release would read as verified, so it
+     answers `raw_view_build_unknown`, said as "Checking the installation…", after
+     every refusal that would outlast the wait. A catalog read that failed answers
+     its own code, as a press would. The webview reads the answer again when the
+     catalog arrives. The worker's own answer of slice 2 note 6 stays, for a race.
+   - The root is looked at by `ViewCache::inspect`, which makes nothing: a root
+     that is not there is not a refusal. `inspect` has no path to `unreadable`
+     today; the answer leaves it to the press, which can offer Try again.
+   - The length asked of the 1.5 GiB limit is the row's admitted length, as
+     `begin_raw_view` asks it, not one read through the lease handle. A RAW that
+     grew since is refused at Checking file's first chunk (slice 2 note 8).
+6. **The pane, as implemented.**
+   - **It takes the main column over an open preview.** Decision 1 was written for
+     a roster row that opens on activation, and today's Workbench leaves a preview
+     on screen when a vendor row is pressed. A RAW row needs a way to View while
+     an mzML row is open, so its pane replaces the viewer while it is highlighted.
+     The other row's preview stays held, and its own press comes back to it. Other
+     vendor rows keep today's behaviour.
+     Owner decision, 2026-11-03 (P203): accepted. A highlighted RAW row temporarily
+     covers an open preview.
+   - **Decision 1's one-line explanation is not on screen,** by the owner's rule
+     against secondary explanation text. The pane is the name, the family, the
+     label where it applies, and the buttons.
+     Owner decision, 2026-11-03 (P203): accepted. Decision 1's line is not shown.
+   - **Where the roster is a drawer,** a press or a first Enter on a RAW row folds
+     it and moves the keyboard to the main column, so Tab reaches View (open
+     question 8's narrow path). Show from the status bar leaves it folded.
+   - **Each phase's line waits 300 ms** (design goal I8) by a CSS delay on an
+     element keyed by the phase; Cancel does not wait.
+   - **The file row of a viewed file** has Convert this file… beside the tabs and, on
+     an unmeasured build, the label on the line below with the export sentence, where
+     it can wrap and never clips. `ui/unverified-labels` adds the label to a labelled
+     output's title, a different fact, so a merge keeps both.
+   - **Convert this file… adds the row to the checked set.** It is one action
+     (`convertRow`) in the pane, the file row and a failed open, and does what the
+     vendor rows' action does on `main`: it checks the row, keeps every earlier
+     check, sets the scope to Checked rows, from All workspace rows too, and shows
+     Conversion. So the page lists every checked file, its button reads Convert N
+     eligible…, and the row stays checked afterwards. Nothing yet converts this file
+     alone; N-C3 is that one-item scope.
+     Owner decision, 2026-11-03 (P203): accepted, until N-C3, which comes right after.
+   - **N-C3, 2026-11-04: that "until" has ended.** `convertRow` no longer touches the
+     checked set. It holds the page to a third scope, the one file, so the page lists
+     that file, its button reads Convert 1 eligible…, and every check stays as it was,
+     before and after the run. One function, so the vendor rows' Open in Conversion
+     does the same. The scope stays in the webview; Rust revalidates the one handle
+     like any other.
+     As built, not an owner decision: the third button reads as the live roster names
+     that row, with its context where Rust gives one (ADR 0006), whole and wrapped, and
+     without a middle ellipsis, whose tail stays on one line; it is there only while
+     that scope is current and takes a row of its own under the other two. Checked
+     rows, All workspace rows or the Workbench's Convert… leaves it and forgets the
+     file; a later press replaces the file. A removed row leaves the scope empty and
+     refused for the existing reason, and the button reads the name it saved. The scope
+     does not follow that file if it is added again: Rust gives it a new handle, and one
+     name is not one file. So here the refusal has its own sentence, which says the row
+     has left and names the ways out; the shared sentence's Add files… would not bring
+     this scope back. Pressed over a running or finished queue, the page shows that
+     queue first, and the scope is the next conversion's, as it was before.
+7. **Deferred, each with its reason.**
+   - **View with…** (`begin_raw_view_with`, `rawViewIntents`) and the **Settings
+     row** (`describe_view_cache`, `clear_view_cache`, still awaiting a caller) are
+     not in this change. Decision 16 puts both in this slice, so the split was the
+     owner's to answer (note 9).
+   - A failure that is not retryable offers Convert this file… alone, as decision
+     10 says. View comes back with the next operation of any row, or with the cure
+     of a failure of the build (note 8).
+   - A native drop while a view runs still says a conversion is under way (slice 2
+     note 6), because that state is a webview-visible transfer object.
+   - The digest memo, the reporting form of the post-run revalidation, and the
+     key's move to the structured intent stay as slice 2 notes 4, 5 and 6 left them.
+   - Native QA (decision 14) waits for its hold release, HR-1. This slice's evidence
+     is the fake provider, Vitest and the browser boundary.
+8. **What the rendered review of this slice settled.**
+   - **The pane follows the row's own operation.** A row's own open or failed
+     preview gives way to the pane while its operation is running, failed or an
+     Open away, because a re-read needs its phases, its Cancel and its failure on
+     screen. Decision 3 keeps a view on screen during another setting's run; that is
+     View with…'s, and it can move there with it. Here Cancel brings the preview back.
+     So a re-read gives the row the highlight first, or a row the reader had moved
+     off would run, or be refused, with nothing on screen saying so.
+   - **A view is its own fact in the conversion lane,** not a read: the queue's
+     Convert answers `raw-view-running`, with decision 5's sentence and Show {name},
+     and the scan selection says the same.
+   - **A settings read waits for a running view,** as for a running queue, and is
+     issued as it ends. It takes the backend gate the worker needs. A document that
+     loads during a view therefore has its settings late, and says what they wait for.
+   - **Try again answers to Rust's availability** as View does, with its reason and
+     recovery, and Enter presses it only then. A failure of the build
+     (`provider_build_not_evidenced`, `backend_not_found`) offers Choose ProteoWizard
+     folder…, and Try again once availability says the cause has gone. That is the
+     one Try again of the pane that decision 10 does not list; a failed open's re-read
+     has its own exception (note 10).
+     Owner decision, 2026-11-03 (P203): accepted. Try again appears after a failure
+     of the build once the cause has gone.
+   - **A failure out of sight** has the status bar's line and Show {name} until its
+     row is looked at, and one `role="alert"`, as decision 1 asks. A failure under an
+     open drawer is out of sight too: the pane's alert is inert there.
+   - **The keyboard.** Tabs, then Convert, then the panel (`Tabs` takes `actions`).
+     Storing has no button, so the pane itself holds the keyboard. Open and a re-read
+     hand it to the evidence and the pane. Show goes to the row, or where the list
+     stays folded to the evidence, and Tab reaches the pane's first button. A held
+     Enter presses nothing in the pane or on a failed open's actions, because each
+     press hands the keyboard to the next button. A button that leaves with no change
+     of state, such as a Try again answered by Rust or a Show whose view ended, hands
+     the keyboard to the pane's first button, refused or not. The Show of the bar, of a
+     pressed mzML row and of the Conversion page hands it to the surface on screen.
+   - **Converted at** is in the reader's locale, with the recorded instant as its title.
+9. **What went to the owner.**
+   - **DEF-2.** `OWNER_DECISIONS_V511.md` says it blocks shipping the view cache.
+     Owner decision, 2026-11-03 (DEF-2): option (b). Always remove the cache folder
+     on uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets and
+     preferences stay opt-in behind "Delete the application data". A release-path
+     change: an NSIS hook.
+     Not an owner decision: this change writes no hook, so until one lands no uninstall
+     removes the cache unless "Delete the application data" is checked. The hook is
+     [draft PR #211](https://github.com/MianliWang/MScanvas/pull/211), not merged.
+     Whether it must land before this change merges is not answered: the decision page
+     says DEF-2 blocks shipping the view cache, and the answer names no order.
+   - **The split of View with… and the Settings row** (note 7). Until the row exists
+     the cache is bounded by its 10 GiB cap, and a person has no way to clear it.
+     Owner decision, 2026-11-03 (A0060-split): accepted. View with… and the Settings
+     row (Clear view cache) are the next slice. Until then only the 10 GiB cap evicts.
+   - **The install and support page.** "What this amends" lists it for this change.
+     The beta 1 page describes a release that has no view cache, so the edit belongs
+     to the next release's page. Not an owner decision: the answers of 2026-11-03 do
+     not cover it.
+10. **Departures the answers of 2026-11-03 do not cover.** Each stays as built, and
+    is not an owner decision.
+    - Exports of a view are withheld until slice 4 (note 2).
+    - `viewSource` carries the intent's shape in place of `intentId` and
+      `intentSummary` (note 4).
+    - The size check of the availability answer uses the row's admitted length
+      (note 5).
+    - The label of an unmeasured build sits on the line below the file row (note 6).
+    - During a re-read the pane covers the row's own preview (note 8). P203 names a
+      highlighted RAW row over an open preview, and does not name a re-read.
+    - Clear's copy, the settings line and the scan's refusal name the view rather
+      than a conversion.
+    - **The phases' words.** Decision 3 has "Checking QC_pool_01.raw" and "Converting
+      QC_pool_01.raw for viewing", and A0060 (2026-10-30) took the phases "as written".
+      As built they are "Checking the file" and "Converting for viewing", beside the
+      name in the pane's head. The owner has not seen this change of words.
+    - **The sentences of decisions 4 and 9.** Decision 9 has "The drive that holds
+      MSCanvas's application data needs about {n} GiB free; {m} GiB are free. Free space
+      on it, or convert this file to a folder on another drive." and "{m} GiB are free
+      on the drive that holds MSCanvas's application data." As built they are "The
+      application-data drive needs about {needed} GiB free and has {free} GiB. Free
+      space, or convert this file to another drive." and "{free} GiB are free on the
+      application-data drive." The owner has not seen this change of words. Decision
+      4's proposed "ProteoWizard is not available."
+      and "This ProteoWizard does not report its release, so it cannot convert vendor
+      files." are those codes' existing messages, "ProteoWizard was not found." and
+      "MSCanvas has no conversion evidence for that acquisition format on the installed
+      ProteoWizard build."
+    - **A failed open answered `raw_view_not_ready`** offers Try reading this file again
+      though it is not retryable, because its own sentence says to view the file again;
+      a superseded open does too, as an mzML row's does. Any other failed open that is
+      not retryable offers Convert this file… alone (note 7).
+    - **`view_cache_root_unrecognized` also offers Try again,** which asks Rust again and
+      presses nothing. Decision 4's recovery is Convert this file… alone, and its reason
+      asks for a move outside the application, which nothing in decision 12 would read
+      again. Beside a retryable failure it takes the place of that failure's Try again
+      until Rust answers, so two buttons do not share one name.
+    - **A refusal's reason sits above View,** in the pane's message, with the buttons
+      under it. Decision 3's Refused row has "its reason below it".
+    - **Ready says less than decision 3.** Decision 3 has the status bar say Ready with
+      Show {name} "until the next operation". As built, while that row is highlighted
+      and its pane would show Ready, the bar has no line and the live region says
+      nothing, also when another surface or a drawer covers the pane.
+    - **The label in the first moments of a view.** Decision 4 puts it in the progress
+      line. Rust holds no label until the worker has bound the build, so
+      `begin_raw_view`'s answer and any read before that binding show none. This was
+      read from the code, not timed.
+
 ## Alternatives rejected
 
 - **Activating the row converts it** (the accepted wording read literally).
@@ -1457,6 +1687,11 @@ once the owner has answered them, and their defaults are recommendations, not
 answers. Every other question has a recommended default, which stands unless
 the owner chooses otherwise.
 
+Owner decision, 2026-10-30 (A0060): Q1: a View button. Q8: slice 3 builds on #164's
+structure (FE-1 (a)), with decision 1's content, the phases, Cancel and the CNV-D8
+progress amendment as written. The pane's place moves with FE-2. The defaults of
+Q2–Q5 and Q7 stand. Q6, the hold release, stays open under HR-1.
+
 1. **The entry point (gates slice 3).** The accepted wording is "Selecting a
    Thermo RAW row to view converts it". This record recommends a View button,
    so that activating a row starts nothing (decision 1). Converting on
@@ -1466,6 +1701,20 @@ the owner chooses otherwise.
    store refuses another schema rather than migrating it, so preferences written
    by a later build would read as unsupported in an earlier one. *Default: the
    10 GiB constant.*
+   Dated note, 2026-11-04, PR #213 (N-S7), as built and not an owner decision: the
+   preference store now reads a schema 1 record and upgrades it to schema 2, writing
+   it at the next change. That is the cost V-7.1 accepted on 2026-11-03 ("the new
+   build must also read beta 1's record"). So three sentences here no longer hold as
+   written, and they stay as they were accepted: decision 9's "whose store refuses
+   another schema rather than migrating it", Alternatives rejected's "a preference
+   schema change that the store refuses rather than migrates", and this question's
+   "the store refuses another schema rather than migrating it". A version the store
+   does not know is still refused and left in place, and an earlier build still reads
+   a later record as unsupported. Schema 2 carries V-7's seven settings and no cap.
+   A cap added before the release that ships schema 2 stays schema 2 (PR #213's
+   reading, not an owner decision); after that release it bumps again, V-7.1's "a
+   setting added later bumps again". A user-adjustable cap stays not built, and this
+   note decides nothing about it: question 2 and its default stand as A0060 left them.
 3. **A same-session repeat view on highlight.** With a memo hit and an existing
    entry, a highlighted RAW row could open at once, as an mzML row does, at the
    cost of the cached copy's hash and the open on every highlight. *Default: no;

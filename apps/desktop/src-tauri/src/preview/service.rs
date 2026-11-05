@@ -32,8 +32,8 @@ use mscanvas_proteowizard::{
 
 use super::chromatogram::{
     ChromatogramExportFormat, ChromatogramSource, LinkedFigureFormat, MixedRetentionTimeUnits,
-    RangeRequest, TraceSet, data_document as chromatogram_data, figure_spec as chromatogram_figure,
-    linked_figure_spec, shared_retention_time_unit, svg_document as chromatogram_svg,
+    RangeRequest, ResolvedRange, TraceSet, data_document as chromatogram_data,
+    figure_spec as chromatogram_figure, linked_figure_spec, shared_retention_time_unit,
 };
 use super::conversion::conversion_source_kind;
 #[cfg(test)]
@@ -156,10 +156,11 @@ use super::dto::{
     adoption_superseded, outputs_not_adoptable,
 };
 use super::export::{
-    BeginExportRefusal, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
-    ClaimedSpectrumExport, FigureFailure, LinkedTokens, ScientificExportSlots,
-    SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest, data_document,
-    exported_point_count, figure_raster, png_document, png_of, raster_of, svg_document,
+    BeginExportRefusal, ChromatogramSnapshot, ClaimedChromatogramExport, ClaimedLinkedFigureExport,
+    ClaimedSpectrumExport, FigureFailure, LinkedPair, LinkedTokens, ResolvedSpectrumRange,
+    ScientificExportSlots, SpectrumExportFormat, SpectrumProjectionRefusal, SpectrumRangeRequest,
+    SpectrumSnapshot, data_document, exported_point_count, figure_spec as spectrum_figure,
+    labelled_figure, png_of, raster_of,
 };
 use super::figure::{
     FigureRenderSettings, PngDpi, RasterFailure, SettingsRefusal, validate_raster_budget,
@@ -500,6 +501,9 @@ fn describe_outcomes(
 /// Why a retained run summary cannot be handed to a QC capture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RetainedSummaryRefusal {
+    /// The row's preview is a cached view, whose summary would be the converted
+    /// copy's and not the RAW's (ADR 0060 decision 11).
+    ViewedThroughCache,
     /// The token names no summary this session still retains, or the one it
     /// names is of a different row.
     NotCurrent,
@@ -1645,42 +1649,133 @@ impl PreviewService {
         Some(identities)
     }
 
-    /// The "not verified by MSCanvas" label of the row whose primary is the
-    /// object `identity` names, where this session adopted it from a labelled
-    /// conversion (ADR 0055; owner decision 2 of 2026-10-29).
+    /// The "not verified by MSCanvas" label of the object `identity` names, where
+    /// this session finalized it from a labelled conversion (ADR 0055; owner
+    /// decisions of 2026-10-29 and 2026-10-31) or a project's reference brought
+    /// the label to its row (ADR 0055: as built, review of 2026-10-31 (PR #161),
+    /// not an owner decision).
     ///
     /// Asked by a project registration about the object it just hashed, so
-    /// the label follows the object whatever route the user registers it by.
+    /// the label follows the object whatever route the user registers it by, as
+    /// far as this process knows it: a row Restore workspace put back has the label
+    /// its stored row held, so that is recorded (owner decision P201-RESTORE,
+    /// 2026-11-04). The same file added with Add files in a later session has none,
+    /// so none is recorded, the cost that decision accepted. Added by another route,
+    /// or registered from the file picker while its row still waits, none is recorded
+    /// either, and a later press does not change it: as built on 2026-11-04, not an
+    /// owner decision.
     /// A row's identity is one its lease holds, so a match is that row's own
-    /// object. Memory only; reads nothing.
+    /// object. The row is asked first because where a finalized output holds no
+    /// identity, as off Windows, the table never hears of it. With no row the
+    /// table answers (ADR 0055: as built in PR #201, 2026-11-03, not an owner
+    /// decision). Memory only; reads nothing.
+    /// 2026-11-04: accepted by the owner (P201-SCOPE).
     pub(crate) fn not_verified_label_of_object(
         &self,
         identity: (u64, [u8; 16]),
     ) -> Option<NotVerifiedByMscanvas> {
-        let workspace = self.workspace();
-        let registry = &workspace.registry;
-        registry
-            .ids()
-            .iter()
-            .filter_map(|id| registry.get(*id))
-            .find(|dataset| dataset.object_identities().first() == Some(&identity))
-            .and_then(|dataset| dataset.not_verified().cloned())
+        let of_row = {
+            let workspace = self.workspace();
+            let registry = &workspace.registry;
+            registry
+                .ids()
+                .iter()
+                .filter_map(|id| registry.get(*id))
+                .find(|dataset| dataset.object_identities().first() == Some(&identity))
+                .and_then(|dataset| dataset.not_verified().cloned())
+        };
+        of_row.or_else(|| self.conversion_slot().object_label(identity))
+    }
+
+    /// Registers one admitted file, with the label it carries as one of this
+    /// session's finalized outputs (ADR 0055; owner decision A0055 (b),
+    /// 2026-10-31, for Add files… and Add mzML folder…; for a drop and a reference
+    /// carried back, as built in PR #201, 2026-11-03, not an owner decision).
+    /// 2026-11-04: accepted by the owner (P201-SCOPE).
+    ///
+    /// Every route a user adds a file by comes through here, so within the
+    /// process that finalized an output, or that a project's reference brought a
+    /// label to, a route cannot lose the label. The table ends with that process.
+    /// A row Restore workspace puts back in a later session is given its stored
+    /// label. The same file added with Add files instead has none, the cost owner
+    /// decision P201-RESTORE (2026-11-04) accepted; by another route it has none
+    /// either, as built on 2026-11-04, not an owner decision. By object identity and
+    /// never by name: an output moved on its volume keeps it, and a copy under any name
+    /// is a new object without it. The slot is asked first and let go of, as
+    /// everywhere that needs both.
+    fn register_admitted(
+        &self,
+        accepted: AcceptedFile,
+        add: impl FnOnce(&mut DatasetRegistry, AcceptedFile) -> AddDatasetOutcome,
+    ) -> AddDatasetOutcome {
+        let label = self
+            .conversion_slot()
+            .object_label(accepted.identity().as_pair());
+        let mut workspace = self.workspace();
+        let outcome = add(&mut workspace.registry, accepted);
+        if let (Some(label), Some(id)) = (label, outcome.registered_id()) {
+            workspace.registry.label(id, label);
+        }
+        outcome
+    }
+
+    /// The label of the row a figure's source was read from. Memory only.
+    ///
+    /// A row that is gone is `stale`'s refusal and never "no label": the row is
+    /// the only thing that knows, and a figure drawn without asking it could be
+    /// a labelled output's with the label lost.
+    fn row_label(
+        &self,
+        owner: DatasetId,
+        stale: fn() -> PreviewErrorDto,
+    ) -> Result<Option<NotVerifiedByMscanvas>, PreviewErrorDto> {
+        self.workspace()
+            .registry
+            .get(owner)
+            .map(|row| row.not_verified().cloned())
+            .ok_or_else(stale)
+    }
+
+    /// [`Self::row_label`] for a claim, which keeps the label for its dialog. A
+    /// refused claim gives its reservation back: its dialog never opens, and
+    /// nothing else would.
+    fn claimed_row_label(
+        &self,
+        reservation: &str,
+        owner: DatasetId,
+        stale: fn() -> PreviewErrorDto,
+    ) -> Result<Option<Box<NotVerifiedByMscanvas>>, PreviewErrorDto> {
+        let label = self.row_label(owner, stale).inspect_err(|_| {
+            self.spectrum_export_slot().cancel(reservation);
+        })?;
+        Ok(label.map(Box::new))
     }
 
     /// Gives the row a project reference was admitted as the label the
-    /// project recorded for that object, and says it in the add's own answer.
+    /// project recorded for that object, says it in the add's own answer, and
+    /// keeps it in the slot's table, so the row leaving does not forget it (ADR
+    /// 0055: as built in PR #201, 2026-11-03, not an owner decision).
+    /// 2026-11-04: accepted by the owner (P201-SCOPE).
     ///
     /// The other half of `not_verified_label_of_object`: the label is a
     /// property of the object, so a reference carried back into the Workbench
-    /// brings it to the row (ADR 0055; owner decision 2 of 2026-10-29). Called
-    /// only once the project has claimed `handle`, which is what proves the
-    /// row is the object the label was recorded for. Memory only.
+    /// brings it to the row (ADR 0055: as built, review of 2026-10-31 (PR #161),
+    /// not an owner decision). Called only once the project has claimed `handle`,
+    /// or Restore workspace has found the row to be the recorded objects (owner
+    /// decision P201-RESTORE, 2026-11-04), which is what proves the row is the
+    /// object the label was recorded for.
+    /// `identity` is the object that claim was of. The table hears first and is
+    /// let go of, so a row that has left by now does not forget it either.
+    /// Memory only.
     pub(crate) fn label_admitted_row(
         &self,
         result: &mut WorkspaceAddResultDto,
         handle: &str,
+        identity: (u64, [u8; 16]),
         label: NotVerifiedByMscanvas,
     ) {
+        self.conversion_slot()
+            .remember_object_label(identity, label.clone());
         let Some(id) = DatasetId::parse(handle) else {
             return;
         };
@@ -1721,6 +1816,15 @@ impl PreviewService {
         token: &str,
     ) -> Result<(Arc<RunSummaryResult>, PreviewProducerFacts), RetainedSummaryRefusal> {
         let row = DatasetId::parse(handle).ok_or(RetainedSummaryRefusal::RowGone)?;
+        if self
+            .workspace()
+            .runtime
+            .get(&row)
+            .and_then(|state| state.preview.as_ref())
+            .is_some_and(|preview| preview.view.is_some())
+        {
+            return Err(RetainedSummaryRefusal::ViewedThroughCache);
+        }
         // The slot is a leaf: copied out of and let go of before the workspace
         // is asked anything.
         let snapshot = self
@@ -1786,9 +1890,7 @@ impl PreviewService {
             // Taken per item rather than once for the batch, so a long batch
             // does not hold the workspace across the acceptance of every file
             // in it.
-            let mut workspace = self.workspace();
-            let outcome = workspace.registry.add_direct(accepted);
-            drop(workspace);
+            let outcome = self.register_admitted(accepted, DatasetRegistry::add_direct);
             // The dataset each outcome names is described after the batch, not
             // here: a row's context depends on what else the roster holds, and
             // the second file of a colliding pair is what gives the first one
@@ -2023,6 +2125,13 @@ impl PreviewService {
     /// disabled button is a courtesy, not the rule.
     fn conversion_is_busy(&self) -> bool {
         self.conversion_busy.load(Ordering::Acquire)
+    }
+
+    /// What a conversion under way looks like to the rest of the workspace, for
+    /// a test outside this module that has no conversion to start.
+    #[cfg(test)]
+    pub(crate) fn set_conversion_busy_for_test(&self, busy: bool) {
+        self.conversion_busy.store(busy, Ordering::Release);
     }
 
     /// Answers one exact plan question.
@@ -3385,7 +3494,7 @@ impl PreviewService {
     // snapshot out of the slot first and work from that, so a selection that
     // lands while a dialog is open changes what a *new* export would name
     /// without disturbing one already under way.
-    fn spectrum_export_slot(&self) -> std::sync::MutexGuard<'_, ScientificExportSlots> {
+    pub(super) fn spectrum_export_slot(&self) -> std::sync::MutexGuard<'_, ScientificExportSlots> {
         self.spectrum_export
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3590,6 +3699,7 @@ impl PreviewService {
     /// chose an m/z window would send them to the wrong control.
     fn spectrum_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
         match refusal {
+            BeginExportRefusal::ViewedThroughCache => super::raw_view::view_export_withheld(),
             BeginExportRefusal::AlreadyExporting => spectrum_export_in_progress(),
             BeginExportRefusal::Stale => spectrum_export_stale(),
             BeginExportRefusal::RangeOutsideSource => spectrum_range_outside_source(),
@@ -3608,6 +3718,7 @@ impl PreviewService {
     /// How a lane refusal reads for the linked two-panel surface.
     fn linked_figure_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
         match refusal {
+            BeginExportRefusal::ViewedThroughCache => super::raw_view::view_export_withheld(),
             BeginExportRefusal::AlreadyExporting => scientific_export_in_progress(),
             // One sentence for either token, because a reader cannot act on
             // which of the two moved: both mean "what this was about is not
@@ -3632,6 +3743,7 @@ impl PreviewService {
     /// How a lane refusal reads for the chromatogram surface.
     fn chromatogram_refusal(refusal: BeginExportRefusal) -> PreviewErrorDto {
         match refusal {
+            BeginExportRefusal::ViewedThroughCache => super::raw_view::view_export_withheld(),
             BeginExportRefusal::AlreadyExporting => scientific_export_in_progress(),
             BeginExportRefusal::Stale => chromatogram_export_stale(),
             BeginExportRefusal::RangeOutsideSource => chromatogram_range_outside_source(),
@@ -3830,8 +3942,8 @@ impl PreviewService {
         // Rendered from the snapshot the claim took, off the locks. The
         // spectrum on screen may be replaced while this runs; what is copied is
         // the one the user asked for, over the range they asked for.
-        let raster =
-            figure_raster(snapshot.spectrum(), settings, resolved).map_err(Self::figure_failure)?;
+        let figure = self.spectrum_copy_figure(&snapshot, resolved, settings)?;
+        let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
 
@@ -3850,12 +3962,29 @@ impl PreviewService {
         })
     }
 
+    /// The figure one spectrum copy puts on the clipboard, with its row's label.
+    /// A clipboard image has no other words, so this is all the label it gets.
+    pub(super) fn spectrum_copy_figure(
+        &self,
+        snapshot: &SpectrumSnapshot,
+        resolved: ResolvedSpectrumRange,
+        settings: FigureRenderSettings,
+    ) -> Result<mscanvas_plot_spec::spec::FigureSpec, PreviewErrorDto> {
+        let label = self.row_label(snapshot.owner(), spectrum_export_stale)?;
+        labelled_figure(
+            spectrum_figure(snapshot.spectrum(), settings, resolved),
+            label.as_ref(),
+        )
+        .map_err(|_| Self::figure_failure(FigureFailure::Unspecifiable))
+    }
+
     /// Claims one issued reservation so its save dialog may be shown.
     //
     // # Errors
     //
     // Refuses a reservation that was never issued, has already been claimed,
-    /// or has since been cancelled.
+    // has since been cancelled, or whose source row has left the workspace.
+    /// A refused claim leaves the lane idle.
     pub fn claim_spectrum_export(
         &self,
         reservation: &str,
@@ -3864,9 +3993,13 @@ impl PreviewService {
         // *without* the lane having been claimed for it -- see
         // `claim_matching`. The webview holds both identifiers and they come
         // from one counter, so this is a state a reloaded document can reach.
-        self.spectrum_export_slot()
+        let mut claimed = self
+            .spectrum_export_slot()
             .claim_spectrum(reservation)
-            .ok_or_else(spectrum_export_stale)
+            .ok_or_else(spectrum_export_stale)?;
+        claimed.source_label =
+            self.claimed_row_label(reservation, claimed.snapshot.owner(), spectrum_export_stale)?;
+        Ok(claimed)
     }
 
     /// Returns one reservation to idle without writing anything.
@@ -3904,16 +4037,19 @@ impl PreviewService {
         // they asked for.
         let range = claimed.range;
         let bytes = match claimed.format {
-            SpectrumExportFormat::Svg => svg_document(spectrum, claimed.settings, range)
-                .map_err(|_| spectrum_export_refused())?
-                .into_bytes(),
+            SpectrumExportFormat::Svg => {
+                let figure = claimed.figure().map_err(|_| spectrum_export_refused())?;
+                mscanvas_plot_spec::svg::render(&figure).into_bytes()
+            }
             SpectrumExportFormat::Png => {
                 // The resolution validated when the export began, carried here
                 // rather than read again: the settings the user is about to
                 // save with are the ones they were shown in the dialog.
                 let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
-                png_document(spectrum, claimed.settings, dpi, range)
-                    .map_err(Self::figure_failure)?
+                let figure = claimed
+                    .figure()
+                    .map_err(|_| Self::figure_failure(FigureFailure::Unspecifiable))?;
+                png_of(&figure, claimed.settings, dpi).map_err(Self::figure_failure)?
             }
             // The data documents, which no figure setting reaches. The same
             // bytes come out of here whatever the figure is being drawn at,
@@ -4033,9 +4169,16 @@ impl PreviewService {
         &self,
         reservation: &str,
     ) -> Result<ClaimedChromatogramExport, PreviewErrorDto> {
-        self.spectrum_export_slot()
+        let mut claimed = self
+            .spectrum_export_slot()
             .claim_chromatogram(reservation)
-            .ok_or_else(chromatogram_export_stale)
+            .ok_or_else(chromatogram_export_stale)?;
+        claimed.source_label = self.claimed_row_label(
+            reservation,
+            claimed.snapshot.owner(),
+            chromatogram_export_stale,
+        )?;
+        Ok(claimed)
     }
 
     /// Returns one chromatogram reservation to idle without writing anything.
@@ -4067,17 +4210,17 @@ impl PreviewService {
         let mut row_count = None;
         let bytes = match claimed.format {
             ChromatogramExportFormat::Svg => {
-                let settings = claimed.figure_settings();
-                chromatogram_svg(source, claimed.range, claimed.traces, settings)
-                    .map_err(|_| chromatogram_export_refused())?
-                    .into_bytes()
+                let figure = claimed
+                    .figure()
+                    .map_err(|_| chromatogram_export_refused())?;
+                mscanvas_plot_spec::svg::render(&figure).into_bytes()
             }
             ChromatogramExportFormat::Png => {
                 let dpi = claimed.dpi.expect("a PNG export reserved a resolution");
-                let settings = claimed.figure_settings();
-                let figure = chromatogram_figure(source, claimed.range, claimed.traces, settings)
+                let figure = claimed
+                    .figure()
                     .map_err(|_| chromatogram_export_refused())?;
-                png_of(&figure, settings, dpi).map_err(Self::figure_failure)?
+                png_of(&figure, claimed.figure_settings(), dpi).map_err(Self::figure_failure)?
             }
             // The data documents, which no figure setting and no trace toggle
             // reaches. Both measured columns are written whatever is on screen.
@@ -4148,8 +4291,7 @@ impl PreviewService {
             .map_err(Self::chromatogram_refusal)?;
         let _in_flight = SpectrumExportInFlight(self);
 
-        let figure = chromatogram_figure(snapshot.source(), resolved, traces, settings)
-            .map_err(|_| chromatogram_export_refused())?;
+        let figure = self.chromatogram_copy_figure(&snapshot, resolved, traces, settings)?;
         let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
@@ -4169,6 +4311,22 @@ impl PreviewService {
             range_high: resolved.domain().high(),
             source_scan_count: snapshot.source().scan_count(),
         })
+    }
+
+    /// As [`Self::spectrum_copy_figure`], for one chromatogram.
+    pub(super) fn chromatogram_copy_figure(
+        &self,
+        snapshot: &ChromatogramSnapshot,
+        resolved: ResolvedRange,
+        traces: TraceSet,
+        settings: FigureRenderSettings,
+    ) -> Result<mscanvas_plot_spec::spec::FigureSpec, PreviewErrorDto> {
+        let label = self.row_label(snapshot.owner(), chromatogram_export_stale)?;
+        labelled_figure(
+            chromatogram_figure(snapshot.source(), resolved, traces, settings),
+            label.as_ref(),
+        )
+        .map_err(|_| chromatogram_export_refused())
     }
 
     // ------------------------------------------------- linked two-panel figure
@@ -4235,9 +4393,16 @@ impl PreviewService {
         &self,
         reservation: &str,
     ) -> Result<ClaimedLinkedFigureExport, PreviewErrorDto> {
-        self.spectrum_export_slot()
+        let mut claimed = self
+            .spectrum_export_slot()
             .claim_linked_figure(reservation)
-            .ok_or_else(linked_figure_stale)
+            .ok_or_else(linked_figure_stale)?;
+        claimed.source_label = self.claimed_row_label(
+            reservation,
+            claimed.chromatogram.owner(),
+            linked_figure_stale,
+        )?;
+        Ok(claimed)
     }
 
     /// Returns one linked reservation to idle without writing anything.
@@ -4344,20 +4509,7 @@ impl PreviewService {
             .map_err(Self::linked_figure_refusal)?;
         let _in_flight = SpectrumExportInFlight(self);
 
-        let row = pair
-            .chromatogram()
-            .source()
-            .row_for_spectrum(pair.spectrum().spectrum())
-            .ok_or_else(linked_figure_source_mismatch)?;
-        let figure = linked_figure_spec(
-            pair.chromatogram().source(),
-            pair.spectrum().spectrum(),
-            row,
-            pair.range(),
-            traces,
-            settings,
-        )
-        .map_err(|_| linked_figure_not_drawable())?;
+        let figure = self.linked_copy_figure(&pair, traces, settings)?;
         let raster = raster_of(&figure, settings).map_err(Self::figure_failure)?;
         let (width, height) = (raster.width(), raster.height());
         let image = tauri::image::Image::new_owned(raster.into_rgba(), width, height);
@@ -4381,6 +4533,33 @@ impl PreviewService {
         })
     }
 
+    /// As [`Self::spectrum_copy_figure`], for one linked pair.
+    pub(super) fn linked_copy_figure(
+        &self,
+        pair: &LinkedPair,
+        traces: TraceSet,
+        settings: FigureRenderSettings,
+    ) -> Result<mscanvas_plot_spec::spec::FigureSpec, PreviewErrorDto> {
+        let row = pair
+            .chromatogram()
+            .source()
+            .row_for_spectrum(pair.spectrum().spectrum())
+            .ok_or_else(linked_figure_source_mismatch)?;
+        let label = self.row_label(pair.chromatogram().owner(), linked_figure_stale)?;
+        labelled_figure(
+            linked_figure_spec(
+                pair.chromatogram().source(),
+                pair.spectrum().spectrum(),
+                row,
+                pair.range(),
+                traces,
+                settings,
+            ),
+            label.as_ref(),
+        )
+        .map_err(|_| linked_figure_not_drawable())
+    }
+
     /// The two-panel figure one claimed linked export draws.
     //
     // The row is looked up again from the snapshot the export bound, not from
@@ -4394,13 +4573,16 @@ impl PreviewService {
             .source()
             .row_for_spectrum(claimed.spectrum.spectrum())
             .ok_or_else(linked_figure_source_mismatch)?;
-        linked_figure_spec(
-            claimed.chromatogram.source(),
-            claimed.spectrum.spectrum(),
-            row,
-            claimed.range,
-            claimed.traces,
-            claimed.settings,
+        labelled_figure(
+            linked_figure_spec(
+                claimed.chromatogram.source(),
+                claimed.spectrum.spectrum(),
+                row,
+                claimed.range,
+                claimed.traces,
+                claimed.settings,
+            ),
+            claimed.source_label.as_deref(),
         )
         .map_err(|_| linked_figure_not_drawable())
     }
@@ -5992,11 +6174,9 @@ impl PreviewService {
                 continue;
             }
             let relative_parents = parent_components(candidate.relative_components());
-            let mut workspace = self.workspace();
-            let outcome = workspace
-                .registry
-                .add_discovered(accepted, relative_parents);
-            drop(workspace);
+            let outcome = self.register_admitted(accepted, |registry, file| {
+                registry.add_discovered(file, relative_parents)
+            });
             outcomes.push(PendingOutcome::Registered {
                 candidate_name,
                 outcome,
@@ -6240,14 +6420,13 @@ impl PreviewService {
                 continue;
             }
 
-            let mut workspace = self.workspace();
-            let outcome = match candidate.origin {
-                DropCandidateOrigin::Direct => workspace.registry.add_direct(accepted),
-                DropCandidateOrigin::Folder { relative_parents } => workspace
-                    .registry
-                    .add_discovered(accepted, relative_parents),
-            };
-            drop(workspace);
+            let outcome =
+                self.register_admitted(accepted, |registry, file| match candidate.origin {
+                    DropCandidateOrigin::Direct => registry.add_direct(file),
+                    DropCandidateOrigin::Folder { relative_parents } => {
+                        registry.add_discovered(file, relative_parents)
+                    }
+                });
             outcomes.push(PendingOutcome::Registered {
                 candidate_name,
                 outcome,
@@ -7661,6 +7840,7 @@ impl PreviewService {
             spectrum_table,
             qc_snapshot_token: qc_snapshot_token.map(|token| token.as_wire()),
             qc_producer_identified,
+            view_source: None,
         })
     }
 
@@ -7870,7 +8050,11 @@ impl PreviewService {
         // and the token below is the only way the webview can name it, so an
         // export writes this spectrum rather than reconstructing one from the
         // arrays it is about to receive, which may be a prefix of them.
-        let snapshot = self.spectrum_export_slot().install(id, spectrum);
+        let snapshot = if view.is_some() {
+            self.spectrum_export_slot().install_viewed(id, spectrum)
+        } else {
+            self.spectrum_export_slot().install(id, spectrum)
+        };
         let projected = selected_spectrum_dto(
             snapshot.spectrum(),
             &redactor,
@@ -8138,6 +8322,18 @@ mod native_projection_tests {
                 "spectrum_refused",
                 false,
                 Some("mz:unit_not_an_accession"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Mz, ArrayProblem::PayloadStatedTwice)),
+                "spectrum_refused",
+                false,
+                Some("mz:payload_stated_twice"),
+            ),
+            (
+                spectrum_refused(array(ArrayRole::Intensity, ArrayProblem::ElementInPayload)),
+                "spectrum_refused",
+                false,
+                Some("intensity:element_in_payload"),
             ),
             (
                 spectrum_refused(MzmlSpectrumError::ArrayLengthsDiffer),

@@ -346,7 +346,7 @@ fn an_ordinary_import_of_the_same_object_converges_on_one_row() {
 
 /// A reference the project recorded as not verified by MSCanvas brings that
 /// label to its row, as a new row and onto a row the user already had
-/// (ADR 0055; owner decision 2 of 2026-10-29).
+/// (ADR 0055: as built, review of 2026-10-31 (PR #161), not an owner decision).
 #[test]
 fn a_labelled_reference_brings_its_label_to_the_row_it_is_admitted_as() {
     let label = NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
@@ -384,6 +384,153 @@ fn a_labelled_reference_brings_its_label_to_the_row_it_is_admitted_as() {
         assert_eq!(result.roster.datasets[0].not_verified_by_mscanvas, label);
         assert_eq!(service.roster().datasets[0].not_verified_by_mscanvas, label);
     }
+}
+
+/// A reference registered from a row records the row's label when the session
+/// finalized nothing, which is how a label reaches a later process (ADR 0055: as
+/// built, review of 2026-10-31 (PR #161), not an owner decision).
+#[cfg(windows)]
+#[test]
+fn a_row_labelled_by_a_reference_gives_its_label_to_the_next_registration() {
+    let label = NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    let scratch = Scratch::new("reattach-labelled-onward");
+    let path = scratch.write("converted.mzML", b"<mzML/>");
+    let carried_back = ProjectStore::new();
+    carried_back
+        .create("Labelled".to_owned(), false)
+        .expect("a new project");
+    let id = carried_back
+        .register_input_labelled(&path, |_| label.clone())
+        .expect("register the labelled reference");
+    let service = workspace();
+    add(&carried_back, &service, id).expect("admitted");
+
+    let next = ProjectStore::new();
+    next.create("Next".to_owned(), false)
+        .expect("a new project");
+    next.register_input_labelled(&path, |identity| {
+        service.not_verified_label_of_object(identity)
+    })
+    .expect("register the row's object");
+
+    assert_eq!(next.describe().inputs[0].not_verified_by_mscanvas, label);
+}
+
+/// A label a reference brought stays known once its row has left, so the object
+/// added back by any route has it, and the next reference records it rather than
+/// `null`, which nothing writes again (ADR 0055: as built in PR #201, 2026-11-03,
+/// not an owner decision).
+/// 2026-11-04: accepted by the owner (P201-SCOPE).
+#[cfg(windows)]
+#[test]
+fn a_label_a_reference_brought_outlives_the_row_it_was_brought_to() {
+    let label = NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    let scratch = Scratch::new("reattach-labelled-left");
+    let path = scratch.write("converted.mzML", b"<mzML/>");
+    let carried_back = ProjectStore::new();
+    carried_back
+        .create("Labelled".to_owned(), false)
+        .expect("a new project");
+    let id = carried_back
+        .register_input_labelled(&path, |_| label.clone())
+        .expect("register the labelled reference");
+    let service = workspace();
+    let result = add(&carried_back, &service, id).expect("admitted");
+    let handle = admitted_handle(&result).expect("a row").to_owned();
+    service
+        .remove_datasets(std::slice::from_ref(&handle))
+        .expect("remove the row");
+
+    let next_reference_records = || {
+        let next = ProjectStore::new();
+        next.create("Next".to_owned(), false)
+            .expect("a new project");
+        next.register_input_labelled(&path, |identity| {
+            service.not_verified_label_of_object(identity)
+        })
+        .expect("register the object");
+        next.describe().inputs[0].not_verified_by_mscanvas.clone()
+    };
+    assert_eq!(next_reference_records(), label, "with no row");
+
+    service
+        .add_files(std::slice::from_ref(&path))
+        .expect("the object added back");
+    assert_eq!(service.roster().datasets[0].not_verified_by_mscanvas, label);
+    assert_eq!(next_reference_records(), label, "from the row added back");
+}
+
+/// Two references that say different things of one object leave the whole of it
+/// known once the row has left, not one reference's half (ADR 0055: as built in
+/// PR #201, 2026-11-03, not an owner decision).
+/// 2026-11-04: accepted by the owner (P201-SCOPE).
+#[cfg(windows)]
+#[test]
+fn what_two_references_brought_outlives_the_row_whole() {
+    let settings = NotVerifiedByMscanvas::of(true, None);
+    let build = NotVerifiedByMscanvas::of(false, Some("3.0.26204".to_owned()));
+    let scratch = Scratch::new("reattach-labelled-two");
+    let path = scratch.write("converted.mzML", b"<mzML/>");
+    let service = workspace();
+    let mut handle = String::new();
+    for label in [settings, build] {
+        let project = ProjectStore::new();
+        project
+            .create("Labelled".to_owned(), false)
+            .expect("a new project");
+        let id = project
+            .register_input_labelled(&path, |_| label.clone())
+            .expect("register the labelled reference");
+        let result = add(&project, &service, id).expect("admitted");
+        admitted_handle(&result)
+            .expect("a row")
+            .clone_into(&mut handle);
+    }
+    service
+        .remove_datasets(std::slice::from_ref(&handle))
+        .expect("remove the row");
+
+    service
+        .add_files(std::slice::from_ref(&path))
+        .expect("the object added back");
+
+    assert_eq!(
+        service.roster().datasets[0].not_verified_by_mscanvas,
+        NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()))
+    );
+}
+
+/// A row removed in the moment before its label is given does not forget that
+/// label: the project proved the object, whether or not the row is still there
+/// (ADR 0055: as built in PR #201, 2026-11-03, not an owner decision).
+/// 2026-11-04: accepted by the owner (P201-SCOPE).
+#[cfg(windows)]
+#[test]
+fn a_label_that_finds_its_row_gone_is_still_known_to_the_object() {
+    let label = NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    let scratch = Scratch::new("reattach-labelled-gone");
+    let path = scratch.write("converted.mzML", b"<mzML/>");
+    let service = workspace();
+    let mut result = service
+        .add_files(std::slice::from_ref(&path))
+        .expect("the ordinary import");
+    let handle = admitted_handle(&result).expect("a row").to_owned();
+    let primary = service.dataset_object_identities(&handle).expect("a row")[0];
+    service
+        .remove_datasets(std::slice::from_ref(&handle))
+        .expect("remove the row");
+
+    service.label_admitted_row(
+        &mut result,
+        &handle,
+        primary,
+        label.clone().expect("a label"),
+    );
+
+    service
+        .add_files(std::slice::from_ref(&path))
+        .expect("the object added back");
+    assert_eq!(service.roster().datasets[0].not_verified_by_mscanvas, label);
 }
 
 // ---------------------------------------------------------------------------
@@ -551,6 +698,71 @@ fn an_object_replaced_after_the_proof_is_not_claimed_however_identical_its_bytes
     // its own rules, and manufacturing atomicity the workspace does not
     // promise by tearing that row out is not this module's to do.
     assert_eq!(service.roster().datasets.len(), 1);
+}
+
+/// The same window, with a reference that carries a label.
+///
+/// The record's label is about the object the project proved, and only a claim
+/// says the row is that object. Labelled before the claim, the replacement would
+/// be marked, the table would keep it for the rest of the process, and the next
+/// reference to it would record a label nothing ever gave it.
+#[test]
+fn a_refused_claim_gives_its_label_to_neither_the_row_nor_the_table() {
+    let label = NotVerifiedByMscanvas::of(true, Some("3.0.26204".to_owned()));
+    assert!(label.is_some(), "the reference must have a label to leak");
+    let scratch = Scratch::new("reattach-swapped-labelled");
+    let bytes = b"<mzML>identical either way</mzML>";
+    let path = scratch.write("sample.mzML", bytes);
+    let projects = ProjectStore::new();
+    projects
+        .create("Labelled".to_owned(), false)
+        .expect("a new project");
+    let id = projects
+        .register_input_labelled(&path, |_| label.clone())
+        .expect("register the labelled reference");
+    assert_eq!(
+        projects.describe().inputs[0].not_verified_by_mscanvas,
+        label
+    );
+    let service = workspace();
+    let proved = crate::local_document::object_identity(&path);
+
+    let refusal = add_project_input_to_workspace_between(
+        &projects,
+        &service,
+        projects.accept_job().expect("accept"),
+        id,
+        || {
+            let replacement = scratch.write("replacement", bytes);
+            fs::remove_file(&path).expect("remove the proved object");
+            fs::rename(&replacement, &path).expect("put it in place");
+        },
+    )
+    .expect_err("a refusal");
+
+    assert_ne!(
+        crate::local_document::object_identity(&path),
+        proved,
+        "this test is only meaningful while the object really was replaced"
+    );
+    assert_eq!(project_refusal(refusal), ProjectError::ContentChanged);
+    assert_eq!(
+        service.roster().datasets[0].not_verified_by_mscanvas,
+        None,
+        "the row is not the object the label is about"
+    );
+    let next = ProjectStore::new();
+    next.create("Next".to_owned(), false)
+        .expect("a new project");
+    next.register_input_labelled(&path, |identity| {
+        service.not_verified_label_of_object(identity)
+    })
+    .expect("register the row's object");
+    assert_eq!(
+        next.describe().inputs[0].not_verified_by_mscanvas,
+        None,
+        "the table holds no label for an object the project never proved"
+    );
 }
 
 /// The same window, with a replacement that differs only in its bytes.

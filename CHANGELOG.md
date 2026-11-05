@@ -6,7 +6,19 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Added
 
-- **Restore workspace.** MSCanvas remembers the Workbench's files, groups, order
+- **Copy diagnostics.** Settings → Support → **Copy diagnostics** shows a short
+  environment summary in a read-only box, and **Copy** puts that text on
+  the clipboard, for you to paste into a bug report yourself. It holds the
+  MSCanvas, Windows, WebView2 and ProteoWizard versions, whether that
+  ProteoWizard is the verified build, and this session's recent error codes,
+  failed conversions among them. It holds no file name, path, user name or list
+  of what is in your workspace, though an error code can name a vendor or a
+  feature you used, and its time says when. Nothing is written or sent
+  ([ADR 0063](docs/architecture/adr/0063-copy-diagnostics.md)).
+- **Restore workspace.** MSCanvas remembers the Workbench's files, groups that hold
+  a file (an empty one does not come back, accepted by the owner on 2026-11-03), order
+  (a row's place does not hold in a group put back only in part, accepted by the
+  owner on 2026-11-04)
   and checked rows for the next start, in one document in its own per-user folder.
   At the next start nothing comes back by itself: a notice says how many files can
   be added again and lists any that changed, went missing or cannot be reached,
@@ -14,8 +26,13 @@ All notable changes will be documented here once versioned releases begin.
   hashing each file, previews nothing and says they were added again, not verified
   against the last session. **Start fresh** forgets them, one marked file can be
   dismissed, and Settings turns restore off, saying that kept-aside copies remain.
-  A file not taken is offered at the next start only; a marked file waits
-  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md)).
+  A file not taken is offered at the next start only, except one the workspace
+  refused at a press, accepted by the owner on 2026-11-03; a marked file waits
+  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md), decision 10).
+  A file put back keeps its "Not verified by MSCanvas" label, on its row, on its
+  figures and in a project reference made from it; the same file added with Add
+  files instead of put back has none, an owner decision of 2026-11-04
+  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md), decision 1).
 - **Spreadsheet CSV on a stored targeted result's table.** The results table has
   a third export, spreadsheet CSV / 电子表格 CSV, beside CSV and TSV. It is a
   document of its own, `mscanvas_targeted_ms1_results_spreadsheet` schema 1, that
@@ -24,9 +41,61 @@ All notable changes will be documented here once versioned releases begin.
   not altered. The CSV and TSV files do not change. The check of how Excel,
   LibreOffice and WPS open it is pending
   ([ADR 0054](docs/architecture/adr/0054-spreadsheet-csv-for-the-targeted-results-table.md)).
+- **Sort, filter and save the rows shown of a stored targeted result.** The
+  results table sorts by a pressed column head, with missing values last and ties
+  in plan order, and filters by outcome and by text over target name and formula.
+  **Save 12 of 40 rows…** writes those rows, in that order, as CSV, TSV or
+  spreadsheet CSV. The file is a format of its own,
+  `mscanvas_targeted_ms1_results_view` or `…_view_spreadsheet` schema 1, and says
+  in its preamble which rows it holds and which of how many. Nothing is
+  recomputed, and the whole table's three exports do not change. The owner's
+  check of the spreadsheet CSV in Excel, LibreOffice and WPS is still pending.
 
 ### Changed
 
+- **Convert this file… converts this file.** The Conversion page holds that one
+  file, named on a third scope button, and your checked rows stay as they were,
+  before and after the run. **Checked rows** brings them back. **Open in Conversion**
+  on a Shimadzu or SCIEX row does the same.
+- **The preference record is now schema 2, and it keeps what beta 1 saved.** It
+  gains text size, contrast, motion, wheel habit, crosshair, grid and whether
+  preferences are remembered, each defaulting to what MSCanvas does today. No
+  Settings row uses them yet. A record from beta 1 or a later build of schema 1
+  reads with nothing lost and is written as schema 2 at its next change. After
+  that, an earlier build says the saved file was written by a newer version, runs
+  on its defaults and leaves the file alone.
+- **"Not verified by MSCanvas" follows a labelled output further.** The viewer's
+  file title, the Metadata tab's File row, the figure dialog and the figure
+  itself say it: a labelled source's SVG, PNG, copied image and preview draw the
+  label on a line under the panels, and an unlabelled figure is unchanged. Add
+  files…, Add mzML folder… and a drop recognise this session's finalized outputs
+  by the file object, so a moved output keeps its label, a renamed copy has none,
+  and a project reference registered from such a row records it
+  ([ADR 0055](docs/architecture/adr/0055-msconvert-parity-verified-defaults-and-unverified-advanced-set.md)).
+- **Each converted output has its own Add** in the conversion results, where the
+  output can be adopted and the queue has finished, with the label for a labelled
+  output and **Show in Workbench** once the row exists
+  ([ADR 0052](docs/architecture/adr/0052-per-output-adoption.md)).
+- **Describe again is offered only where asking again could help.** A name
+  collision or a row of the wrong family keeps its reason and no longer offers it.
+- **A Thermo RAW row can be viewed in two presses.** Highlighting it shows **View**
+  and starts nothing. View converts it with the verified default into MSCanvas's
+  view cache, never beside your file, shows each phase with Cancel, and opens it in
+  the same viewer; a second View of the same file finds the cached copy. The view
+  says which RAW file and conversion it came from. Its exports are refused until
+  they can say so too; **Convert this file…** is the route to an output you can
+  export ([ADR 0060](docs/architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).
+- **Uninstalling removes the view cache.** Every uninstall, silent and passive
+  included, removes MSCanvas's view cache folder, up to 10 GiB of converted copies
+  that can be made again. Only the uninstaller's own `/UPDATE` switch keeps it, and
+  no installer passes that, so installing a newer version with its default,
+  **Uninstall before installing**, removes it too, and each file's next View
+  converts again. Presets and preferences stay unless you select
+  **Delete the application data**. With that box not selected, a folder MSCanvas
+  would not recognize as its cache, or one with a symbolic link or junction inside
+  it, is left as found. With it selected, the whole folder goes, and a junction
+  inside it loses what its target holds
+  ([ADR 0060](docs/architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md)).
 - **Conversion runs are now remembered, and you can see and forget them.**
   Conversion → **Conversion history** lists every run with when it started and
   ended, or that it was cut short, and reads one run's files, outputs and checks
@@ -34,6 +103,15 @@ All notable changes will be documented here once versioned releases begin.
   and is never uploaded; the screen shows names and no path. **Clear history…**
   forgets ended runs and **Turn off…** in Settings forgets every run and records
   none; neither touches an acquisition or a converted file
+  ([ADR 0065](docs/architecture/adr/0065-conversion-run-history.md)).
+- **Clear history… and Turn off… also remove what a crashed write left, once it
+  is a day old.** A write that crashed can leave a private file beside the runs,
+  holding a whole record with its paths. Either one now removes such a file if it
+  has been untouched for over 24 hours at that moment. A file written more recently
+  is left where it is, and nothing counts or shows it; while recording stays off, a
+  later start or list removes it once it has aged. An older one that cannot be
+  removed, because something holds it open and does not allow deleting it, is
+  counted in the answer as a file that could not be removed
   ([ADR 0065](docs/architecture/adr/0065-conversion-run-history.md)).
 - **A saved PNG figure now carries the figure's title and description.** Every
   PNG saved from a spectrum, a chromatogram, the linked figure or a stored
@@ -77,6 +155,17 @@ All notable changes will be documented here once versioned releases begin.
   **To be able to go back to beta 1, keep a copy of the `.mscanvas` file
   before you save it in this version.** Beta 1's roll back reinstalls the
   program; it does not convert a project back.
+
+### Fixed
+
+- **A malformed mzML file can no longer show a spectrum joined from separate
+  pieces.** Two `<binary>` elements in one m/z or intensity array, or an element
+  inside its `<binary>`, could read as one array when the pieces held the declared
+  length. That spectrum is now refused, and the file still opens and its other
+  spectra still read. Text in a `<binary>` nested elsewhere in the array, after
+  the array's own payload, was joined on the same way; it is now ignored, so the
+  array is read from its own payload alone
+  ([ADR 0056](docs/architecture/adr/0056-project-owned-mzml-reader-for-viewing.md)).
 
 ### Known limitations
 

@@ -30,6 +30,7 @@ import {
 } from "../support/harness";
 import { showProjectSurface } from "../support/shell";
 import { ipcTable } from "../support/fixtures";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
 
 let output = "";
 const evidence: unknown[] = [];
@@ -563,9 +564,10 @@ describe("M8.1 project records, rendered", () => {
       outcome: "saved",
       revision: 1,
       preferences: {
-        schemaVersion: 1,
+        schemaVersion: PREFERENCE_SCHEMA_VERSION,
         appearance: { locale: "zh-CN", density: "comfortable" },
         layout: { roster: "automatic", details: "automatic" },
+        display: DISPLAY_DEFAULTS,
       },
     });
     await browser.$("[data-settings-entry]").click();

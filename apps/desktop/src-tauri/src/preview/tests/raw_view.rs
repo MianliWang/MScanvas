@@ -5,15 +5,23 @@
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::time::Instant;
 
+use super::recent_error_ring::noted_during;
 use super::*;
 use crate::presets::{
     PresetDeleteRequest, PresetListDto, PresetRenameRequest, PresetSaveRequest, PresetWriteDto,
 };
-use crate::preview::dto::{ConversionIntentWireDto, PreviewDto};
-use crate::preview::raw_view::{
-    MAX_RAW_BYTES, RawViewBeginRequestDto, RawViewOperationRequestDto, RawViewPhaseDto,
-    RawViewStateDto, ViewCacheSummaryDto,
+use crate::preview::dto::{
+    ConversionIntentWireDto, FigurePreviewOutcomeDto, FigurePreviewRequestDto,
+    FigurePreviewSourceDto, PreviewDto, backend_quarantined, conversion_busy,
 };
+use crate::preview::raw_view::{
+    MAX_RAW_BYTES, RawViewAvailabilityDto, RawViewBeginRequestDto, RawViewOperationRequestDto,
+    RawViewPhaseDto, RawViewStateDto, RawViewStateRequestDto, ViewCacheSummaryDto, raw_view_busy,
+    raw_view_unsupported_source, view_cache_entry_too_large, view_cache_root_unrecognized,
+    view_cache_unavailable,
+};
+use crate::preview::selection::unknown_dataset;
+use crate::preview::service::RetainedSummaryRefusal;
 
 /// An advanced intent (ADR 0055): MS1 only at 64/32, which no row holds.
 fn advanced_ms1() -> serde_json::Value {
@@ -38,6 +46,10 @@ struct Recording<R = FakeConversionRunner> {
     sources: Arc<Mutex<Vec<PathBuf>>>,
     /// When armed, the next preview read announces itself and waits.
     park: Park,
+    /// When set, a configuration read answers that it could not be read.
+    read_fails: Arc<AtomicBool>,
+    /// When set, the next generated metadata names the file it was read from.
+    echo_source: Arc<AtomicBool>,
 }
 
 type Park = Arc<Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>>;
@@ -63,6 +75,17 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for Recording<R> {
                 .recv_timeout(Duration::from_secs(10))
                 .expect("the parked read is released");
         }
+        if self.echo_source.load(Ordering::SeqCst)
+            && let Some(Response::File(text)) = self
+                .inner
+                .inner
+                .responses
+                .lock()
+                .expect("test lock")
+                .first_mut()
+        {
+            text.push_str(&format!("  sourceFile: {}\n", source.display()));
+        }
         self.inner.run(source, operation)
     }
 
@@ -71,7 +94,15 @@ impl<R: ProcessRunner + Send + Sync> PreviewProvider for Recording<R> {
     }
 
     fn read_conversion_configuration(&self) -> ConfigurationReading {
-        self.inner.read_conversion_configuration()
+        let mut reading = self.inner.read_conversion_configuration();
+        if self.read_fails.load(Ordering::SeqCst) {
+            reading.conversion = Some(Err(PreviewErrorDto::new(
+                "capability_evidence_unavailable",
+                "The options could not be read.",
+                true,
+            )));
+        }
+        reading
     }
 
     fn conversion_backend(&self) -> ConversionBackendAttempt<'_> {
@@ -90,6 +121,8 @@ struct Viewing {
     arguments: Arc<Mutex<Vec<Vec<String>>>>,
     sources: Arc<Mutex<Vec<PathBuf>>>,
     park: Park,
+    read_fails: Arc<AtomicBool>,
+    echo_source: Arc<AtomicBool>,
 }
 
 const RAW_NAME: &str = "QC pool 01.raw";
@@ -100,18 +133,38 @@ fn viewing_with<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
     arguments: Arc<Mutex<Vec<Vec<String>>>>,
     responses: Vec<Response>,
 ) -> Viewing {
+    viewing_on(
+        evidenced_capabilities(),
+        label,
+        runner,
+        arguments,
+        responses,
+    )
+}
+
+fn viewing_on<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
+    capabilities: InstalledHelpCapabilities,
+    label: &str,
+    runner: R,
+    arguments: Arc<Mutex<Vec<Vec<String>>>>,
+    responses: Vec<Response>,
+) -> Viewing {
     let raws = TestFile::new(label);
     let app_data = TestFile::new(&format!("{label}-appdata"));
     let raw = raws.thermo_raw(RAW_NAME);
     let launches = runner.launch_count();
-    let mut inner = ConvertingProvider::new(evidenced_capabilities(), runner);
+    let mut inner = ConvertingProvider::new(capabilities, runner);
     inner.inner = FakeProvider::available(responses);
     let sources = Arc::new(Mutex::new(Vec::new()));
     let park = Park::default();
+    let read_fails = Arc::new(AtomicBool::new(false));
+    let echo_source = Arc::new(AtomicBool::new(false));
     let service = Arc::new(PreviewService::new(Box::new(Recording {
         inner,
         sources: Arc::clone(&sources),
         park: Arc::clone(&park),
+        read_fails: Arc::clone(&read_fails),
+        echo_source: Arc::clone(&echo_source),
     })));
     service.bind_view_cache(Some(app_data.directory.clone()));
     service.set_view_cache_free_space(|_| Some(1 << 40));
@@ -126,6 +179,8 @@ fn viewing_with<R: ProcessRunner + HasLaunchCount + Send + Sync + 'static>(
         arguments,
         sources,
         park,
+        read_fails,
+        echo_source,
     }
 }
 
@@ -808,9 +863,15 @@ fn a_failed_conversion_reports_its_own_code_and_publishes_nothing() {
     assert!(!retryable);
     assert_eq!(session.entries(), Vec::<String>::new());
     assert_eq!(session.staging(), Vec::<String>::new());
-    let RawViewStateDto::Failed { message, .. } = state else {
+    let RawViewStateDto::Failed {
+        message,
+        free_bytes,
+        ..
+    } = state
+    else {
         unreachable!()
     };
+    assert_eq!(free_bytes, None, "room left: nothing to say about space");
     assert!(!message.contains("GiB"), "{message}");
 }
 
@@ -831,7 +892,12 @@ fn a_disk_that_fills_during_the_run_fails_as_the_conversion_and_states_the_free_
     });
     let state = session.view();
     assert_eq!(failed(&state), ("backend_rejected", false));
-    let RawViewStateDto::Failed { message, .. } = state else {
+    let RawViewStateDto::Failed {
+        message,
+        free_bytes,
+        ..
+    } = state
+    else {
         unreachable!()
     };
     assert!(
@@ -839,6 +905,7 @@ fn a_disk_that_fills_during_the_run_fails_as_the_conversion_and_states_the_free_
         "{message}"
     );
     assert!(!message.to_lowercase().contains("full"), "{message}");
+    assert_eq!(free_bytes, Some(1 << 30), "the pane words this itself");
     assert_eq!(session.entries(), Vec::<String>::new());
     assert_eq!(session.staging(), Vec::<String>::new());
 }
@@ -1827,4 +1894,574 @@ fn operation_of(state: &RawViewStateDto) -> u64 {
         | RawViewStateDto::Cancelled { operation, .. } => *operation,
         RawViewStateDto::Idle => panic!("no operation"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Slice 3: what the interface reads
+// ---------------------------------------------------------------------------
+
+/// Whatever it answers, asking leaves nothing in the recent-error ring: a refusal
+/// carried in an `Ok` outcome is not in it (ADR 0063, decision 5), and this answer
+/// is polled. Read whole, not through `noted_during`: a look at a path here would
+/// build `file_not_resolvable` on every poll, and that filter would hide it.
+fn availability(session: &Viewing, handle: &str) -> RawViewAvailabilityDto {
+    use crate::environment_diagnostics::NOTED_ON_THIS_THREAD;
+
+    NOTED_ON_THIS_THREAD.take();
+    let answer = session
+        .service
+        .raw_view_snapshot(&RawViewStateRequestDto {
+            handle: Some(handle.to_owned()),
+        })
+        .availability
+        .expect("a row was named");
+    let noted = NOTED_ON_THIS_THREAD.take();
+    assert!(noted.is_empty(), "{answer:?} noted {noted:?}");
+    answer
+}
+
+fn refusal(session: &Viewing, handle: &str) -> String {
+    match availability(session, handle) {
+        RawViewAvailabilityDto::Refused { available, code } => {
+            assert!(!available);
+            code
+        }
+        other => panic!("expected a refusal; got {other:?}"),
+    }
+}
+
+/// The session as the webview meets it: the backend observed, its catalog read.
+fn observed(session: &Viewing) {
+    session.service.inspect_backend();
+    session
+        .service
+        .read_conversion_configuration()
+        .expect("the catalog is read");
+}
+
+#[test]
+fn the_availability_answer_follows_decision_4s_table_and_touches_nothing() {
+    let session = viewing("raw-view-availability");
+    let before = session.raw_facts();
+    assert_eq!(
+        session
+            .service
+            .raw_view_snapshot(&RawViewStateRequestDto { handle: None })
+            .availability,
+        None
+    );
+    // Nothing observed yet says nothing usable.
+    assert_eq!(refusal(&session, &session.handle), "backend_not_found");
+    observed(&session);
+    assert_eq!(
+        availability(&session, &session.handle),
+        RawViewAvailabilityDto::Available {
+            available: true,
+            unverified_build_release: None,
+        }
+    );
+    // Asking made no folder, launched nothing and read nothing of the RAW.
+    assert!(!session.cache().exists());
+    assert_eq!(session.launches.load(Ordering::SeqCst), 0);
+    assert_eq!(session.raw_facts(), before);
+
+    assert_eq!(refusal(&session, "not-a-handle"), "unknown_file_handle");
+    let mzml = session.raws.directory.join("run.mzML");
+    fs::write(&mzml, b"<mzML/>").expect("an mzML row's file");
+    assert_eq!(
+        refusal(&session, &add_one_acquisition(&session.service, &mzml)),
+        "raw_view_unsupported_source"
+    );
+
+    let large = session.raws.thermo_raw("large.raw");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&large)
+        .and_then(|file| file.set_len(MAX_RAW_BYTES + 1))
+        .expect("a RAW one byte over the limit");
+    let large = add_one_acquisition(&session.service, &large);
+    assert_eq!(refusal(&session, &large), "view_cache_entry_too_large");
+    // At the limit itself View is offered, as a press there is admitted.
+    let at_limit = session.raws.thermo_raw("at-limit.raw");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&at_limit)
+        .and_then(|file| file.set_len(MAX_RAW_BYTES))
+        .expect("a RAW at the limit");
+    let at_limit = add_one_acquisition(&session.service, &at_limit);
+    assert_eq!(
+        availability(&session, &at_limit),
+        RawViewAvailabilityDto::Available {
+            available: true,
+            unverified_build_release: None,
+        }
+    );
+
+    session.service.bind_view_cache(None);
+    assert_eq!(refusal(&session, &large), "view_cache_unavailable");
+    session
+        .service
+        .bind_view_cache(Some(session.app_data.directory.clone()));
+
+    // A folder MSCanvas did not make is refused, read no further and left.
+    fs::create_dir_all(session.cache()).expect("a foreign folder");
+    let foreign = session.cache().join("theirs.txt");
+    fs::write(&foreign, b"theirs").expect("a foreign file");
+    assert_eq!(refusal(&session, &large), "view_cache_root_unrecognized");
+    assert_eq!(fs::read(&foreign).expect("left alone"), b"theirs");
+    fs::remove_dir_all(session.cache()).expect("the foreign folder goes");
+
+    // A queue, in the table's order: before the row's own facts.
+    let answered = session.service.begin_conversion_queue(
+        &begin_request(
+            std::slice::from_ref(&session.handle),
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            current_receipt(&session.service),
+        ),
+        current_document(&session.service),
+    );
+    assert!(matches!(
+        answered.outcome,
+        ConversionBeginOutcomeDto::Reserved { .. }
+    ));
+    assert_eq!(refusal(&session, &large), "conversion_busy");
+}
+
+#[test]
+fn a_catalog_not_read_yet_never_reads_as_a_verified_build() {
+    let unmeasured = conversion_capabilities("3.0.26204", None, &"e".repeat(64));
+    let runner = FakeConversionRunner::new(BackendAct::ConvertViewable);
+    let arguments = runner.arguments();
+    let session = viewing_on(
+        unmeasured,
+        "raw-view-availability-unread",
+        runner,
+        arguments,
+        open_responses(),
+    );
+    // Observed, but no configuration read: the build's release is not known.
+    session.service.inspect_backend();
+    assert_eq!(refusal(&session, &session.handle), "raw_view_build_unknown");
+
+    // A slot's holder still comes first, because that is what the reader waits for.
+    let answered = session.service.begin_conversion_queue(
+        &begin_request(
+            std::slice::from_ref(&session.handle),
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            current_receipt(&session.service),
+        ),
+        current_document(&session.service),
+    );
+    assert!(matches!(
+        answered.outcome,
+        ConversionBeginOutcomeDto::Reserved { .. }
+    ));
+    assert_eq!(refusal(&session, &session.handle), "conversion_busy");
+}
+
+#[test]
+fn a_catalog_read_that_failed_answers_its_own_code_and_not_a_wait() {
+    let session = viewing("raw-view-availability-read-failed");
+    session.read_fails.store(true, Ordering::SeqCst);
+    observed(&session);
+    assert_eq!(
+        refusal(&session, &session.handle),
+        "capability_evidence_unavailable"
+    );
+    // The catalog's retry cures it, as the Conversion surface offers.
+    session.read_fails.store(false, Ordering::SeqCst);
+    observed(&session);
+    assert!(matches!(
+        availability(&session, &session.handle),
+        RawViewAvailabilityDto::Available { .. }
+    ));
+}
+
+#[test]
+fn a_running_view_and_a_quarantine_are_refused_by_their_own_codes() {
+    let (runner, started, release) = StopAwareRunner::parked(StopEnding::Unterminated);
+    let session = viewing_with(
+        "raw-view-availability-busy",
+        runner,
+        Arc::default(),
+        open_responses(),
+    );
+    observed(&session);
+    let operation = session.begin().expect("View begins");
+    let worker = {
+        let service = Arc::clone(&session.service);
+        std::thread::spawn(move || service.run_raw_view(operation))
+    };
+    started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("msconvert starts");
+    assert_eq!(refusal(&session, &session.handle), "raw_view_busy");
+    session
+        .service
+        .cancel_raw_view(RawViewOperationRequestDto { operation });
+    release.send(()).expect("release msconvert");
+    worker.join().expect("the worker ends");
+    // That cancel could not be confirmed: the quarantine comes first now.
+    assert_eq!(refusal(&session, &session.handle), "backend_quarantined");
+}
+
+/// Decision 4's table order: a build that reports no release is refused by its
+/// own code, before any work, and a quarantine comes before it.
+#[test]
+fn a_build_reporting_no_release_is_refused_and_a_quarantine_comes_first() {
+    let runner = FakeConversionRunner::new(BackendAct::ConvertViewable);
+    let arguments = runner.arguments();
+    let session = viewing_on(
+        capabilities_without_a_release(),
+        "raw-view-unreported",
+        runner,
+        arguments,
+        open_responses(),
+    );
+    observed(&session);
+    assert_eq!(
+        refusal(&session, &session.handle),
+        "provider_build_not_evidenced"
+    );
+    // A press that raced the answer ends the same way, and launches nothing.
+    assert_eq!(failed(&session.view()).0, "provider_build_not_evidenced");
+    assert_eq!(session.launches.load(Ordering::SeqCst), 0);
+    session.service.quarantine_backend_now();
+    assert_eq!(refusal(&session, &session.handle), "backend_quarantined");
+}
+
+/// The availability answer names these by hand so that it builds no error, and
+/// each stays what a press that is refused answers with.
+#[test]
+fn the_codes_the_availability_answer_names_are_what_a_press_answers_with() {
+    for (code, error) in [
+        ("unknown_file_handle", unknown_dataset()),
+        ("backend_quarantined", backend_quarantined()),
+        ("raw_view_busy", raw_view_busy()),
+        ("conversion_busy", conversion_busy()),
+        ("raw_view_unsupported_source", raw_view_unsupported_source()),
+        ("view_cache_unavailable", view_cache_unavailable()),
+        (
+            "view_cache_root_unrecognized",
+            view_cache_root_unrecognized(),
+        ),
+        ("view_cache_entry_too_large", view_cache_entry_too_large()),
+    ] {
+        assert_eq!(code, error.kind);
+    }
+}
+
+/// The webview asks about the highlighted row all through a view, as this does
+/// at each phase. A view that succeeded leaves no error behind.
+#[test]
+fn a_view_watched_to_its_end_notes_nothing() {
+    let session = viewing("ring-view-watched");
+    observed(&session);
+    let polls = Arc::new(AtomicUsize::new(0));
+    {
+        let service = Arc::downgrade(&session.service);
+        let handle = session.handle.clone();
+        let polls = Arc::clone(&polls);
+        session.service.set_raw_view_phase_hook(move |_, _| {
+            let answer = service
+                .upgrade()
+                .expect("the session outlives its view")
+                .raw_view_snapshot(&RawViewStateRequestDto {
+                    handle: Some(handle.clone()),
+                })
+                .availability;
+            assert_eq!(
+                answer,
+                Some(RawViewAvailabilityDto::Refused {
+                    available: false,
+                    code: "raw_view_busy".to_owned(),
+                })
+            );
+            polls.fetch_add(1, Ordering::SeqCst);
+        });
+    }
+    let (state, noted) = noted_during(|| session.view());
+    assert!(!ready(&state).1, "the view ran the whole conversion");
+    assert!(
+        polls.load(Ordering::SeqCst) > 0,
+        "the view was never polled"
+    );
+    assert!(noted.is_empty(), "{noted:?}");
+}
+
+/// A press that is refused is an `Err` at the boundary, so it does join the ring,
+/// beside an availability answer that names the same code and does not.
+#[test]
+fn a_press_refused_while_a_queue_holds_the_slot_notes_its_code() {
+    let session = viewing("ring-view-refused-press");
+    observed(&session);
+    let answered = session.service.begin_conversion_queue(
+        &begin_request(
+            std::slice::from_ref(&session.handle),
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            current_receipt(&session.service),
+        ),
+        current_document(&session.service),
+    );
+    assert!(matches!(
+        answered.outcome,
+        ConversionBeginOutcomeDto::Reserved { .. }
+    ));
+    assert_eq!(refusal(&session, &session.handle), "conversion_busy");
+    let (answer, noted) = noted_during(|| session.begin());
+    assert_eq!(answer.expect_err("refused").kind, "conversion_busy");
+    assert_eq!(noted, ["conversion_busy"]);
+}
+
+/// ADR 0063, decision 5: a view conversion is recorded once, as the kind of the
+/// error the run returns, and reading the failed state again adds nothing.
+#[test]
+fn a_failed_view_notes_its_code_once_however_often_it_is_read() {
+    let runner = FakeConversionRunner::new(BackendAct::Fail);
+    let arguments = runner.arguments();
+    let session = viewing_with("ring-view-failed", runner, arguments, open_responses());
+    let (state, noted) = noted_during(|| session.view());
+    assert_eq!(failed(&state).0, "backend_rejected");
+    assert_eq!(noted, ["backend_rejected"]);
+    let (_, noted) = noted_during(|| {
+        for _ in 0..5 {
+            session.service.raw_view_state();
+        }
+    });
+    assert!(noted.is_empty(), "{noted:?}");
+}
+
+#[test]
+fn an_unmeasured_build_views_with_its_release_named() {
+    let unmeasured = conversion_capabilities("3.0.26204", None, &"e".repeat(64));
+    let runner = FakeConversionRunner::new(BackendAct::ConvertViewable);
+    let arguments = runner.arguments();
+    let session = viewing_on(
+        unmeasured,
+        "raw-view-unmeasured",
+        runner,
+        arguments,
+        open_responses(),
+    );
+    observed(&session);
+    let named = || Some("3.0.26204".to_owned());
+    assert_eq!(
+        availability(&session, &session.handle),
+        RawViewAvailabilityDto::Available {
+            available: true,
+            unverified_build_release: named(),
+        }
+    );
+    let state = session.view();
+    let RawViewStateDto::Ready {
+        operation,
+        unverified_build_release,
+        ..
+    } = state
+    else {
+        panic!("expected ready; got {state:?}");
+    };
+    assert_eq!(unverified_build_release, named());
+    let source = session
+        .open(operation)
+        .expect("the view opens")
+        .view_source
+        .expect("a viewed preview says what it was made from");
+    assert!(!source.verified);
+    assert_eq!(source.unverified_build_release, named());
+    assert_eq!(source.provider_release, "3.0.26204");
+}
+
+#[test]
+fn a_viewed_preview_says_what_it_was_made_from_and_names_no_path() {
+    let session = viewing("raw-view-source");
+    session.echo_source.store(true, Ordering::SeqCst);
+    let (operation, _) = ready(&session.view());
+    let preview = session.open(operation).expect("the view opens");
+    let source = preview.view_source.as_ref().expect("the view's source");
+    assert_eq!(source.kind, "viewCache");
+    assert_eq!(source.source_file_name, RAW_NAME);
+    assert_eq!(source.source_kind, "thermo_raw");
+    assert_eq!(
+        source.source_sha256,
+        Sha256Digest::calculate_file(&session.raw)
+            .expect("hash the RAW")
+            .to_string()
+            .to_lowercase()
+    );
+    assert_eq!(source.provider_release, EVIDENCED_RELEASE);
+    assert_eq!(
+        source.provider_sha256,
+        EVIDENCED_EXECUTABLE_SHA256.to_lowercase()
+    );
+    assert_eq!(source.intent.id, ConversionIntent::SHIPPED.stable_id());
+    assert!(source.verified);
+    assert_eq!(source.unverified_build_release, None);
+    // No cache path, key or entry name crosses, anywhere in the preview, though
+    // what the reader printed named the entry.
+    let wire = serde_json::to_string(&preview).expect("the preview serializes");
+    let key = session.entries().remove(0);
+    let root = session.app_data.directory.file_name().expect("a folder");
+    assert!(wire.contains("sourceFile: <file>"), "{wire}");
+    assert!(!wire.contains(&key), "{wire}");
+    assert!(!wire.contains("view.mzML"), "{wire}");
+    assert!(!wire.contains("view-cache"), "{wire}");
+    assert!(
+        !wire.contains(root.to_str().expect("a test folder")),
+        "{wire}"
+    );
+    assert_eq!(
+        serde_json::to_value(&preview).expect("the preview serializes")["viewSource"]["kind"],
+        "viewCache"
+    );
+}
+
+#[test]
+fn a_viewed_preview_exports_nothing_and_its_spectrum_stays_drawable() {
+    let session = viewing("raw-view-exports");
+    let service = &session.service;
+    let (operation, _) = ready(&session.view());
+    let preview = session.open(operation).expect("the view opens");
+    let chromatogram = preview
+        .chromatogram_export_token
+        .expect("the chromatogram on screen");
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = service
+        .load_spectrum(&session.handle, 0)
+        .expect("a spectrum of the view")
+        .outcome
+    else {
+        panic!("the view has a spectrum");
+    };
+    let (low, high) = (spectrum.mz[0], spectrum.mz[spectrum.mz.len() - 1]);
+    let spectrum = spectrum.export_token;
+    let settings = default_figure_settings();
+    let traces = ChromatogramTracesDto {
+        tic: true,
+        bpc: true,
+    };
+    let withheld = |error: PreviewErrorDto| assert_eq!(error.kind, "view_export_withheld");
+    withheld(
+        service
+            .begin_spectrum_export(&spectrum, "csv", &full_spectrum_range(), &settings)
+            .expect_err("no spectrum document"),
+    );
+    withheld(
+        service
+            .begin_spectrum_export(&spectrum, "svg", &full_spectrum_range(), &settings)
+            .expect_err("no spectrum figure"),
+    );
+    withheld(
+        service
+            .begin_chromatogram_export(&chromatogram, "csv", &full_run_range(), traces, &settings)
+            .expect_err("no chromatogram document"),
+    );
+    withheld(
+        service
+            .begin_linked_figure_export(
+                &chromatogram,
+                &spectrum,
+                "svg",
+                &full_run_range(),
+                traces,
+                &settings,
+            )
+            .expect_err("no linked figure"),
+    );
+    let outcome = service.preview_figure(
+        &FigurePreviewRequestDto {
+            request_id: 7,
+            source: FigurePreviewSourceDto::Spectrum {
+                token: spectrum.clone(),
+                range: full_spectrum_range(),
+            },
+            settings,
+        },
+        service.workspace_drop_document_epoch(),
+    );
+    assert!(
+        matches!(
+            &outcome,
+            FigurePreviewOutcomeDto::Refused { error, .. } if error.kind == "view_export_withheld"
+        ),
+        "{outcome:?}"
+    );
+    // Not an export: the viewport still draws the spectrum it names.
+    service
+        .project_selected_spectrum(&spectrum, low, high)
+        .expect("the viewed spectrum is drawn");
+}
+
+/// The withholding belongs to what was read, not to the latest open: a reopen
+/// refused after its start keeps the row's cached preview, whose next spectrum
+/// is still the converted copy's, and that document could name neither the RAW
+/// nor the conversion (decision 11).
+#[test]
+fn a_spectrum_of_a_view_stays_withheld_after_a_refused_reopen_of_its_row() {
+    let session = viewing("raw-view-exports-reopen");
+    let service = &session.service;
+    let (operation, _) = ready(&session.view());
+    session.open(operation).expect("the view opens");
+    let (second, hit) = ready(&session.view());
+    assert!(hit, "the second view is a hit");
+    let document = current_document(service);
+    let answered = service.begin_conversion_queue(
+        &begin_request(
+            std::slice::from_ref(&session.handle),
+            ConversionIntent::SHIPPED,
+            ConversionConflictPolicyDto::Fail,
+            current_receipt(service),
+        ),
+        document,
+    );
+    let ConversionBeginOutcomeDto::Reserved { reservation } = answered.outcome else {
+        panic!("a queue reserves: {answered:?}");
+    };
+    assert_eq!(
+        session
+            .open(second)
+            .expect_err("a queue holds the slot")
+            .kind,
+        "conversion_busy"
+    );
+    let claimed = service
+        .claim_conversion(&reservation.reservation_id, document)
+        .expect("the reservation is claimed");
+    service.cancel_conversion(claimed);
+    let SelectedSpectrumOutcomeDto::Spectrum { spectrum } = service
+        .load_spectrum(&session.handle, 0)
+        .expect("the preview the refused open left")
+        .outcome
+    else {
+        panic!("the view has a spectrum");
+    };
+    assert_eq!(
+        service
+            .begin_spectrum_export(
+                &spectrum.export_token,
+                "csv",
+                &full_spectrum_range(),
+                &default_figure_settings(),
+            )
+            .expect_err("still the converted copy's spectrum")
+            .kind,
+        "view_export_withheld"
+    );
+}
+
+#[test]
+fn a_qc_capture_of_a_viewed_preview_is_refused_by_its_own_name() {
+    let session = viewing("raw-view-qc");
+    let (operation, _) = ready(&session.view());
+    session.open(operation).expect("the view opens");
+    assert_eq!(
+        session
+            .service
+            .retained_run_summary(&session.handle, "any-token")
+            .map(|_| ())
+            .expect_err("a viewed preview has no summary to copy"),
+        RetainedSummaryRefusal::ViewedThroughCache
+    );
 }

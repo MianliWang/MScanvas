@@ -34,9 +34,11 @@ mod fs_guard;
 mod intent;
 mod mzml;
 mod mzml_reader;
+mod mzml_xic;
 mod output_inspect;
 mod preview;
 mod process;
+mod rt_mz_map;
 mod sciex_completeness;
 mod sciex_wiff;
 mod sha256;
@@ -129,6 +131,11 @@ pub use mzml_reader::{
     ReaderLimitKind, RequiredValue, RetentionTimeUnit, read_selected_spectrum,
     read_selected_spectrum_from, read_spectrum_table, read_spectrum_table_from,
 };
+pub use mzml_xic::{
+    XIC_QUANTITY, XicAxis, XicIdentity, XicMetadataProblem, XicQuery, XicRefusal, XicRequiredValue,
+    XicResult, XicScan, XicScanState, XicSpectrumTransform, XicUnit, XicUnreadableReason,
+    XicWindowInput, read_xic, read_xic_from,
+};
 pub use output_inspect::{
     FinalOutputVerdict, IntermediateFacts, MzxmlEncoding, MzxmlPrecision, NonMzmlFormat,
     OutputCheckRefusal, admit_intermediate, inspect_final_output, scan_intermediate,
@@ -148,6 +155,10 @@ pub use process::{
     CancellationToken, LaunchFailureKind, ProcessError, ProcessOutput, ProcessRunner,
     SystemProcessRunner, Termination, TreeOwnership, execute, execute_cancellable,
 };
+pub use rt_mz_map::{
+    MAX_MAP_CELLS, MapError, MapKind, MapRequest, Ms1Extent, RtMzMap, bin_rt_mz_map,
+    bin_rt_mz_map_from, ms1_extent,
+};
 pub use sciex_completeness::{
     EstablishedSampleCompleteness, SampleCompletenessRefusal, SciexSampleCompleteness,
 };
@@ -157,5 +168,5 @@ pub use structured::{
     IntegrityRoute, IntensityArray, LinearTolerance, Lowering, MAX_CHAIN_STEPS, Mz5Encoding,
     MzArray, MzMlEncoding, MzMlbEncoding, MzMlbIntensityArray, MzMlbMzArray, MzMlbPlainArray,
     MzXmlEncoding, OutputEncoding, Precision, Prediction, ProviderRequirement, SourceBlock,
-    StructuredIntent, StructuredIntentParts, Switch, Tier, Truncation,
+    StructuredIntent, StructuredIntentParts, Switch, Tier, Truncation, VERIFIED_MSCONVERT_SHA256,
 };

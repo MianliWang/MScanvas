@@ -840,6 +840,9 @@ button:disabled,
 .conversion-scope > legend { float: none; margin: 0 0 6px; color: var(--color-text-primary); font-size: 12px; font-weight: 600; line-height: 1.5; }
 .conversion-scope .conversion-segments-track { display: flex; }
 .conversion-scope .conversion-segment { flex: 1 1 0; min-width: 0; justify-content: center; text-align: center; white-space: normal; }
+/* The one file (N-C3) is a name and maybe its context, too long for a third of
+   the rail: a row of its own under the pair, wrapping rather than clipping. */
+.conversion-scope .conversion-segment:has(input[value="file"]) { flex-basis: 100%; border-top: 1px solid var(--color-border); border-left: 0; overflow-wrap: anywhere; }
 .conversion-scope-counts { color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 .conversion-excluded-group { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 4px; }
@@ -1201,7 +1204,7 @@ button:disabled,
 /* Open file / Open folder, a line of the row. */
 .output-open-actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .output-open-name { min-width: 0; max-width: 100%; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
-.output-open-actions > p { flex-basis: 100%; color: var(--color-text-secondary); font-size: 12px; }
+.output-open-actions > p { flex-basis: 100%; min-width: 0; color: var(--color-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .output-open-actions > p:empty { display: none; }
 
 /* The staging cleanup, as a note (v5.11 .note.amber). */
@@ -1596,6 +1599,10 @@ button:disabled,
   margin: 0;
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.metadata-list dd > .not-verified-tag {
+  margin-left: 8px;
 }
 
 .metadata-lines {
@@ -2228,6 +2235,9 @@ button:disabled,
   inset: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  /* Its width and not its content's: the source line's unbroken name would widen
+     the column, and focus on the close button would then scroll the head away. */
+  grid-template-columns: minmax(0, 1fr);
   width: min(1080px, calc(100vw - 48px));
   height: min(720px, calc(100vh - 48px));
   margin: auto;
@@ -2240,6 +2250,7 @@ button:disabled,
 }
 .figure-export-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 14px 14px 12px 22px; border-bottom: 1px solid var(--color-border); }
 .figure-export-heading { min-width: 0; }
+.figure-export-head > button { flex: none; }
 .figure-export-head h2 { margin: 0; font-size: 17px; font-weight: 650; line-height: 1.4; }
 .figure-export-source { margin: 2px 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .figure-export-body { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 0; }

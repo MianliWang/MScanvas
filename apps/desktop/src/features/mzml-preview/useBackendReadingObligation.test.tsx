@@ -20,6 +20,7 @@ const FREE: BackendCheckFacts = {
   backendChanging: false,
   laneClaimed: false,
   reclaimingStaging: false,
+  rawViewRunning: false,
   previewReading: false,
   probeInFlight: false,
 };

@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use super::super::dto::DatasetSourceKindDto;
-use super::super::selection::source_kind_dto;
+use super::super::selection::{NotVerifiedByMscanvas, source_kind_dto};
 use super::PreviewService;
 
 /// One object a live row is bound to, as admission recorded it.
@@ -19,12 +19,13 @@ pub(crate) struct RowMember {
     pub identity: (u64, [u8; 16]),
 }
 
-/// One live row: the handle the webview holds, its family and its members,
-/// primary first.
+/// One live row: the handle the webview holds, its family, its members, primary
+/// first, and its "not verified by MSCanvas" label.
 pub(crate) struct LiveRow {
     pub handle: String,
     pub family: DatasetSourceKindDto,
     pub members: Vec<RowMember>,
+    pub not_verified: Option<NotVerifiedByMscanvas>,
 }
 
 impl PreviewService {
@@ -56,6 +57,7 @@ impl PreviewService {
                     handle: dataset.id().handle(),
                     family: source_kind_dto(file.source_kind()),
                     members: std::iter::once(primary).chain(companions).collect(),
+                    not_verified: dataset.not_verified().cloned(),
                 }
             })
             .collect();

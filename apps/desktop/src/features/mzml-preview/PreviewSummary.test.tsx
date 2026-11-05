@@ -50,6 +50,18 @@ describe("the Details inspector", () => {
     expect(document.querySelector("[data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
   });
 
+  it("labels the Metadata tab's File row, and nothing for a verified file", () => {
+    const { unmount } = render(<PreviewMetadata file={{ ...preview.file, notVerifiedByMscanvas: { unverifiedSettings: true, unverifiedBuildRelease: null } }}
+      metadata={preview.metadata} runSummary={preview.runSummary} spectrumListTotal={preview.spectrumTable.totalRowCount} />);
+    const row = screen.getByText(en.summaryFile).parentElement!;
+    expect(row.querySelector("dd")?.textContent).toBe(`${preview.file.fileName}${en.m74CnvNotVerified}`);
+    expect(row.querySelector("[data-not-verified]")?.textContent).toBe(en.m74CnvNotVerified);
+    unmount();
+
+    renderMetadata();
+    expect(document.querySelector("[data-not-verified]")).toBeNull();
+  });
+
   it("labels it in zh-CN too, naming the build where the build is why", async () => {
     const preferences = createFakePreferencesApi({ stored: storedRecord({ appearance: { locale: "zh-CN" } }) });
     rtlRender(

@@ -128,7 +128,7 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's states, %s", (loc
     expect(toggle).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("says what a picked vendor row is, and opens it in Conversion", async () => {
+  it("offers a Thermo RAW row View and its route to conversion, and starts neither", async () => {
     await mount(false, [selectedFile, VENDOR_ROW]);
     const row = await waitFor(() => {
       const found = document.querySelector<HTMLElement>(`.grouped-roster [data-handle="${VENDOR_ROW.handle}"]`);
@@ -138,9 +138,37 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's states, %s", (loc
     await act(async () => {
       fireEvent.click(row);
     });
-    await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "vendor"));
+    await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "raw-view"));
     expect(within(evidence()).getByText(VENDOR_ROW.fileName)).toBeVisible();
-    expect(within(evidence()).getByText(`Thermo RAW · ${words.needsConversion}`)).toBeVisible();
+    expect(within(evidence()).getByText("Thermo RAW")).toBeVisible();
+    // Bordered: the Workbench's one filled primary stays the roster's Convert.
+    expect(within(evidence()).getByRole("button", { name: words.rawViewView })).toHaveClass("ui-button--secondary");
+
+    await act(async () => {
+      fireEvent.click(within(evidence()).getByRole("button", { name: words.rawViewConvert }));
+    });
+    expect(document.querySelector(".workbench-shell")).toHaveAttribute("data-surface", "conversion");
+    expect(document.getElementById("workbench-conversion")).toHaveFocus();
+    // N-C3: that one file is the scope, and its check does not change.
+    expect(screen.getByRole("radio", { name: VENDOR_ROW.fileName })).toBeChecked();
+    expect(within(row).getByRole("checkbox")).not.toBeChecked();
+  });
+
+  it("says what a picked vendor row with no View is, and opens it in Conversion", async () => {
+    const lcd: SelectedFile = { ...VENDOR_ROW, fileName: "run-9.lcd", sourceKind: "shimadzu_lcd" };
+    await mount(false, [selectedFile, lcd]);
+    const row = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>(`.grouped-roster [data-handle="${lcd.handle}"]`);
+      if (found === null) throw new Error("no row yet");
+      return found;
+    });
+    await act(async () => {
+      fireEvent.click(row);
+    });
+    await waitFor(() => expect(evidence()).toHaveAttribute("data-evidence", "vendor"));
+    expect(within(evidence()).getByText(lcd.fileName)).toBeVisible();
+    expect(within(evidence()).getByText(`Shimadzu LabSolutions LCD · ${words.needsConversion}`)).toBeVisible();
+    expect(within(evidence()).queryByRole("button", { name: words.rawViewView })).toBeNull();
 
     await act(async () => {
       fireEvent.click(within(evidence()).getByRole("button", { name: words.openInConversion }));
@@ -148,7 +176,8 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's states, %s", (loc
     expect(document.querySelector(".workbench-shell")).toHaveAttribute("data-surface", "conversion");
     // The pressed button left with the evidence; the keyboard followed.
     expect(document.getElementById("workbench-conversion")).toHaveFocus();
-    // The row is checked for conversion; nothing was read.
-    expect(within(row).getByRole("checkbox")).toBeChecked();
+    // N-C3: that one file is the scope, and its check does not change; nothing was read.
+    expect(screen.getByRole("radio", { name: lcd.fileName })).toBeChecked();
+    expect(within(row).getByRole("checkbox")).not.toBeChecked();
   });
 });

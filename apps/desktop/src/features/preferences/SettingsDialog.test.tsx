@@ -5,7 +5,7 @@ import { App } from "../../app/App";
 import { PreviewApiProvider } from "../mzml-preview/api";
 import { WorkspaceDropTransportProvider } from "../mzml-preview/dropTransport";
 import type { SelectedSpectrumOutcome } from "../mzml-preview/contracts";
-import { availableBackend, unavailableBackend, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, deferred, type FakePreviewApi } from "../../test/previewFixtures";
+import { availableBackend, unavailableBackend, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, deferred, ENVIRONMENT_DIAGNOSTICS, type Deferred, type FakePreviewApi } from "../../test/previewFixtures";
 import { createFakePreferencesApi, type FakePreferencesApi } from "../../test/preferenceFixtures";
 import { PreferencesApiProvider } from "./preferencesApi";
 import { createUiRuntime, UI_RESOURCES, validateBundle, type UiRuntime } from "./i18n";
@@ -67,6 +67,267 @@ async function loadedApp(api = createFakePreviewApi({ availability: availableBac
   return api;
 }
 
+describe("Copy diagnostics (ADR 0063, decision 10)", () => {
+  const writeText = vi.fn<(text: string) => Promise<void>>();
+  const original = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  const refusedRead = { kind: "preview_worker_unavailable", summary: "boundary words", detail: null, retryable: true };
+
+  beforeEach(() => {
+    writeText.mockReset().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  });
+  afterEach(() => {
+    if (original === undefined) Reflect.deleteProperty(navigator, "clipboard");
+    else Object.defineProperty(navigator, "clipboard", original);
+  });
+
+  function button(dialog: HTMLElement, attribute: string) { return dialog.querySelector<HTMLButtonElement>(`[${attribute}]`)!; }
+
+  it("shows exactly what Rust wrote, in the box, and Copy takes that string", async () => {
+    mount(createFakePreviewApi({ availability: unavailableBackend }));
+    const dialog = openSettings();
+    expect(dialog.querySelector("[data-diagnostics-preview]")).toBeNull();
+    expect(button(dialog, "data-diagnostics-read")).toHaveAccessibleName(en.diagnosticsShow);
+
+    const opener = button(dialog, "data-diagnostics-read");
+    opener.focus();
+    fireEvent.click(opener);
+    const preview = await waitFor(() => {
+      const box = dialog.querySelector<HTMLTextAreaElement>("[data-diagnostics-preview]");
+      expect(box).not.toBeNull();
+      return box!;
+    });
+    expect(preview).toHaveValue(ENVIRONMENT_DIAGNOSTICS);
+    expect(preview).toHaveAttribute("readonly");
+    expect(preview).toHaveAccessibleName(en.diagnosticsField);
+    // The keyboard goes to the text, and Copy is the next stop. In an effect, so
+    // it can follow the commit that made the box exist.
+    await waitFor(() => expect(preview).toHaveFocus());
+    expect(writeText).not.toHaveBeenCalled();
+
+    fireEvent.click(button(dialog, "data-diagnostics-copy"));
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent(en.diagnosticsCopied));
+    expect(writeText.mock.calls).toEqual([[ENVIRONMENT_DIAGNOSTICS]]);
+  });
+
+  it("keeps the summary's English in a Chinese session", async () => {
+    mount(createFakePreviewApi({ availability: unavailableBackend }));
+    await screen.findByText("No ProteoWizard installation was found");
+    const dialog = openSettings();
+    choose(dialog, en.simplifiedChinese);
+    expect(button(dialog, "data-diagnostics-read")).toHaveAccessibleName(zh.diagnosticsShow);
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue(ENVIRONMENT_DIAGNOSTICS));
+    expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveAttribute("lang", "en");
+  });
+
+  it("refuses a second read while one is out, with the reason in sight", async () => {
+    const answer = deferred<string>();
+    const readEnvironmentDiagnostics = vi.fn(() => answer.promise);
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics }));
+    const dialog = openSettings();
+    const opener = button(dialog, "data-diagnostics-read");
+
+    fireEvent.click(opener);
+    expect(opener).toHaveAttribute("aria-disabled", "true");
+    expect(opener).toHaveAccessibleDescription(en.diagnosticsReading);
+    fireEvent.click(opener);
+    expect(readEnvironmentDiagnostics).toHaveBeenCalledTimes(1);
+
+    await act(async () => { answer.resolve("text"); await answer.promise; });
+    expect(opener).not.toHaveAttribute("aria-disabled");
+    expect(opener).toHaveAccessibleName(en.diagnosticsReadAgain);
+  });
+
+  it("says a failed read in the owned sentence, shows no text and reads again from the same button", async () => {
+    const readEnvironmentDiagnostics = vi.fn<() => Promise<string>>()
+      .mockRejectedValueOnce(refusedRead)
+      .mockResolvedValueOnce("the second reading\n");
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics }));
+    const dialog = openSettings();
+
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(en.errPreviewWorkerUnavailable);
+    expect(dialog).not.toHaveTextContent("boundary words");
+    expect(dialog.querySelector("[data-diagnostics-preview]")).toBeNull();
+    expect(dialog.querySelector("[data-diagnostics-copy]")).toBeNull();
+
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue("the second reading\n"));
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+  });
+
+  it("says when the clipboard refused, claims no copy, and a later Copy can still succeed", async () => {
+    writeText.mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
+    mount(createFakePreviewApi({ availability: unavailableBackend }));
+    const dialog = openSettings();
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-copy]")).not.toBeNull());
+
+    fireEvent.click(button(dialog, "data-diagnostics-copy"));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(en.diagnosticsCopyFailed);
+    expect(within(dialog).getByRole("status")).toBeEmptyDOMElement();
+
+    fireEvent.click(button(dialog, "data-diagnostics-copy"));
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent(en.diagnosticsCopied));
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+  });
+
+  it("also survives a platform with no clipboard at all", async () => {
+    Reflect.deleteProperty(navigator, "clipboard");
+    mount(createFakePreviewApi({ availability: unavailableBackend }));
+    const dialog = openSettings();
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-copy]")).not.toBeNull());
+    fireEvent.click(button(dialog, "data-diagnostics-copy"));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(en.diagnosticsCopyFailed);
+  });
+
+  it.each([
+    ["answers", (read: Deferred<string>) => { read.resolve("text\n"); }],
+    ["fails", (read: Deferred<string>) => { read.reject(refusedRead); }],
+  ] as const)("leaves the keyboard with a reader who moved on when a read %s", async (_ending, end) => {
+    const answer = deferred<string>();
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics: () => answer.promise }));
+    const dialog = openSettings();
+    const opener = button(dialog, "data-diagnostics-read");
+    opener.focus();
+    fireEvent.click(opener);
+    const elsewhere = dialog.querySelector<HTMLButtonElement>('[role="radio"]')!;
+    elsewhere.focus();
+
+    await act(async () => { end(answer); await answer.promise.catch(() => undefined); });
+    expect(dialog.querySelector("[data-diagnostics-preview], [data-diagnostics-failed]")).not.toBeNull();
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it.each(["data-diagnostics-copy", "data-diagnostics-preview"])("gives the keyboard to Read again when a failed read takes away %s", async (holder) => {
+    const second = deferred<string>();
+    const readEnvironmentDiagnostics = vi.fn<() => Promise<string>>()
+      .mockResolvedValueOnce("first\n").mockReturnValueOnce(second.promise);
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics }));
+    const dialog = openSettings();
+    const opener = button(dialog, "data-diagnostics-read");
+    fireEvent.click(opener);
+    await waitFor(() => expect(dialog.querySelector(`[${holder}]`)).not.toBeNull());
+    fireEvent.click(opener);
+    dialog.querySelector<HTMLElement>(`[${holder}]`)!.focus();
+
+    await act(async () => { second.reject(refusedRead); await second.promise.catch(() => undefined); });
+    expect(dialog.querySelector(`[${holder}]`)).toBeNull();
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it("reads anew each time and keeps nothing once Settings closes", async () => {
+    const readEnvironmentDiagnostics = vi.fn<() => Promise<string>>()
+      .mockResolvedValueOnce("first\n").mockResolvedValueOnce("second\n").mockResolvedValueOnce("third\n");
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics }));
+    let dialog = openSettings();
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue("first\n"));
+    fireEvent.click(button(dialog, "data-diagnostics-copy"));
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent(en.diagnosticsCopied));
+
+    // A new reading is not the text that was copied, so "Copied." does not stand.
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue("second\n"));
+    expect(within(dialog).getByRole("status")).toBeEmptyDOMElement();
+
+    press(dialog, en.close);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    dialog = openSettings();
+    expect(dialog.querySelector("[data-diagnostics-preview]")).toBeNull();
+    expect(button(dialog, "data-diagnostics-read")).toHaveAccessibleName(en.diagnosticsShow);
+    expect(readEnvironmentDiagnostics).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the button, the text and any copy result through a second read, with Copy refused until it answers", async () => {
+    const second = deferred<string>();
+    const readEnvironmentDiagnostics = vi.fn<() => Promise<string>>()
+      .mockResolvedValueOnce("first\n").mockReturnValueOnce(second.promise);
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics }));
+    const dialog = openSettings();
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue("first\n"));
+    fireEvent.click(button(dialog, "data-diagnostics-copy"));
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent(en.diagnosticsCopied));
+
+    const opener = button(dialog, "data-diagnostics-read");
+    fireEvent.click(opener);
+    expect(opener).toHaveAccessibleName(en.diagnosticsReadAgain);
+    expect(opener).toHaveAttribute("aria-disabled", "true");
+    expect(opener).toHaveAccessibleDescription(en.diagnosticsReading);
+    expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue("first\n");
+    expect(within(dialog).getByRole("status")).toHaveTextContent(en.diagnosticsCopied);
+    const copy = button(dialog, "data-diagnostics-copy");
+    expect(copy).toHaveAttribute("aria-disabled", "true");
+    expect(copy).toHaveAccessibleDescription(en.diagnosticsReading);
+    fireEvent.click(copy);
+    fireEvent.click(opener);
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(readEnvironmentDiagnostics).toHaveBeenCalledTimes(2);
+
+    await act(async () => { second.resolve("second\n"); await second.promise; });
+    expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue("second\n");
+    expect(within(dialog).getByRole("status")).toBeEmptyDOMElement();
+    expect(copy).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(copy);
+    await waitFor(() => expect(writeText.mock.calls).toEqual([["first\n"], ["second\n"]]));
+  });
+
+  it("drops the old text when a second read fails, so Copy cannot hand it over", async () => {
+    const readEnvironmentDiagnostics = vi.fn<() => Promise<string>>()
+      .mockResolvedValueOnce("first\n").mockRejectedValueOnce(refusedRead);
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics }));
+    const dialog = openSettings();
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue("first\n"));
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(en.errPreviewWorkerUnavailable);
+    expect(dialog.querySelector("[data-diagnostics-preview]")).toBeNull();
+    expect(dialog.querySelector("[data-diagnostics-copy]")).toBeNull();
+    expect(button(dialog, "data-diagnostics-read")).not.toHaveAttribute("aria-disabled");
+  });
+
+  it.each([
+    ["answers", (copy: Deferred<void>) => { copy.resolve(); }],
+    ["refuses", (copy: Deferred<void>) => { copy.reject(new DOMException("denied", "NotAllowedError")); }],
+  ] as const)("says nothing when the clipboard %s after Read again: that copy took the old text", async (_ending, end) => {
+    const copy = deferred<void>();
+    writeText.mockReturnValueOnce(copy.promise);
+    const readEnvironmentDiagnostics = vi.fn<() => Promise<string>>()
+      .mockResolvedValueOnce("first\n").mockResolvedValueOnce("second\n");
+    mount(createFakePreviewApi({ availability: unavailableBackend, readEnvironmentDiagnostics }));
+    const dialog = openSettings();
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue("first\n"));
+    fireEvent.click(button(dialog, "data-diagnostics-copy"));
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-preview]")).toHaveValue("second\n"));
+
+    await act(async () => { end(copy); await copy.promise.catch(() => undefined); });
+    expect(writeText.mock.calls).toEqual([["first\n"]]);
+    expect(within(dialog).getByRole("status")).toBeEmptyDOMElement();
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+  });
+
+  it("speaks only for the last Copy pressed", async () => {
+    const first = deferred<void>();
+    writeText.mockReturnValueOnce(first.promise);
+    mount(createFakePreviewApi({ availability: unavailableBackend }));
+    const dialog = openSettings();
+    fireEvent.click(button(dialog, "data-diagnostics-read"));
+    await waitFor(() => expect(dialog.querySelector("[data-diagnostics-copy]")).not.toBeNull());
+    fireEvent.click(button(dialog, "data-diagnostics-copy"));
+    fireEvent.click(button(dialog, "data-diagnostics-copy"));
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent(en.diagnosticsCopied));
+
+    await act(async () => { first.reject(new DOMException("denied", "NotAllowedError")); await first.promise.catch(() => undefined); });
+    expect(within(dialog).getByRole("status")).toHaveTextContent(en.diagnosticsCopied);
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+  });
+});
+
 describe("session Settings in the real application composition", () => {
   beforeEach(() => { vi.spyOn(document, "hasFocus").mockReturnValue(true); });
   afterEach(() => { vi.restoreAllMocks(); });
@@ -82,7 +343,7 @@ describe("session Settings in the real application composition", () => {
     let dialog = openSettings();
     expect(within(dialog).getByRole("radio", { name: en.english })).toHaveFocus();
     // One Close and no Apply or Cancel.
-    expect(within(dialog).getAllByRole("button").map(button => button.textContent)).toEqual([en.layoutReset, en.restoreStartFresh, en.runHistoryTurnUnknown, en.reset, en.close]);
+    expect(within(dialog).getAllByRole("button").map(button => button.textContent)).toEqual([en.layoutReset, en.restoreStartFresh, en.runHistoryTurnUnknown, en.diagnosticsShow, en.reset, en.close]);
     // Already the default: refused, with its reason on the row.
     expect(within(dialog).getByRole("button", { name: en.reset })).toHaveAttribute("aria-disabled", "true");
     expect(within(dialog).getByRole("button", { name: en.reset })).toHaveAccessibleDescription(en.settingsAlreadyDefault);

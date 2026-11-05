@@ -61,8 +61,18 @@ import {
   type TargetedMs1Plan,
   type TargetedNewRuns,
   type TargetedTableFormat,
+  type TargetedTableSortKey,
 } from "./projectApi";
 import type { TargetedLineage } from "./lineage";
+import {
+  INITIAL_TARGETED_VIEW,
+  outcomeChoices,
+  projectTargetedRows,
+  targetedViewActive,
+  targetedViewWire,
+  toggleOutcome,
+  toggleTargetedSort,
+} from "./targetedTableView";
 import type { ProjectSession } from "./useProject";
 
 export const OUTCOME_KEYS = {
@@ -1592,7 +1602,23 @@ const DEFAULT_FIGURE: FigureSettingsDraft = {
   theme: "light",
 };
 
-type Operation = "svg" | "png" | TargetedTableFormat;
+/** A table export of every row, or `view-…` of the rows shown. */
+type Operation = "svg" | "png" | TargetedTableFormat | `view-${TargetedTableFormat}`;
+
+const TABLE_FORMATS = ["csv", "tsv", "spreadsheetCsv"] as const;
+
+/** The columns a person can sort by, named as Rust's table names them. */
+const SORT_COLUMNS = [
+  ["label", "targetedFieldLabel"],
+  ["outcome", "targetedColumnOutcome"],
+  ["feature_apex_rt_s", "targetedColumnApex"],
+  ["raw_area", "targetedColumnRawArea"],
+] as const satisfies readonly (readonly [TargetedTableSortKey, string])[];
+
+const SORT_DIRECTION_KEYS = {
+  ascending: "targetedViewAscending",
+  descending: "targetedViewDescending",
+} as const;
 
 /** What the figure's text alternative says is drawn, by what the row holds. */
 const DRAWN_KEYS = {
@@ -1625,6 +1651,8 @@ type OutputState =
       readonly format: TargetedTableFormat;
       readonly fileName: string;
       readonly rowCount: number;
+      /** How many rows the whole table has, for a save of a view; else `null`. */
+      readonly ofTotal: number | null;
     }
   | { readonly status: "failed"; readonly error: PreviewError };
 
@@ -1643,6 +1671,7 @@ function describeOutput(state: OutputState, t: UiMessage, errorText: (error: Pre
     case "idle":
       return "";
     case "running":
+      if (state.operation.startsWith("view-")) return t("targetedViewChoose");
       // Whole sentences for the spreadsheet CSV (ADR 0054): its name is words,
       // not a file extension, so the shared "{{name}}" templates would space it.
       return state.operation === "spreadsheetCsv"
@@ -1653,6 +1682,13 @@ function describeOutput(state: OutputState, t: UiMessage, errorText: (error: Pre
     case "savedFigure":
       return t("viewerExportSaved", { name: state.fileName, details: describeFigure(state.figure, t) });
     case "savedTable":
+      if (state.ofTotal !== null) {
+        return t(state.format === "spreadsheetCsv" ? "targetedViewSavedSpreadsheet" : "targetedViewSaved", {
+          name: state.fileName,
+          visible: state.rowCount,
+          count: state.ofTotal,
+        });
+      }
       // Rust's word for what it wrote: the picker lets a person type any name
       // ending in .csv, so the name alone cannot say which document this is.
       return t(state.format === "spreadsheetCsv" ? "targetedTableSavedSpreadsheet" : "targetedTableSaved", {
@@ -1719,6 +1755,10 @@ export function TargetedMs1Report({
     () => figureSettings(DEFAULT_FIGURE) ?? { widthPx: 1200, heightPx: 640, pngDpi: 300, theme: "light" },
   );
   const [figureExportOpen, setFigureExportOpen] = useState(false);
+  // The view belongs to the result it was chosen on: ProjectPanel keys this
+  // report by result, so another result starts again from the table.
+  const [viewOptions, setViewOptions] = useState(INITIAL_TARGETED_VIEW);
+  const viewText = useRef<HTMLInputElement | null>(null);
   const [output, setOutput] = useState<{
     readonly region: "figure" | "table";
     /** The target a figure output was for; `null` for the table. */
@@ -1844,8 +1884,25 @@ export function TargetedMs1Report({
     rows !== null && rows.id === artifact.id ? rows.page : { status: "loading" };
   const labels = new Map(plan?.targets.map((target) => [target.targetId, target.label]) ?? []);
   const nameOf = (targetId: string) => labels.get(targetId) ?? targetId;
-  const formulaOf = (targetId: string) =>
-    plan?.targets.find((target) => target.targetId === targetId)?.formula ?? "";
+  const formulas = new Map(plan?.targets.map((target) => [target.targetId, target.formula]) ?? []);
+  const formulaOf = (targetId: string) => formulas.get(targetId) ?? "";
+  const names = { nameOf, formulaOf };
+  // Sorted and filtered only over a whole result: a page that does not hold
+  // every row (a stored result larger than a plan can be) has no view to offer.
+  const viewable = page.status === "ready" && page.value.total === page.value.rows.length;
+  const shownRows =
+    page.status !== "ready"
+      ? []
+      : viewable
+        ? projectTargetedRows(page.value.rows, viewOptions, names)
+        : page.value.rows;
+  const viewActive = viewable && targetedViewActive(viewOptions);
+  const sortedBy = viewable ? viewOptions.sort : null;
+  const sortedColumn = SORT_COLUMNS.find(([key]) => key === sortedBy?.key);
+  const sortWords =
+    sortedBy === null || sortedColumn === undefined
+      ? null
+      : { column: t(sortedColumn[1]), direction: t(SORT_DIRECTION_KEYS[sortedBy.direction]) };
   const selectedRow =
     page.status === "ready" ? page.value.rows.find((row) => row.targetId === chosen) ?? null : null;
   const shown: Loaded<TargetEvidence> =
@@ -1907,8 +1964,68 @@ export function TargetedMs1Report({
       const answer = await api.exportTargetedMs1Table(artifact.id, format);
       return answer.status === "cancelled"
         ? { status: "cancelled" }
-        : { status: "savedTable", format: answer.format, fileName: answer.fileName, rowCount: answer.rowCount };
+        : {
+            status: "savedTable",
+            format: answer.format,
+            fileName: answer.fileName,
+            rowCount: answer.rowCount,
+            ofTotal: null,
+          };
     });
+  }
+
+  function exportView(format: TargetedTableFormat, total: number) {
+    const view = targetedViewWire(shownRows, viewOptions);
+    start("table", null, `view-${format}`, async () => {
+      const answer = await api.exportTargetedMs1TableView(artifact.id, format, view);
+      return answer.status === "cancelled"
+        ? { status: "cancelled" }
+        : {
+            status: "savedTable",
+            format: answer.format,
+            fileName: answer.fileName,
+            rowCount: answer.rowCount,
+            ofTotal: total,
+          };
+    });
+  }
+
+  function resetView() {
+    setViewOptions(INITIAL_TARGETED_VIEW);
+    // Reset goes with the view it reset, so the keyboard stays near the table.
+    viewText.current?.focus();
+  }
+
+  /** One table export button: of every row, or just the format under a Save that counts the rows shown. */
+  function tableExportButton(format: TargetedTableFormat, onPress: () => void, operation: Operation) {
+    const name = format.toUpperCase();
+    const spreadsheet = format === "spreadsheetCsv";
+    const idle =
+      operation === format
+        ? spreadsheet
+          ? t("targetedTableSpreadsheetExport")
+          : t("viewerExportFormat", { name })
+        : spreadsheet
+          ? t("targetedViewFormatSpreadsheet")
+          : `${name}…`;
+    const exporting = spreadsheet ? t("targetedTableSpreadsheetExporting") : t("viewerExporting", { name });
+    return (
+      <Button
+        key={format}
+        variant="secondary"
+        size="sm"
+        icon={<Icon name="download" />}
+        // The pressed control keeps focus across the native picker;
+        // `start` refuses a repeat, keyboard or pointer. Refused, not
+        // native-disabled, and the output line says what is running.
+        refused={running}
+        reasonId={running ? `${ids}-${runningLine}-output` : undefined}
+        {...(operation === format ? { "data-targeted-export": format } : { "data-targeted-view-export": format })}
+        onClick={onPress}
+      >
+        {initiated(operation, null) ? exporting : idle}
+      </Button>
+    );
   }
 
   function exportFigure(targetId: string, operation: "svg" | "png") {
@@ -2046,47 +2163,149 @@ export function TargetedMs1Report({
           <div className="targeted-table-export" data-targeted-table-export="">
             <span className="targeted-table-export-label">{t("targetedTableExports")}</span>
             <div className="targeted-output-actions">
-              {(["csv", "tsv", "spreadsheetCsv"] as const).map((format) => (
-                <Button
-                  key={format}
-                  variant="secondary"
-                  size="sm"
-                  icon={<Icon name="download" />}
-                  // The pressed control keeps focus across the native picker;
-                  // `start` refuses a repeat, keyboard or pointer. Refused, not
-                  // native-disabled, and the output line says what is running.
-                  refused={running}
-                  reasonId={running ? `${ids}-${runningLine}-output` : undefined}
-                  data-targeted-export={format}
-                  onClick={() => exportTable(format)}
-                >
-                  {format === "spreadsheetCsv"
-                    ? t(initiated(format, null) ? "targetedTableSpreadsheetExporting" : "targetedTableSpreadsheetExport")
-                    : t(initiated(format, null) ? "viewerExporting" : "viewerExportFormat", {
-                        name: format.toUpperCase(),
-                      })}
-                </Button>
-              ))}
+              {TABLE_FORMATS.map((format) => tableExportButton(format, () => exportTable(format), format))}
             </div>
+            {/* The rows shown, offered only once they differ from the table. */}
+            {viewActive ? (
+              <div className="targeted-view-save" data-targeted-view-save="">
+                {shownRows.length === 0 ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      refused
+                      reasonId={`${ids}-view-refusal`}
+                      data-targeted-view-save-button=""
+                    >
+                      {t("targetedViewSave", { visible: 0, count: page.value.total })}
+                    </Button>
+                    <span className="targeted-view-refusal" id={`${ids}-view-refusal`} data-targeted-view-refusal="">
+                      {t("targetedViewNoRows")}
+                    </span>
+                  </>
+                ) : (
+                  // Its own open state, so the formats close with the view whatever
+                  // ended it. Named by this button: the buttons say only the format.
+                  <Disclosure
+                    id={`${ids}-view-save`}
+                    variant="secondary"
+                    label={t("targetedViewSave", { visible: shownRows.length, count: page.value.total })}
+                    data-targeted-view-save-button=""
+                    regionProps={{
+                      className: "targeted-output-actions",
+                      role: "group",
+                      "aria-labelledby": `${ids}-view-save`,
+                      "data-targeted-view-formats": "",
+                    }}
+                  >
+                    {TABLE_FORMATS.map((format) =>
+                      tableExportButton(format, () => exportView(format, page.value.total), `view-${format}`),
+                    )}
+                  </Disclosure>
+                )}
+              </div>
+            ) : null}
             {status("table", null)}
           </div>
 
+          {viewable ? (
+            <div className="targeted-view" data-targeted-view="">
+              <div className="targeted-view-text">
+                <Icon name="search" />
+                <label className="visually-hidden" htmlFor={`${ids}-view-text`}>
+                  {t("targetedViewText")}
+                </label>
+                <input
+                  ref={viewText}
+                  id={`${ids}-view-text`}
+                  type="search"
+                  value={viewOptions.text}
+                  placeholder={t("targetedViewTextShort")}
+                  data-targeted-view-text=""
+                  onChange={(event) => setViewOptions({ ...viewOptions, text: event.target.value })}
+                />
+              </div>
+              <div className="targeted-view-outcomes" role="group" aria-label={t("targetedViewOutcomes")}>
+                {outcomeChoices(page.value.rows, viewOptions.text, names).map(({ outcome, count }) => (
+                  <Button
+                    key={outcome}
+                    variant="secondary"
+                    size="sm"
+                    aria-pressed={viewOptions.outcomes.includes(outcome)}
+                    data-targeted-view-outcome={outcome}
+                    onClick={() => setViewOptions(toggleOutcome(viewOptions, outcome))}
+                  >
+                    <span aria-hidden="true" className="targeted-symbol">
+                      {OUTCOME_SYMBOLS[outcome]}
+                    </span>
+                    {t(OUTCOME_KEYS[outcome])} <span className="targeted-view-outcome-count">{formatCount(count)}</span>
+                  </Button>
+                ))}
+              </div>
+              {/* The live region stands before its first sentence, like the
+                  output line; the sort's own sentence is heard, and the caption
+                  says the same to the eye. */}
+              <div className="targeted-view-tail">
+                <p className="targeted-view-count" role="status" data-targeted-view-count="">
+                  {viewActive ? t("targetedViewCount", { visible: shownRows.length, count: page.value.total }) : ""}
+                  {sortWords === null ? null : (
+                    <span className="visually-hidden"> {t("targetedViewSortAnnouncement", sortWords)}</span>
+                  )}
+                </p>
+                {viewActive ? (
+                  <Button variant="secondary" size="sm" data-targeted-view-reset="" onClick={resetView}>
+                    {t("targetedViewReset")}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           <div className="targeted-rows">
             <table className="qc-report-table" data-targeted-rows={page.value.total}>
-              <caption>{t("targetedRowsCaption")}</caption>
+              <caption>{sortWords === null ? t("targetedRowsCaption") : t("targetedRowsCaptionSorted", sortWords)}</caption>
               <thead>
                 <tr>
-                  <th scope="col">{t("targetedFieldLabel")}</th>
-                  <th scope="col">{t("targetedColumnOutcome")}</th>
-                  <th scope="col">{t("targetedColumnApex")}</th>
-                  <th scope="col">{t("targetedColumnRawArea")}</th>
+                  {SORT_COLUMNS.map(([key, label]) => (
+                    <th
+                      key={key}
+                      scope="col"
+                      aria-sort={sortedBy?.key === key ? sortedBy.direction : undefined}
+                    >
+                      {viewable ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="targeted-sort"
+                          data-targeted-sort={key}
+                          onClick={() => setViewOptions(toggleTargetedSort(viewOptions, key))}
+                        >
+                          {t(label)}
+                          {/* The scan table's mark, with the direction in `aria-sort`. */}
+                          <svg aria-hidden="true" viewBox="0 0 12 12" width="10" height="10">
+                            <path
+                              d={
+                                sortedBy?.key !== key
+                                  ? "M3 4 6 1 9 4 M3 8 6 11 9 8"
+                                  : sortedBy.direction === "ascending"
+                                    ? "M2 8 6 4 10 8"
+                                    : "M2 4 6 8 10 4"
+                              }
+                            />
+                          </svg>
+                        </Button>
+                      ) : (
+                        t(label)
+                      )}
+                    </th>
+                  ))}
                   <th scope="col">
                     <span className="visually-hidden">{t("projectDetails")}</span>
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {page.value.rows.map((row) => (
+                {shownRows.map((row) => (
                   <tr
                     key={row.targetId}
                     className={row.targetId === chosen ? "is-chosen" : undefined}

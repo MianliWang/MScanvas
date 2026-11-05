@@ -198,9 +198,13 @@ pub struct SelectedFileDto {
     /// display only -- not searched, not sorted by, and not part of identity.
     pub relative_context: Option<String>,
     /// The "not verified by MSCanvas" label of the conversion this session
-    /// adopted this row's object from, or `null` (ADR 0055; owner decision 2
-    /// of 2026-10-29). `null` is the answer for every row not adopted from a
-    /// labelled conversion, and never itself a claim of verification.
+    /// finalized this row's object from, or `null` (ADR 0055; owner decisions of
+    /// 2026-10-29 and 2026-10-31; for a row from a drop or a project, as built in
+    /// PR #201, 2026-11-03, not an owner decision). `null` is the answer for every
+    /// other row, and never itself a claim of verification.
+    /// 2026-11-04: accepted by the owner (P201-SCOPE), for a drop.
+    /// Also the label a row Restore workspace put back had stored (owner decision
+    /// P201-RESTORE, 2026-11-04).
     pub not_verified_by_mscanvas: Option<crate::project::record::NotVerifiedByMscanvas>,
 }
 
@@ -2958,6 +2962,9 @@ pub struct PreviewDto {
     /// refused rather than attributed to a guess, and the page says why
     /// before anyone presses.
     pub qc_producer_identified: bool,
+    /// `None` for an mzML row. For a Thermo RAW row viewed through the view
+    /// cache, what the preview was made from (ADR 0060 decision 12).
+    pub view_source: Option<super::raw_view::ViewSourceDto>,
 }
 
 /// One precursor. Either value may be unstated in mzML, and an unstated value

@@ -92,7 +92,10 @@ function codeAsError(code: string): PreviewError {
 /** What the record says of one item's outputs. Nothing is opened from here: ADR 0065 §8 is a later slice. */
 function ItemDetails({ item }: { readonly item: RunItem }): ReactElement | null {
   const t = useUiMessages();
-  const { outputs, completeness, setAdoptable, failure } = item.progress;
+  const { state, outputs, completeness, setAdoptable, failure } = item.progress;
+  // A file a retry has not reached still holds its earlier attempt, which ADR 0065
+  // section 5 needs kept and which says nothing about this attempt.
+  if (state === "pending") return null;
   // A single output is recorded only once finalized, so anything else has none.
   if (outputs.length === 0 && completeness === null) return null;
   // The first validated output's, as the queue's own row says it. The record's

@@ -248,6 +248,63 @@ default.
 >
 > The `ui/unverified-labels` lane is to implement all three. Until it merges,
 > the build behaves as the earlier notes say.
+>
+> **Implemented, PR #201, 2026-11-03.**
+>
+> - (a) The tag is beside the viewer's title and on the Metadata tab's File
+>   row. No figure document had a source line, so one was added: `FigureSpec`
+>   gains an optional source note (contract version 5), drawn on its own line
+>   under the panels and first in the `<desc>`, in a figure's own English. The
+>   preview, the saved SVG and PNG and the clipboard build through it, and the
+>   clipboard has no text, so only the drawn line reaches it. The figure dialog
+>   also carries the tag beside its source line. A stored targeted result's
+>   figure reads the label from its reference in the document. A figure without
+>   a label is byte for byte what it was. A release too long for a note to name
+>   (over 81 characters) refuses the figure, and a row that has left by the claim
+>   or during a copy refuses it as stale, rather than drawing it unlabelled. A
+>   reopened `.msfigure`, which no command reaches yet, carries no note.
+> - (b) The session keeps the label of every labelled output it finalized, by
+>   volume serial and file ID, for the life of the process. Add files… and Add
+>   mzML folder… consult it, and a reference registered from such a row records
+>   the label. Nothing keeps those objects open, so an identity can outlive its
+>   file and be reissued; the worst that does is label a file that needed no
+>   label. A move across volumes is a copy and carries none.
+>   *As built in PR #201, 2026-11-03, not an owner decision: (b) names those two
+>   routes, and the build goes further. A drop and a reference carried back from
+>   a project consult the same table, and a reference registered with no row asks
+>   it too.*
+>   *As built in PR #201, 2026-11-03, not an owner decision: a row Restore
+>   workspace puts back in a later session has no label. The table ends with its
+>   process and ADR 0061's document keeps no label, so nothing that reads that row
+>   says it, figures included, and a reference registered from it records `null`.
+>   A reference carried back from a project still brings its label to the row.
+>   The owner has not been asked.*
+>   *2026-11-04: asked (P201-RESTORE), not yet answered; still not an owner
+>   decision.*
+>   *Owner decision, 2026-11-04 (P201-RESTORE): "全部按推荐" ("all as recommended"),
+>   keep the label. ADR 0061's document now records it (its decision 1's note), so
+>   a row put back in a later session says it, figures included, and a reference
+>   registered from it records it, not `null`. The same file added with Add files in
+>   a later session instead of being put back still has none, the cost that answer
+>   accepted.*
+>   *As built in PR #201, 2026-11-03, not an owner decision: a label a reference
+>   carried back goes into the same table, so it outlives that row in this process.
+>   The object added back by any route carries it, and the next reference records
+>   it, not `null`. It still ends with the process. The owner has not been asked.*
+>   *2026-11-04: asked, with the first of these notes (P201-SCOPE), not yet
+>   answered; still not an owner decision.*
+> - (c) `Describe again` is offered only after a failure Rust calls retryable.
+>
+> **Owner decision, 2026-11-03:** asked whether to draw "Not verified by MSCanvas"
+> on exported figures (P201), the owner replied "全部按推荐" ("all as recommended"):
+> draw it. The drawn line of (a) above stays, as built in PR #201, and the revert
+> recipe in that PR's body is withdrawn.
+>
+> **ADR 0060 slice 3, 2026-11-03.** The view cache's reuse of an existing entry is
+> not a conflict policy, because a view has no destination. On an unmeasured build
+> a view carries the label beside View, in its progress, in the file row and in
+> the Metadata tab. Exports of a view are withheld until they can carry it too; that
+> is not an owner decision (ADR 0060 slice 3 note 10).
 
 ### 4. An ordered filter chain replaces the nine fixed rows
 
@@ -808,11 +865,21 @@ Each later in its own slice:
   >   explicit `null` on a measured build, like every optional value in the
   >   document: an omitted one is `malformed`. A label with neither half set
   >   is refused as inconsistent.
+  >   *Decided by the owner on 2026-10-31: a row from those routes carries the
+  >   label, and a project reference registered from such a row records the
+  >   label, not `null` (decision 3; implemented in PR #201).*
+  >   *As built in PR #201, 2026-11-03, not an owner decision: a row from a drop
+  >   carries it too, and a reference registered with no row asks the same table,
+  >   so within the process neither records `null` for a labelled output, or for an
+  >   object a reference brought a label to. A later session's restored row is
+  >   decision 3 (b)'s note.*
   > - ~~**A schema-4 document is refused as `unsupportedVersion`**, like every
   >   other version, and nothing migrates. Beta 1's projects therefore do not
   >   open in this build.~~ Replaced the same day by the read-and-upgrade
   >   disposition in the note above. Either one is a release decision for the
   >   owner before merge. *The owner chose read and upgrade on 2026-10-30.*
+
+  > **2026-11-04 (N-11).** The rest of schema 5's content is recorded in [ADR 0067](0067-study-model-for-cross-sample-analysis.md#12-schema-one-bump-for-the-study-model-shared-with-schema-5), decision 12 with its decision 1; none of it is built, and what has not merged when a release ships schema 5 takes schema 6 instead.
 - **A larger settings surface.** It cuts against the owner's direction to
   remove secondary explanations. It is collapsed by default, with one label
   and no prose.

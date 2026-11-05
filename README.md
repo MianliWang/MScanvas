@@ -22,9 +22,17 @@ restart — language, roster density and which workspace panels you asked for �
 recovers from a stored record it cannot read or cannot write, explains offline
 what ProteoWizard is yours to install and how long a folder you choose lasts,
 and reads in English or Simplified Chinese throughout, including the
-installed-backend banner and the inspector panel. Nothing about a dataset, a
-path, a selection, a range or a conversion is stored. See
+installed-backend banner and the inspector panel. These preferences hold nothing
+about a dataset, a selection, a range or a conversion; once you choose one, they
+also hold the folder for ProteoWizard. See
 [the implementation record](docs/ux/M7_5_PREFERENCES_FIRST_RUN_RECOVERY.md).
+Since then, Restore workspace keeps the Workbench's files (their absolute paths),
+groups that hold a file (an empty one does not come back, accepted by the owner on 2026-11-03),
+order (a row's place does not hold in a group put back only in part, accepted by the owner on 2026-11-04)
+checked rows and, for a row that has one, its "Not verified by MSCanvas" label (owner decision
+P201-RESTORE, 2026-11-04) in one local document, on by default, off in
+Settings, and puts them back only when you press it
+([ADR 0061](docs/architecture/adr/0061-restore-workspace.md)).
 
 It builds on the published **M7.4** slice: compact bilingual
 conversion/results, identity-checked output opening, active-run Clear,
@@ -181,7 +189,7 @@ Build a session workspace of local `.mzML` files and inspect one of them:
 
 - Set the interface language, the roster's row spacing and which of the two
   workspace panels you want, and find them the way you left them the next time
-  MSCanvas starts. That record holds those five things and, once you choose one,
+  MSCanvas starts. That record holds those four things and, once you choose one,
   the folder for ProteoWizard, and nothing else: no file list, no selection, no
   range and no conversion. A window that gets too narrow folds a panel away for space without
   changing what you asked for, so widening it again brings the panel back.
@@ -200,14 +208,18 @@ Build a session workspace of local `.mzML` files and inspect one of them:
   choose lasts, what each recovery control does, and which Windows the first
   beta is supported on.
 
-Not implemented yet: vendor RAW preview; XIC — refused on measured evidence for
-the ProteoWizard build MSCanvas was tested against, not merely pending;
+Not implemented yet: viewing any vendor format but Thermo RAW, whose **View**
+converts it into MSCanvas's view cache and whose exports wait for a later slice
+(**Convert this file…** is the route to an output that can be exported); XIC —
+refused on measured evidence for the ProteoWizard build MSCanvas was tested against, not merely pending;
 directory-formatted acquisition recognition; filtering the workspace by
-anything other than filename, and grouping it; reopening a saved project as a
+anything other than filename; reopening a saved project as a
 Workbench session -- a saved project records references and history, but
-reopening one restores none; remembering a search, a sort, a selection or a
-range -- what does survive a restart is the five preferences listed above, the
-folder you chose for ProteoWizard, the rows of workspace restore and the conversion history, and the off switch of each; a dark theme, or any
+reopening one restores none; remembering a search, a sort, a highlighted
+selection or a range -- what does survive a restart is the four preferences
+listed above, the folder you chose for ProteoWizard, through Restore workspace
+the Workbench's files, groups that hold a file, order (not a row's place in a group put back only in part), checked rows and a row's "Not verified by MSCanvas" label, the conversion history,
+and the off switch of each of those two; a dark theme, or any
 appearance setting beyond language and row spacing; a remembered panel *size*,
 which the workspace has no way to set; conversion progress as a
 percentage; resuming a stopped queue; removing a row from a queue that is

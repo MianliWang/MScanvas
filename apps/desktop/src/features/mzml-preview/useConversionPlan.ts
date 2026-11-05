@@ -32,7 +32,7 @@ export interface ConversionPlanView {
    * The rows a conversion would act on, as the surface that owns the selection
    * says they are.
    *
-   * The scope model resolves the complete roster's selected/all query and sort.
+   * The scope model resolves the complete roster's selected/all/one-file query and sort.
    * Search and focus never contribute members. Everything else about the
    * question is read from authorities this hook already holds.
    */
@@ -275,8 +275,11 @@ export function useConversionPlan(
    * as one being worked out, and a `Describe again` beside "Working out what
    * this conversion would do…" would offer a reader a control for a question
    * nobody is asking -- pressing it would re-ask the one they have left.
+   *
+   * And only where asking again could change the answer (owner decision A0055
+   * (c), 2026-10-31). `retryStep` holds the same rule for the press itself.
    */
-  const retryOffered = start === "failed";
+  const retryOffered = start === "failed" && state.status === "failed" && state.error.retryable;
   const retry = useCallback(() => {
     if (startPlan(stateRef.current, readQuestion()) !== "failed") {
       return;

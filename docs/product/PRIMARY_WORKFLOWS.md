@@ -42,7 +42,8 @@ drive `Remove highlighted`, drag and Move to group. Hidden highlights survive
 search/collapse; Ctrl+A applies only within the roster. Group checkboxes apply to
 all group members, including filtered ones, and do not change highlights.
 
-One level of session-only groups references admitted dataset IDs. New arrivals
+One level of groups references admitted dataset IDs; a group with rows in it
+comes back after a restart only through Restore workspace (WSP-010). New arrivals
 enter Ungrouped. Create/rename/disclose/reorder and Move to group have keyboard
 and menu paths; dissolving a group returns its members to Ungrouped without
 removing acquisitions. Drag captures the full highlighted payload, including
@@ -160,6 +161,14 @@ truncation refusals below remain. See the
 5. Spectrum, marker, row and inspector synchronize.
 
 **Success:** user can confirm identity and inspect a relevant scan without changing modes.
+
+**A Thermo RAW row takes one more press** ([ADR 0060](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md), 2026-11-03).
+Activating it starts nothing and shows its pane. View converts it with the
+verified default into MSCanvas's view cache, with its phases and Cancel on screen,
+and then opens it as above, while the row stays highlighted. Otherwise it waits
+under Ready, and the status bar says so. Exports of a view wait for
+[ADR 0060 slice 4](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-3-notes-2026-11-03);
+Convert this file… is the route to one meanwhile.
 
 **Implemented for mzML, end to end.** Activating a row reads the file once; the
 run summary, the chromatogram, the scan table and the selected-spectrum panel are
@@ -282,8 +291,17 @@ availability, queue, adoption and export contracts.
    Both scopes exclude unsupported rows and show requested/eligible/excluded
    counts; a bounded disclosure names the excluded rows without changing
    membership, eligibility or order (PM9.4 O2). The three families may be mixed. Vendor rows cannot be previewed,
-   and say so. There is no `Convert visible` scope: search changes presentation
+   and say so, except a Thermo RAW row, which is read through View (ADR 0060, 2026-11-03). There is no `Convert visible` scope: search changes presentation
    only; the selected/all actions remain available.
+   **A third scope holds one file (N-C3, 2026-11-04).** Convert this file…, in a RAW
+   row's pane, a viewed file's row and a failed open, and Open in Conversion, on a
+   Shimadzu or SCIEX row, hold the page to that file and leave every check as it was,
+   before and after the run. A third button, named as the roster names that row, is
+   there only while that scope is current. Like the other two, it excludes an unsupported
+   row and shows its counts. Checked rows, All workspace rows or the Workbench's Convert…
+   leaves it for good, and a later press replaces the file. A removed row leaves the
+   scope empty and refused, with a sentence saying so and naming the ways out: a file
+   added again is a new row, which the scope does not follow.
 3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
    groups — peak processing, spectra included, numeric precision, array
    compression — edit one dimension each, over one combination. A choice either
@@ -472,7 +490,8 @@ availability, queue, adoption and export contracts.
     queue — in queue order, and then in publication order within one item's own
     set — and only when it is pressed. The count offered is a count of output
     **files**: one finalized Thermo item offers one, and one finalized
-    ten-sample SCIEX acquisition offers ten. An acquisition that finalized only
+    ten-sample SCIEX acquisition offers ten. Each of those outputs also has its
+    own **Add** for taking one without the rest (ADR 0052). An acquisition that finalized only
     part of its output set offers none, and is explained separately rather than
     silently omitted. Nothing is adopted
     because a conversion finished and nothing is previewed as a result. Before
@@ -677,3 +696,13 @@ stored result and its history read as one task:
 
 Reopening a project still checks, relinks and admits nothing until asked. See
 [slice-06](../phases/pm9/slice-06.md).
+
+*2026-11-04 (S-7.1, the owner's answer of 2026-11-03):* the report's rows, still
+in plan order at first, sort by a pressed column head and filter by outcome and
+by text over target name and formula. **Save N of M rows…** then writes the rows
+shown, in that order, as CSV, TSV or spreadsheet CSV, in a document that says it
+is a view; **Reset** returns to the table, and **Export** still writes every row.
+See FIG-010 in the [feature catalog](FEATURE_CATALOG.md). The owner selected
+sorting, filtering and saving the rows shown, in a file that names its filter.
+Everything else here is as built, not an owner decision: the controls and their
+words, the formats offered and the form of the document.

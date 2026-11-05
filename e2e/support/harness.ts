@@ -271,6 +271,15 @@ export async function ipcCalls(): Promise<IpcCall[]> {
   ) as Promise<IpcCall[]>;
 }
 
+/**
+ * Every invocation but the view's state read, for a spec proving a gesture asks
+ * Rust nothing. Highlighting a Thermo RAW row asks that one question by design
+ * (ADR 0060 decision 12), and it reads no file and starts no work.
+ */
+export async function ipcCallsButViewState(): Promise<IpcCall[]> {
+  return (await ipcCalls()).filter((call) => call.command !== "get_raw_view_state");
+}
+
 /** Every console entry and unhandled failure this document has produced. */
 export async function consoleEntries(): Promise<ConsoleEntry[]> {
   return browser.execute(
@@ -320,6 +329,12 @@ export async function boxOf(selector: string): Promise<Box> {
       height: rect.height,
     };
   }, selector) as Promise<Box>;
+}
+
+/** A press where the element is now. An element click would scroll it into view first. */
+export async function pressAt(selector: string): Promise<void> {
+  const box = await boxOf(selector);
+  await browser.action("pointer").move({ x: Math.round((box.left + box.right) / 2), y: Math.round((box.top + box.bottom) / 2) }).down().up().perform();
 }
 
 /** Reads the bounding rectangle of one element found by accessible name. */

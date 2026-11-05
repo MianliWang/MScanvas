@@ -25,6 +25,17 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("the export-specific figure preview", () => {
+  it("says a labelled source is not verified beside its source line, and nothing otherwise", async () => {
+    const view = render(<ExportFigureDialog {...props({ notVerified: { unverifiedSettings: false, unverifiedBuildRelease: "3.0.26204" } })} />);
+    await screen.findByRole("img");
+    const tag = document.querySelector(".figure-export-heading [data-not-verified]");
+    expect(tag?.textContent).toBe("Not verified by MSCanvas: ProteoWizard 3.0.26204");
+    expect(document.querySelector(".figure-export-source")?.textContent).toBe("sample.mzML · Spectrum 17");
+
+    view.rerender(<ExportFigureDialog {...props()} />);
+    expect(document.querySelector("[data-not-verified]")).toBeNull();
+  });
+
   it.each(["chromatogram", "linked"] as const)("names the %s scope as a run and offers data only beside a single plot", async kind => {
     const source = kind === "chromatogram"
       ? { kind, token: "chromatogram-1", range: { scope: "full" as const, low: null, high: null }, traces: { tic: true, bpc: false } }

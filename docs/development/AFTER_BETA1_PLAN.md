@@ -538,6 +538,12 @@ writer and Rust's ownership of files.
     [slice 2 notes](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-2-notes-2026-10-30),
     including the two cases below (accepted by the owner, 2026-10-30, A0060).
     Slice 3, the interface, builds on #164's structure once it lands (A0060).
+  - *Status, 2026-11-03:* slice 3, the interface, is [PR #203](https://github.com/MianliWang/MScanvas/pull/203),
+    not merged. A0060 answered the direction this section says it waits on, through
+    FE-1 and FE-2. With #203 on `main`, `begin_raw_view`, `get_raw_view_state`,
+    `cancel_raw_view` and `open_raw_view` have their caller; `describe_view_cache` and
+    `clear_view_cache` wait for the next slice (A0060-split). Its departures are ADR 0060's
+    [slice 3 notes](../architecture/adr/0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md#slice-3-notes-2026-11-03).
   - Left to slice 2, and done there: a chunked, cancellable hash of the RAW for Checking file
     and Checking output; reading the volume's free space for `make_space`; the
     1.5 GiB refusal before any work; the summary and Clear DTOs over `usage`
@@ -653,6 +659,78 @@ writer and Rust's ownership of files.
     recommendation is to always remove the cache folder (except on
     `/UPDATE`) and keep the key, presets and preferences opt-in. A
     release-path change, so the owner's.
+  - Owner decision, 2026-11-03 (DEF-2, option (b)): always remove the cache
+    folder on uninstall, including `/S` and `/P`, except on `/UPDATE`. Presets
+    and preferences stay opt-in behind Delete the application data.
+  - *2026-11-03, built:* `apps/desktop/src-tauri/installer-hooks.nsh`, at
+    `NSIS_HOOK_POSTUNINSTALL`, so after the template has closed the application
+    and, with the box checked, removed the parent, when it finds nothing to do.
+    It removes `view-cache` only where Rust would open it: spelled so, a plain
+    directory under a parent that is no reparse point, with the marker byte for
+    byte; and, narrower than Rust, with no reparse point anywhere below, every
+    folder listable, which a path past `MAX_PATH` is not, no name ending in a
+    space or a dot, which Win32 reads as another name, and, on a UNC parent,
+    nothing in the root but the marker, since its `\\?\` probe cannot read any
+    other name there; otherwise nothing. The cases
+    where it removes nothing are not an owner decision. It never fails the uninstall
+    and never prompts. With the box not checked, a locked file stays with the
+    marker, and the marker comes back if something holds the root itself, so the
+    root is still recognized, and once the lock has gone the next uninstall
+    finishes it. Some names never go, on this uninstall or a later one, and stay with
+    the marker with nothing said, among them `NUL` or `nul` as a file or a folder, a
+    file whose name takes its path past `MAX_PATH`, and some folders whose whole name
+    is combining marks or high surrogates, such as U+0301, U+20DD, U+3099, U+FE0F,
+    U+D800, U+DBFF, or two of U+0301 or of U+D800, though not all (U+1AB0 and U+0903
+    go) (run against scratch folders with NSIS 3.13, the last two on 2026-11-04, not
+    an owner decision).
+    A hard link is no reparse point: its name goes with the tree, its content stays
+    under its other names, and they lose the read-only bit they share (the same run,
+    not an owner decision); `view_cache.rs` makes none. A test in
+    `view_cache/tests.rs` pins its names to Rust's constants, the probe that reads
+    a name's attributes through `\\?\`, and the refusal of those names, and
+    refuses any comparison by collation, which ignores some bytes and names;
+    `scripts/build_candidate.ps1` lists the hook among a candidate's inputs and
+    refuses a build whose generated script does not call it;
+    `.github/workflows/uninstall-view-cache.yml`, not a required check, installs
+    and uninstalls a debug build for real on a GitHub-hosted runner, and drives
+    the interactive pages by window messages. With the box not checked the cache
+    goes and the rest stays. With it checked, the local folder, the roaming folder
+    and the registry key go, which answers "not observed" above for those three.
+    No person has looked at those pages with the hook in place.
+  - *2026-11-03, run against scratch folders with NSIS 3.11 and with 3.13, which
+    Tauri CLI 2.12.4 pins, not an owner decision:* `RMDir /r` follows a junction,
+    as the folder named or inside it, and deletes what the target holds. The hook
+    never uses it. The template's checked path does
+    (`RmDir /r "$LOCALAPPDATA\${BUNDLEID}"`), and that is not changed; read with
+    that run, not run itself: with the box checked, a junction under that folder
+    loses its target's contents.
+  - *2026-11-03, run on that runner and read from `view_cache.rs`, not an owner
+    decision:* with the box checked and a file locked, that `RmDir /r` takes the
+    marker first and leaves the locked file in a root with no marker. The hook then
+    recognizes nothing, on that uninstall or on a later one with the box not
+    checked, and after a reinstall Rust refuses the root as unrecognized (read, not
+    run), so no View is served from it until a person removes the folder or checks
+    the box again with nothing locked. Clear view cache is in the next slice
+    (A0060-split). Only converted copies are at stake, and no one has been asked
+    about this state.
+  - *2026-11-03, read from `PageLeaveReinstall` and run on that runner (the same
+    build, with the recorded version set to 0.0.1), not an owner decision:* no
+    installer passes `/UPDATE` to the old uninstaller. One given `/UPDATE` jumps
+    past the uninstall, so the template's line that appends the switch is never
+    reached, and the exception in DEF-2 counts only for someone who runs
+    `uninstall.exe /UPDATE` directly. A person who runs a newer installer and keeps
+    the page's first choice, Uninstall before installing, runs the old uninstaller
+    without it, and once that uninstaller carries the hook the cache goes; each
+    file's next View converts again. Presets and preferences stay. Installing over
+    an install with `/S` or `/S /UPDATE` runs no uninstaller and keeps the cache.
+    `/P` over the same version runs the uninstaller and the cache goes; `/P` over
+    an older version runs none and the cache stays. The hook cannot tell these
+    apart by its switches.
+  - *2026-11-03, run on that runner and read from `MUI_UNGETLANGUAGE`, not an owner
+    decision:* a `/P` uninstall after a silent install had not finished when the
+    job stopped it after five minutes. A silent install records no language, so
+    anything but a silent uninstall asks for one, which is the likely cause: no one
+    saw the dialog. With a language recorded, `/P` runs to its end.
 - M9 leftovers: unreferenced results counted but not shown; the 4 MiB document
   bound checked only after a worker ran; no "experimental" caption on an
   exported figure (owner design decision); no recovery UI for retained
@@ -719,7 +797,7 @@ preview is refused too.*
 ### 7.4 Future capabilities
 
 - P1: WSP-010 restore workspace; FIG-007 saved FigureSpec; ENV-004 copy
-  diagnostics (*2026-10-30:* Rust side implemented, no interface yet; [ADR 0063](../architecture/adr/0063-copy-diagnostics.md), Accepted 2026-10-30).
+  diagnostics (*2026-11-03:* implemented; [ADR 0063](../architecture/adr/0063-copy-diagnostics.md), Accepted 2026-10-30).
   - *2026-10-30: FIG-007's Rust side is implemented with no interface, its
     decisions accepted by the owner on 2026-10-30 (A0062) in
     [ADR 0062](../architecture/adr/0062-saved-figurespec.md): a `.msfigure`
@@ -729,6 +807,14 @@ preview is refused too.*
 - P2: FIG-008 figure composer; VIEW-008 multi-layer comparison (needs an
   admitted normalization first); RUN-007 persistent conversion history;
   ANA-002 QC recipe or a second recipe.
+  - *2026-11-03:* the statistics library for ANA-002 and the v5.11
+    statistics page (PCA, Welch's test with a log2 fold change,
+    Benjamini-Hochberg, volcano rows, QC RSD, detection rate and missing
+    fraction) is `crates/stats`, with no command or interface. Its definitions
+    are in
+    [ADR 0069](../architecture/adr/0069-statistics-engine.md), Accepted
+    2026-11-03 with the owner's answers (S-2 to S-5), and its two
+    crates are owner-approved (S-1).
 - Later: other adducts, charges, negative mode and profile input for targeted
   MS1; history pruning; a preview cache only on a measured need; a vendor
   reader self-test; G16 cross-session staging ownership.
@@ -744,6 +830,8 @@ None can be delivered by engineering alone; each waits for one input.
 | Thermo vendor centroiding and scoped presets (CNV-005/006) | One lawfully redistributable profile-mode Thermo RAW (not yet found; ProteoWizard's own test data is the first place to look), a sample decision, a bounded ProteoWizard hold release, and the owner's choice of what the output check may claim. *2026-10-30: public profile RAW was measured ([evidence](../spikes/THERMO_VENDOR_CENTROIDING_EVIDENCE.md)); "MS1 and up" becomes a verified row, and "MS2 and up" waits for a public Orbitrap profile-MS2 file (section 2). Later the same day a public Q Exactive profile-MS2 file (PRIDE `PXD066799`) was measured, so "MS2 and up" meets that condition; its verified row is a follow-up code change ([ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md#consequences)). That change is made: "MS2 and up" is the eleventh verified row (section 2, the later decisions of 2026-10-30)* | M–L |
 | Thermo direct preview | The same sample plus an independent reference that does not pass through the same vendor reader. *2026-10-30: under [ADR 0059](../architecture/adr/0059-vendor-format-strategy-official-readers-thermo-first.md) that reference cannot be an in-house decoder; one-click view RAW (section 2) meets the goal through conversion* | M |
 | Directory acquisitions, further vendor families | A lawful directory sample, a new directory source model, then recognition (directory recognition follows the first admitted directory family). *2026-10-30: Bruker is the next one named, later, when there is capacity, by its own decision (ADR 0059)* | XL |
+| Untargeted single-file feature detection (U1) and its worker limits | A measurement of `MassTraceDetection` → `ElutionPeakDetection` → `FeatureFindingMetabo` time and memory on realistic public data, against today's 600 s and 4 GiB. *2026-10-30: measured on two public centroided runs of 0.53 and 0.89 GiB ([evidence](../spikes/U1_FEATURE_DETECTION_MEASUREMENT.md)). At noise 1e4 and 1e5 the engine's peak commit was at most 0.95 GiB and the longest run 94.8 s; memory is modelled per MS1 peak, an inference these two files cannot test against encoding. Recommended U1 limits: 600 s; a 4 GiB cap plus a refusal before the load above 150 M MS1 peaks at noise 1e4 or more and above 80 M below 1e4, provided U1's source check keeps no copy of the MS1 spectra as the M9 adapter's does; one thread, as in M9; and a noise floor of 1e3. They are the owner's to set in the U1 recipe record. 2026-11-03: the owner answered these limits, replacing the one-thread and noise-floor recommendations; below 1e3 stays refused until measured, the record's reading, not an owner decision (the record's section 7), and A-13's remainder is still owed* | M–L |
+| pyOpenMS 3.6.0 as the first runtime (B-2.1, B-2.2) | The owner's reading of the libiconv lines of A-03's probe. *2026-11-04: approved by the owner ("批准 A-03") and run ([evidence](../spikes/RUNTIME_360_PROBE.md)). In the shape that would ship, on synthetic data, all 26 planned classes ran without the Thermo folder. That libiconv is not linked is NOT SHOWN and its terms are not answered, so the rule of the roadmap's section 7 gives neither a pass nor a failure yet, and which branch of B-2 applies stays open. *2026-11-04, later:* the owner accepted libiconv's terms (LIB-1, option A), so the condition holds and B-2.1 and B-2.2 apply; nothing ships. On one fixture and two targets, ANA-004 completes unedited with the same outcomes and different numbers; on a variant of another fixture, one target's outcome changes when its mass comes from its formula, and with its declared mass its `rawArea` changes, and its model status too in the seven-target batch only. A-07 takes both* | A-03: M; the 3.6.0 half ran, and the 3.5.0 half can run if the owner reads NOT SHOWN as a failure. A-07: L (3–5) |
 
 ### 7.6 Refused or not adopted
 
@@ -769,6 +857,10 @@ None can be delivered by engineering alone; each waits for one input.
       conversion stays serial until then.
     - **Presets** are adopted as user-saved conversion presets
       ([ADR 0058](../architecture/adr/0058-user-saved-conversion-presets.md)).
+  - *2026-11-04:* on-screen result sorting and filtering and view-scoped export
+    left this list for the targeted results table: the owner selected S-7.1 (a)
+    on 2026-11-03, and FIG-010 builds it. The feature table's half comes with
+    N-A5 and N-A6.
 - **Owned elsewhere:** Workbench restore on reopen (WSP-010), surviving queue
   and adoption history (RUN-007), remembered choices (M7.5 preferences),
   saved typed plans and large unattended batches (M10).
@@ -783,8 +875,13 @@ None can be delivered by engineering alone; each waits for one input.
     bounded collision-only parent-folder context (the ADR 0006 amendment is
     approved in principle and written with the interface slice), an untaken
     matching offer lasts one start while a marked row never expires, and a
-    save over 1,024 rows is refused with Start fresh offered. PR #177 carries
-    its interface slice too (2026-11-03) and merges as one.
+    save over 1,024 rows is refused with Start fresh offered. PR #177 stays a
+    draft and merges together with its interface slice.
+  - *2026-11-03:* PR #177 carried its interface slice too and merged as
+    `ae14765e` with review findings open. Their fixes are on PR #204. The owner
+    answered the same day: go forward with #204, after its review is dry and its
+    checks are green, and #177 is not reverted
+    ([roadmap](ROADMAP_V511_AND_ANALYSIS.md), [F-177](OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 
 ## 8. Dates and external dependencies
 
@@ -825,6 +922,12 @@ None can be delivered by engineering alone; each waits for one input.
   B-1 (2026-10-30) answered its questions 1, 2, 6, 8 and 9; the answers of
   2026-11-03 (RT-1, B-2, B-3) took 3, 4, 5, 7 and 10. It stays Proposed until
   the 3.6.0 probe names its engine.
+- *Answered 2026-11-03:* the study model for cross-sample analysis:
+  [ADR 0067](../architecture/adr/0067-study-model-for-cross-sample-analysis.md)
+  is accepted with the owner's answers to its ten questions. It supersedes ADR
+  0050 for study recipes only, and its records join schema 5 if they merge before
+  a release writes it. The owner answered A0067-D6, S-6-TYPES, S-6-HOME,
+  S-6-EXPERIMENT and EXP-22-ROSTER on 2026-11-04, in that record's dated notes.
 - The per-feature questions that rendered QA raises inside each slice.
 - Each dependency batch, the Node 26 patch, and the SignPath application.
 - M10.0's route, when drafted. *Drafted 2026-10-30 as

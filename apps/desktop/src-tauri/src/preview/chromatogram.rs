@@ -1033,12 +1033,13 @@ pub(super) fn linked_figure_spec(
     )
 }
 
-/// Renders one chromatogram as the SVG document a user receives.
+/// Renders one unlabelled chromatogram as the SVG document a user receives.
 ///
 /// # Errors
 ///
 /// Answers with the contract's refusal where the chromatogram cannot be
 /// specified as a figure.
+#[cfg(test)]
 pub(super) fn svg_document(
     source: &ChromatogramSource,
     resolved: ResolvedRange,
@@ -2291,8 +2292,9 @@ mod tests {
     /// Two panels needed no contract change: the renderer has carried a
     /// `Vec<PanelSpec>` since ADR 0028, and ordered vertical bands already place
     /// and describe them. Version 3 (M9.2) added sample marks and intervals,
-    /// and version 4 printed sizes and edited axis titles; a linked figure at
-    /// pixel settings uses none of them.
+    /// version 4 printed sizes and edited axis titles, and version 5 the source
+    /// note; a linked figure of an unlabelled row at pixel settings uses none of
+    /// them.
     #[test]
     fn a_linked_figure_needs_no_new_schema_version() {
         let source = ordinary();
@@ -2301,7 +2303,7 @@ mod tests {
             figure.schema_version(),
             mscanvas_plot_spec::spec::SCHEMA_VERSION
         );
-        assert_eq!(figure.schema_version(), 4);
+        assert_eq!(figure.schema_version(), 5);
         assert!(figure.size().print().is_none() && figure.x_axis_title().is_none());
         assert!(figure.panels().iter().all(|panel| {
             panel.intervals().is_empty()

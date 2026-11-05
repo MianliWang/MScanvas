@@ -25,6 +25,8 @@ import type {
   ConversionStartOutcome,
   FolderIngestionResult,
   Preview,
+  RawViewSnapshot,
+  RawViewState,
   SelectedSpectrumOutcome,
   SpectrumExportFormat,
   FigureSettings,
@@ -67,6 +69,12 @@ export interface PreviewApi {
   openFinalizedOutput(outputId: string, action: OutputOpenAction): Promise<OutputOpenOutcome>;
   planWorkspaceClear(): Promise<WorkspaceClearPlanOutcome>;
   executeWorkspaceClear(planId: string, action: WorkspaceClearAction): Promise<WorkspaceClearOutcome>;
+  /**
+   * The redacted environment summary a user copies into a support request
+   * (ADR 0063). Rust writes every word and keeps the closed list of facts; it
+   * reads what the session holds, and writes, sends and launches nothing.
+   */
+  readEnvironmentDiagnostics(): Promise<string>;
   inspectBackend(): Promise<BackendAvailability>;
   /**
    * Shows the native folder picker, uses the chosen ProteoWizard for this
@@ -136,6 +144,18 @@ export interface PreviewApi {
   /** Forgets one restored row; the next save records it. The file is not touched. */
   dismissRestoredRow(handle: string): Promise<void>;
   openPreview(handle: string): Promise<Preview>;
+  /**
+   * Begins the one-click view of one Thermo RAW row (ADR 0060). It names the
+   * row and nothing else: Rust chooses the verified default, so no request can
+   * carry a picker.
+   */
+  beginRawView(handle: string): Promise<RawViewState>;
+  /** The latest view, and whether View can be pressed for the row named. Polled while one runs. */
+  getRawViewState(handle: string | null): Promise<RawViewSnapshot>;
+  /** Cancels the exact operation named. A late press answers the state. */
+  cancelRawView(operation: number): Promise<RawViewState>;
+  /** Opens a ready operation's cached copy, once, as the RAW row's preview. */
+  openRawView(operation: number): Promise<Preview>;
   /**
    * Reads one spectrum of the open file.
    *
@@ -253,6 +273,14 @@ export interface PreviewApi {
    * an error, and does not stop the others.
    */
   adoptConversionOutputs(operationId: string): Promise<WorkspaceOutputAdoptionResult>;
+  /**
+   * Adds one finalized output of a terminal queue to the workspace (ADR 0052).
+   *
+   * The same adoption, narrowed to the output named, so the reply holds one
+   * outcome. An output this queue does not offer is refused with
+   * `outputs_not_adoptable`, and nothing is claimed.
+   */
+  adoptConversionOutput(operationId: string, outputId: string): Promise<WorkspaceOutputAdoptionResult>;
   /**
    * Saves one local, redacted JSON diagnostics file for the terminal queue.
    *
@@ -418,6 +446,7 @@ export const tauriPreviewApi: PreviewApi = {
   previewFigure: (request) => invoke<FigurePreviewOutcome>("preview_figure", { request }, {
     headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() },
   }),
+  readEnvironmentDiagnostics: () => invoke<string>("read_environment_diagnostics"),
   inspectBackend: () => invoke<BackendAvailability>("inspect_backend"),
   chooseInstallation: () => invoke<BackendAvailability | null>("choose_backend_installation"),
   useAutomaticDiscovery: () => invoke<BackendAvailability>("use_automatic_backend_discovery"),
@@ -448,6 +477,10 @@ export const tauriPreviewApi: PreviewApi = {
   planWorkspaceClear: () => invoke<WorkspaceClearPlanOutcome>("plan_workspace_clear", {}, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   executeWorkspaceClear: (planId, action) => invoke<WorkspaceClearOutcome>("execute_workspace_clear", { planId, action }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   openPreview: (handle) => invoke<Preview>("open_mzml_preview", { handle }),
+  beginRawView: (handle) => invoke<RawViewState>("begin_raw_view", { request: { handle } }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
+  getRawViewState: (handle) => invoke<RawViewSnapshot>("get_raw_view_state", { request: { handle } }),
+  cancelRawView: (operation) => invoke<RawViewState>("cancel_raw_view", { request: { operation } }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
+  openRawView: (operation) => invoke<Preview>("open_raw_view", { request: { operation } }, { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } }),
   loadSpectrum: (handle, index) =>
     invoke<AuthorityObserved<SelectedSpectrumOutcome>>("load_selected_spectrum", { handle, index }),
   describeConversion: (request) =>
@@ -515,6 +548,12 @@ export const tauriPreviewApi: PreviewApi = {
     invoke<WorkspaceOutputAdoptionResult>(
       "adopt_workspace_conversion_outputs",
       { operationId },
+      { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
+    ),
+  adoptConversionOutput: (operationId, outputId) =>
+    invoke<WorkspaceOutputAdoptionResult>(
+      "adopt_workspace_conversion_output",
+      { operationId, outputId },
       { headers: { [DOCUMENT_AUTHORITY_HEADER]: currentDocumentAuthority() } },
     ),
   exportConversionDiagnostics: (operationId, onReserved) => {

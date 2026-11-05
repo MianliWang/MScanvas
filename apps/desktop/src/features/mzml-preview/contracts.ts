@@ -324,7 +324,12 @@ export interface SelectedFile {
   readonly relativeContext: string | null;
   /**
    * The "not verified by MSCanvas" label of the conversion this session
-   * adopted the row's object from (ADR 0055; owner decision 2 of 2026-10-29).
+   * finalized the row's object from (ADR 0055; owner decisions of 2026-10-29 and
+   * 2026-10-31; for a row from a drop or a project, as built in PR #201,
+   * 2026-11-03, not an owner decision).
+   * 2026-11-04: accepted by the owner (P201-SCOPE), for a drop.
+   * Also the label a row Restore workspace put back had stored (owner decision
+   * P201-RESTORE, 2026-11-04).
    * `null` is never a claim of verification. Optional only until fixtures
    * carry it; Rust always sends it.
    */
@@ -425,7 +430,8 @@ export interface WorkspaceArrangement {
 /** One row Restore workspace left in the Workbench, and where it belongs. */
 export interface PlacedRow {
   readonly handle: string;
-  readonly group: string | null;
+  /** The stored group's place among a read's groups: two groups can share a name. */
+  readonly group: number;
   readonly checked: boolean;
   /** `false`: the object was already a row, which keeps its arrangement. */
   readonly added: boolean;
@@ -682,6 +688,88 @@ export interface Preview {
    * than attributed to a guess, and the page says why before anyone presses.
    */
   readonly qcProducerIdentified: boolean;
+  /**
+   * What a viewed Thermo RAW row's preview was made from (ADR 0060 decision
+   * 12), or `null` for an mzML row. It names no cache path, key or entry.
+   */
+  readonly viewSource: ViewSource | null;
+}
+
+/** The facts of the conversion a viewed RAW row is drawn from. */
+export interface ViewSource {
+  readonly kind: "viewCache";
+  readonly sourceFileName: string;
+  readonly sourceKind: "thermo_raw";
+  readonly sourceSha256: string;
+  readonly providerRelease: string;
+  readonly providerSha256: string;
+  /** Worded here from its axes, so it follows the locale. */
+  readonly intent: ConversionIntentDescriptor;
+  readonly verified: boolean;
+  /** The release of an unmeasured build, or `null` on the measured one. */
+  readonly unverifiedBuildRelease: string | null;
+  readonly convertedAt: string;
+}
+
+/** Where a one-click view is (ADR 0060 decision 3). */
+export type RawViewPhase = "checkingSource" | "checkingCachedCopy" | "converting" | "checkingOutput" | "storing";
+
+/** `get_raw_view_state`'s operation: the latest view of this session, or none. */
+export type RawViewState =
+  | { readonly state: "idle" }
+  | {
+      readonly state: "running";
+      readonly operation: number;
+      readonly handle: string;
+      readonly fileName: string;
+      readonly phase: RawViewPhase;
+      readonly elapsedMs: number;
+      /** For a checking phase: MSCanvas's own read. `null` while converting or storing. */
+      readonly bytesRead: number | null;
+      readonly bytesTotal: number | null;
+      readonly intentId: string;
+      readonly unverifiedBuildRelease: string | null;
+      /** The cached copy was damaged and was removed, so this press converts again. */
+      readonly cachedCopyDamaged: boolean;
+    }
+  | {
+      readonly state: "ready";
+      readonly operation: number;
+      readonly handle: string;
+      readonly intentId: string;
+      readonly cacheHit: boolean;
+      readonly unverifiedBuildRelease: string | null;
+      /** Whether `open_raw_view` would open it: the row still holds its pin. */
+      readonly openable: boolean;
+    }
+  | {
+      readonly state: "failed";
+      readonly operation: number;
+      readonly handle: string;
+      readonly intentId: string;
+      readonly code: string;
+      readonly message: string;
+      readonly retryable: boolean;
+      readonly neededBytes: number | null;
+      readonly freeBytes: number | null;
+    }
+  | {
+      readonly state: "cancelled";
+      readonly operation: number;
+      readonly handle: string;
+      /** Whether this operation published an entry before it ended. */
+      readonly stored: boolean;
+    };
+
+/** Whether View can be pressed for one row: Rust's answer, never recomputed here. */
+export type RawViewAvailability =
+  | { readonly available: true; readonly unverifiedBuildRelease: string | null }
+  | { readonly available: false; readonly code: string };
+
+export interface RawViewSnapshot {
+  readonly state: RawViewState;
+  /** `null` when no row was named. */
+  readonly availability: RawViewAvailability | null;
 }
 
 /** One precursor. An unstated value is `null`, never zero. */
@@ -1256,12 +1344,17 @@ export type ConversionProcessOutcome =
     };
 
 /**
- * What an adoption did with one item's finalized outputs.
+ * What the latest adoption did with one item's finalized outputs.
  *
  * Historical, and about this settling of this queue: it says what an adoption
  * did, not what the workspace holds now. Removing a row afterwards leaves this
  * unchanged, because removing a row deletes no file and undoes no past process
  * outcome.
+ *
+ * The latest answer, queue-wide or per-output (ADR 0052 decision 5), replacing
+ * what the item held. After a per-output Add of one set member the counts are
+ * about that member alone, so they can sum to less than the item's outputs, and
+ * which members are in the workspace is the roster's answer.
  */
 export type ConversionItemAdoption =
   /** Nobody has asked yet, which is not the same as having been refused. */

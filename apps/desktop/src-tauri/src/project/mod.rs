@@ -149,6 +149,10 @@ pub enum ProjectError {
     /// this layer's source: another preview has been opened since, a newer
     /// read of the same source replaced it, or it was never this source's.
     PreviewNotCurrent,
+    /// The preview is a Thermo RAW row viewed through the view cache. Its run
+    /// summary would be the converted copy's, recorded as the RAW's with no
+    /// conversion provenance, so it is not recorded (ADR 0060 decision 11).
+    ViewedThroughCache,
     /// The retained preview cannot say which executable produced it, so its
     /// facts cannot be recorded with a producer -- and a guessed producer is
     /// not recorded instead.
@@ -228,6 +232,7 @@ impl ProjectError {
             Self::InputUsedByRun => "inputUsedByRun",
             Self::LayerUsedByRun => "layerUsedByRun",
             Self::PreviewNotCurrent => "previewNotCurrent",
+            Self::ViewedThroughCache => "viewed_through_cache",
             Self::ProducerUnidentified => "producerUnidentified",
             Self::SummaryTooLarge => "summaryTooLarge",
             Self::AnalysisRunning => "analysisRunning",
@@ -2916,6 +2921,26 @@ impl ProjectStore {
                 ),
                 EvidenceRefusal::NotDrawable => TargetedFigureRefusal::NotDrawable,
             })?;
+        // What the reference says about itself, from the document and not from
+        // a live row, so a reopened result still says it (ADR 0055; owner
+        // decision A0055 (a)). A run keeps its reference from being removed, so
+        // one missing here is a damaged document and not an unlabelled figure.
+        let label = self
+            .locked()
+            .open()
+            .map_err(TargetedFigureRefusal::Project)?
+            .document
+            .input(stored.plan.input_id)
+            .ok_or(TargetedFigureRefusal::Project(ProjectError::UnknownRecord))?
+            .not_verified_by_mscanvas
+            .clone();
+        let figure = match label {
+            Some(label) => figure.with_source_note(
+                mscanvas_plot_spec::spec::Label::new(label.figure_note())
+                    .map_err(|_| TargetedFigureRefusal::NotDrawable)?,
+            ),
+            None => figure,
+        };
         Ok((figure, position))
     }
 

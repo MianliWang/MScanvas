@@ -516,7 +516,7 @@ fn the_byte_bound_prunes_the_oldest_and_an_oversized_run_drops_only_its_items() 
 }
 
 #[test]
-fn a_document_one_byte_over_the_bound_with_its_newline_drops_its_items() {
+fn a_document_keeps_its_items_at_the_bound_and_drops_them_one_byte_over_it() {
     // The newline is part of the document the bound is checked against: a
     // body of exactly the bound would otherwise be written one byte over it,
     // and then read as corrupt and kept aside.
@@ -530,6 +530,38 @@ fn a_document_one_byte_over_the_bound_with_its_newline_drops_its_items() {
     drop(history);
     fs::remove_file(&path).expect("remove the measuring run");
 
+    // The document exactly the bound: it fits, in its file and from memory.
+    let history = open(&scratch);
+    exact.items[0].display_name = "z".repeat(usize::try_from(room).expect("fits"));
+    history.begin(1, exact.clone(), progress(RunState::Running, &["running"]));
+    let run_id = active_id(&history);
+    let path = history_directory(&scratch).join(file_name_of(&run_id));
+    assert_eq!(
+        fs::metadata(&path).expect("written").len(),
+        MAX_RECORD_BYTES
+    );
+    let stored = read_record(&path).expect("reads back").expect("written");
+    assert_eq!((stored.omitted, stored.items.len()), (None, 1));
+    let told_with_items = || {
+        let listed = runs(&history);
+        let run = listed
+            .iter()
+            .find(|run| run.run_id == run_id)
+            .expect("listed");
+        assert!(!run.items_omitted);
+        assert_eq!(items(&history, &run_id).len(), 1);
+    };
+    told_with_items();
+    #[cfg(windows)]
+    {
+        // A holder keeps the file from this session, so this can only be memory.
+        let holder = hold(&path, SHARES_NOTHING);
+        told_with_items();
+        drop(holder);
+    }
+    drop(history);
+    fs::remove_file(&path).expect("remove the run at the bound");
+
     let history = open(&scratch);
     // Same-length identifiers and times, so the body is exactly the bound.
     exact.items[0].display_name = "z".repeat(usize::try_from(room + 1).expect("fits"));
@@ -542,6 +574,42 @@ fn a_document_one_byte_over_the_bound_with_its_newline_drops_its_items() {
         .expect("listed, not kept aside");
     assert!(run.items_omitted);
     assert_eq!(run.item_count, 1);
+}
+
+/// Left without its items, a run's own facts answer to the same bound.
+#[test]
+fn a_run_whose_own_facts_fill_a_document_is_written_up_to_the_bound_and_no_further() {
+    let with_intent = |length: usize| {
+        let mut run = start(1);
+        run.items[0].display_name = "y".repeat(17 * 1024 * 1024);
+        run.settings.intent = serde_json::Value::String("i".repeat(length));
+        run
+    };
+    let running = || progress(RunState::Running, &["running"]);
+
+    let scratch = Scratch::new("history-facts-measured");
+    let history = open(&scratch);
+    history.begin(1, with_intent(0), running());
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    let room = MAX_RECORD_BYTES - fs::metadata(&path).expect("written").len();
+    let room = usize::try_from(room).expect("fits");
+
+    let scratch = Scratch::new("history-facts-at-the-bound");
+    let history = open(&scratch);
+    history.begin(1, with_intent(room), running());
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    assert_eq!(
+        fs::metadata(&path).expect("written").len(),
+        MAX_RECORD_BYTES
+    );
+    let stored = read_record(&path).expect("reads back").expect("written");
+    assert!(stored.omitted.is_some() && stored.items.is_empty());
+
+    let scratch = Scratch::new("history-facts-over-the-bound");
+    let history = open(&scratch);
+    history.begin(1, with_intent(room + 1), running());
+    assert!(run_files(&scratch).is_empty());
+    assert_eq!(history.locked().problem, Some("notWritten"));
 }
 
 #[test]
@@ -1174,6 +1242,9 @@ fn hold(path: &Path, share: u32) -> fs::File {
 const SHARES_ALL_BUT_DELETE: u32 = 0x1 | 0x2;
 #[cfg(windows)]
 const SHARES_NOTHING: u32 = 0;
+/// `FILE_SHARE_DELETE`: a name can go, and nobody else can open the file.
+#[cfg(windows)]
+const SHARES_DELETE_ONLY: u32 = 0x4;
 
 #[cfg(windows)]
 const NOT_REMOVED_ONE: RunHistoryWriteDto = RunHistoryWriteDto::Failed {
@@ -1233,35 +1304,46 @@ fn a_clear_that_could_not_remove_a_run_keeps_what_this_session_knows_of_it() {
     }
 }
 
+/// An exclusive holder keeps the file from being read as well, and what this
+/// session knows of an earlier run still answers: it is not counted as unreadable
+/// or kept as if it might be in progress.
 #[cfg(windows)]
 #[test]
 fn a_clear_that_could_not_remove_an_earlier_run_still_owes_its_end() {
-    let scratch = Scratch::new("history-clear-held-owed");
-    let history = open(&scratch);
-    history.begin(1, start(1), progress(RunState::Running, &["running"]));
-    let first = active_id(&history);
-    let path = history_directory(&scratch).join(file_name_of(&first));
-    let holder = hold(&path, SHARES_ALL_BUT_DELETE);
-    history.update(1, progress(RunState::Completed, &["finalized"]));
-    history.begin(2, start(1), progress(RunState::Running, &["running"]));
+    for share in [SHARES_ALL_BUT_DELETE, SHARES_NOTHING] {
+        let scratch = Scratch::new("history-clear-held-owed");
+        let history = open(&scratch);
+        history.begin(1, start(1), progress(RunState::Running, &["running"]));
+        let first = active_id(&history);
+        let path = history_directory(&scratch).join(file_name_of(&first));
+        let holder = hold(&path, share);
+        history.update(1, progress(RunState::Completed, &["finalized"]));
+        history.begin(2, start(1), progress(RunState::Running, &["running"]));
 
-    assert_eq!(history.clear(), NOT_REMOVED_ONE);
-    assert_eq!(items(&history, &first)[0].progress.state, "finalized");
+        assert_eq!(history.clear(), NOT_REMOVED_ONE, "share {share}");
+        assert_eq!(items(&history, &first)[0].progress.state, "finalized");
+        let RunHistoryListDto::Listed { unreadable, .. } = history.list() else {
+            panic!("listed");
+        };
+        assert_eq!(unreadable, 0, "share {share}");
 
-    drop(holder);
-    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
-        panic!("listed");
-    };
-    assert_eq!(problem, None);
-    assert_eq!(runs.len(), 2);
-    assert_eq!(
-        read_record(&path).map(|record| record.map(|record| record.state)),
-        Ok(Some(RunState::Completed))
-    );
+        drop(holder);
+        let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+            panic!("listed");
+        };
+        assert_eq!(problem, None, "share {share}");
+        assert_eq!(runs.len(), 2);
+        assert_eq!(
+            read_record(&path).map(|record| record.map(|record| record.state)),
+            Ok(Some(RunState::Completed)),
+            "share {share}"
+        );
+    }
 }
 
 /// An Off that could not remove a file leaves the run this session's to tell. On
-/// again, its end lands; still off, its next write removes the file.
+/// again, its end lands; still off, its next write removes the file, and the list
+/// never says a write is owed: while off nothing is to be written.
 #[cfg(windows)]
 #[test]
 fn an_off_that_could_not_remove_a_run_keeps_it_until_the_switch_decides() {
@@ -1299,12 +1381,16 @@ fn an_off_that_could_not_remove_a_run_keeps_it_until_the_switch_decides() {
     let RunHistoryListDto::Listed {
         runs: told,
         recording,
+        problem,
         ..
     } = history.list()
     else {
         panic!("listed");
     };
-    assert_eq!((told[0].state, recording), (RunState::Completed, false));
+    assert_eq!(
+        (told[0].state, recording, problem),
+        (RunState::Completed, false, None)
+    );
     drop(holder);
     let RunHistoryListDto::Listed {
         runs: told,
@@ -1317,6 +1403,277 @@ fn an_off_that_could_not_remove_a_run_keeps_it_until_the_switch_decides() {
     assert!(told.is_empty());
     assert_eq!(problem, None);
     assert!(run_files(&scratch).is_empty());
+
+    // Its next write alone removes it: a session may end before any list does.
+    assert_eq!(
+        history.set_enabled(true),
+        RunHistoryWriteDto::Done {
+            kept_in_progress: 0
+        }
+    );
+    history.begin(3, start(1), progress(RunState::Running, &["running"]));
+    let path = history_directory(&scratch).join(file_name_of(&active_id(&history)));
+    let holder = hold(&path, SHARES_ALL_BUT_DELETE);
+    assert_eq!(history.set_enabled(false), NOT_REMOVED_ONE);
+    drop(holder);
+    assert_eq!(run_files(&scratch).len(), 1, "nothing has tried again yet");
+    history.update(3, progress(RunState::Completed, &["finalized"]));
+    assert!(run_files(&scratch).is_empty());
+    assert!(history.locked().active.is_none());
+}
+
+const FORGOT_ALL: RunHistoryWriteDto = RunHistoryWriteDto::Done {
+    kept_in_progress: 0,
+};
+
+/// A run whose first write never landed has no file to miss, so only this session
+/// can forget it. Its own Off and On do not bring it back: not by a list and not
+/// by its end. Another instance's Off and On are section 7's open case.
+#[cfg(windows)]
+#[test]
+fn off_forgets_a_run_whose_first_write_never_landed_and_on_does_not_bring_it_back() {
+    let scratch = Scratch::new("history-off-never-written");
+    let history = open(&scratch);
+    let denied = Denied::new(&history_directory(&scratch), "WD");
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    assert!(run_files(&scratch).is_empty(), "the test's own condition");
+    drop(denied);
+
+    assert_eq!(history.set_enabled(false), FORGOT_ALL);
+    assert_eq!(history.set_enabled(true), FORGOT_ALL);
+    assert!(runs(&history).is_empty());
+    assert!(run_files(&scratch).is_empty(), "the list wrote nothing");
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+    assert!(runs(&history).is_empty());
+    assert!(run_files(&scratch).is_empty(), "nor did its end");
+}
+
+#[cfg(windows)]
+#[test]
+fn clear_forgets_an_ended_run_whose_first_write_never_landed() {
+    let scratch = Scratch::new("history-clear-never-written");
+    let history = open(&scratch);
+    let denied = Denied::new(&history_directory(&scratch), "WD");
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+    drop(denied);
+
+    assert_eq!(history.clear(), FORGOT_ALL);
+    assert!(runs(&history).is_empty());
+    assert!(run_files(&scratch).is_empty());
+}
+
+/// The same for an earlier run a later one put by. Clear keeps the later one, which
+/// is in progress, and Off keeps neither.
+#[cfg(windows)]
+#[test]
+fn clear_and_off_forget_an_earlier_run_whose_first_write_never_landed() {
+    for off in [false, true] {
+        let scratch = Scratch::new("history-earlier-never-written");
+        let history = open(&scratch);
+        let denied = Denied::new(&history_directory(&scratch), "WD");
+        history.begin(1, start(1), progress(RunState::Running, &["running"]));
+        history.update(1, progress(RunState::Completed, &["finalized"]));
+        history.begin(2, start(1), progress(RunState::Running, &["running"]));
+        let second = active_id(&history);
+        drop(denied);
+
+        let kept = if off {
+            assert_eq!(history.set_enabled(false), FORGOT_ALL);
+            assert_eq!(history.set_enabled(true), FORGOT_ALL);
+            Vec::new()
+        } else {
+            assert_eq!(
+                history.clear(),
+                RunHistoryWriteDto::Done {
+                    kept_in_progress: 1
+                }
+            );
+            vec![file_name_of(&second)]
+        };
+        assert_eq!(runs(&history).len(), kept.len(), "off: {off}");
+        assert_eq!(run_files(&scratch), kept, "off: {off}");
+    }
+}
+
+/// From memory a run reads as its file would: a holder or a refused first write
+/// must not put a run past its bound on the wire that its file never would.
+#[cfg(windows)]
+#[test]
+fn a_run_too_large_for_its_file_is_told_without_its_items_from_memory_too() {
+    let huge = || {
+        let mut huge = start(1);
+        huge.items[0].display_name = "y".repeat(17 * 1024 * 1024);
+        huge
+    };
+    let told_without_items = |history: &ConversionHistory, id: &str| {
+        let listed = runs(history);
+        let run = listed.iter().find(|run| run.run_id == id).expect("listed");
+        assert!(run.items_omitted, "the list");
+        let RunHistoryReadDto::Found { run, items } = history.read(id) else {
+            panic!("the run reads back");
+        };
+        assert!(run.items_omitted, "the read");
+        assert!(items.is_empty(), "the read's items");
+    };
+
+    let scratch = Scratch::new("history-huge-held");
+    let history = open(&scratch);
+    history.begin(1, huge(), progress(RunState::Running, &["running"]));
+    let id = active_id(&history);
+    let path = history_directory(&scratch).join(file_name_of(&id));
+    let holder = hold(&path, SHARES_NOTHING);
+    told_without_items(&history, &id);
+    drop(holder);
+
+    let scratch = Scratch::new("history-huge-never-written");
+    let history = open(&scratch);
+    let denied = Denied::new(&history_directory(&scratch), "WD");
+    history.begin(1, huge(), progress(RunState::Running, &["running"]));
+    told_without_items(&history, &active_id(&history));
+    drop(denied);
+
+    // Its file can be read, and says less: a holder refused the write that grew it.
+    let scratch = Scratch::new("history-huge-grown");
+    let history = open(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let id = active_id(&history);
+    let path = history_directory(&scratch).join(file_name_of(&id));
+    let holder = hold(&path, SHARES_ALL_BUT_DELETE);
+    let mut grown = progress(RunState::Running, &["running"]);
+    grown.items[0].outputs.push(RunOutput {
+        file_name: "y".repeat(17 * 1024 * 1024),
+        state: None,
+        byte_length: None,
+        sha256: None,
+        checks: None,
+    });
+    history.update(1, grown);
+    told_without_items(&history, &id);
+    drop(holder);
+}
+
+/// One corrupt run a holder keeps under its own name has one link however often
+/// it is listed. It counts once, unless the holder keeps the name from being read.
+#[cfg(windows)]
+#[test]
+fn a_corrupt_run_a_holder_keeps_is_counted_once_and_kept_aside_once() {
+    let scratch = Scratch::new("history-corrupt-held");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let path = directory.join(file_name_of(&format!("{:013}-{}", 1, "c".repeat(32))));
+    fs::write(&path, b"{ not a run").expect("write");
+    let asides = || {
+        entries(&directory)
+            .iter()
+            .filter(|name| is_set_aside(name))
+            .count()
+    };
+    let unreadable = || {
+        let RunHistoryListDto::Listed { unreadable, .. } = history.list() else {
+            panic!("listed");
+        };
+        unreadable
+    };
+
+    let holder = hold(&path, SHARES_ALL_BUT_DELETE);
+    for _ in 0..3 {
+        assert_eq!(unreadable(), 1);
+        assert_eq!(asides(), 1);
+        // Two lists in one millisecond would hide a second link behind one name.
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(path.exists(), "the holder keeps its name");
+
+    drop(holder);
+    let holder = hold(&path, SHARES_NOTHING);
+    assert_eq!(unreadable(), 2, "its link, and a name nobody can read");
+    assert_eq!(asides(), 1);
+
+    drop(holder);
+    assert_eq!(unreadable(), 1, "kept aside, and its bytes with it");
+    assert_eq!(asides(), 1);
+    assert!(!path.exists(), "its name is gone once it can be");
+    assert_eq!(history.clear(), FORGOT_ALL);
+    assert_eq!(unreadable(), 0);
+}
+
+/// An earlier link keeps one file, not a name: another document at that name is
+/// another run to keep, and taking the name off must not lose it.
+#[cfg(windows)]
+#[test]
+fn another_document_at_a_name_already_kept_aside_gets_a_link_of_its_own() {
+    for held in [false, true] {
+        let scratch = Scratch::new(if held {
+            "history-corrupt-replaced"
+        } else {
+            "history-corrupt-again"
+        });
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let path = directory.join(file_name_of(&format!("{:013}-{}", 1, "c".repeat(32))));
+        let unreadable = || {
+            let RunHistoryListDto::Listed { unreadable, .. } = history.list() else {
+                panic!("listed");
+            };
+            unreadable
+        };
+
+        fs::write(&path, b"{ document A").expect("write");
+        let holder = held.then(|| hold(&path, SHARES_ALL_BUT_DELETE));
+        assert_eq!(unreadable(), 1);
+        assert_eq!(path.exists(), held, "only a holder keeps its name");
+        drop(holder);
+        // Two lists in one millisecond would give both links one name.
+        std::thread::sleep(Duration::from_millis(2));
+
+        // Over the first document's name, or at a name it has already left.
+        let sibling = directory.join("sibling");
+        fs::write(&sibling, b"{ document B").expect("write");
+        fs::rename(&sibling, &path).expect("takes the name");
+        assert_eq!(unreadable(), 2);
+        assert!(!path.exists(), "its bytes are in its own link");
+        let mut kept: Vec<Vec<u8>> = entries(&directory)
+            .iter()
+            .filter(|name| is_set_aside(name))
+            .map(|name| fs::read(directory.join(name)).expect("read"))
+            .collect();
+        kept.sort();
+        assert_eq!(kept, [b"{ document A".to_vec(), b"{ document B".to_vec()]);
+        assert_eq!(unreadable(), 2);
+    }
+}
+
+/// An identity nobody could read says nothing about a link, so the link is made
+/// before the name goes. This calls `set_aside` itself: a list stops at Unreadable
+/// under this holder, and only a holder arriving after the read, or a filesystem
+/// with no file ID, reaches this from there.
+#[cfg(windows)]
+#[test]
+fn a_run_whose_identity_cannot_be_read_gets_its_link_before_its_name_goes() {
+    let scratch = Scratch::new("history-corrupt-no-identity");
+    let _history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let name = file_name_of(&format!("{:013}-{}", 1, "c".repeat(32)));
+    let path = directory.join(&name);
+    fs::write(&path, b"{ not a run").expect("write");
+
+    let holder = hold(&path, SHARES_DELETE_ONLY);
+    assert_eq!(
+        local_document::object_identity(&path),
+        None,
+        "this holder leaves no identity to read"
+    );
+    assert!(set_aside(&directory, &name));
+    drop(holder);
+
+    assert!(!path.exists(), "its name is gone");
+    let kept: Vec<Vec<u8>> = entries(&directory)
+        .iter()
+        .filter(|name| is_set_aside(name))
+        .map(|name| fs::read(directory.join(name)).expect("read"))
+        .collect();
+    assert_eq!(kept, [b"{ not a run".to_vec()]);
 }
 
 #[cfg(windows)]
@@ -1515,4 +1872,398 @@ fn a_history_directory_that_is_a_junction_is_refused() {
     );
     // Only the link, never its target's contents.
     fs::remove_dir(&link).expect("remove the junction");
+}
+
+// ADR 0065 section 7, item 5: a crashed write's old private sibling.
+
+const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+/// Far longer than a test takes between setting a time and a sweep reading it.
+const MINUTE: Duration = Duration::from_secs(60);
+const LONG_AGO: Duration = Duration::from_secs(48 * 60 * 60);
+const SIBLING_BYTES: &[u8] = b"a whole record, paths included";
+const SWEPT: RunHistoryWriteDto = RunHistoryWriteDto::Done {
+    kept_in_progress: 0,
+};
+/// Clear and Off, which share `sweep`.
+const CLEAR_AND_OFF: [fn(&ConversionHistory) -> RunHistoryWriteDto; 2] =
+    [ConversionHistory::clear, |history| {
+        history.set_enabled(false)
+    }];
+
+/// Exactly the name a write gives its private sibling.
+fn sibling_name(attempt: u32) -> String {
+    local_document::temporary_name(TEMPORARY_PREFIX, attempt)
+}
+
+/// Sets a name's own last-write time, never that of what a link at it points to.
+fn set_written(path: &Path, written: SystemTime) {
+    let mut options = fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_WRITE_ATTRIBUTES; FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT.
+        options
+            .access_mode(0x0100)
+            .custom_flags(0x0200_0000 | 0x0020_0000);
+    }
+    #[cfg(not(windows))]
+    options.read(true);
+    options
+        .open(path)
+        .expect("open the name itself")
+        .set_modified(written)
+        .expect("set its time");
+}
+
+/// A file at `name`, last written `age` ago.
+fn left_behind(directory: &Path, name: &str, age: Duration) -> PathBuf {
+    let path = directory.join(name);
+    fs::write(&path, SIBLING_BYTES).expect("write");
+    set_written(&path, SystemTime::now() - age);
+    path
+}
+
+#[test]
+fn clear_and_off_remove_a_sibling_past_a_day_and_keep_one_short_of_it() {
+    assert_eq!(SIBLING_MAX_AGE, DAY, "the owner's 24 hours");
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-age");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        // The last attempt a write makes.
+        let old = left_behind(&directory, &sibling_name(7), LONG_AGO);
+        // What a crash leaves: another process's name, and that process is gone.
+        let another_process = format!(
+            "{TEMPORARY_PREFIX}{}-0.tmp",
+            std::process::id().wrapping_add(1)
+        );
+        let crashed = left_behind(&directory, &another_process, LONG_AGO);
+        let just_past = left_behind(&directory, &sibling_name(1), DAY + MINUTE);
+        let just_short = left_behind(&directory, &sibling_name(2), DAY - MINUTE);
+        let fresh = left_behind(&directory, &sibling_name(3), Duration::ZERO);
+        write_stored(&scratch, 1, RunState::Completed, Some(2));
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(!old.exists(), "an old sibling goes");
+        assert!(!crashed.exists(), "whichever process wrote it");
+        assert!(!just_past.exists(), "just past a day goes");
+        assert_eq!(fs::read(&just_short).expect("kept"), SIBLING_BYTES);
+        assert_eq!(fs::read(&fresh).expect("kept"), SIBLING_BYTES);
+        assert!(run_files(&scratch).is_empty(), "runs go as before");
+    }
+}
+
+#[test]
+fn a_sibling_whose_last_write_lies_in_the_future_is_kept() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-future");
+        let history = open(&scratch);
+        let path = history_directory(&scratch).join(sibling_name(0));
+        fs::write(&path, SIBLING_BYTES).expect("write");
+        set_written(&path, SystemTime::now() + LONG_AGO);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert_eq!(fs::read(&path).expect("kept"), SIBLING_BYTES);
+    }
+}
+
+/// Clear and Off only, so no start-up cleanup and no list while recording. While
+/// Off holds its sweep runs at every start and list, and that takes one that has
+/// aged since.
+#[test]
+fn only_clear_and_off_take_a_sibling_and_off_goes_on_taking_them() {
+    let scratch = Scratch::new("history-sibling-when");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let old = left_behind(&directory, &sibling_name(0), LONG_AGO);
+
+    let _ = history.list();
+    drop(open(&scratch));
+    assert!(old.exists(), "neither a list nor a start takes it");
+
+    assert_eq!(history.set_enabled(false), SWEPT);
+    assert!(!old.exists());
+
+    let later = left_behind(&directory, &sibling_name(0), Duration::ZERO);
+    let _ = history.list();
+    assert!(later.exists(), "written just now");
+    set_written(&later, SystemTime::now() - LONG_AGO);
+    let _ = history.list();
+    assert!(!later.exists(), "aged while Off holds");
+}
+
+#[test]
+fn a_name_that_only_looks_like_a_sibling_is_kept_however_old() {
+    // No two of these may differ by case alone: the file system would make them
+    // one file.
+    let names = [
+        ".mscanvas-run-history",
+        ".mscanvas-run-history-",
+        ".mscanvas-run-history-1",
+        ".mscanvas-run-history-1-0",
+        ".mscanvas-run-history-1-.tmp",
+        ".mscanvas-run-history--0.tmp",
+        ".mscanvas-run-history-a-0.tmp",
+        ".mscanvas-run-history-1-a.tmp",
+        ".mscanvas-run-history-1-0-0.tmp",
+        ".mscanvas-run-history-1-0.tmp.bak",
+        // Past the attempts a write makes.
+        ".mscanvas-run-history-1-8.tmp",
+        // No number prints like these.
+        ".mscanvas-run-history-007-0.tmp",
+        ".mscanvas-run-history-1-00.tmp",
+        ".mscanvas-run-history-+1-0.tmp",
+        ".mscanvas-run-history-1-+0.tmp",
+        // Past what a process identifier can hold.
+        ".mscanvas-run-history-4294967296-0.tmp",
+        ".mscanvas-run-history-1-1.TMP",
+        ".MSCANVAS-RUN-HISTORY-1-2.tmp",
+        "x.mscanvas-run-history-1",
+        "x.mscanvas-run-history-1-3.tmp",
+        ".mscanvas-workspace-restore-1-0.tmp",
+        ".mscanvas-conversion-presets-1-0.tmp",
+        ".mscanvas-ui-preferences-1-0.tmp",
+        ".mscanvas-project-1-0.tmp",
+        ".owner-pending-1",
+        ".owner-pending-1-0.tmp",
+    ];
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-names");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        for name in names {
+            left_behind(&directory, name, LONG_AGO);
+        }
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        for name in names {
+            assert_eq!(
+                fs::read(directory.join(name)).expect(name),
+                SIBLING_BYTES,
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_directory_with_a_siblings_name_is_kept_with_its_contents() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-directory");
+        let history = open(&scratch);
+        let path = history_directory(&scratch).join(sibling_name(0));
+        fs::create_dir(&path).expect("a folder at the name");
+        fs::write(path.join("inside"), SIBLING_BYTES).expect("write");
+        // After the write, which sets the folder's time.
+        set_written(&path, SystemTime::now() - LONG_AGO);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert_eq!(fs::read(path.join("inside")).expect("kept"), SIBLING_BYTES);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_or_a_link_with_a_siblings_name_is_kept_and_its_target_untouched() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-junction");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let elsewhere = scratch.join("elsewhere");
+        fs::create_dir_all(&elsewhere).expect("the target");
+        let canary = elsewhere.join("canary");
+        fs::write(&canary, SIBLING_BYTES).expect("write");
+        // Old, so that a stat that followed the link would see a file to remove.
+        set_written(&canary, SystemTime::now() - LONG_AGO);
+        let junction = directory.join(sibling_name(0));
+        let made = std::process::Command::new("cmd.exe")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&elsewhere)
+            .output()
+            .expect("run mklink");
+        assert!(made.status.success(), "the disposable junction must exist");
+        set_written(&junction, SystemTime::now() - LONG_AGO);
+        // A file link needs a privilege an ordinary session may not have. CI has it,
+        // so this part cannot go unrun there unnoticed.
+        let link = directory.join(sibling_name(1));
+        let linked = std::os::windows::fs::symlink_file(&canary, &link).is_ok();
+        assert!(linked || std::env::var_os("CI").is_none(), "no link in CI");
+        if linked {
+            set_written(&link, SystemTime::now() - LONG_AGO);
+        }
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(
+            fs::symlink_metadata(&junction).is_ok(),
+            "the junction stays"
+        );
+        assert!(
+            !linked || fs::symlink_metadata(&link).is_ok(),
+            "the link stays"
+        );
+        assert_eq!(fs::read(&canary).expect("untouched"), SIBLING_BYTES);
+        assert_eq!(entries(&elsewhere), ["canary"]);
+        // Only the links, never their target.
+        fs::remove_dir(&junction).expect("remove the junction");
+        if linked {
+            fs::remove_file(&link).expect("remove the link");
+        }
+    }
+}
+
+/// An AF_UNIX socket's file: a reparse point whose tag has no name-surrogate bit,
+/// so std's `is_file()` says yes. It takes no privilege, and it stays because the
+/// child kills itself before .NET can remove it, so its exit status means nothing.
+#[cfg(windows)]
+fn reparse_file_without_name_surrogate(directory: &Path, name: &str) -> PathBuf {
+    use std::os::windows::fs::MetadataExt as _;
+    // By bare name from the folder: a socket's path has a limit of 108 bytes.
+    let script = format!(
+        "$s = [Net.Sockets.Socket]::new('Unix', 'Stream', 'Unspecified'); \
+         $s.Bind([Net.Sockets.UnixDomainSocketEndPoint]::new('{name}')); \
+         Stop-Process -Id $PID -Force"
+    );
+    let made = std::process::Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .current_dir(directory)
+        .output()
+        .expect("run pwsh");
+    let path = directory.join(name);
+    let metadata = fs::symlink_metadata(&path).unwrap_or_else(|error| {
+        panic!(
+            "the disposable socket file must exist: {error}: {}",
+            String::from_utf8_lossy(&made.stderr)
+        )
+    });
+    // Not through the code under test. Should a later Windows mark this tag a name
+    // surrogate, `is_file()` turns false and this says so instead of passing idly.
+    assert_ne!(metadata.file_attributes() & 0x400, 0, "a reparse point");
+    assert!(metadata.is_file(), "no name-surrogate bit");
+    path
+}
+
+#[cfg(windows)]
+#[test]
+fn a_reparse_file_that_is_no_link_with_a_siblings_name_is_kept() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-reparse-file");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let path = reparse_file_without_name_surrogate(&directory, &sibling_name(0));
+        set_written(&path, SystemTime::now() - LONG_AGO);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(fs::symlink_metadata(&path).is_ok(), "the file stays");
+        fs::remove_file(&path).expect("remove the socket file");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_sibling_that_cannot_be_removed_is_counted_and_the_sweep_goes_on() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-held");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let held = left_behind(&directory, &sibling_name(0), LONG_AGO);
+        let other = left_behind(&directory, &sibling_name(1), LONG_AGO);
+        write_stored(&scratch, 1, RunState::Completed, Some(2));
+        let holder = hold(&held, SHARES_ALL_BUT_DELETE);
+
+        assert_eq!(sweep(&history), NOT_REMOVED_ONE);
+
+        assert!(held.exists(), "the holder keeps it");
+        assert!(!other.exists(), "the sweep went on");
+        assert!(run_files(&scratch).is_empty(), "the sweep went on");
+
+        drop(holder);
+        assert_eq!(sweep(&history), SWEPT);
+        assert!(!held.exists());
+    }
+}
+
+/// A holder that allows deletion stops nothing: the name goes, so Done is true.
+#[cfg(windows)]
+#[test]
+fn a_holder_that_allows_deletion_does_not_keep_a_sibling() {
+    for sweep in CLEAR_AND_OFF {
+        let scratch = Scratch::new("history-sibling-held-shared");
+        let history = open(&scratch);
+        let directory = history_directory(&scratch);
+        let held = left_behind(&directory, &sibling_name(0), LONG_AGO);
+        let holder = hold(&held, SHARES_DELETE_ONLY);
+
+        assert_eq!(sweep(&history), SWEPT);
+
+        assert!(!held.exists(), "its name is gone");
+        drop(holder);
+    }
+}
+
+/// `notRemoved` is about the sibling. The run this session is recording is told
+/// and written as if the sibling were not there.
+#[cfg(windows)]
+#[test]
+fn a_sibling_that_cannot_be_removed_changes_nothing_for_a_run_in_progress() {
+    let scratch = Scratch::new("history-sibling-held-run");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    history.begin(1, start(1), progress(RunState::Running, &["running"]));
+    let id = active_id(&history);
+    let held = left_behind(&directory, &sibling_name(0), LONG_AGO);
+    let _holder = hold(&held, SHARES_ALL_BUT_DELETE);
+
+    assert_eq!(history.clear(), NOT_REMOVED_ONE);
+    history.update(1, progress(RunState::Completed, &["finalized"]));
+
+    let stored = read_record(&directory.join(file_name_of(&id)))
+        .expect("readable")
+        .expect("still there");
+    assert_eq!(stored.state, RunState::Completed);
+    let RunHistoryListDto::Listed { runs, problem, .. } = history.list() else {
+        panic!("listed");
+    };
+    assert_eq!((runs.len(), problem), (1, None));
+}
+
+/// A session suspended for over a day between creating its sibling and publishing
+/// it, through the very handle a write holds. It shares reading only, so on Windows
+/// the sibling cannot go while the writer lives: Clear and Off say so, and the write
+/// lands when the session wakes.
+#[cfg(windows)]
+#[test]
+fn a_write_suspended_for_over_a_day_keeps_its_sibling_and_still_publishes() {
+    use std::io::Write as _;
+
+    let scratch = Scratch::new("history-sibling-suspended");
+    let history = open(&scratch);
+    let directory = history_directory(&scratch);
+    let name = write_stored(&scratch, 1, RunState::Completed, Some(2));
+    let target = directory.join(&name);
+    let document = fs::read(&target).expect("read");
+    fs::remove_file(&target).expect("not yet published");
+    let (mut writer, path) =
+        local_document::create_private_sibling(&directory, TEMPORARY_PREFIX).expect("the sibling");
+    writer.write_all(&document).expect("fill");
+    writer
+        .set_modified(SystemTime::now() - LONG_AGO)
+        .expect("a day passes");
+
+    assert_eq!(history.clear(), NOT_REMOVED_ONE);
+    assert_eq!(history.set_enabled(false), NOT_REMOVED_ONE);
+    assert_eq!(history.set_enabled(true), SWEPT);
+    assert!(path.exists());
+
+    local_document::replace_with(&writer, &path, &target, true).expect("it publishes");
+    drop(writer);
+
+    assert!(!path.exists(), "the sibling became the document");
+    assert_eq!(runs(&history).len(), 1);
 }

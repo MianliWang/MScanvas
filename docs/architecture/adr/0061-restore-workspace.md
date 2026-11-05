@@ -66,6 +66,12 @@ the Rust side, and question 5's wording and question 7 belong to the
 interface slice, so only the `MAX_OFFERS` doc comment changed on
 `be/restore-workspace` for these answers. With questions 1 to 4 and 10 answered, no question remains open.
 
+*2026-11-03, as built, not an owner decision:* PR #204 gives question 8 one
+exception, set out under [decision 10](#10-how-long-a-row-that-is-not-put-back-is-offered).
+The owner has not answered it.
+
+*Owner decision, 2026-11-03 (Q8-exception):* accepted: a row pressed for Restore and refused by admission (for example a full workspace) is not counted as declined, so a row refused every session never expires. The direction is conservative: such rows stay longer, and nothing is lost ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the workspace
 boundary, its *Persistence exclusion* and its collision-only relative context),
 [0057](0057-conversion-capacity-and-viewing-during-conversion.md) (capacity
@@ -124,6 +130,46 @@ membership or queue authority" when a project opens, and the M7.5 preference
 record keeps "no highlighted or conversion selection". Under it every restored
 row starts unchecked. Collapsed state is not restored, so a marked row never
 starts hidden.
+
+*Owner decision, 2026-11-04 (P201-RESTORE):* asked whether a row Restore
+workspace puts back keeps "Not verified by MSCanvas" (ADR 0055), the owner
+replied "全部按推荐" ("all as recommended"): keep it. The text of this decision
+stands as accepted, with this one exception to "a row's provenance" and "a plain
+row": each stored row also records its label, so the row put back in a later
+session says it, its figures draw it, and a reference registered from it records
+it, not `null`. The cost the answer accepted stays: the same file added with Add
+files instead of being put back has no label in the next session, because a save
+records it as that live row and the restored row's label goes with the restored
+row.
+
+*As built (2026-11-04), not an owner decision, for the owner's eye:*
+
+- The label is an optional field of a stored row, in the project record's shape,
+  and the schema version stays 1. No released build reads this document (beta 1
+  has no restore), a document from before the field reads as no label, and one
+  with no labelled row is byte for byte what it was. A build from before the field
+  refuses a document holding one as `malformed`, as decision 6 says.
+- A stored value that is not a label, by the project record's rule, gives the row
+  no label and refuses nothing. This is the one field that does not follow decision
+  6, which every other unreadable field does: it stays as found while the row waits
+  and is gone once the row is put back and saved. Nothing says so on screen.
+- A value the parser cannot hold (nested past 128 levels, a number out of range, a
+  lone surrogate) makes a document it cannot parse, as damage to the JSON anywhere
+  does, so decision 6 refuses that one whole. No build writes one.
+- Restore workspace over a row already in the Workbench gives that row the stored
+  label, merged with any it has, on the same object proof.
+- As a build writes it, the label is a flag and a bounded, redacted release, which
+  add no path (decision 7). A read checks the release only by the project record's
+  bounds and does not redact it, as a project's reference does not, so a hand-edited
+  document can put a path on the row and on its figures.
+- A row that gains a label without moving is recorded by the next save, which the
+  webview now owes it.
+- The accepted cost names Add files. Three more paths lose the label, none changed
+  here: a reference registered from the file picker while the row still waits
+  records `null`, and the press that later labels the row does not change it; the
+  same file added in a later session by another route (Add mzML folder…, a drop) has
+  none, as with Add files; and a row decision 10 no longer offers leaves the document
+  with its label.
 
 ### 2. Where it is stored
 
@@ -260,14 +306,31 @@ explicit **Restore workspace** action the user starts puts the matching rows
 back through ordinary admission (the same rule, duplicate check and capacity as
 Add files), in their restored groups and checked state; nothing is put back at
 start-up, nothing is previewed and no conversion starts. Marked rows are
-listed in the restore notice above every surface, each under its stored group's
-name with its state, its reason and a dismiss: above the surfaces, not in the
-roster, because the roster is a closed drawer at 1,050 px and below, and an offer
-nobody sees is not an offer. Putting a marked row back
+shown in place with their state and a Remove action. Putting a marked row back
 is the user adding the file again. This is not adoption in the sense of
 [ADR 0016](0016-explicit-converted-output-adoption.md), which takes a
 conversion's outputs into the Workbench and stays explicit: a restored row is
 only ever the file the user had already added, at the path it had.
+
+*As built, not an owner decision (interface slice, 2026-11-03), for the owner's
+eye:* "in place" above is not what shipped. Marked rows are listed in the
+restore notice above every surface, each under its stored group's name with its
+state, its reason and a dismiss, because the roster is a closed drawer at
+1,050 px and below, and an offer nobody sees is not an offer. The notice cannot
+be collapsed, and the track it sits in takes up to about 154 px of a 960x640
+window (`min(24vh, 180px)`), and up to 256 px (`min(40vh, 320px)`) while a restore
+refusal, or any warning or failure beside the offer, stands: the workspace's own
+answer to a press of Restore workspace is one of those. The list of marked rows
+gives up height first, down to 36 px, so the refusal with its reason, Restore
+workspace and Start fresh stay on screen while the rows scroll. What stands above
+the list can still pass the bound; the track then scrolls too and keeps what the
+keyboard is on in view. Three refusals at once do that at 960x640 even with the
+bound relaxed, which can take the top of the first refusal out of it. So does a
+neutral notice with no refusal standing, because it does not relax the bound: a
+file added, or a put-back that went wholly through, above a two-line offer in en
+at 960x640 leaves the track scrolling and no row whole (measured 2026-11-03; in
+zh-CN the offer takes one line and one row shows whole). Restore workspace and
+Start fresh stay whole there, and the rows are reached from the keyboard.
 
 *Alternative:* put matching rows back automatically at every start. Rejected
 (by the owner on 2026-10-31) because of what admission costs, which the
@@ -308,7 +371,9 @@ What the interface slice needed, as built (2026-11-03):
   admission refused (a full workspace, say) stay waiting; a conversion's refusal
   leaves every row waiting. The stored group and checked state come back with the
   row, as an arrangement the webview applies with no undo step; a row that was
-  already live keeps its own. Nothing is written here: the save that follows
+  already live keeps its own. A row's group is its stored group's place among the
+  read's groups, not its name, because the Workbench allows two groups of one
+  name. Nothing is written here: the save that follows
   records it. The webview says the rows were added again, not verified against
   the last session (question 10). Before the session's first read it is refused
   (`workspace_restore_not_read`).
@@ -319,11 +384,15 @@ What the interface slice needed, as built (2026-11-03):
   file name, so two `QC_01.raw` rows from different folders read alike. The
   live roster's collision-only relative context (ADR 0006, amended by M1.4.1)
   is a fragment below the folder the user chose and is never persisted; a
-  restored row has no chosen folder. *Decision (owner, 2026-10-31, question 7):*
-  a bounded number of the parent folders above the file, shown only on a
-  collision, never the drive, share or root;
-  [ADR 0006](0006-multi-dataset-workspace-boundary.md) is amended for it
-  (2026-11-03).
+  restored row has no chosen folder. Showing anything more needs an amendment
+  of ADR 0006. *Decision (owner, 2026-10-31, question 7):* a bounded number of
+  the parent folders above the file, shown only on a collision, never the
+  drive, share or root; the amendment is approved in principle and is written
+  with the interface slice.
+
+  *As built (2026-11-03), not an owner decision, for the owner's eye:*
+  [ADR 0006](0006-multi-dataset-workspace-boundary.md) was amended for it; that
+  text has not been shown to the owner.
 
 ### 5. Bounds
 
@@ -447,6 +516,33 @@ read presented in any other state (changed, missing, unreachable, unreadable,
 unsafe) could not be put back as itself, so it is not counted; nor is a row in
 a session that saved without reading.
 
+*As built (2026-11-03), not an owner decision, for the owner's eye:* the code on
+PR #204 departs from the rule above and from question 8 in one case. A row a
+press of Restore workspace handed to admission, because the press's re-check
+found it matching, is not counted if it is still waiting afterwards: a full
+workspace, a conversion or a file another program holds refused it, and the user
+had asked for it, so a refusal does not use up its one offer. "Only an offer the
+user could take counts" is the argument for this, and it can be argued either
+way. Two things go past that argument: a row refused once and left there after
+room was made is still not counted, although the user could then have taken it,
+and a row pressed and refused in every session never expires, so "offered at the
+next start only" does not hold for it. Such a row only stays longer; none leaves
+earlier. A row the re-check found marked was not handed to admission, so the press
+does not protect it: if a read of the session presented it as matching and the
+session saves without taking it, it is counted, whether or not it ever matches
+again. That is the rule above to the letter, and this PR changed it: at `88facc6a`
+the press protected every waiting row. Such a row uses its one offer although the
+user pressed Restore workspace; its source file is untouched, and the next start
+whose first read finds it matching reports it as no longer offered. The owner has
+not answered this.
+
+*As built (2026-11-04), not an owner decision:* a row whose file was replaced
+after the press's re-check is not counted either, and it was not refused. The
+re-check found it matching, so the press handed it to admission; admission adds
+the new file, the row stays waiting because that is not its recorded object
+(decision 4), and a save does not count it. It reads `changed` at the next read,
+and a marked row never expires. Q8-exception names a row refused by admission.
+
 Which rows are no longer offered is decided once per session, by its first
 read, from what that read finds, never at load: a row whose count has reached
 `MAX_OFFERS` and that the read finds `matching` is no longer offered, and every
@@ -495,6 +591,31 @@ answer is a one-line change.
 
 - A restart keeps the Workbench's rows, groups, order and checked state, and a
   file that moved or changed is visible as such rather than gone.
+- *As built (2026-11-03), not an owner decision, for the owner's eye:* on PR #204
+  a group with nothing in it does not come back, so "groups" above and in
+  decision 1 does not hold for one. A group the user made and left empty is
+  written to the document, is not made again after a restart (`placeRestored`
+  makes only a group a row lands in) and is dropped by that session's first save
+  (`buildArrangement` carries only a stored group something still waits in). The
+  same two lines keep a group the user dissolved or renamed from returning, and
+  the document holds no history that could tell the two apart. `ae14765e` brought
+  an empty stored group back. The owner has not answered this.
+- *As built (2026-11-03), not an owner decision, for the owner's eye:* "order"
+  above and "of rows within them" in decision 1 do not hold for a group Restore
+  workspace took only part of. A row still waiting follows the group's live rows,
+  so stored a, b, c with b missing are saved as a, c, b, and b stays last when it
+  is put back later: a row's stored place among its neighbours is not kept once
+  they are live. Nothing is lost. `ae14765e` and `main` do the same, so a revert
+  does not change this. The order of groups does hold. The owner has not answered
+  this.
+- *As built (2026-11-04), not an owner decision:* a row still waiting, in any
+  state, joins the group of its stored name at the same count among the groups of
+  that name, or a new one if there is none (`placeRestored`, `buildArrangement`).
+  A group has no identity beyond that, so renaming a group to or from that name,
+  dissolving, moving or making one can change which group those rows join. Stored
+  `Batch` holding x with m waiting and `Batch` holding y with n waiting: with the
+  second moved up, the save puts m beside y and n beside x; with the first renamed,
+  it puts m beside y and n in a new group of that name. Nothing is lost.
 - The webview must save after every roster answer and organization change; a
   crash between a change and its save restores the previous arrangement. A
   row removed just before a crash can therefore come back as a restored row,
@@ -527,6 +648,9 @@ answer is a one-line change.
   back adds the file again. A marked row is never aged out, so marked rows
   wait until put back, dismissed or cleared, and can build up toward
   `tooManyRows` (decision 5).
+- *As built (2026-11-03), not an owner decision, for the owner's eye:* on PR #204
+  a row a press could not place is an exception to the point above, set out in
+  decision 10's note. The owner has not answered this.
 - A restored row that matches is the same object at the same length, not the
   same content: a rewrite in place at the same length comes back with its
   group and checked state, and put-back admits what is there then (decision 4,

@@ -17,6 +17,7 @@ import {
   shimadzuDataset,
   shippedIntent,
 } from "../../apps/desktop/src/test/previewFixtures";
+import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
 import { RUN_HISTORY_EMPTY } from "./runHistory";
 
 /**
@@ -240,9 +241,10 @@ export function ipcTable(
       outcome: "saved",
       revision: 1,
       preferences: {
-        schemaVersion: 1,
+        schemaVersion: PREFERENCE_SCHEMA_VERSION,
         appearance: { locale: "en", density: "comfortable" },
         layout: { roster: "automatic", details: "automatic" },
+        display: DISPLAY_DEFAULTS,
       },
     },
     get_workspace_roster: {
@@ -255,7 +257,11 @@ export function ipcTable(
     save_workspace_restore: { outcome: "saved" },
     clear_workspace_restore: { outcome: "saved" },
     set_workspace_restore_enabled: { outcome: "saved" },
+    dismiss_restored_row: null,
     subscribe_workspace_drop_updates: null,
+    // No view has run, and View could begin (ADR 0060). A spec about a view
+    // replaces this answer as the operation moves.
+    get_raw_view_state: { state: { state: "idle" }, availability: { available: true, unverifiedBuildRelease: null } },
     ...RUN_HISTORY_EMPTY,
     // The conversion slot, and the authority it is answered under. Every
     // response in this shape carries the projection -- the poll included, which

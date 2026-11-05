@@ -699,7 +699,33 @@ def validate_clipboard_stays_write_only(errors: list[str]) -> None:
     would let anything running there replace what the user copied. And the
     JavaScript guest plugin is how both usually arrive, so it must not become a
     dependency of the application either.
+
+    Copy diagnostics is the one departure, accepted by the owner "for this button
+    only" (ADR 0063, question 4): it writes text through the platform's clipboard,
+    which needs no capability. So nothing below would see a second use of it, or
+    a read, and that scope is checked in the source.
     """
+    source_root = ROOT / "apps" / "desktop" / "src"
+    allowed = source_root / "features" / "preferences" / "SettingsDialog.tsx"
+    for source in sorted(source_root.glob("**/*")):
+        if source.suffix not in {".ts", ".tsx"} or ".test." in source.name or not source.is_file():
+            continue
+        uses = re.findall(
+            r"\bnavigator\s*\??\.\s*clipboard\b(\s*\??\.\s*writeText\s*\()?",
+            source.read_text(encoding="utf-8"),
+        )
+        relative = source.relative_to(ROOT).as_posix()
+        if source != allowed and uses:
+            errors.append(
+                f"{relative} uses navigator.clipboard; the platform clipboard is accepted "
+                "for the Copy diagnostics button only (ADR 0063, question 4)"
+            )
+        elif len(uses) > 1 or not all(uses):
+            errors.append(
+                f"{relative} may call navigator.clipboard.writeText once, for the Copy "
+                "diagnostics button, and nothing else on the clipboard (ADR 0063, question 4)"
+            )
+
     for capability in sorted((ROOT / "apps" / "desktop" / "src-tauri" / "capabilities").glob("*.json")):
         declared = json.loads(capability.read_text(encoding="utf-8"))
         relative = capability.relative_to(ROOT).as_posix()
@@ -5790,6 +5816,70 @@ def validate_every_boundary_error_code_is_accounted_for(errors: list[str]) -> No
         )
 
 
+# ADR 0065 section 7's first four open edge cases as they read at c006a0ad, the
+# text the owner accepted as documented on 2026-11-03. One block, because the owner
+# named them by position. An answer or a further corner goes in a dated note after
+# the list or outside it, never before item 1 or between items 4 and 5, so changing
+# these words or what "item 5" means takes a new answer, not a better sentence.
+ADR_0065_ACCEPTED_CORNERS = """\
+  - **A write under way at Off:** a write already under way when Off removes
+    the files can land just after. The next start or list while it is off
+    removes it; if recording is on again before either, it stays.
+  - **A first write that never landed:** such a run has no file to miss, so an
+    Off and an On in another instance before that write lands do not stop it.
+  - **A run Off could not remove:** a file a holder keeps leaves the run this
+    session's (section 2). If recording is on again by then, its record, paths
+    included, goes on being written until that run ends. Shipped 2026-11-03, not
+    an owner decision.
+  - **A retry at the moment of a Clear:** a retry of the same queue that reopens
+    a run after Clear read it as ended and before Clear removes its file is not
+    recorded: its next write finds the file gone and stops, and nothing says so.
+    Writing it back would restore what Clear forgot. The window is one file's read
+    to its removal; this comes from reading the code and was not run. Shipped
+    2026-11-03, not an owner decision.
+"""
+# Position only: item 5's words stay free, since the owner's answer changes them. If
+# building that answer renames its label, update this label in the same commit.
+ADR_0065_ITEM_5_LABEL = "  - **What Clear and Off cannot reach:**"
+ADR_0065_CORNERS_IN_PLACE = re.compile(
+    r"^- \*\*Open edge cases\.\*\*[^\n]*\n"
+    + re.escape(ADR_0065_ACCEPTED_CORNERS + ADR_0065_ITEM_5_LABEL),
+    re.MULTILINE,
+)
+
+
+def validate_the_accepted_run_history_corners_keep_their_words(errors: list[str]) -> None:
+    adr = "docs/architecture/adr/0065-conversion-run-history.md"
+    text = (ROOT / adr).read_text(encoding="utf-8")
+    corners = ADR_0065_ACCEPTED_CORNERS
+    if not ADR_0065_CORNERS_IN_PLACE.search(text):
+        fail(
+            f"{adr} section 7 no longer holds, byte for byte and in place, the four edge "
+            "cases the owner accepted on 2026-11-03: restore them from c006a0ad as the "
+            "first four items of the list, and put anything new in a dated note after the "
+            "list or outside it",
+            errors,
+        )
+        return
+    # This rule's own proof, against the real text: an edit it lets through, or one
+    # that no longer changes anything, means it stopped holding what it says it holds.
+    note = "  - **A dated note:** new.\n"
+    item_3 = "  - **A run Off could not remove:**"
+    for name, edited in {
+        "a word changed in item 3": text.replace(
+            corners, corners.replace("goes on being written", "keeps being written")
+        ),
+        "a bullet before item 1": text.replace(corners, note + corners),
+        "a bullet between items 2 and 3": text.replace(item_3, note + item_3),
+        "a bullet between items 4 and 5": text.replace(corners, corners + note),
+        "the block moved under Consequences": text.replace(corners, "").replace(
+            "## Consequences", corners + "\n## Consequences"
+        ),
+    }.items():
+        if edited == text or ADR_0065_CORNERS_IN_PLACE.search(edited):
+            fail(f"{adr}: the accepted-corners rule lets this edit through: {name}", errors)
+
+
 def main() -> int:
     errors: list[str] = []
     validate_required(errors)
@@ -5811,6 +5901,7 @@ def main() -> int:
         validate_the_chromatogram_authority_has_one_installation_path(errors)
         validate_the_linked_pair_is_bound_in_one_operation(errors)
         validate_the_current_status_section_has_one_answer(errors)
+        validate_the_accepted_run_history_corners_keep_their_words(errors)
         validate_drawability_is_settled_in_one_place(errors)
         validate_a_spectrum_range_is_resolved_in_one_place(errors)
         validate_the_xic_route_outcome_has_one_answer(errors)

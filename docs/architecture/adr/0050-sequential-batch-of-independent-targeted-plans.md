@@ -9,6 +9,12 @@ read without running anything) and
 attempt scratch). Record:
 [M9.4 batch](../../product/M9_4_TARGETED_MS1_BATCH.md).
 
+> **2026-11-04.** [ADR 0067](0067-study-model-for-cross-sample-analysis.md#3-per-sample-and-cross-sample-steps),
+> decision 3 (accepted on 2026-11-03, owner decision B-6), supersedes this record
+> for study recipes only: decision 1's single-acquisition rule and the 2–16 bound
+> do not apply to them. For targeted MS1 this record stays in force, and its
+> decisions are unchanged. No study recipe is built.
+
 ## Context
 
 Until M9.4 a targeted MS1 lookup ran over one explicitly chosen layer at a

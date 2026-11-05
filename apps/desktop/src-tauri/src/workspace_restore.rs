@@ -7,9 +7,10 @@
 //! each row's locator, its family and the identity facts admission
 //! established (length, volume serial and file ID of every member), the
 //! groups, the order and the checked state (conversion membership, which
-//! starts nothing by itself). Nothing that starts work is representable in it:
-//! no open preview, no viewed or highlighted row, no conversion queue and no
-//! adoption.
+//! starts nothing by itself), and a row's "not verified by MSCanvas" label
+//! (owner decision P201-RESTORE, 2026-11-04). Nothing that starts work is
+//! representable in it: no open preview, no viewed or highlighted row, no
+//! conversion queue and no adoption.
 //!
 //! ## What a start does
 //!
@@ -34,8 +35,10 @@
 //! unreachable file stays a marked row; it is never dropped, never relinked
 //! and never aged out. Only an offer the user could take ages a row: one a read
 //! presented as matching, in a session that then saved without putting it back,
-//! was declined. A row [`MAX_OFFERS`] sessions declined is no longer offered by
-//! a session whose first read finds it matching, and every read of that
+//! was declined; accepted by the owner on 2026-11-03, a row a press handed to
+//! admission and admission refused is not (ADR 0061, decision 10's note). A row
+//! [`MAX_OFFERS`] sessions declined is no
+//! longer offered by a session whose first read finds it matching, and every read of that
 //! session says how many such rows there are; it leaves the document only at a
 //! save after that read.
 //!
@@ -71,6 +74,7 @@ use crate::preview::dto::{
 };
 use crate::preview::selection::bounded_context;
 use crate::preview::service::workspace_rows::LiveRow;
+use crate::project::record::{NotVerifiedByMscanvas, storable_label};
 
 /// The document's fixed name in the per-user directory.
 const FILE_NAME: &str = "workspace-restore.json";
@@ -171,10 +175,41 @@ pub struct StoredRow {
     pub checked: bool,
     /// How many sessions have presented this row as matching and saved
     /// without putting it back, since it was last in the Workbench: 0 for a
-    /// live row and for a row only ever marked.
+    /// live row and for a row only ever marked. A row a press handed to
+    /// admission is not counted (`Lane::asked`).
     pub offered: u32,
     /// Primary first.
     pub members: Vec<StoredMember>,
+    /// The row's "not verified by MSCanvas" label, in the project record's shape
+    /// (owner decision P201-RESTORE, 2026-11-04; ADR 0061, decision 1's note).
+    /// Absent on a row with none and in a document from before this field, which
+    /// is why the schema version did not move; absent never claims verification.
+    /// Held as found and read only through [`StoredRow::label`], and no rule of
+    /// [`RestoreDocument::valid`] looks at it, so it can refuse no read or save.
+    ///
+    /// ponytail: a value `serde_json` cannot hold (past 128 levels, a number out of
+    /// range, a lone surrogate) fails the parse, so that document is refused whole,
+    /// as damage to its JSON anywhere is; a lazy value type closes that if a build
+    /// ever writes one, and none does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_verified_by_mscanvas: Option<serde_json::Value>,
+}
+
+impl StoredRow {
+    /// The label the stored value says, by the project record's rule: both halves
+    /// present and nothing else, one of them set, and a release it could store. A
+    /// value that is not one gives the row no label and the row and the document
+    /// stand, unlike every other field here (ADR 0061, decision 6): as built on
+    /// 2026-11-04, not an owner decision.
+    fn label(&self) -> Option<NotVerifiedByMscanvas> {
+        let stored = self.not_verified_by_mscanvas.clone()?;
+        let label: NotVerifiedByMscanvas = serde_json::from_value(stored).ok()?;
+        let release = label.unverified_build_release;
+        if release.as_deref().is_some_and(|text| !storable_label(text)) {
+            return None;
+        }
+        NotVerifiedByMscanvas::of(label.unverified_settings, release)
+    }
 }
 
 /// One object, as admission found it.
@@ -498,8 +533,9 @@ pub struct RestoredRowDto {
 #[serde(rename_all = "camelCase")]
 pub struct PlacedRowDto {
     pub handle: String,
-    /// The stored group; `None` is Ungrouped.
-    pub group: Option<String>,
+    /// The stored group's place among a read's groups, not its name: the
+    /// Workbench allows two groups of one name.
+    pub group: usize,
     pub checked: bool,
     /// `false`: the object was already a row, which keeps its arrangement.
     pub added: bool,
@@ -667,6 +703,13 @@ struct Lane {
     /// offers the user could take, which a save counts in `offered`. Never
     /// refilled within a session, so positions stay meaningful.
     presented: HashSet<usize>,
+    /// The rows a press of Restore workspace handed to admission because its
+    /// re-check found them matching. A save does not count one still waiting
+    /// after that, and a later read presenting it changes nothing: accepted by
+    /// the owner on 2026-11-03 for a row admission refused (ADR 0061, decision
+    /// 10's note), as built and not an owner decision for a file replaced since
+    /// the re-check.
+    asked: HashSet<usize>,
     /// The restored rows this session no longer offers (decision 10), decided
     /// once, by this session's first read: `None` before it, when nothing is
     /// expired and a save must place every stored row, so nothing leaves the
@@ -730,6 +773,7 @@ impl WorkspaceRestoreStore {
                     restored: Vec::new(),
                     gone: HashSet::new(),
                     presented: HashSet::new(),
+                    asked: HashSet::new(),
                     expired: None,
                 },
             ),
@@ -881,7 +925,8 @@ impl WorkspaceRestoreStore {
             {
                 continue;
             }
-            let declined = u32::from(lane.presented.contains(&index));
+            let declined =
+                u32::from(lane.presented.contains(&index) && !lane.asked.contains(&index));
             let row = StoredRow {
                 offered: row.offered.saturating_add(declined),
                 ..row.clone()
@@ -978,8 +1023,15 @@ impl WorkspaceRestoreStore {
     /// only if the row admission answered with is the recorded objects; a file
     /// replaced since the re-check stays in the Workbench as any file added
     /// there, and its restored row reads `changed` at the next read. A marked
-    /// row, or one admission refused, stays where it is. Nothing is previewed
-    /// and nothing is written here: the webview's next save records the result.
+    /// row, or one admission refused, stays where it is. A row the press handed
+    /// to admission and still waiting is not counted as declined: accepted by the
+    /// owner on 2026-11-03 for one admission refused (ADR 0061, decision 10's
+    /// note), as built and not an owner decision for a file replaced since the
+    /// re-check. Nothing is previewed and nothing is written here: the webview's
+    /// next save records the result. A row that left brings its stored label, on
+    /// the same proof, to the row admission answered with and to the table a
+    /// reference asks (owner decision P201-RESTORE, 2026-11-04; onto a row already
+    /// there, as built on 2026-11-04, not an owner decision).
     ///
     /// # Errors
     ///
@@ -1007,7 +1059,7 @@ impl WorkspaceRestoreStore {
             .saves
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let waiting: Vec<(usize, Option<String>, StoredRow)> = {
+        let waiting: Vec<(usize, usize, StoredRow)> = {
             let lane = self.locked();
             let Some(expired) = &lane.expired else {
                 return Err(PreviewErrorDto::new(
@@ -1018,10 +1070,11 @@ impl WorkspaceRestoreStore {
             };
             lane.restored
                 .iter()
-                .flat_map(|group| group.rows.iter().map(move |row| (&group.name, row)))
+                .enumerate()
+                .flat_map(|(at, group)| group.rows.iter().map(move |row| (at, row)))
                 .enumerate()
                 .filter(|(index, _)| !expired.contains(index) && !lane.gone.contains(index))
-                .map(|(index, (name, row))| (index, name.clone(), row.clone()))
+                .map(|(index, (at, row))| (index, at, row.clone()))
                 .collect()
         };
         let mut roots = Roots::new();
@@ -1029,18 +1082,26 @@ impl WorkspaceRestoreStore {
             .into_iter()
             .filter(|(_, _, row)| check_row(row, &mut roots) == RowState::Matching)
             .collect();
+        // Before admission can refuse them: the press asked for these rows. A
+        // row the re-check marked is not among them: if a read of this session
+        // presented it as matching and the session saves, it is declined like
+        // any other, whether or not it ever matches again.
+        self.locked()
+            .asked
+            .extend(matching.iter().map(|(index, _, _)| *index));
         let paths: Vec<PathBuf> = matching
             .iter()
             .map(|(_, _, row)| PathBuf::from(primary_path(row)))
             .collect();
         between();
-        let workspace = service.add_files(&paths)?;
+        let mut workspace = service.add_files(&paths)?;
         let live: HashMap<String, Vec<(u64, String)>> = service
             .workspace_restore_rows()
             .iter()
             .filter_map(|row| Some((row.handle.clone(), objects(&stored_row(row)?))))
             .collect();
         let mut placed = Vec::new();
+        let mut labelled = Vec::new();
         let mut lane = self.locked();
         for ((index, group, row), outcome) in matching.iter().zip(&workspace.outcomes) {
             let (handle, added) = match outcome {
@@ -1052,13 +1113,21 @@ impl WorkspaceRestoreStore {
                 lane.gone.insert(*index);
                 placed.push(PlacedRowDto {
                     handle: handle.clone(),
-                    group: group.clone(),
+                    group: *group,
                     checked: row.checked,
                     added,
                 });
+                if let (Some(label), Some(primary)) = (row.label(), primary_identity(row)) {
+                    labelled.push((handle.clone(), primary, label));
+                }
             }
         }
         drop(lane);
+        // After the lane, because this takes the mutation gate; still under
+        // `saves`, so no save can record one of these rows before its label.
+        for (handle, primary, label) in labelled {
+            service.label_admitted_row(&mut workspace, &handle, primary, label);
+        }
         Ok(WorkspaceRestorePutBackDto { workspace, placed })
     }
 
@@ -1111,6 +1180,12 @@ fn primary_path(row: &StoredRow) -> &str {
     row.members
         .first()
         .map_or("", |member| member.path.as_str())
+}
+
+/// The object the row's primary member is, as a row and the label table name it.
+fn primary_identity(row: &StoredRow) -> Option<(u64, [u8; 16])> {
+    let primary = row.members.first()?;
+    Some((primary.volume_serial, file_id_bytes(&primary.file_id)?))
 }
 
 fn display_name(row: &StoredRow) -> &str {
@@ -1237,6 +1312,10 @@ fn stored_row(row: &LiveRow) -> Option<StoredRow> {
         checked: false,
         offered: 0,
         members,
+        not_verified_by_mscanvas: row
+            .not_verified
+            .as_ref()
+            .map(|label| serde_json::to_value(label).expect("a label always serializes")),
     };
     stored.members.iter().all(valid_member).then_some(stored)
 }
@@ -1395,6 +1474,7 @@ fn load(directory: &Path) -> Lane {
         restored,
         gone: HashSet::new(),
         presented: HashSet::new(),
+        asked: HashSet::new(),
         expired: None,
     };
     // Off: a refused document may be one the user had switched off.

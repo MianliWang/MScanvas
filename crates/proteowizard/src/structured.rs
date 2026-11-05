@@ -52,7 +52,7 @@ use crate::intent::{
 use crate::output_inspect::NonMzmlFormat;
 
 /// The executable every measured setting is bound to (ADR 0043 contract 3).
-const VERIFIED_MSCONVERT_SHA256: &str =
+pub const VERIFIED_MSCONVERT_SHA256: &str =
     "9BB6F5D5033BB8EAD925F67515538C1A5C246A71351C9F7C1830A3F190D590BD";
 
 /// On the wire, the number of bits: `32` or `64`.
