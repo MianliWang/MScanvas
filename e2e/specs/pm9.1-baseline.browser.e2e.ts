@@ -2505,6 +2505,8 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
               rail: style(".conversion-side").backgroundColor,
               field: type(".conversion-form-label"),
               track: [track.paddingTop, track.borderTopColor, track.backgroundColor],
+              // One line with the longer option chosen, so pressing it moves nothing below.
+              scope: Math.round(document.querySelector(".conversion-scope .conversion-segments-track")!.getBoundingClientRect().height),
               chosen: [chosen.backgroundColor, chosen.color, chosen.fontWeight],
               refused: style('.conversion-segment[data-choice-state="unavailable"]').textDecorationLine,
               tile: [tile.borderTopColor, tile.borderTopLeftRadius, tile.backgroundColor],
@@ -2519,6 +2521,7 @@ describe("PM9.1 browser baseline and the PM9.2 context line, rendered", () => {
             rail: "rgb(255, 255, 255)",
             field: "13px/550",
             track: ["2px", "rgb(220, 227, 235)", "rgb(247, 248, 250)"],
+            scope: 32,
             chosen: ["rgb(255, 255, 255)", "rgb(23, 105, 209)", "650"],
             refused: "line-through",
             tile: ["rgb(159, 191, 235)", "6px", "rgb(237, 244, 255)"],
