@@ -30,7 +30,7 @@ const STICK_BLEED = 4;
  * A second copy of these numbers in the adapter is how a wheel comes to anchor
  * somewhere other than where the cursor is: the element scales to its
  * container, so the only way from a client x to an m/z is through this viewBox
- * and this padding. `preserveAspectRatio="none"` and `width: 100%` are what
+ * and this band. `preserveAspectRatio="none"` and `width: 100%` are what
  * make that mapping linear.
  */
 const BAND = xBand(PLOT_PADDING_LEFT, PLOT_WIDTH - PLOT_PADDING_RIGHT);

@@ -614,7 +614,7 @@ function ChromatogramPlot({
         {selectedPoint === null ? null : (() => {
           const x = scale.x(selectedPoint.retentionTime);
           const at = (x / PLOT_WIDTH) * 100;
-          // Off the range on screen, the rule is clipped and so is its label.
+          // Off the range on screen, `inBand` hides the rule and so its label.
           return <span aria-hidden="true" className="chromatogram-cursor-label" data-side={at > 60 ? "left" : "right"}
             hidden={!inBand(x)}
             style={{ left: `${at.toFixed(3)}%` }}>

@@ -474,6 +474,20 @@ function sticks(): Element | null {
   return document.querySelector("path.spectrum-sticks");
 }
 
+/**
+ * That a gesture's transform lands each m/z where the range on screen now puts
+ * it, on the band the sticks are drawn over. Answers with the transform's scale.
+ */
+function expectTheLayerOnTheLiveRange(): number {
+  const transform = plot().querySelector("g.spectrum-sticks-layer")?.getAttribute("transform") ?? "";
+  const [shift, scale] = [...transform.matchAll(/\((-?[\d.e+-]+) /gu)].map((match) => Number(match[1]));
+  const band = { left: 16, drawnWidth: 968 };
+  for (const mz of [200, 250, 300]) {
+    expect(scale * xAt(mz, shown(), band) + shift, `m/z ${String(mz)}`).toBeCloseTo(xAt(mz, liveShown(), band), 6);
+  }
+  return scale;
+}
+
 beforeEach(() => {
   ownerRenders = 0;
   // Not `shouldAdvanceTime`. A wheel's settle is scheduled 120ms out, and a
@@ -1605,13 +1619,7 @@ describe("panning the spectrum with a press", () => {
     // Nothing was published for that frame, and the drawing moved anyway.
     expect(ownerRenders, "no render for the frame").toBe(publishedRenders);
     expect(layer()?.getAttribute("transform"), "the sticks moved").toMatch(/translate/u);
-    // To where the range on screen now puts them, on the band the sticks are drawn over.
-    const [shift, scale] = [...(layer()?.getAttribute("transform") ?? "").matchAll(/\((-?[\d.e+-]+) /gu)]
-      .map((match) => Number(match[1]));
-    const band = { left: 16, drawnWidth: 968 };
-    for (const mz of [200, 250, 300]) {
-      expect(scale * xAt(mz, shown(), band) + shift, `m/z ${String(mz)}`).toBeCloseTo(xAt(mz, liveShown(), band), 6);
-    }
+    expectTheLayerOnTheLiveRange();
     expect(rangeText(), "the range line moved").not.toBe(startedAt);
     expect(axisLow(), "the axis moved").toBe(formatMz(liveShown().low));
     // And its ticks with it: every one inside the range on screen now.
@@ -1625,6 +1633,25 @@ describe("panning the spectrum with a press", () => {
     // committed to -- so the transform left over from the gesture is gone.
     releasePointer(CENTRE_X - 200);
     expect(layer()?.getAttribute("transform"), "after the settle").toBeNull();
+  });
+
+  it("keeps the sticks on the axis through a wheel zoom, where the layer scales as well as moves", () => {
+    renderViewport();
+    drawProjection(DRAWN);
+    send({ type: "viewport-step", domain: mzDomain(200, 300) });
+    drawProjection({ ...DRAWN, low: 200, high: 300 });
+
+    // The first notch opens the gesture and is drawn; the second is a frame over it.
+    wheel({ deltaY: IN, clientX: clientXFor(0.25) });
+    wheel({ deltaY: IN, clientX: clientXFor(0.25) });
+
+    // A pan's scale is 1, and there the band's left edge drops out of the sum.
+    expect(Math.abs(expectTheLayerOnTheLiveRange() - 1), "the layer scaled").toBeGreaterThan(0.1);
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(plot().querySelector("g.spectrum-sticks-layer")?.getAttribute("transform"), "after the settle").toBeNull();
   });
 
   it("starts no gesture for a drag pushed outward at an edge it already rests on", () => {

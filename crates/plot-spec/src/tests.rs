@@ -7344,6 +7344,46 @@ fn a_rule_at_the_last_position_is_not_drawn_through_the_legend_or_a_label() {
     }
 }
 
+/// A name too long for the plot is condensed to the room its legend entry has,
+/// which ends short of the band's end, so its stroke sample stays whole inside the
+/// frame. Room measured from the frame would crowd the sample by the inset.
+#[test]
+fn a_long_legend_name_leaves_its_stroke_sample_whole() {
+    let name = "m".repeat(MAX_LABEL_CHARS);
+    let panel = chromatogram_panel(vec![
+        chromatogram_series(
+            &name,
+            StyleRole::Measurement,
+            vec![10.0, 13.0],
+            vec![100.0, 300.0],
+        ),
+        chromatogram_series(
+            "BPC",
+            StyleRole::SecondaryMeasurement,
+            vec![10.0, 13.0],
+            vec![40.0, 120.0],
+        ),
+    ]);
+    let size = FigureSize::new(MIN_FIGURE_WIDTH, MIN_FIGURE_CHROME_HEIGHT + 400.0).expect("a size");
+    let document =
+        svg::render(&FigureSpec::new(FigureTheme::Light, size, vec![panel]).expect("a figure"));
+
+    let (left, right) = plot_edges(&document);
+    let (x, _, head, _) = drawn_texts(&document)
+        .into_iter()
+        .find(|(_, _, _, words)| *words == name)
+        .expect("the name");
+    let length: f64 = head
+        .split("textLength=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .and_then(|value| value.parse().ok())
+        .expect("condensed");
+    assert!((x - (right - 12.0)).abs() < 0.01, "{document}");
+    // The entry's 18-unit sample and 4-unit gap, then the frame's left edge.
+    assert!((x - length - 22.0 - left).abs() < 0.01, "{document}");
+}
+
 /// Ticks are fitted to the band they are drawn over, not the frame, so the inset
 /// can change which of them fit. Pinned in both directions: an end tick standing
 /// further in leaves a wide label room it did not have, and a shorter axis fits
@@ -7540,6 +7580,12 @@ fn the_precision_decision_measures_the_band() {
     for spec in [
         panel(vec![0.0, 0.5, 0.5 + apart, 1.0], &[]),
         panel(vec![0.0, 1.0], &[0.5, 0.5 + apart]),
+        panel(vec![0.0, 1.0], &[])
+            .with_intervals(vec![
+                IntervalSpec::new(0.5, 0.5 + apart, IntervalRole::Window, None)
+                    .expect("an interval"),
+            ])
+            .expect("an interval on a valid panel"),
     ] {
         let document = svg::render(&figure_of(spec));
         assert!(document.contains("stroke-width=\"1.0000\""), "{document}");

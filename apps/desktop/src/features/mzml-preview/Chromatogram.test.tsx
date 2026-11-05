@@ -813,9 +813,10 @@ describe("choosing a scan", () => {
     const clip = document.querySelector("#chromatogram-clip rect");
     expect(clip).toHaveAttribute("x", "64");
     expect(clip).toHaveAttribute("width", "924");
-    const gridline = document.querySelector(".plot-gridlines line");
-    expect(gridline).toHaveAttribute("x1", "64");
-    expect(gridline).toHaveAttribute("x2", "988");
+    for (const rule of [document.querySelector(".plot-gridlines line"), document.querySelector("g.chromatogram-axes line")]) {
+      expect(rule).toHaveAttribute("x1", "64");
+      expect(rule).toHaveAttribute("x2", "988");
+    }
   });
 
   it("keeps the last scan's rule and label on a range that ends a unit in the last place short of it", () => {
@@ -847,6 +848,24 @@ describe("choosing a scan", () => {
     expect(document.querySelector("g.chromatogram-selected")).toHaveAttribute("visibility", "visible");
     expect(document.querySelector("g.chromatogram-selected line")).toHaveAttribute("x1", "72");
     expect(document.querySelector(".chromatogram-cursor-label")).toBeVisible();
+  });
+
+  it("hides the rule of a hovered scan off the range on screen, even one that would land in the inset", () => {
+    renderChromatogram();
+    const rule = () => document.querySelector("g.chromatogram-hover");
+    // The nearest scan is asked of the whole run, so a pointer at the range's edge can name one a hair past it.
+    for (const [domain, x] of [[{ low: 0.2501, high: 0.3 }, 72], [{ low: 0.2, high: 0.2499 }, 980]] as const) {
+      send({ type: "viewport-step", domain });
+      fireEvent.pointerMove(plot(), { clientX: x });
+      expect(state().hover?.spectrumIndex).toBe(20);
+      expect(rule()).toHaveAttribute("visibility", "hidden");
+    }
+
+    send({ type: "viewport-step", domain: { low: 0.25, high: 0.3 } });
+    fireEvent.pointerMove(plot(), { clientX: 72 });
+    expect(state().hover?.spectrumIndex).toBe(20);
+    expect(rule()).toHaveAttribute("visibility", "visible");
+    expect(rule()?.querySelector("line")).toHaveAttribute("x1", "72");
   });
 
   it("draws no marker while nothing is selected", () => {
