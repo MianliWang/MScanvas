@@ -2582,6 +2582,26 @@ fn the_worker_vocabulary_maps_onto_closed_codes_and_nothing_else() {
     );
 }
 
+/// A worker refused its Job, as a host in a Job with UI restrictions is,
+/// failed to launch; unless its suspended root was not reclaimed, which is a
+/// process the run cannot account for.
+#[test]
+fn a_worker_refused_its_job_is_a_launch_failure_or_unaccounted() {
+    use super::process_failure;
+    let refused = |owned_root_reclaimed| mscanvas_proteowizard::ProcessError::AssignToOwnedJob {
+        detail: String::new(),
+        owned_root_reclaimed,
+    };
+    assert_eq!(
+        process_failure(&refused(true)),
+        (FailureCode::WorkerLaunchFailed, FailureStage::Runtime)
+    );
+    assert_eq!(
+        process_failure(&refused(false)),
+        (FailureCode::WorkerNotAccountedFor, FailureStage::Runtime)
+    );
+}
+
 #[test]
 fn a_row_page_and_an_evidence_read_are_bounded_and_checked() {
     let scratch = Scratch::new("m91-bounded");

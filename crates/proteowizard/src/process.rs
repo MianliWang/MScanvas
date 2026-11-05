@@ -1916,6 +1916,27 @@ mod windows_job {
                 restrictions,
             ))
         }
+
+        /// Gives this Job a worker's UI restrictions and nothing else, so a
+        /// test can stand in for a host already in such a Job.
+        #[cfg(test)]
+        pub(super) fn restrict_ui(&self) -> io::Result<()> {
+            let restrictions_length = structure_size::<u32>()?;
+            // SAFETY: The handle is live, and the pointer and byte size describe
+            // the one DWORD of JOBOBJECT_BASIC_UI_RESTRICTIONS for this call.
+            let restricted = unsafe {
+                set_information_job_object(
+                    self.handle.as_raw_handle(),
+                    JOB_OBJECT_BASIC_UI_RESTRICTIONS_CLASS,
+                    ptr::from_ref(&WORKER_UI_RESTRICTIONS).cast(),
+                    restrictions_length,
+                )
+            };
+            if restricted == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
     }
 
     fn structure_size<T>() -> io::Result<u32> {
@@ -3366,6 +3387,79 @@ mod tests {
         assert!(!test_directory.path().join("child-launched").exists());
         drop(host);
         root.wait().expect("reap the root");
+    }
+
+    /// The same refusal through the production launch, from a host whose Job
+    /// has UI restrictions and nothing else, so it can still create a process.
+    /// The worker fails before it runs, and the launch never falls back to a
+    /// Job without them: Windows accepts a plain Job there, so a fallback would
+    /// run the worker and write its marker.
+    #[cfg(windows)]
+    #[test]
+    fn a_worker_from_a_host_in_a_restricted_job_fails_before_it_runs() {
+        let test_directory = TestDirectory::new();
+        let spec = CommandSpec::new(
+            BackendTool::MsConvert,
+            std::env::current_exe().expect("test executable"),
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_restricted_host",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            test_directory.path(),
+        );
+        let mut command = process_command(&spec).expect("construct the host command");
+        command
+            .env("MSCANVAS_PROCESS_TEST_DIRECTORY", test_directory.path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        suspend_root_creation(&mut command);
+        let host = command.spawn().expect("spawn the suspended host");
+        let job = OwnedProcessJob::assign(&host).expect("host Job");
+        job.restrict_ui().expect("restrict the host Job");
+        resume_owned_root(&host, &job).expect("resume the host");
+
+        let output = host.wait_with_output().expect("reap the host");
+        drop(job);
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("Err(AssignToOwnedJob {"), "{stdout}");
+        assert!(stdout.contains("(os error 50)"), "{stdout}");
+        assert!(stdout.contains("owned_root_reclaimed: true"), "{stdout}");
+        assert!(!test_directory.path().join("child-launched").exists());
+    }
+
+    /// The host's end of the test above: one worker launch, reported.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "controlled subprocess entry point"]
+    fn controlled_restricted_host() {
+        let test_directory = controlled_test_directory();
+        let executable = std::env::current_exe().expect("test executable");
+        let digest = Sha256Digest::calculate_file(&executable).expect("digest");
+        let spec = CommandSpec::analysis_worker(
+            executable,
+            digest,
+            [
+                "--ignored",
+                "--exact",
+                "process::tests::controlled_output_marker",
+                "--nocapture",
+                "--test-threads=1",
+            ]
+            .map(OsString::from)
+            .to_vec(),
+            test_directory,
+            Vec::new(),
+            WORKER_LIMITS,
+        );
+        println!(
+            "{:?}",
+            execute_cancellable(&spec, &CancellationToken::new())
+        );
     }
 
     /// A host in a Job with no UI restrictions, the ordinary way to be in one,
