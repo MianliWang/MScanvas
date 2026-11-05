@@ -183,6 +183,8 @@ The crate forbids `unsafe` code. No input panics it.
   `zeroIsAValue` in ADR 0067 decision 7, #184, a draft PR, at `e6e8fe61`): a zero
   that means "not detected" is missing by then, and one declared a value stays a
   value.
+  *2026-11-04, a status:* #184 merged as `e9dd0a9e`, so
+  [ADR 0067](0067-study-model-for-cross-sample-analysis.md) is on `main`.
 - **A non-positive intensity** in either tested group refuses the call, naming
   the feature and the sample (S-2.7 (b)). It has no log2, and flooring it would
   invent a value. One such value hides the whole volcano until the user goes
@@ -316,6 +318,8 @@ df 2e4, far above a cohort's.
 ADR 0067 decision 7 (#184, a draft PR, not on `main`) leaves this to this
 record. At `e6e8fe61` its table has seven states; B-6.5 (2026-11-03) made the
 engine's discard the seventh, `engineDiscarded`.
+*2026-11-04, a status:* #184 merged as `e9dd0a9e`, so
+[ADR 0067](0067-study-model-for-cross-sample-analysis.md) is on `main`.
 
 | State | In a statistic | Basis |
 | --- | --- | --- |
@@ -473,6 +477,7 @@ Not answered here:
   `matrix`: a chunked matrix, with the CSV at most 64 MiB. It still has no effect
   here. ADR 0067 decision 6 (#184, a draft PR, not on `main`) is the record that
   takes it.
+  *2026-11-04, a status:* #184 merged as `e9dd0a9e`, so it has.
 - Raising the PCA bound (decision 5), for N-A7.
 - S-2.8's 1/5-minimum: the scale it is taken on (raw or log2) and the samples
   the minimum is taken over, for N-A7.

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
 import { ipcTable } from "../support/fixtures";
-import { readBackSavedPreferences, revealRosterRow, seedARunOf } from "../support/viewer";
+import { PLOT_BAND, PLOT_VIEWBOX_WIDTH, readBackSavedPreferences, revealRosterRow, seedARunOf, SPECTRUM_BAND } from "../support/viewer";
 import { choosePlotMenuItem, FIGURE_DIALOG, openFigureDialog } from "../support/figure";
 import { installIpcBoundary, IPC_TABLE_KEY, ipcCalls, consoleEntries, holdInvoke, heldCallers, releaseInvokeHold, setInvokeResult, setInvokeRejection } from "../support/harness";
 
@@ -138,13 +138,13 @@ async function open(kind: Parameters<typeof answers>[0] = "complete", options = 
   if (await rosterToggle.getAttribute("aria-expanded") === "true") await browser.$(".workbench-home").click();
 }
 async function point(selector: string, fraction: number) {
-  return browser.execute((css, part) => {
+  return browser.execute((css, part, rt, mzBand, width) => {
     const node = document.querySelector(css)!;
     const box = node.getBoundingClientRect();
-    const mz = node.classList.contains("spectrum-plot");
-    return { x: Math.round(box.x + box.width * ((mz ? 8 : 64) + (mz ? 984 : 924) * part) / 1000),
+    const band = node.classList.contains("spectrum-plot") ? mzBand : rt;
+    return { x: Math.round(box.x + box.width * (band.left + band.drawnWidth * part) / width),
       y: Math.round(box.y + box.height * .45) };
-  }, selector, fraction);
+  }, selector, fraction, PLOT_BAND, SPECTRUM_BAND, PLOT_VIEWBOX_WIDTH);
 }
 async function clickPlot(selector: string, fraction: number) {
   await browser.performActions([{ type: "pointer", id: "m73-pointer", parameters: { pointerType: "mouse" }, actions: [
@@ -530,14 +530,14 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     // low edge and the band's clip cuts it there, as the export cuts it.
     await browser.execute((css: string) => document.querySelector<SVGSVGElement>(css)?.focus(), MZ);
     await browser.keys("+");
-    await browser.waitUntil(async () => await lineStartX() < 8, { timeoutMsg: "the zoomed line never started beyond the band" });
+    await browser.waitUntil(async () => await lineStartX() < SPECTRUM_BAND.left, { timeoutMsg: "the zoomed line never started beyond the band" });
     expect(await browser.$(MZ).getAttribute("data-drawn-as")).toBe("line");
     await capture("profile-line-zoomed");
     // And from the button, the same.
     const line = () => browser.$(".spectrum-panel .spectrum-line").getAttribute("d");
     const before = await line();
     await browser.$('.spectrum-panel button[aria-label="Zoom in m/z"]').click();
-    await browser.waitUntil(async () => await line() !== before && await lineStartX() < 8,
+    await browser.waitUntil(async () => await line() !== before && await lineStartX() < SPECTRUM_BAND.left,
       { timeoutMsg: "the button's zoom never redrew the cut line" });
     expect(await browser.$(MZ).getAttribute("data-drawn-as")).toBe("line");
     expect(await consoleEntries()).toEqual([]);

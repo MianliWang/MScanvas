@@ -54,9 +54,9 @@ async function pointAt(fraction: number): Promise<{ readonly x: number; readonly
       ? { left: 0, top: 0, width: 0, height: 0 }
       : { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
   }, PLOT);
-  const drawn = ((1_000 - 64 - 12) / 1_000) * box.width;
+  const drawn = (908 / 1_000) * box.width;
   return {
-    x: Math.round(box.left + (64 / 1_000) * box.width + drawn * fraction),
+    x: Math.round(box.left + (72 / 1_000) * box.width + drawn * fraction),
     y: Math.round(box.top + box.height / 2),
   };
 }

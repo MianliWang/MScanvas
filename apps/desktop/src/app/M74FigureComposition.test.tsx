@@ -206,7 +206,7 @@ describe("M7.4 through the delivered figure owner", () => {
     await waitFor(() => expect(api.spectrumProjectionRequests.at(-1)).toEqual({ exportToken: "token-1", low: 200, high: 800 }));
     const plot = within(panel).getByRole("img");
     vi.spyOn(plot, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 260, width: 1000, height: 260, toJSON: () => ({}) });
-    for (const [event, x] of [["pointerDown", 254], ["pointerMove", 500], ["pointerUp", 500]] as const) {
+    for (const [event, x] of [["pointerDown", 258], ["pointerMove", 500], ["pointerUp", 500]] as const) {
       fireEvent[event](plot, { button: 0, pointerId: 1, isPrimary: true, pointerType: "mouse", clientX: x, clientY: 80 });
     }
     fireEvent.click(plot, { detail: 1 });

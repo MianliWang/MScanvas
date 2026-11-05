@@ -12,6 +12,8 @@ library, is implemented ([PR #172](https://github.com/MianliWang/MScanvas/pull/1
 ([slice 3 notes](#slice-3-notes-2026-11-03)), without View with… and the Settings row; nothing else here is. The questions still open for the owner are listed
 [at the end](#open-questions-for-the-owner). None of them blocks slices 1
 and 2; questions 1 and 8 gate slice 3, the interface (decision 16).
+*2026-11-04, a status:* slice 2 merged with #181 as `52f8f794` and slice 3 with #203 as
+`07c232db`, so both are on `main`, not only on the branches named above.
 Owner decision, 2026-10-30 (A0060): Q1: a View button. Q8: slice 3 builds on #164's
 structure (FE-1 (a)), with decision 1's content, the phases, Cancel and the CNV-D8
 progress amendment as written. The pane's place moves with FE-2.
@@ -334,6 +336,16 @@ an entry exists. The open of a hit needs `msaccess` too (ADR 0056 decision 3).
   that writes to the user's destination. A queue can hold 1,024 items and run
   for hours (ADR 0057 decision 3), and a click that silently waits that long is
   worse than a refusal that says why.
+
+*Owner decision, 2026-11-04 (R-3-RAW, option `refuse`):* once an open runs no process
+(R-3, ADR 0057 decision 2), View stays refused during a conversion, for a hit as well
+as a miss, with its reason stated. The first bullet's reason, that a hit opens through
+`msaccess`, is then rewritten; the reason that stays is the conversion slot below,
+which a hit holds while it takes the file's digest and opens. The interface's refusal
+does not change. The costs the page names: a RAW already viewed cannot be opened
+during a conversion, and a queue may run for hours; an mzML can open then and a RAW
+cannot
+([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 
 **A view conversion is a conversion: it holds the conversion slot.** It takes
 the slot that ADR 0012 gives a queue, with the slot's lock-free busy mirror,
@@ -1327,6 +1339,10 @@ it says so; the decisions stand otherwise.
      although adding files answers `raw_view_busy`. Neither ends the view.
      `a_terminal_queue_adopts_one_output_and_then_the_rest_while_a_view_runs`
      pins this; a guard the owner chooses changes that test.
+     Owner decision, 2026-11-03 (VIEW-A): keep allowing it, as built, so no guard is
+     added and that test stands. Accepted cost: at one moment Add files is refused
+     while this add works, so the rule is not uniform
+     ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
    - **The next open of any row ends a cached view and its pin when that open
      is accepted,** not when it commits, so an open that then fails does not
      leave a preview off screen holding an entry. Since the merge with PR #175
@@ -1509,6 +1525,11 @@ unless it carries "Owner decision, 2026-11-03".
      [draft PR #211](https://github.com/MianliWang/MScanvas/pull/211), not merged.
      Whether it must land before this change merges is not answered: the decision page
      says DEF-2 blocks shipping the view cache, and the answer names no order.
+     Owner decision, 2026-11-04 (P203-HOOK, option `after`): it need not; landing before
+     any release with the view cache is enough
+     ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
+     *2026-11-04, a status:* this change merged as `07c232db` and #211 as `9d7d6445`,
+     so the hook is on `main`.
    - **The split of View with… and the Settings row** (note 7). Until the row exists
      the cache is bounded by its 10 GiB cap, and a person has no way to clear it.
      Owner decision, 2026-11-03 (A0060-split): accepted. View with… and the Settings
@@ -1517,6 +1538,14 @@ unless it carries "Owner decision, 2026-11-03".
      The beta 1 page describes a release that has no view cache, so the edit belongs
      to the next release's page. Not an owner decision: the answers of 2026-11-03 do
      not cover it.
+     Owner decision, 2026-11-04 (P211-1 `accept`, P211-2 `doc`, P211-3 `accept`): what
+     an uninstall does on a manual upgrade, through a junction under the application
+     data and with a locked file stays as built, and each is written on the next
+     release's install page
+     ([after-beta-1 plan, section 7.2](../../development/AFTER_BETA1_PLAN.md#72-polish-and-limits)).
+     Not written: that page does not exist yet.
+   - **A cached Thermo RAW during a conversion.** Owner decision, 2026-11-04 (R-3-RAW,
+     option `refuse`): View stays refused (the note under decision 5).
 10. **Departures the answers of 2026-11-03 do not cover.** Each stays as built, and
     is not an owner decision.
     - Exports of a view are withheld until slice 4 (note 2).
@@ -1731,6 +1760,12 @@ Q2–Q5 and Q7 stand. Q6, the hold release, stays open under HR-1.
    under 1.5 GiB that can be found, plus a cancel and a two-process eviction
    check (decision 14). Without it, the slices merge on fake-provider and
    browser evidence, and the timings stay unmeasured.
+
+   *Owner decision, 2026-11-03 (HR-1.1):* granted; it runs when the interface is
+   ready. The window is asked for when its turn comes (HR-1.7), and no run starts on
+   this answer alone. Accepted cost: an idle-desktop window, about 1 slice; if no
+   suitable large file is found, only the search can be recorded
+   ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 7. **Viewing RAW files over 1.5 GiB.** Raising the 4 GiB document limit of the
    inspector and the viewing reader would amend ADR 0056 decision 2, whose caps
    are a resource contract. *Default: the limit stays, and such files go

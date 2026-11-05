@@ -13,6 +13,9 @@
   restored row may say which folders it sat in, on a name collision only. The
   roster is no longer session-only without exception: ADR 0061 is the durable
   storage *Persistence exclusion* asked for. See *Amended by ADR 0061* below.
+  *Owner decision, 2026-11-03 (A0006-amendment):* the owner saw this text and
+  accepted it as written; the approval in principle of 2026-10-31 had not shown it
+  ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 - Amended: 2026-10-30 ([ADR 0060](0060-one-click-view-of-a-thermo-raw-file-through-a-conversion-cache.md),
   slice 2) — a Thermo RAW row's preview state can be backed by a pinned
   view-cache entry. The row keeps its lease, its handle and its identity, and

@@ -45,3 +45,24 @@ writes the same bytes after it.
   detection, through `evidence_figure`, pinned in `targeted_ms1/tests.rs` by
   `pinned_figure()`. The test fixes the result and plan identifiers that a run
   would mint, because the caption names both.
+
+## The domain inset
+
+All five were regenerated together on 2026-11-04, deliberately, so the screen and
+the figure draw one geometry: each end of the domain axis now stands 8 figure
+units inside the frame, and a mark at the end of a run no longer sits on it.
+
+Only positions on the domain axis moved, each within 8 units: the x of every path
+vertex, sample mark, marker rule, interval and tick, and the width of an interval
+band. Every height, colour, word, `<title>` and `<desc>` is byte-identical, and so
+is `fixtures/saved-figure-golden/linked-full-run.msfigure`, which records no
+geometry. A colour here does not change this way: see FE-1 item 3 in
+`docs/development/OWNER_DECISIONS_V511.md`. See
+`docs/architecture/FIGURE_MODEL.md`.
+
+It took two commits of one pull request. `7d9dce09` moved the positions and left
+the legend on the frame, and review found the dotted window end of
+`targeted-stored-result.svg` running through its legend's words. The second moved
+the legend 8 units further in, the x of its swatches, marks and words and nothing
+else, in the four documents that have one: every one of the five but
+`spectrum-full-source.svg`.

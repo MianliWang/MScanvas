@@ -72,6 +72,12 @@ The owner has not answered it.
 
 *Owner decision, 2026-11-03 (Q8-exception):* accepted: a row pressed for Restore and refused by admission (for example a full workspace) is not counted as declined, so a row refused every session never expires. The direction is conservative: such rows stay longer, and nothing is lost ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 
+*Owner decision, 2026-11-03 (F-177):* #177 merged by accident. Go forward with
+#204, after its review is dry and its checks are green, and #177 is not reverted
+([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+*2026-11-04:* #204 merged as `2452038e`, so the notes below that say "on PR #204"
+describe `main`.
+
 Related: [0006](0006-multi-dataset-workspace-boundary.md) (the workspace
 boundary, its *Persistence exclusion* and its collision-only relative context),
 [0057](0057-conversion-capacity-and-viewing-during-conversion.md) (capacity
@@ -332,6 +338,14 @@ at 960x640 leaves the track scrolling and no row whole (measured 2026-11-03; in
 zh-CN the offer takes one line and one row shows whole). Restore workspace and
 Start fresh stay whole there, and the rows are reached from the keyboard.
 
+*Owner decision, 2026-11-03 (P177):* marked rows stay in the notice, as built, not
+in the list as "in place" says. Accepted cost: about 154 px at 960x640, up to 256 px
+while a warning, failure or refusal stands beside the offer, not collapsible; with
+three refusals at once the marked list needs scrolling
+([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+That answer does not name the neutral notice above: with no refusal standing, the
+track can show no marked row whole. That point stays as built, not an owner decision.
+
 *Alternative:* put matching rows back automatically at every start. Rejected
 (by the owner on 2026-10-31) because of what admission costs, which the
 re-check above does not:
@@ -393,6 +407,11 @@ What the interface slice needed, as built (2026-11-03):
   *As built (2026-11-03), not an owner decision, for the owner's eye:*
   [ADR 0006](0006-multi-dataset-workspace-boundary.md) was amended for it; that
   text has not been shown to the owner.
+
+  *Owner decision, 2026-11-03 (A0006-amendment):* the owner saw that text and
+  accepted it as written on `main`: only on a name collision, at most three folders,
+  at most 128 characters, never a drive, share or root
+  ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 
 ### 5. Bounds
 
@@ -536,6 +555,13 @@ user pressed Restore workspace; its source file is untouched, and the next start
 whose first read finds it matching reports it as no longer offered. The owner has
 not answered this.
 
+*Owner decision, 2026-11-03 (Q8-exception):* accepted for the row this note starts
+with: a row pressed for Restore and refused by admission is not counted as declined,
+so a row refused every session never expires
+([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
+The other case above, a row the re-check found marked, which the press does not
+protect, is not in that answer and stays as built, not an owner decision.
+
 *As built (2026-11-04), not an owner decision:* a row whose file was replaced
 after the press's re-check is not counted either, and it was not refused. The
 re-check found it matching, so the press handed it to admission; admission adds
@@ -600,6 +626,10 @@ answer is a one-line change.
   same two lines keep a group the user dissolved or renamed from returning, and
   the document holds no history that could tell the two apart. `ae14765e` brought
   an empty stored group back. The owner has not answered this.
+
+  *Owner decision, 2026-11-03 (P204):* accepted: user-made empty groups no longer
+  survive a restart
+  ([section 1d](../../development/OWNER_DECISIONS_V511.md#1d-decided-on-2026-11-03)).
 - *As built (2026-11-03), not an owner decision, for the owner's eye:* "order"
   above and "of rows within them" in decision 1 do not hold for a group Restore
   workspace took only part of. A row still waiting follows the group's live rows,
@@ -608,6 +638,12 @@ answer is a one-line change.
   they are live. Nothing is lost. `ae14765e` and `main` do the same, so a revert
   does not change this. The order of groups does hold. The owner has not answered
   this.
+
+  *Owner decision, 2026-11-04 (P204-6, option `accept`):* accepted as built. In a
+  group a put-back took only part of, the order within the group is not the order
+  stored, and decision 1's "of rows within them" does not hold there. Whether that
+  order affects the conversion queue's order was not checked
+  ([section 1e](../../development/OWNER_DECISIONS_V511.md#1e-decided-on-2026-11-04)).
 - *As built (2026-11-04), not an owner decision:* a row still waiting, in any
   state, joins the group of its stored name at the same count among the groups of
   that name, or a new one if there is none (`placeRestored`, `buildArrangement`).
@@ -651,6 +687,9 @@ answer is a one-line change.
 - *As built (2026-11-03), not an owner decision, for the owner's eye:* on PR #204
   a row a press could not place is an exception to the point above, set out in
   decision 10's note. The owner has not answered this.
+
+  *Owner decision, 2026-11-03 (Q8-exception):* accepted for a row refused by
+  admission; the note beside decision 10's says what the answer does not reach.
 - A restored row that matches is the same object at the same length, not the
   same content: a rewrite in place at the same length comes back with its
   group and checked state, and put-back admits what is there then (decision 4,
