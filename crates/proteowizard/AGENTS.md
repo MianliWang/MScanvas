@@ -27,7 +27,7 @@ This crate translates typed MSCanvas intent into validated ProteoWizard executab
 - `rt_mz_map.rs` reads MS1 spectra only through the viewing reader's selected read, at the table's offsets, over one handle per pass, and decodes nothing itself. Its one computation over the arrays is ADR 0068's: the greatest stored intensity per cell. Add no other without a record.
 - An empty cell is not zero. Nothing is smoothed, centroided, interpolated or converted between units; mixed units refuse the map, a refused spectrum refuses the whole map, and a cancelled pass returns no raster.
 - A map is of one polarity and one representation. A file where only some MS1 spectra declare one has no map; a file where none do does not separate by it, and each of its maps states it as not reported (as built 2026-11-04, not an owner decision).
-- An MS1 spectrum that declares a narrow scan (MAP-1.9) is on no map, is never read for one, and is counted. Narrow means it states `zoom scan` (MS:1000497) or `SIM spectrum` (MS:1000582); never derive it from a width, a scan window or the filter string (ADR 0068 decision 1).
+- An MS1 spectrum that declares a narrow scan (MAP-1.9) is on no map, is never read for one, and is counted. Narrow is read as stating `zoom scan` (MS:1000497) or `SIM spectrum` (MS:1000582), a reading, not an owner decision. A numeric definition of narrow is open (ADR 0068 decision 1). Until one is decided, do not derive it from a width or a scan window, and do not read the filter string (R-1-ANALYZER, section 1e).
 
 ## mzML viewing reader (ADR 0056)
 
