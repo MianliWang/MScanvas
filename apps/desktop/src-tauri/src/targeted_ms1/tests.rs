@@ -13,7 +13,9 @@
 //! builds from M9.0's verified material; run them with
 //! `cargo test -p mscanvas-desktop --lib targeted_ms1 -- --ignored`. Their
 //! projects and fixtures live under `.tmp/m91-jobs/tests/`, on the work area's
-//! own volume, except where a test is about another volume.
+//! own volume, except where a test is about another volume. One of them keeps a
+//! result for the next runtime and fails unless `MSCANVAS_A07_HISTORY_DIR` names
+//! a new folder: `--skip a_real_result_of_this_runtime` leaves it out.
 
 use std::fmt::Write as _;
 use std::fs;

@@ -1,9 +1,11 @@
-//! What ties this build to one analysis runtime, in one place.
+//! What ties this build's Rust code to one analysis runtime.
 //!
-//! A later runtime changes these values and the recipe's and the worker's code
-//! around them stays as it is. The recipe's own words -- the engine's package
-//! and algorithm, the fixed profile, the recipe version and the adapter -- stay
-//! in [`super::recipe`], which re-exports the three pins it names plans by.
+//! Another runtime changes these values, and with them what names the same
+//! runtime elsewhere: the adapter's `KEY_MODULES`, the provisioning script and
+//! the tests that state a run's facts. The recipe's own words -- the engine's
+//! package and algorithm, the fixed profile, the recipe version and the adapter
+//! -- stay in [`super::recipe`], which re-exports the three pins it names plans
+//! by.
 
 /// SHA-256 of the canonical runtime manifest this build pins, as
 /// `scripts/provision_targeted_ms1_runtime.py` writes it.
