@@ -53,6 +53,10 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **Convert this file… converts this file.** The Conversion page holds that one
+  file, named on a third scope button, and your checked rows stay as they were,
+  before and after the run. **Checked rows** brings them back. **Open in Conversion**
+  on a Shimadzu or SCIEX row does the same.
 - **The preference record is now schema 2, and it keeps what beta 1 saved.** It
   gains text size, contrast, motion, wheel habit, crosshair, grid and whether
   preferences are remembered, each defaulting to what MSCanvas does today. No

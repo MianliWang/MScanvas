@@ -100,6 +100,7 @@ export interface MessageParameters {
   readonly m74CnvRerunBetweenItems: { readonly count: number; readonly total: number };
   readonly m74CnvExcludedNames: { readonly count: number };
   readonly m74CnvNoticeNoConvertibleTarget: { readonly toggle: string; readonly add: string };
+  readonly m74CnvNoticeHeldRowGone: { readonly toggle: string; readonly add: string; readonly convert: string; readonly open: string; readonly checkedRows: string; readonly allRows: string };
   readonly m74CnvRequestFailed: { readonly action: string };
   readonly m74CnvSkipping: { readonly name: string };
   readonly m74CnvSkip: { readonly name: string };

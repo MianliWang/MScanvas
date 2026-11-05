@@ -37,6 +37,10 @@ table remains the target, including the unsupported portions called out below:
 - **WSP-008 — Implemented by M6.7 ([PR #100](https://github.com/MianliWang/MScanvas/pull/100)).** Selected means the
   user's curated checkbox membership in M7.2, including a selection of one; all means every eligible
   workspace row, including rows outside search. Focus never supplies a fallback.
+  **Convert this file… (N-C3, 2026-11-04)** is a third scope, the one file, reached
+  from a RAW row's pane, a viewed file's row, a failed open and a vendor row; no check
+  changes, and its button is there only while it is current. What follows of "both
+  scopes" holds for it too.
   Requested, eligible and excluded counts are visible. Both scopes use the
   complete roster's chosen sort, with added order breaking ties, and show every
   resolved queue member in order. Rust's current capacity is displayed and an

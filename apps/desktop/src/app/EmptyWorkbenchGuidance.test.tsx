@@ -149,7 +149,9 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's states, %s", (loc
     });
     expect(document.querySelector(".workbench-shell")).toHaveAttribute("data-surface", "conversion");
     expect(document.getElementById("workbench-conversion")).toHaveFocus();
-    expect(within(row).getByRole("checkbox")).toBeChecked();
+    // N-C3: that one file is the scope, and its check does not change.
+    expect(screen.getByRole("radio", { name: VENDOR_ROW.fileName })).toBeChecked();
+    expect(within(row).getByRole("checkbox")).not.toBeChecked();
   });
 
   it("says what a picked vendor row with no View is, and opens it in Conversion", async () => {
@@ -174,7 +176,8 @@ describe.each(["en", "zh-CN"] as const)("the empty Workbench's states, %s", (loc
     expect(document.querySelector(".workbench-shell")).toHaveAttribute("data-surface", "conversion");
     // The pressed button left with the evidence; the keyboard followed.
     expect(document.getElementById("workbench-conversion")).toHaveFocus();
-    // The row is checked for conversion; nothing was read.
-    expect(within(row).getByRole("checkbox")).toBeChecked();
+    // N-C3: that one file is the scope, and its check does not change; nothing was read.
+    expect(screen.getByRole("radio", { name: lcd.fileName })).toBeChecked();
+    expect(within(row).getByRole("checkbox")).not.toBeChecked();
   });
 });
