@@ -3384,10 +3384,10 @@ mod tests {
         root.wait().expect("reap the root");
     }
 
-    /// Everything the Job promises, through the production launch: the worker
-    /// is kept off the desktop and the clipboard, and dies of an exception
-    /// nothing handles as an ordinary exit with that exception's code, every
-    /// process gone, for the caller to classify.
+    /// Through the production launch: the kernel refuses the worker a new
+    /// desktop and a clipboard read, and an exception nothing handles is an
+    /// ordinary exit with that exception's code, every process gone, for the
+    /// caller to classify.
     #[cfg(windows)]
     #[test]
     fn a_worker_is_restricted_and_dies_of_an_unhandled_exception_with_its_code() {
@@ -3428,12 +3428,12 @@ mod tests {
         assert!(stdout.contains("clipboard refused Some(5)"), "{stdout}");
     }
 
-    /// The worker's end of the test above. It asks the clipboard only for a
-    /// private format nobody has put there, so no owner is made to render
-    /// anything, and it never writes: if the restriction were gone, a write here
-    /// would be the user's clipboard. It does not ask `GetErrorMode` about the
-    /// dialog: that read 0 in a Job with the flag when measured, and a harness
-    /// can have the bit anyway. `a_workers_job_carries_...` is what pins the flag.
+    /// The worker's end of the test above. It never opens the clipboard and asks
+    /// only for a private format, so with the restriction gone it is told the
+    /// clipboard is not open, and it never writes: a write here would be the
+    /// user's clipboard. It does not ask `GetErrorMode` about the dialog: that
+    /// read 0 in a Job with the flag when measured, and a harness can have the
+    /// bit anyway. `a_workers_job_carries_...` is what pins the flag.
     #[cfg(windows)]
     #[test]
     #[ignore = "controlled subprocess entry point"]
@@ -3457,12 +3457,8 @@ mod tests {
                 access: u32,
                 attributes: *const c_void,
             ) -> *mut c_void;
-            #[link_name = "OpenClipboard"]
-            fn open_clipboard(owner: *mut c_void) -> i32;
             #[link_name = "GetClipboardData"]
             fn get_clipboard_data(format: u32) -> *mut c_void;
-            #[link_name = "CloseClipboard"]
-            fn close_clipboard() -> i32;
         }
         const DESKTOP_CREATEWINDOW: u32 = 0x0002;
         const CF_PRIVATELAST: u32 = 0x02FF;
@@ -3489,19 +3485,9 @@ mod tests {
             println!("desktop refused {desktop_error:?}");
         }
 
-        // SAFETY: Takes no pointer from this process. The returned handle is
-        // only compared to null, never read.
-        let (opened, data) = unsafe {
-            (
-                open_clipboard(ptr::null_mut()),
-                get_clipboard_data(CF_PRIVATELAST),
-            )
-        };
+        // SAFETY: Takes no pointer. The returned handle is only compared to null.
+        let data = unsafe { get_clipboard_data(CF_PRIVATELAST) };
         let clipboard_error = io::Error::last_os_error().raw_os_error();
-        if opened != 0 {
-            // SAFETY: This thread opened the clipboard just above.
-            unsafe { close_clipboard() };
-        }
         if data.is_null() {
             println!("clipboard refused {clipboard_error:?}");
         }
