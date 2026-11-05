@@ -1,7 +1,7 @@
 /** Production viewer; deterministic synthetic source responses at the existing IPC boundary only. */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { buildPreview, buildSpectrum, secondFile, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
+import { buildPreview, buildSpectrum, secondFile, selectedFile, unavailableBackend } from "../../apps/desktop/src/test/previewFixtures";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 import { ipcTable } from "../support/fixtures";
@@ -712,6 +712,16 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.waitUntil(async () => (await reads()).at(-1) === 7);
     await browser.waitUntil(async () => (await shownScans()).includes("7"), { timeoutMsg: "the scan never came into the list" });
     await capture(label("went-into-range"));
+    // While no scan can be selected, Enter says why beside the input, and the number stays.
+    await setInvokeResult("inspect_backend", unavailableBackend);
+    await browser.$("[data-backend-item]").click();
+    await browser.$('[data-backend-action="recheck"]').click();
+    await browser.keys("Escape");
+    await browser.$('#backend-status[data-backend-mode="notice"]').waitForDisplayed({ timeout: 30_000 });
+    await goToScan("3");
+    expect(await browser.$(".scan-go-to-refusal").getText()).toBe(words.viewerSelectionBackend);
+    expect(await browser.$("#scan-go-to").getValue()).toBe("3");
+    await capture(label("no-selection-reason"));
     expect(await consoleEntries()).toEqual([]);
   });
   for (const scenario of [
