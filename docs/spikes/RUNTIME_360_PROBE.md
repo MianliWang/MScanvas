@@ -316,8 +316,10 @@ needs this only if it measures below 1e3.
 
 The call forms that changed, for A-07 and A-20. This is a floor and not the full list: the two
 bindings were not compared call by call, and these are only forms this run and its review met. Of
-the 44 `oms.` names `probe_classes.py` uses, `TransformationModel_DataPoint` alone is absent on
-3.5.0. That says nothing of how the others are called, because `probe_classes.py` did not run on 3.5.0.
+the 44 top-level `oms.` names `probe_classes.py` uses, `TransformationModel_DataPoint` alone is
+absent on 3.5.0. Nested names such as `ConsensusMapNormalizerAlgorithmMedian.NormalizationMethod`
+were not counted, and the count says nothing of how the others are called, because
+`probe_classes.py` did not run on 3.5.0.
 
 | 3.5.0 | 3.6.0 |
 | --- | --- |
@@ -330,9 +332,9 @@ the 44 `oms.` names `probe_classes.py` uses, `TransformationModel_DataPoint` alo
 The first three rows ran on both engines. The last two ran on 3.6.0, and their 3.5.0
 forms are from that binding's docstrings.
 
-These also changed, and each was tried on both engines (`call_forms.py`, third and fourth review
-rounds, on `<pinned>` and on a scratch copy of `<shape>` that matched its manifest in three SHA-256
-passes and was then deleted). "Also" means 3.6.0 still takes the 3.5.0 form. `MzTabFile.load` takes
+These also changed, and each was tried on both engines (`call_forms.py`, fourth review round, on
+`<pinned>` and on a scratch copy of `<shape>` that matched its manifest in three SHA-256 passes and
+was then deleted). "Also" means 3.6.0 still takes the 3.5.0 form. `MzTabFile.load` takes
 neither engine's form on the other, and the last two rows are return types.
 
 ANA-004's adapter completes unedited. The `getPolarity()` and `getType()` row is on its path:
