@@ -176,8 +176,9 @@ export const SpectrumTable = memo(function SpectrumTable({
   const [goToText, setGoToText] = useState("");
   /** The text Go to scan refused, until it is edited. */
   const [goToRefused, setGoToRefused] = useState<string | null>(null);
-  /** Enter pressed in Go to scan while no scan could be selected, until it is edited. */
+  /** Enter pressed in Go to scan while no scan could be selected, until it is edited or selection reopens. */
   const [goToHeld, setGoToHeld] = useState(false);
+  if (goToHeld && canCommit) setGoToHeld(false);
   /** The row to come back to. */
   const pageTop = useRef<number | null | undefined>(undefined);
   if (pageTop.current === undefined) pageTop.current = readPage?.() ?? null;

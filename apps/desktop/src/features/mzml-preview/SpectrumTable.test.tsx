@@ -553,6 +553,11 @@ describe("the spectrum table while selection is unavailable", () => {
     rerenderWithAvailability({ status: "available" });
     expect(screen.queryByText(reason)).toBeNull();
     expect(input).toHaveValue("3");
+    // That Enter was answered. A lane closing again later says nothing until another.
+    rerenderWithAvailability(BLOCKED);
+    expect(screen.queryByText(reason)).toBeNull();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByText(reason)).toBeVisible();
   });
 
   it("leaves Enter to an input method composing in Go to scan", () => {

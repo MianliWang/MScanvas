@@ -631,6 +631,25 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     const node = document.querySelector<HTMLElement>(selector);
     return node !== null && node.scrollWidth <= node.clientWidth;
   }, css);
+  /**
+   * An empty input's placeholder, its only visible name, fits the box it is drawn
+   * in. A search field's hidden clear glyph keeps about 12 px of that box unless a
+   * rule removes it while the placeholder shows, and no DOM measure sees that room,
+   * so the rule itself is looked for.
+   */
+  const placeholderWhole = (css: string) => browser.execute((selector: string) => {
+    const input = document.querySelector<HTMLInputElement>(selector);
+    const context = document.createElement("canvas").getContext("2d");
+    if (input === null || context === null || !input.matches(":placeholder-shown")) return false;
+    const glyph = "::-webkit-search-cancel-button";
+    const glyphGone = input.type !== "search" || [...document.styleSheets]
+      .flatMap(sheet => { try { return [...sheet.cssRules]; } catch { return []; } })
+      .some(rule => rule instanceof CSSStyleRule && rule.style.display === "none" && rule.selectorText.endsWith(":placeholder-shown" + glyph)
+        && input.matches(rule.selectorText.slice(0, -glyph.length)));
+    const style = getComputedStyle(input);
+    context.font = style.font;
+    return glyphGone && context.measureText(input.placeholder).width <= input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  }, css);
   async function goToScan(text: string) {
     await browser.$("#scan-go-to").setValue(text);
     await browser.keys("Enter");
@@ -737,6 +756,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await revealScans();
     expect(await browser.$(".scan-head .scan-result-count").getText()).toBe("36,319");
     for (const css of [".scan-head", ".scan-head .scan-result-count"]) expect(await whole(css)).toBe(true);
+    for (const css of ["#scan-search", "#scan-go-to"]) expect(await placeholderWhole(css)).toBe(true);
     await capture(label("one-number"));
     // Some of them match: the head stays one line with nothing cut, and the counts are whole under it.
     await browser.$(SCANS + ' input[type="search"]').setValue("scan=1");

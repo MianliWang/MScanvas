@@ -403,20 +403,24 @@
 /* The scan list (direction A): one head with the title, the count, the search
    and the MS-level filter, then the table. */
 .workbench-shell .spectrum-table-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.scan-head { display: flex; flex: none; align-items: center; gap: 6px; height: 36px; min-width: 0; padding: 0 8px 0 12px; }
+.scan-head { display: flex; flex: none; align-items: center; gap: 4px; height: 36px; min-width: 0; padding: 0 8px 0 12px; }
 .scan-head h2 { flex: none; margin: 0; font-size: 13px; font-weight: 650; white-space: nowrap; }
 /* One line at every width: the title and the one number stay whole, the go-to
-   input holds six digits, the MS filter holds, and the search gives way. */
+   input holds six digits, the MS filter holds, and the search gives way, down to
+   its placeholder: in the 300 px column, gaps of 4 and the search's own padding
+   leave "Search" about 3 px to spare. */
 .scan-head .scan-result-count { flex: none; max-width: 40%; margin: 0 auto 0 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 /* The three counts do not fit that line at any width that matters, so they take
    their own under it, and wrap rather than lose a number. */
 .spectrum-table-panel > .scan-result-count { flex: none; margin: 0; padding: 0 8px 4px 12px; color: var(--color-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .spectrum-table-panel > .scan-result-count:empty { display: none; }
 .plot-search { position: relative; flex: 0 1 180px; min-width: 60px; }
-.plot-search > .ui-icon { position: absolute; top: 7px; left: 8px; color: var(--color-text-secondary); pointer-events: none; }
+.plot-search > .ui-icon { position: absolute; top: 7px; left: 7px; color: var(--color-text-secondary); pointer-events: none; }
 .scan-head input, .scan-head select { min-height: 30px; font: inherit; font-size: 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-input); padding: 4px 8px; background: var(--color-surface); color: var(--color-text-primary); }
 .scan-head select { flex: none; max-width: 40%; }
-.scan-head .plot-search > input { width: 100%; padding-left: 28px; }
+.scan-head .plot-search > input { width: 100%; padding-left: 26px; padding-right: 4px; }
+/* The browser's clear glyph keeps its room while hidden; an empty field gives it to the placeholder. */
+.scan-head .plot-search > input:placeholder-shown::-webkit-search-cancel-button { display: none; }
 .scan-head .scan-go-to { flex: none; width: 52px; padding-inline: 6px; }
 .scan-head .scan-go-to[aria-invalid="true"] { border-color: var(--color-danger); }
 .scan-go-to-refusal { margin: 0; padding: 4px 8px 4px 12px; color: var(--color-danger); font-size: 12px; overflow-wrap: anywhere; }
