@@ -1,0 +1,774 @@
+/** N-V3 through the delivered application: go to a scan, the list following the range, memory per file. */
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { App } from "./App";
+import { PreviewApiProvider } from "../features/mzml-preview/api";
+import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
+import { availableBackend, buildPreview, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, quarantinedBackend, secondFile, selectedFile } from "../test/previewFixtures";
+import { UI_RESOURCES } from "../features/preferences/i18n";
+import { usePreviewWorkspace } from "../features/mzml-preview/usePreviewWorkspace";
+import { mzDomain } from "../features/mzml-preview/viewer/spectrumViewport";
+
+const en = UI_RESOURCES.en;
+const source = () => {
+  const preview = buildPreview(8);
+  return { ...preview, spectrumTable: { ...preview.spectrumTable,
+    rows: preview.spectrumTable.rows.map((row, index) => ({ ...row,
+      identifier: index === 3 || index === 7 ? `rare-raw-${index}` : `raw-${index}`,
+      totalIonCurrent: (index + 1) * 10,
+      retentionTime: { value: index, unit: "notReported" as const },
+    })),
+  } };
+};
+const spectrum = async (index: number) => ({ outcome: "spectrum" as const, spectrum: { ...buildSpectrum(index, 12),
+  mzLow: 100, mzHigh: 900, viewportDomain: { state: "admitted" as const, low: 100, high: 900 } } });
+async function mount(preview = source()) {
+  const api = createFakePreviewApi({ initialDatasets: [selectedFile], preview, spectrum });
+  render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+    <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+  </WorkspaceDropTransportProvider>);
+  fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
+  await screen.findByRole("grid", { name: en.scansTitle });
+  return { api };
+}
+const grid = () => screen.getByRole("grid", { name: en.scansTitle });
+const shown = () => within(grid()).getAllByRole("row").filter(row => row.hasAttribute("data-row-position"))
+  .map(row => Number(row.getAttribute("data-source-index")));
+const goToInput = () => screen.getByRole("textbox", { name: en.scanGoTo });
+function goTo(text: string) {
+  fireEvent.change(goToInput(), { target: { value: text } });
+  fireEvent.keyDown(goToInput(), { key: "Enter" });
+}
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+describe("go to scan N", () => {
+  it("selects the scan through the press path and keeps focus in the input", async () => {
+    const { api } = await mount();
+    goToInput().focus();
+    goTo("3");
+    await screen.findByRole("img", { name: /^Spectrum 2,/u });
+    expect(api.requestedSpectra.at(-1)).toBe(2);
+    expect(document.activeElement).toBe(goToInput());
+    expect(goToInput()).toHaveValue("");
+    expect(goToInput()).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("clears the filters that hide it, and leaves filters that do not", async () => {
+    await mount();
+    const search = screen.getByRole("searchbox", { name: en.scanSearch });
+    fireEvent.change(search, { target: { value: "rare" } });
+    expect(shown()).toEqual([3, 7]);
+    goTo("4"); // Index 3, which "rare" lets through: nothing to clear.
+    await screen.findByRole("img", { name: /^Spectrum 3,/u });
+    expect(search).toHaveValue("rare");
+    goTo("2");
+    await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    expect(search).toHaveValue("");
+    expect(shown()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(within(grid()).getAllByRole("row").find(row => row.getAttribute("data-source-index") === "1")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("refuses a number not in the table in place, and changes nothing", async () => {
+    const { api } = await mount();
+    const before = api.requestedSpectra.length;
+    const search = screen.getByRole("searchbox", { name: en.scanSearch });
+    fireEvent.change(search, { target: { value: "rare" } });
+    goTo("99");
+    const refusal = en.scanGoToRefused.replace("{{value}}", "99");
+    expect(screen.getByText(refusal)).toBeVisible();
+    expect(goToInput()).toHaveAttribute("aria-invalid", "true");
+    expect(goToInput()).toHaveAccessibleDescription(expect.stringContaining(refusal));
+    expect(goToInput()).toHaveValue("99");
+    expect(search).toHaveValue("rare");
+    expect(api.requestedSpectra.length).toBe(before);
+    fireEvent.change(goToInput(), { target: { value: "9" } });
+    expect(screen.queryByText(refusal)).toBeNull();
+    expect(goToInput()).not.toHaveAttribute("aria-invalid");
+  });
+});
+
+describe("the list following the chromatogram's range (V-2)", () => {
+  const chromatogram = () => screen.getByRole("region", { name: "Chromatogram" });
+  const count = () => document.querySelector(".scan-result-count:not(:empty)")?.textContent ?? "";
+  const counted = (visible: number) => `${visible} matches / 8 loaded rows / 8 reported spectra`;
+  async function setRange(low: string, high: string) {
+    fireEvent.keyDown(within(chromatogram()).getByRole("button", { name: en.plotMoreExports }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: en.rangeSet }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    fireEvent.change(within(chromatogram()).getByRole("textbox", { name: en.rangeLow }), { target: { value: low } });
+    fireEvent.change(within(chromatogram()).getByRole("textbox", { name: en.rangeHigh }), { target: { value: high } });
+    fireEvent.click(within(chromatogram()).getByRole("button", { name: "Apply range" }));
+  }
+  const fitAll = () => fireEvent.click(within(chromatogram()).getByRole("button", { name: en.viewerReset }));
+
+  it("follows the committed range and says how many of how many, then comes back on a reset", async () => {
+    await mount();
+    expect(count()).toBe("8");
+    await setRange("2", "4.5");
+    await waitFor(() => expect(shown()).toEqual([2, 3, 4]));
+    expect(count()).toBe(counted(3));
+    fitAll();
+    await waitFor(() => expect(shown()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]));
+    expect(count()).toBe("8");
+  });
+
+  it("says the range hides the selected scan, and moves the range to it without reading anything", async () => {
+    const { api } = await mount();
+    goTo("8");
+    await screen.findByRole("img", { name: /^Spectrum 7,/u });
+    const reads = api.requestedSpectra.length;
+    await setRange("1", "3");
+    await waitFor(() => expect(shown()).toEqual([1, 2, 3]));
+    const sentence = en.scanSelectedOutsideRange.replace("{{name}}", "8");
+    expect(screen.getByText(sentence)).toBeVisible();
+    expect(screen.getByRole("button", { name: en.scanNext })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: en.scanNext })).toHaveAccessibleDescription(sentence);
+    expect(screen.getByRole("img", { name: /^Spectrum 7,/u })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: en.scanRevealInRange }));
+    await waitFor(() => expect(shown()).toContain(7));
+    expect(screen.queryByText(sentence)).toBeNull();
+    expect(api.requestedSpectra.length).toBe(reads);
+  });
+
+  it("clears the filters and moves the range when both hide the selected scan", { timeout: 15_000 }, async () => {
+    await mount();
+    goTo("8");
+    await screen.findByRole("img", { name: /^Spectrum 7,/u });
+    await setRange("1", "3");
+    await waitFor(() => expect(shown()).toEqual([1, 2, 3]));
+    const search = screen.getByRole("searchbox", { name: en.scanSearch });
+    fireEvent.change(search, { target: { value: "raw-2" } });
+    await waitFor(() => expect(shown()).toEqual([2]));
+    expect(screen.getByText(en.scanSelectedOutside.replace("{{name}}", "8"))).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: en.scanReveal }));
+    await waitFor(() => expect(shown()).toContain(7));
+    expect(search).toHaveValue("");
+  });
+
+  it("moves the range to the scan without touching a filter that does not hide it", { timeout: 15_000 }, async () => {
+    await mount();
+    const search = screen.getByRole("searchbox", { name: en.scanSearch });
+    const level = screen.getByRole("combobox", { name: en.scanMsLevel });
+    fireEvent.change(search, { target: { value: "rare" } });
+    fireEvent.change(level, { target: { value: "2" } });
+    goTo("8");
+    await screen.findByRole("img", { name: /^Spectrum 7,/u });
+    await setRange("1", "3.5");
+    await waitFor(() => expect(shown()).toEqual([3]));
+    fireEvent.click(screen.getByRole("button", { name: en.scanRevealInRange }));
+    await waitFor(() => expect(shown()).toEqual([7]));
+    expect(search).toHaveValue("rare");
+    expect(level).toHaveValue("2");
+  });
+
+  it("calls a selected row with no scan number a spectrum, and writes a number as the Scan column does", { timeout: 15_000 }, async () => {
+    const run = source();
+    await mount({ ...run, spectrumTable: { ...run.spectrumTable, rows: run.spectrumTable.rows.map(row =>
+      ({ ...row, scanNumber: row.index === 5 ? null : row.index === 6 ? 1234 : row.scanNumber })) } });
+    const press = (index: number) => fireEvent.click(within(grid()).getAllByRole("row").find(row => row.getAttribute("data-source-index") === String(index))!);
+    press(5);
+    await screen.findByRole("img", { name: /^Spectrum 5,/u });
+    await setRange("1", "3");
+    await waitFor(() => expect(shown()).toEqual([1, 2, 3]));
+    expect(screen.getByText(en.scanSelectedSpectrumOutsideRange.replace("{{name}}", "5"))).toBeVisible();
+    expect(screen.queryByText(en.scanSelectedOutsideRange.replace("{{name}}", "5"))).toBeNull();
+    const search = screen.getByRole("searchbox", { name: en.scanSearch });
+    fireEvent.change(search, { target: { value: "raw-2" } });
+    expect(screen.getByText(en.scanSelectedSpectrumOutside.replace("{{name}}", "5"))).toBeVisible();
+    fireEvent.change(search, { target: { value: "" } });
+    fitAll();
+    await waitFor(() => expect(shown()).toContain(6));
+    press(6);
+    await screen.findByRole("img", { name: /^Spectrum 6,/u });
+    await setRange("1", "3");
+    expect(await screen.findByText(en.scanSelectedOutsideRange.replace("{{name}}", "1,234"))).toBeVisible();
+  });
+
+  it("names the range when a narrow one holds no scan, with the rows still loaded", async () => {
+    await mount();
+    await setRange("2.2", "2.8");
+    await waitFor(() => expect(screen.getByText(en.scanNoMatchesInRange)).toBeVisible());
+    expect(count()).toBe(counted(0));
+    fitAll();
+    await waitFor(() => expect(shown()).toHaveLength(8));
+    expect(screen.queryByText(en.scanNoMatchesInRange)).toBeNull();
+  });
+
+  it("goes to a scan the range hides, by the selection's own reveal", async () => {
+    await mount();
+    await setRange("1", "3");
+    await waitFor(() => expect(shown()).toEqual([1, 2, 3]));
+    goTo("7");
+    await screen.findByRole("img", { name: /^Spectrum 6,/u });
+    await waitFor(() => expect(shown()).toContain(6));
+    expect(within(grid()).getAllByRole("row").find(row => row.getAttribute("data-source-index") === "6")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("leaves a truncated prefix unfiltered, since it has no chromatogram to follow", async () => {
+    const preview = buildPreview(8, true);
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile],
+      preview: { ...preview, spectrumTable: { ...preview.spectrumTable, totalRowCount: 120_000 } }, spectrum });
+    render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+    </WorkspaceDropTransportProvider>);
+    fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
+    await screen.findByRole("grid", { name: en.scansTitle });
+    expect(shown()).toHaveLength(8);
+    expect(screen.queryByRole("button", { name: en.viewerReset })).toBeNull();
+    expect(count()).toContain(en.scanPrefix);
+    goTo("120000");
+    expect(screen.getByText(en.scanGoToRefused.replace("{{value}}", "120000"))).toBeVisible();
+  });
+});
+
+/** The same file each time it is read, except that every read renumbers it. */
+const renumberedOnEachRead = () => {
+  let reads = 0;
+  return () => {
+    reads += 1;
+    const run = buildPreview(400);
+    return Promise.resolve({ ...run, spectrumTable: { ...run.spectrumTable,
+      rows: run.spectrumTable.rows.map(row => ({ ...row, identifier: `${row.identifier} read=${reads}` })) } });
+  };
+};
+
+describe("each file as it was left (VW-51, VW-35)", () => {
+  async function mountTwo(preview = () => Promise.resolve(buildPreview(400))) {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview, spectrum });
+    render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+    </WorkspaceDropTransportProvider>);
+    await screen.findByRole("treegrid");
+    return api;
+  }
+  /** A press on the row highlights it, and Enter on the list opens the highlighted row. */
+  async function open(api: ReturnType<typeof createFakePreviewApi>, name: string) {
+    const opens = api.openedHandles.length;
+    fireEvent.click(within(screen.getByRole("treegrid")).getByText(name));
+    fireEvent.keyDown(screen.getByRole("treegrid"), { key: "Enter" });
+    await waitFor(() => expect(api.openedHandles.length).toBe(opens + 1));
+    await screen.findByRole("grid", { name: en.scansTitle });
+  }
+  const scroller = () => grid().querySelector<HTMLElement>(".spectrum-table-viewport")!;
+  const scrollTo = (top: number) => { scroller().scrollTop = top; fireEvent.scroll(scroller()); };
+  const selectedRow = () => document.querySelector('div.spectrum-table-row[aria-selected="true"]')?.getAttribute("data-source-index") ?? null;
+  const ROW = 28;
+
+  it("brings back the selected scan, filters and page of each file", { timeout: 15_000 }, async () => {
+    const api = await mountTwo();
+    await open(api, selectedFile.fileName);
+    goTo("6");
+    await screen.findByRole("img", { name: /^Spectrum 5,/u });
+    fireEvent.change(screen.getByRole("combobox", { name: en.scanMsLevel }), { target: { value: "2" } });
+    scrollTo(120 * ROW);
+    const top = shown()[0];
+
+    await open(api, secondFile.fileName);
+    expect(screen.getByRole("combobox", { name: en.scanMsLevel })).toHaveValue("all");
+    expect(scroller().scrollTop).toBe(0);
+    fireEvent.change(screen.getByRole("searchbox", { name: en.scanSearch }), { target: { value: "scan=3" } });
+
+    const reads = api.requestedSpectra.length;
+    await open(api, selectedFile.fileName);
+    expect(screen.getByRole("combobox", { name: en.scanMsLevel })).toHaveValue("2");
+    expect(screen.getByRole("searchbox", { name: en.scanSearch })).toHaveValue("");
+    await screen.findByRole("img", { name: /^Spectrum 5,/u });
+    expect(api.requestedSpectra.slice(reads)).toEqual([5]);
+    // The list is where it was left, not at the selected row, which is out of view.
+    expect(scroller().scrollTop).toBe(120 * ROW);
+    expect(selectedRow()).toBeNull();
+    expect(shown()[0]).toBe(top);
+
+    await open(api, secondFile.fileName);
+    expect(screen.getByRole("searchbox", { name: en.scanSearch })).toHaveValue("scan=3");
+    expect(screen.getByRole("combobox", { name: en.scanMsLevel })).toHaveValue("all");
+  });
+
+  it("restores nothing from a re-read that renumbered the file, and a later go-to still reveals its row", { timeout: 15_000 }, async () => {
+    const api = await mountTwo(renumberedOnEachRead());
+    await open(api, selectedFile.fileName);
+    goTo("3");
+    await screen.findByRole("img", { name: /^Spectrum 2,/u });
+    scrollTo(200 * ROW);
+    const reads = api.requestedSpectra.length;
+    await open(api, selectedFile.fileName);
+    // Index 2 is another scan now, so it is not read and not selected.
+    expect(api.requestedSpectra.length).toBe(reads);
+    expect(selectedRow()).toBeNull();
+    expect(scroller().scrollTop).toBe(200 * ROW);
+    // A person asking for that number is a person asking: the row has to come into view.
+    goTo("3");
+    await screen.findByRole("img", { name: /^Spectrum 2,/u });
+    expect(selectedRow()).toBe("2");
+    expect(scroller().scrollTop).toBeLessThan(200 * ROW);
+  });
+
+  describe("per-scan zoom", () => {
+    const spectrumPanel = () => screen.getByRole("region", { name: en.viewerSpectrum });
+    async function zoomSpectrum(low: string, high: string) {
+      fireEvent.keyDown(within(spectrumPanel()).getByRole("button", { name: en.plotMoreExports }), { key: "Enter" });
+      fireEvent.click(await screen.findByRole("menuitem", { name: en.rangeSet }));
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+      fireEvent.change(within(spectrumPanel()).getByRole("textbox", { name: en.rangeLow }), { target: { value: low } });
+      fireEvent.change(within(spectrumPanel()).getByRole("textbox", { name: en.rangeHigh }), { target: { value: high } });
+      fireEvent.click(within(spectrumPanel()).getByRole("button", { name: "Apply range" }));
+    }
+    async function visit(api: ReturnType<typeof createFakePreviewApi>, scan: number) {
+      const asked = api.spectrumProjectionRequests.length;
+      goTo(String(scan));
+      await screen.findByRole("img", { name: new RegExp(`^Spectrum ${scan - 1},`, "u") });
+      await waitFor(() => expect(api.spectrumProjectionRequests.length).toBe(asked + 1));
+      return api.spectrumProjectionRequests.at(-1)!;
+    }
+    async function zoomed(api: ReturnType<typeof createFakePreviewApi>, scan: number) {
+      await visit(api, scan);
+      const asked = api.spectrumProjectionRequests.length;
+      await zoomSpectrum(String(100 + scan), String(500 + scan));
+      await waitFor(() => expect(api.spectrumProjectionRequests.length).toBe(asked + 1));
+    }
+    const shownWindow = (request: { low: number; high: number }) => [request.low, request.high];
+
+    it("does not put a zoom on the scan a renumbered re-read left at its index", { timeout: 15_000 }, async () => {
+      const api = await mountTwo(renumberedOnEachRead());
+      await open(api, selectedFile.fileName);
+      await zoomed(api, 3);
+      await open(api, selectedFile.fileName);
+      expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
+    });
+
+    it("gives each scan its own, asks once for it on return, and follows a reset", { timeout: 15_000 }, async () => {
+      const api = await mountTwo();
+      await open(api, selectedFile.fileName);
+      await zoomed(api, 3);
+      expect(shownWindow(await visit(api, 4))).toEqual([100, 900]);
+      expect(shownWindow(await visit(api, 3))).toEqual([103, 503]);
+      const asked = api.spectrumProjectionRequests.length;
+      fireEvent.click(within(spectrumPanel()).getByRole("button", { name: en.viewerMzReset }));
+      await waitFor(() => expect(api.spectrumProjectionRequests.length).toBe(asked + 1));
+      await visit(api, 4);
+      expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
+    });
+
+    // The 12th and 13th zoom are `scanMemory.test.ts`'s.
+    it("keeps a scan's zoom across files, each file's own", { timeout: 30_000 }, async () => {
+      const api = await mountTwo();
+      await open(api, selectedFile.fileName);
+      await zoomed(api, 3);
+      await open(api, secondFile.fileName);
+      expect(shownWindow(await visit(api, 3))).toEqual([100, 900]);
+      await zoomed(api, 5);
+      // Back to the first file: its selection, scan 3, comes back with its zoom.
+      await open(api, selectedFile.fileName);
+      await screen.findByRole("img", { name: /^Spectrum 2,/u });
+      await waitFor(() => expect(shownWindow(api.spectrumProjectionRequests.at(-1)!)).toEqual([103, 503]));
+    });
+  });
+});
+
+describe("forgetting a file", () => {
+  const zoom = mzDomain(103, 503);
+  type Api = ReturnType<typeof createFakePreviewApi>;
+  it.each<[string, (workspace: ReturnType<typeof usePreviewWorkspace>, api: Api) => unknown]>([
+    ["the row is removed", workspace => {
+      workspace.dispatchRoster({ type: "rowPressed", handle: selectedFile.handle, modifiers: { ctrl: false, shift: false } });
+      workspace.removeSelected();
+    }],
+    ["the workspace is cleared", workspace => workspace.clearList()],
+    ["a clear plan removes the row", workspace => workspace.executeActiveClear("plan", "removeNonRunning")],
+    ["the roster read back no longer has the row", async (workspace, api) => {
+      await api.removeDatasets([selectedFile.handle]);
+      workspace.reloadRoster();
+    }],
+  ])("brings back no selection and no zoom once %s and it comes back", { timeout: 15_000 }, async (_how, leave) => {
+    const api: Api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(buildPreview(8)), spectrum,
+      executeWorkspaceClear: () => api.removeDatasets([selectedFile.handle]).then(result => ({ status: "removed" as const, result })) });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={api}>{children}</PreviewApiProvider>
+      </WorkspaceDropTransportProvider>;
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper });
+    const opened = async (handle: string) => {
+      await waitFor(() => { expect(result.current.backendBusy).toBe(false); expect(result.current.previewBackendBusy).toBe(false); });
+      const opens = api.openedHandles.length;
+      await act(async () => { result.current.activateDataset(handle); });
+      await waitFor(() => expect(api.openedHandles).toHaveLength(opens + 1));
+      await waitFor(() => expect(result.current.preview.status).toBe("loaded"));
+      await waitFor(() => expect(result.current.spectrum.status).not.toBe("loading"));
+    };
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+    await opened(selectedFile.handle);
+    act(() => { result.current.selectSpectrum(3); });
+    await waitFor(() => expect(api.spectrumProjectionRequests.length).toBeGreaterThan(0));
+    act(() => { result.current.dispatchSpectrumViewportEvent({ type: "viewport-step", domain: zoom }); });
+    await waitFor(() => expect(api.spectrumProjectionRequests.at(-1)).toMatchObject(zoom));
+    await opened(secondFile.handle);
+    await act(async () => { await leave(result.current, api); });
+    await waitFor(() => expect(result.current.roster.datasets.some(row => row.handle === selectedFile.handle)).toBe(false));
+    await waitFor(() => expect(result.current.workspaceBusy).toBe(false));
+    await act(async () => { result.current.addFiles(); });
+    await waitFor(() => expect(result.current.roster.datasets.some(row => row.handle === selectedFile.handle)).toBe(true));
+    await opened(selectedFile.handle);
+    expect(result.current.viewerInteraction.selection).toBeNull();
+    const asked = api.spectrumProjectionRequests.length;
+    act(() => { result.current.selectSpectrum(3); });
+    await waitFor(() => expect(api.spectrumProjectionRequests.length).toBeGreaterThan(asked));
+    expect(api.spectrumProjectionRequests.at(-1)).toMatchObject({ low: 100, high: 900 });
+  });
+
+  it("does not bring a selection back once the row was removed and added again", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(buildPreview(8)), spectrum });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={api}>{children}</PreviewApiProvider>
+      </WorkspaceDropTransportProvider>;
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper });
+    const opened = async (handle: string, count: number) => {
+      await waitFor(() => expect(result.current.backendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(handle); });
+      await waitFor(() => expect(api.openedHandles).toHaveLength(count));
+      await waitFor(() => expect(result.current.preview.status).toBe("loaded"));
+      await waitFor(() => expect(result.current.spectrum.status).not.toBe("loading"));
+    };
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+    await opened(selectedFile.handle, 1);
+    act(() => { result.current.selectSpectrum(3); });
+    await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+    await opened(secondFile.handle, 2);
+    act(() => {
+      result.current.dispatchRoster({ type: "rowPressed", handle: selectedFile.handle, modifiers: { ctrl: false, shift: false } });
+      result.current.removeSelected();
+    });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(1));
+    await act(async () => { result.current.addFiles(); });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+    await opened(selectedFile.handle, 3);
+    expect(result.current.viewerInteraction.selection?.index ?? null).not.toBe(3);
+  });
+});
+
+describe("a spectrum on open (V-1)", () => {
+  /** A run stating each scan's MS level and declared TIC. */
+  const runOf = (scans: readonly (readonly [number, number])[], truncated = false) => {
+    const base = buildPreview(scans.length, truncated);
+    return { ...base, spectrumTable: { ...base.spectrumTable,
+      rows: base.spectrumTable.rows.map((row, index) => ({ ...row, msLevel: scans[index]![0], totalIonCurrent: scans[index]![1],
+        retentionTime: { value: index, unit: "notReported" as const } })) } };
+  };
+  async function opened(api: ReturnType<typeof createFakePreviewApi>) {
+    render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+    </WorkspaceDropTransportProvider>);
+    fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
+    await screen.findByRole("grid", { name: en.scansTitle });
+  }
+  const selected = () => document.querySelector('div.spectrum-table-row[aria-selected="true"]')?.getAttribute("data-source-index") ?? null;
+  const wrapper = (api: ReturnType<typeof createFakePreviewApi>) => ({ children }: { children: ReactNode }) =>
+    <WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+      <PreviewApiProvider value={api}>{children}</PreviewApiProvider>
+    </WorkspaceDropTransportProvider>;
+
+  it("selects the MS1 at the apex of the declared TIC, not a larger MS2, through a press's path", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf([[1, 10], [2, 900], [1, 70], [2, 500], [1, 30]]) });
+    await opened(api);
+    await screen.findByRole("img", { name: /^Spectrum 2,/u });
+    expect(api.requestedSpectra).toEqual([2]);
+    expect(selected()).toBe("2");
+    expect(screen.queryByText(en.viewerChooseHelp)).toBeNull();
+  });
+
+  it("gives a tie to the first in file order", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf([[1, 10], [1, 70], [2, 70], [1, 70]]) });
+    await opened(api);
+    await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    expect(api.requestedSpectra).toEqual([1]);
+  });
+
+  it("scrolls the list to an apex far down it: a first open has no page to keep", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf(Array.from({ length: 400 }, (_, index) => index === 300 ? [1, 999] as const : [2, 10] as const)) });
+    await opened(api);
+    await screen.findByRole("img", { name: /^Spectrum 300,/u });
+    expect(selected()).toBe("300");
+    expect(grid().querySelector<HTMLElement>(".spectrum-table-viewport")!.scrollTop).toBeGreaterThan(0);
+  });
+
+  it("selects nothing in a file with no MS1, and never an MS2 in its place (V-1-NOMS1)", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf([[2, 10], [2, 900], [3, 70]]) });
+    await opened(api);
+    expect(screen.getByText(en.viewerChooseHelp)).toBeVisible();
+    expect(api.requestedSpectra).toEqual([]);
+    expect(selected()).toBeNull();
+  });
+
+  it("selects nothing in a truncated table: a prefix's largest value is not the run's apex", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      preview: runOf([[1, 10], [1, 70]], true) });
+    await opened(api);
+    expect(screen.getByText(en.viewerChooseHelp)).toBeVisible();
+    expect(api.requestedSpectra).toEqual([]);
+  });
+
+  it("selects by the table when the run's model refuses, as a press can (mixed units)", async () => {
+    const run = runOf([[1, 10], [1, 70]]);
+    const mixed = { ...run, chromatogramExportToken: null, spectrumTable: { ...run.spectrumTable, rows: run.spectrumTable.rows.map((row, index) =>
+      ({ ...row, retentionTime: { value: index, unit: index === 0 ? "minute" as const : "second" as const } })) } };
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum, preview: mixed });
+    await opened(api);
+    await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    expect(api.requestedSpectra).toEqual([1]);
+  });
+
+  it("gives way to a person pressing a row while its read is out, and the late reply changes nothing", async () => {
+    const replies: (() => void)[] = [];
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], preview: runOf([[1, 10], [2, 5], [1, 70]]),
+      spectrum: index => new Promise(resolve => { replies[index] = () => { void spectrum(index).then(resolve); }; }) });
+    await opened(api);
+    await waitFor(() => expect(api.requestedSpectra).toEqual([2]));
+    fireEvent.click(within(grid()).getAllByRole("row").find(row => row.getAttribute("data-source-index") === "1")!);
+    await waitFor(() => expect(api.requestedSpectra).toEqual([2, 1]));
+    replies[1]!();
+    await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    await act(async () => { replies[2]!(); await Promise.resolve(); });
+    expect(screen.getByRole("img", { name: /^Spectrum 1,/u })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /^Spectrum 2,/u })).toBeNull();
+    expect(selected()).toBe("1");
+  });
+
+  it("holds another file's open until its read lands, as any spectrum read does", async () => {
+    let reply: () => void = () => undefined;
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: runOf([[1, 10], [1, 70]]),
+      spectrum: index => new Promise(resolve => { reply = () => { void spectrum(index).then(resolve); }; }) });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+    await waitFor(() => expect(result.current.backendBusy).toBe(false));
+    await act(async () => { result.current.activateDataset(selectedFile.handle); });
+    await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+    expect(result.current.previewBackendBusy).toBe(true);
+    let accepted = true;
+    act(() => { accepted = result.current.activateDataset(secondFile.handle); });
+    expect(accepted).toBe(false);
+    expect(api.openedHandles).toEqual([selectedFile.handle]);
+    await act(async () => { reply(); await Promise.resolve(); });
+    await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+    act(() => { accepted = result.current.activateDataset(secondFile.handle); });
+    expect(accepted).toBe(true);
+    await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle, secondFile.handle]));
+    await waitFor(() => expect(api.requestedSpectra).toEqual([1, 1]));
+    await act(async () => { reply(); await Promise.resolve(); });
+    await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+  });
+
+  it("never takes the selection from a person coming back: their scan returns, not the apex", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], spectrum,
+      preview: () => Promise.resolve(runOf([[1, 10], [2, 5], [1, 70]])) });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+    const open = async (handle: string, count: number) => {
+      await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(handle); });
+      await waitFor(() => expect(api.openedHandles).toHaveLength(count));
+      await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+    };
+    await open(selectedFile.handle, 1);
+    expect(result.current.viewerInteraction.selection?.index).toBe(2);
+    act(() => { result.current.selectSpectrum(0); });
+    await waitFor(() => expect(api.requestedSpectra).toEqual([2, 0]));
+    await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+    await open(secondFile.handle, 2);
+    expect(result.current.viewerInteraction.selection?.index).toBe(2);
+    await open(selectedFile.handle, 3);
+    expect(result.current.viewerInteraction.selection?.index).toBe(0);
+  });
+
+  it("falls to the apex when the scan a person left is another scan after a re-read", async () => {
+    let reads = 0;
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum, preview: () => {
+      reads += 1;
+      const run = runOf([[1, 10], [2, 5], [1, 70]]);
+      return Promise.resolve({ ...run, spectrumTable: { ...run.spectrumTable,
+        rows: run.spectrumTable.rows.map(row => ({ ...row, identifier: `${row.identifier} read=${reads}` })) } });
+    } });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(1));
+    const open = async (count: number) => {
+      await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(selectedFile.handle); });
+      await waitFor(() => expect(api.openedHandles).toHaveLength(count));
+      await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+    };
+    await open(1);
+    act(() => { result.current.selectSpectrum(0); });
+    await waitFor(() => expect(api.requestedSpectra).toEqual([2, 0]));
+    await waitFor(() => expect(result.current.spectrum.status).toBe("loaded"));
+    await open(2);
+    expect(result.current.viewerInteraction.selection?.index).toBe(2);
+    expect(api.requestedSpectra).toEqual([2, 0, 2]);
+  });
+
+  describe("a press on another file while a read is out", () => {
+    const pressFile = (name: string) => fireEvent.click(within(screen.getByRole("treegrid")).getByText(name));
+    /** Two files whose every spectrum read waits to be answered. */
+    function heldReads() {
+      const replies: (() => void)[] = [];
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(runOf([[1, 10], [1, 70]])),
+        spectrum: index => new Promise(resolve => { replies.push(() => { void spectrum(index).then(resolve); }); }) });
+      return { api, replies };
+    }
+    const land = async (reply: (() => void) | undefined) => { await act(async () => { reply!(); await Promise.resolve(); }); };
+
+    it("opens that file when the read lands", async () => {
+      const { api, replies } = heldReads();
+      await opened(api);
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+      pressFile(secondFile.fileName);
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+      await land(replies[0]);
+      await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle, secondFile.handle]));
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1, 1]));
+      await land(replies[1]);
+      await screen.findByRole("img", { name: /^Spectrum 1,/u });
+    });
+
+    it("does not read the first file on the way past when the press came during its open", async () => {
+      let finish: (run: ReturnType<typeof runOf>) => void = () => undefined;
+      let opens = 0;
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], spectrum,
+        preview: () => (opens += 1) === 1 ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(runOf([[1, 10], [1, 70]])) });
+      render(<WorkspaceDropTransportProvider value={createFakeWorkspaceDropTransport()}>
+        <PreviewApiProvider value={api}><App /></PreviewApiProvider>
+      </WorkspaceDropTransportProvider>);
+      fireEvent.keyDown(await screen.findByRole("treegrid"), { key: "Enter" });
+      await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle]));
+      pressFile(secondFile.fileName);
+      await act(async () => { finish(runOf([[1, 10], [1, 70]])); await Promise.resolve(); });
+      await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle, secondFile.handle]));
+      await screen.findByRole("img", { name: /^Spectrum 1,/u });
+      expect(api.requestedSpectra).toEqual([1]);
+    });
+
+    it("forgets the press when a scan row is pressed after it", async () => {
+      const { api, replies } = heldReads();
+      await opened(api);
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      pressFile(secondFile.fileName);
+      fireEvent.click(within(grid()).getAllByRole("row").find(row => row.getAttribute("data-source-index") === "0")!);
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1, 0]));
+      await land(replies[1]);
+      await land(replies[0]);
+      await screen.findByRole("img", { name: /^Spectrum 0,/u });
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+    });
+
+    it("asks for nothing when the press is on the file already open", async () => {
+      const { api, replies } = heldReads();
+      await opened(api);
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      pressFile(selectedFile.fileName);
+      await land(replies[0]);
+      await screen.findByRole("img", { name: /^Spectrum 1,/u });
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+    });
+
+    it("does not open it when the read's own failure says the backend was lost", async () => {
+      let fail: () => void = () => undefined;
+      let answers = 0;
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(runOf([[1, 10], [1, 70]])),
+        availability: () => Promise.resolve((answers += 1) === 1 ? availableBackend : quarantinedBackend),
+        spectrum: () => new Promise((_, reject) => { fail = () => reject({ kind: "backend_quarantined", summary: "Rust's words.", detail: null, retryable: false }); }) });
+      const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+      await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+      await waitFor(() => expect(result.current.backendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(selectedFile.handle); });
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      act(() => { result.current.holdOpen(secondFile.handle); });
+      await act(async () => { fail(); await Promise.resolve(); });
+      await waitFor(() => expect(answers).toBe(2));
+      await waitFor(() => { expect(result.current.backendBusy).toBe(false); expect(result.current.previewBackendBusy).toBe(false); });
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+    });
+
+    it("opens it once the check the read's failure started comes back available", async () => {
+      let fail: () => void = () => undefined;
+      let check: () => void = () => undefined;
+      let answers = 0;
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile], preview: () => Promise.resolve(runOf([[1, 10], [1, 70]])),
+        availability: () => (answers += 1) === 1 ? Promise.resolve(availableBackend) : new Promise(resolve => { check = () => resolve(availableBackend); }),
+        spectrum: () => new Promise((_, reject) => { fail = () => reject({ kind: "file_identity_changed", summary: "Rust's words.", detail: null, retryable: false }); }) });
+      const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+      await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+      await waitFor(() => expect(result.current.backendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(selectedFile.handle); });
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      act(() => { result.current.holdOpen(secondFile.handle); });
+      await act(async () => { fail(); await Promise.resolve(); });
+      await waitFor(() => expect(answers).toBe(2));
+      await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+      expect(result.current.backendBusy).toBe(true);
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+      await act(async () => { check(); await Promise.resolve(); });
+      await waitFor(() => expect(api.openedHandles).toEqual([selectedFile.handle, secondFile.handle]));
+    });
+
+    it("opens the latest press only, and not a row that has left the list", async () => {
+      const replies: (() => void)[] = [];
+      const third = { ...secondFile, handle: "third", fileName: "third.mzML" };
+      const api = createFakePreviewApi({ initialDatasets: [selectedFile, secondFile, third], preview: () => Promise.resolve(runOf([[1, 10], [1, 70]])),
+        spectrum: index => new Promise(resolve => { replies.push(() => { void spectrum(index).then(resolve); }); }) });
+      const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+      await waitFor(() => expect(result.current.roster.datasets).toHaveLength(3));
+      await waitFor(() => expect(result.current.backendBusy).toBe(false));
+      await act(async () => { result.current.activateDataset(selectedFile.handle); });
+      await waitFor(() => expect(api.requestedSpectra).toEqual([1]));
+      act(() => {
+        result.current.holdOpen(secondFile.handle);
+        result.current.holdOpen(third.handle);
+        result.current.dispatchRoster({ type: "rowPressed", handle: third.handle, modifiers: { ctrl: false, shift: false } });
+        result.current.removeSelected();
+      });
+      await waitFor(() => expect(result.current.roster.datasets).toHaveLength(2));
+      await land(replies[0]);
+      await waitFor(() => expect(result.current.previewBackendBusy).toBe(false));
+      expect(api.openedHandles).toEqual([selectedFile.handle]);
+    });
+  });
+
+  it("is refused where a press would be, and does not come back when the lane frees", async () => {
+    let check: () => void = () => undefined;
+    let answers = 0;
+    let open: (preview: ReturnType<typeof runOf>) => void = () => undefined;
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], spectrum,
+      availability: () => (answers += 1) === 1 ? Promise.resolve(availableBackend) : new Promise(resolve => { check = () => resolve(availableBackend); }),
+      preview: () => new Promise(resolve => { open = resolve; }) });
+    const { result } = renderHook(() => usePreviewWorkspace(), { wrapper: wrapper(api) });
+    await waitFor(() => expect(result.current.roster.datasets).toHaveLength(1));
+    await waitFor(() => expect(result.current.backendBusy).toBe(false));
+    await act(async () => { result.current.activateDataset(selectedFile.handle); });
+    await waitFor(() => expect(result.current.preview.status).toBe("opening"));
+    act(() => { result.current.checkBackend(); });
+    expect(result.current.backendBusy).toBe(true);
+    await act(async () => { open(runOf([[1, 10], [1, 70]])); await Promise.resolve(); });
+    await waitFor(() => expect(result.current.preview.status).toBe("loaded"));
+    expect(result.current.spectrumSelection.status).toBe("unavailable");
+    expect(api.requestedSpectra).toEqual([]);
+    await act(async () => { check(); await Promise.resolve(); });
+    await waitFor(() => expect(result.current.backendBusy).toBe(false));
+    expect(result.current.spectrumSelection.status).toBe("available");
+    expect(api.requestedSpectra).toEqual([]);
+    expect(result.current.viewerInteraction.selection).toBeNull();
+  });
+
+  it("shows a refused read at once, with the table still there to choose from", async () => {
+    const api = createFakePreviewApi({ initialDatasets: [selectedFile], preview: runOf([[1, 10], [1, 70]]),
+      spectrum: () => Promise.reject({ kind: "spectrum_encoding_unsupported", summary: "Rust's words.", detail: null, retryable: false }) });
+    await opened(api);
+    expect(await screen.findByText(en.errSpectrumEncodingUnsupported)).toBeVisible();
+    expect(api.requestedSpectra).toEqual([1]);
+    expect(selected()).toBe("1");
+    expect(shown()).toEqual([0, 1]);
+  });
+});

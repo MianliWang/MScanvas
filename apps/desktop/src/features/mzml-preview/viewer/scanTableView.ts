@@ -1,4 +1,6 @@
 import type { SpectrumRow } from "../contracts";
+import type { RetentionTimeDomain } from "./scanModel";
+import { contains } from "./viewport";
 
 export const SCAN_SORT_KEYS = ["index", "scanNumber", "identifier", "msLevel", "retentionTime",
   "basePeakMz", "basePeakIntensity", "totalIonCurrent", "precursorMz"] as const;
@@ -36,16 +38,51 @@ function scalar(row: SpectrumRow, key: ScanSortKey): number | string | null {
  */
 const RETENTION_UNIT_RANK = { second: 0, minute: 1, notReported: 2 } as const;
 
+/** Whether the search and the MS-level filter let a row through. */
+export function matchesScanFilters(row: SpectrumRow, options: ScanTableOptions): boolean {
+  const query = options.query.trim();
+  return (options.msLevel === null || row.msLevel === options.msLevel) &&
+    (query === "" || row.identifier.includes(query) || String(row.index).includes(query) ||
+      (row.scanNumber !== null && String(row.scanNumber).includes(query)));
+}
+
+/**
+ * The row that declares this scan number, the first in file order if several do,
+ * or `null` for anything else: text that is not a whole number (as the list writes
+ * it, or plainly), or a number no row declares. Never a row index in its place.
+ */
+export function findScanByNumber(rows: readonly SpectrumRow[], text: string): SpectrumRow | null {
+  const typed = text.trim();
+  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)$/u.test(typed)) return null;
+  const scanNumber = Number(typed.replaceAll(",", ""));
+  return rows.find(row => row.scanNumber === scanNumber) ?? null;
+}
+
+/**
+ * The scan an open shows (V-1): the MS1 row declaring the largest TIC, ties going
+ * to the first in file order, read from the table and computing no array. `null`
+ * for a file with no MS1 (V-1-NOMS1), and never an MS2 scan in its place.
+ *
+ * The caller refuses a truncated table: the largest value of a prefix is not the
+ * run's apex.
+ */
+export function apexMs1Row(rows: readonly SpectrumRow[]): SpectrumRow | null {
+  let apex: SpectrumRow | null = null;
+  for (const row of rows) {
+    if (row.msLevel === 1 && Number.isFinite(row.totalIonCurrent) && (apex === null || row.totalIonCurrent > apex.totalIonCurrent)) apex = row;
+  }
+  return apex;
+}
+
 /** Raw, case-sensitive substring search; raw identifiers compare by UTF-16 code units.
  * Missing scalars stay last in either direction. Ties keep original table order.
  * No formatted or translated value is an input, and source rows are never mutated.
+ * `rtDomain` is the chromatogram's committed range (V-2), edges included; `null` is
+ * the whole run, which is also what a table with no chromatogram has.
  */
-export function projectScanTable(index: ScanTableIndex, options: ScanTableOptions): ScanTableProjection {
-  const query = options.query.trim();
-  const rows = index.rows.filter(row =>
-    (options.msLevel === null || row.msLevel === options.msLevel) &&
-    (query === "" || row.identifier.includes(query) || String(row.index).includes(query) ||
-      (row.scanNumber !== null && String(row.scanNumber).includes(query))));
+export function projectScanTable(index: ScanTableIndex, options: ScanTableOptions, rtDomain: RetentionTimeDomain | null = null): ScanTableProjection {
+  const rows = index.rows.filter(row => matchesScanFilters(row, options) &&
+    (rtDomain === null || contains(rtDomain, row.retentionTime.value)));
   const sort = options.sort;
   if (sort !== null) rows.sort((left, right) => {
     const a = scalar(left, sort.key);

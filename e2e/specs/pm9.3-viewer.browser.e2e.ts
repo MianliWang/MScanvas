@@ -114,9 +114,10 @@ const NO_PROJECT = {
 };
 
 /**
- * M7.3's eight-scan run: retention time equal to the index, MS level
- * alternating, total ion current rising with the index, and two identifiers a
- * search can single out. Synthetic; no file was read.
+ * M7.3's eight-scan run: retention time equal to the index, MS2 only, so an open
+ * selects nothing (V-1-NOMS1) and each test chooses its scan, total ion current
+ * rising with the index, and two identifiers a search can single out. Synthetic;
+ * no file was read.
  */
 function eightScans() {
   const preview = buildPreview(8);
@@ -124,16 +125,12 @@ function eightScans() {
     Object.assign(row, {
       identifier: `${index === 3 || index === 7 ? "rare" : "raw"}-${String(index)}-controllerType=0 controllerNumber=1 scan=${String(index + 1)}`,
       retentionTime: { value: index, unit: "notReported" },
-      msLevel: (index % 2) + 1,
       totalIonCurrent: (index + 1) * 10,
     }),
   );
   Object.assign(preview.runSummary, {
     retentionTimeRange: { state: "reported", minimum: 0, maximum: 7, unit: "notReported" },
-    msLevels: [
-      { msLevel: 1, spectrumCount: 4 },
-      { msLevel: 2, spectrumCount: 4 },
-    ],
+    msLevels: [{ msLevel: 2, spectrumCount: 8 }],
   });
   return preview;
 }
@@ -1116,7 +1113,7 @@ describe("PM9.3 viewer contracts, rendered", () => {
       await browser.$(`${SCANS} input[type="search"]`).setValue("raw-1");
       await browser.$(`${SCANS} .scan-hidden-selection`).waitForDisplayed();
       expect(await browser.$(`${SCANS} .scan-hidden-selection`).getText()).toContain(
-        fill(en.scanSelectedOutside, { name: "3" }),
+        fill(en.scanSelectedOutside, { name: "4" }),
       );
       // Refused, not disabled: still Tab stops, with the hidden selection as
       // the reason. The steps are the spectrum head's (direction A).

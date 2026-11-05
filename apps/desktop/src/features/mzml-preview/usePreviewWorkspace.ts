@@ -101,7 +101,9 @@ import {
 } from "./viewer/selectionAvailability";
 import { buildPreviewScanModel } from "./viewer/previewScanModel";
 import type { RetentionTimeDomain, ScanModel, TraceKind } from "./viewer/scanModel";
-import { adjacentDisplayedScan } from "./viewer/scanTableView";
+import { adjacentDisplayedScan, apexMs1Row } from "./viewer/scanTableView";
+import { revealDomain } from "./viewer/viewport";
+import { fileMemoryIn, forgetScanZooms, rememberScanZoom, scanZoomKey, type FileViewMemory } from "./viewer/scanMemory";
 import { useScanTableView, type ScanTableView } from "./viewer/useScanTableView";
 import type {
   MzDomain,
@@ -564,6 +566,9 @@ export interface PreviewWorkspace {
    */
   readonly scanModel: ScanModel;
   readonly scanTableView: ScanTableView;
+  readonly revealSelectedScan: () => void;
+  readonly readScanPage: () => number | null;
+  readonly rememberScanTopRow: (topRow: number | null) => void;
   /**
    * The one interaction state: committed viewport, transient gesture,
    * persistent selection, selection revision and hover.
@@ -763,6 +768,7 @@ export interface PreviewWorkspace {
   readonly clearList: () => boolean;
   /** Explicitly reads one dataset; returns whether this request started a read. */
   readonly activateDataset: (handle: string) => boolean;
+  readonly holdOpen: (handle: string) => void;
   /** Reads the active dataset again, after a failure or a backend change. */
   readonly previewActiveAgain: () => void;
   /** The one-click view of a Thermo RAW row (ADR 0060): the operation, and its polling. */
@@ -1012,6 +1018,11 @@ export function usePreviewWorkspace(): PreviewWorkspace {
    * eventually disagree about which scan a linked view is pointing at.
    */
   const selectedIndex = viewer.state.selection?.index ?? null;
+  /** What each file and each scan keep while the workspace lives: see `viewer/scanMemory.ts`. */
+  const fileViewMemory = useRef(new Map<string, FileViewMemory>());
+  const scanZooms = useRef(new Map<string, MzDomain>());
+  /** The row a press asked for while a viewer read was out. It opens when the read lands. */
+  const heldOpen = useRef<string | null>(null);
   const [chromatogramTraces, setChromatogramTraces] =
     useState<TraceVisibility>(INITIAL_TRACES);
   const [measurements, setMeasurements] = useState<readonly PreviewMeasurement[]>([]);
@@ -2105,6 +2116,29 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     [loadPreview],
   );
 
+  /**
+   * A press on an mzML row while a viewer read is out, as one now is after every
+   * open (V-1). One read at a time still holds, so the press waits for it rather
+   * than being lost: the latest press only, and one on the file already open
+   * asks for nothing.
+   */
+  const holdOpen = useCallback((handle: string) => {
+    heldOpen.current = handle === openHandle.current ? null : handle;
+  }, []);
+  useEffect(() => {
+    const handle = heldOpen.current;
+    // A read that failed or saw a newer backend starts a check as it lands, so the
+    // press also waits for that check's answer.
+    if (previewBackendBusy || backendBusy || viewerRequests.current > 0 || handle === null) return;
+    heldOpen.current = null;
+    // `activateDataset` keeps its own guards: a backend the check found unusable
+    // refuses the press, and the backend's notice says why. The conversion and the
+    // view are defensive, since neither starts while a viewer read is out, and keep
+    // this to `canPreview`'s rule. A row that left the list while the press waited
+    // does not open.
+    if (!conversionBusyRef.current && !rawViewBusyRef.current && rosterRef.current.datasets.some(dataset => dataset.handle === handle)) activateDataset(handle);
+  }, [activateDataset, backendBusy, previewBackendBusy]);
+
   const openRawView = useCallback(
     (operation: number, handle: string) => {
       // One viewer read at a time. It stays ready, and the row's pane offers Open.
@@ -2697,6 +2731,8 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       if (row === undefined) {
         return;
       }
+      // A scan chosen here is the latest word: a file press still waiting is not.
+      heldOpen.current = null;
       const startedAt = now();
       // The reducer allocates the revision. Several producers reach this one
       // function -- the plot, the table, Previous and Next -- and the number
@@ -2707,6 +2743,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
         retentionTime: row.retentionTime.value,
       });
       if (selected.selection !== null) dispatchSpectrumViewport({ type: "selection-changed", revision: selected.selection.revision });
+      fileMemoryIn(fileViewMemory.current, handle).selected = { index, identifier: row.identifier };
       spectrumToken.current += 1;
       const token = spectrumToken.current;
       inFlightSpectrum.current = { index, token };
@@ -2867,7 +2904,41 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
   // same reason every other mirror here is: a commit arriving in the gap would
   // reconcile against the table before the last change.
   previewRowsRef.current = previewRows;
-  const scanTableView = useScanTableView(previewRows);
+  const scanTableView = useScanTableView(previewRows, viewer.state.committedDomain,
+    openHandle.current === null ? undefined : fileViewMemory.current.get(openHandle.current)?.options);
+  const { options: scanTableOptions } = scanTableView;
+  useEffect(() => {
+    const handle = openHandle.current;
+    if (preview.status === "loaded" && handle !== null) fileMemoryIn(fileViewMemory.current, handle).options = scanTableOptions;
+  }, [preview, scanTableOptions]);
+  // What a file kept leaves with its row, however the row left: a removal, a
+  // clear, or a roster read back without it.
+  useEffect(() => {
+    const live = new Set(roster.datasets.map(dataset => dataset.handle));
+    for (const handle of fileViewMemory.current.keys()) {
+      if (live.has(handle)) continue;
+      fileViewMemory.current.delete(handle);
+      forgetScanZooms(scanZooms.current, handle);
+    }
+  }, [roster.datasets]);
+
+  /** Read when the list mounts: the row this file's list was left at. */
+  const readScanPage = useCallback(() =>
+    openHandle.current === null ? null : fileViewMemory.current.get(openHandle.current)?.topRow ?? null, []);
+  const rememberScanTopRow = useCallback((topRow: number | null) => {
+    if (openHandle.current !== null) fileMemoryIn(fileViewMemory.current, openHandle.current).topRow = topRow;
+  }, []);
+
+  /**
+   * A committed range hiding the selected scan moves to it, the way a selection's
+   * own reveal moves it. Not a selection: nothing is read.
+   */
+  const revealSelectedScan = useCallback(() => {
+    const { committedDomain, fullDomain, selection } = readViewerInteraction();
+    if (committedDomain === null || fullDomain === null || selection === null) return;
+    const revealed = revealDomain(committedDomain, fullDomain, selection.retentionTime);
+    if (revealed !== committedDomain) dispatchViewerEvent({ type: "viewport-step", domain: revealed });
+  }, [dispatchViewerEvent, readViewerInteraction]);
 
   /**
    * Tells the interaction which run it belongs to, once there is one to name.
@@ -2891,6 +2962,35 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       dispatchViewerEvent({ type: "preview-loaded", fullDomain: scanModel.fullDomain });
     }
   }, [dispatchViewerEvent, scanModel]);
+
+  /**
+   * What an open selects: once per preview, before its first paint, through the
+   * path a press takes, so a lane that refuses a press refuses this too.
+   *
+   * Here rather than where the open's reply lands, and after the effect above:
+   * the row lookup reads the table this render published, and `preview-loaded`
+   * would clear anything selected before it.
+   */
+  useLayoutEffect(() => {
+    // A press has already asked for another file, so this one is not read on the way past.
+    if (preview.status !== "loaded" || heldOpen.current !== null) return;
+    const { rows, truncated } = preview.preview.spectrumTable;
+    const file = openHandle.current === null ? undefined : fileViewMemory.current.get(openHandle.current);
+    if (file !== undefined && file.selected !== null) {
+      const { index, identifier } = file.selected;
+      const row = rows.find(candidate => candidate.index === index);
+      if (row?.identifier === identifier) {
+        selectSpectrum(index);
+        return;
+      }
+      // Another scan now: what the person left is gone, so this is a first time here.
+      file.selected = null;
+    }
+    // First time here: the apex of the declared TIC (V-1). Not on a truncated
+    // table, whose largest value is a prefix's and not the run's.
+    const apex = truncated ? null : apexMs1Row(rows);
+    if (apex !== null) selectSpectrum(apex.index);
+  }, [preview, selectSpectrum]);
 
   const toggleChromatogramTrace = useCallback((trace: TraceKind) => {
     setChromatogramTraces((current) => ({ ...current, [trace]: !current[trace] }));
@@ -3131,6 +3231,10 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     spectrum.status === "loaded" && spectrum.spectrum.pointCount > 0 ? spectrum.spectrum : null;
   const viewportSpectrumToken = viewportSpectrum?.exportToken ?? null;
   const viewportSpectrumDomain = viewportSpectrum?.viewportDomain ?? null;
+  const viewportScanKey = useMemo(() => {
+    const row = viewportSpectrum === null ? undefined : previewRows.find(candidate => candidate.index === viewportSpectrum.index);
+    return row === undefined || openHandle.current === null ? null : scanZoomKey(openHandle.current, row.index, row.identifier);
+  }, [previewRows, viewportSpectrum]);
   /**
    * Whether a spectrum is being read right now.
    *
@@ -3177,12 +3281,24 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
       spectrumToken: viewportSpectrumToken,
       domain: viewportSpectrumDomain,
     });
+    // A new context opens whole, and the zoom its scan kept comes back in the
+    // same breath, so the one projection this asks for is of that window.
+    const zoom = viewportScanKey === null ? undefined : scanZooms.current.get(viewportScanKey);
+    if (zoom !== undefined) dispatchSpectrumViewport({ type: "viewport-step", domain: zoom });
   }, [
     dispatchSpectrumViewport,
     viewportReading,
+    viewportScanKey,
     viewportSpectrumDomain,
     viewportSpectrumToken,
   ]);
+
+  /** The committed window of the spectrum on screen, or `undefined` while it has no viewport of its own yet. */
+  const scanZoom = spectrumViewportState.status === "ready" && spectrumViewportState.spectrumToken === viewportSpectrumToken
+    ? spectrumViewportState.committed : undefined;
+  useEffect(() => {
+    if (viewportScanKey !== null && scanZoom !== undefined) rememberScanZoom(scanZooms.current, viewportScanKey, scanZoom);
+  }, [scanZoom, viewportScanKey]);
 
   /**
    * Every committed window gets exactly one request, and gets it here.
@@ -4467,6 +4583,7 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     removeSelected,
     clearList,
     activateDataset,
+    holdOpen,
     previewActiveAgain,
     rawView,
     openRawView,
@@ -4493,6 +4610,9 @@ const QUARANTINED_BACKEND_KIND = "backend_quarantined";
     selectPreviousScan,
     selectNextScan,
     scanTableView,
+    revealSelectedScan,
+    readScanPage,
+    rememberScanTopRow,
     spectrumSelection,
     canSelectPreviousScan: spectrumSelectionAvailable && previousScanIndex !== null,
     canSelectNextScan: spectrumSelectionAvailable && nextScanIndex !== null,

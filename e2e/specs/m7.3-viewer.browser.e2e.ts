@@ -1,7 +1,9 @@
 /** Production viewer; deterministic synthetic source responses at the existing IPC boundary only. */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { buildPreview, buildSpectrum, selectedFile } from "../../apps/desktop/src/test/previewFixtures";
+import { buildPreview, buildSpectrum, secondFile, selectedFile, unavailableBackend } from "../../apps/desktop/src/test/previewFixtures";
+import { en } from "../../apps/desktop/src/features/preferences/locales/en";
+import { zhCN } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 import { ipcTable } from "../support/fixtures";
 import { PLOT_BAND, PLOT_VIEWBOX_WIDTH, readBackSavedPreferences, revealRosterRow, seedARunOf, SPECTRUM_BAND } from "../support/viewer";
 import { choosePlotMenuItem, FIGURE_DIALOG, openFigureDialog } from "../support/figure";
@@ -47,7 +49,7 @@ async function preferences(language: "en" | "zh-CN", density: "comfortable" | "c
   await browser.$("[data-settings-close]").click();
   await browser.$("[data-settings-dialog]").waitForExist({ reverse: true });
 }
-function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" | "minutes" | "narrow" = "complete") {
+function answers(kind: "complete" | "ms2" | "prefix" | "empty" | "refused" | "one" | "large-values" | "mixed" | "minutes" | "narrow" = "complete") {
   const table: Record<string, unknown> = ipcTable({ emptySpectrum: kind === "empty", refusedViewport: kind === "refused", oneMzViewport: kind === "one" });
   const preview = buildPreview(8);
   preview.spectrumTable.rows.forEach((row, index) => Object.assign(row, {
@@ -60,6 +62,7 @@ function answers(kind: "complete" | "prefix" | "empty" | "refused" | "one" | "la
   if (kind === "large-values") preview.spectrumTable.rows.forEach((row, index) => {
     Object.assign(row, { totalIonCurrent: index === 0 ? -1e12 : (index + 1) * 1e12 });
   });
+  if (kind === "ms2") preview.spectrumTable.rows.forEach(row => Object.assign(row, { msLevel: 2 }));
   if (kind === "prefix") {
     Object.assign(preview.spectrumTable, { truncated: true, totalRowCount: 120000 });
     Object.assign(preview.runSummary, { totalSpectrumCount: 120000 });
@@ -130,7 +133,7 @@ async function open(kind: Parameters<typeof answers>[0] = "complete", options = 
   await browser.url("/");
   await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').waitForExist();
   if (count !== undefined) await seedARunOf(count);
-  if (kind === "complete" || kind === "prefix" || kind === "narrow") await sourceBoundary(count === undefined ? 1 : .0125, declared);
+  if (kind === "complete" || kind === "ms2" || kind === "prefix" || kind === "narrow") await sourceBoundary(count === undefined ? 1 : .0125, declared);
   const rosterToggle = browser.$('[aria-controls="workbench-roster"]');
   await revealRosterRow(selectedFile.handle);
   await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').click();
@@ -219,6 +222,8 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
   it("uses real full header and row targets, raw search, source identity and loaded-only navigation", async () => {
     await open(); await revealScans();
     const header = browser.$(SCANS + ' [role="columnheader"]:nth-child(2) button');
+    // The open selected the MS1 at the apex of the declared TIC (V-1); sorting reads nothing.
+    await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum"));
     const before = await scientificCalls(); await header.click(); await header.click();
     // The header shows "RT"; its full name is its tooltip and the rest of its name.
     expect(await browser.$(SCANS + ' [aria-sort="descending"]').getText()).toContain("RT");
@@ -228,15 +233,15 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.$(row(3) + ' [role="gridcell"]:nth-child(3)').click();
     await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "load_selected_spectrum" && call.args.index === 3));
     await browser.$(row(7) + ' [role="gridcell"]:nth-child(4)').click();
-    await browser.waitUntil(async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").length === 2);
+    await browser.waitUntil(async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").length === 3);
     await browser.keys("End");
     expect(await browser.execute(() => document.activeElement?.getAttribute("data-source-index"))).toBe("3");
-    expect((await scientificCalls()).filter(call => call.command === "load_selected_spectrum").map(call => call.args.index)).toEqual([3, 7]);
+    expect((await scientificCalls()).filter(call => call.command === "load_selected_spectrum").map(call => call.args.index)).toEqual([6, 3, 7]);
     await browser.keys("Enter");
-    await browser.waitUntil(async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").length === 3);
-    expect(before).toEqual([]);
+    await browser.waitUntil(async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").length === 4);
+    expect(before.filter(call => call.command === "load_selected_spectrum").map(call => call.args.index)).toEqual([6]);
     await browser.$(SCANS + ' input[type="search"]').setValue("raw-1");
-    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is hidden by the filters");
+    expect(await browser.$(SCANS).getText()).toContain("Selected scan 4 is hidden by the filters");
     expect(await browser.$('button[aria-label="Next scan"]').getAttribute("aria-disabled")).toBe("true");
     await capture("hidden-selection");
     await browser.$("button=Clear filters and reveal").click(); await browser.$('button[aria-label="Next scan"]').click();
@@ -359,7 +364,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await browser.$(RT).scrollIntoView({ block: "center" });
     await clickPlot(RT, 3 / 7);
     await browser.$(MZ).waitForDisplayed();
-    expect(await browser.$(SCANS).getText()).toContain("Selected scan 3 is hidden by the filters");
+    expect(await browser.$(SCANS).getText()).toContain("Selected scan 4 is hidden by the filters");
     expect(await browser.$(SCANS + " select").getValue()).toBe("1");
     expect(await browser.$('button[aria-label="Next scan"]').getAttribute("aria-disabled")).toBe("true");
     await capture("plot-hidden-by-ms-filter");
@@ -479,6 +484,8 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
   }
   it("cancels emulated touch on vertical travel and multiple contacts without committing", async () => {
     await open("complete", { width: 960, height: 640, dpr: 2 });
+    await browser.waitUntil(async () => (await scientificCalls()).some(call => call.command === "project_selected_spectrum"));
+    const openRead = await scientificCalls();
     await cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 2 });
     const start = await point(RT, .25), end = await point(RT, .65);
     const touch = (p: { x: number; y: number }, id = 1) => ({ ...p, id, radiusX: 2, radiusY: 2, force: 1 });
@@ -486,7 +493,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await cdp("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [touch(end)] });
     await cdp("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await browser.$(".chromatogram-panel .plot-pending-actions").waitForDisplayed();
-    expect(await scientificCalls()).toEqual([]);
+    expect(await scientificCalls()).toEqual(openRead);
     await browser.$(".chromatogram-panel .plot-pending-actions button:nth-child(2)").click();
     await cdp("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch(start)] });
     await cdp("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [touch(end)] });
@@ -502,7 +509,7 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     for (const dy of [20, 55, 90]) await cdp("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [touch({ x: start.x + 1, y: start.y - dy })] });
     await cdp("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     expect(await browser.$(".chromatogram-panel .plot-pending-actions").isExisting()).toBe(false);
-    expect(await scientificCalls()).toEqual([]);
+    expect(await scientificCalls()).toEqual(openRead);
     const trace = await browser.execute(() => Reflect.get(window, "__m73TouchTrace") as string[]);
     evidence.push({ kind: "CDP emulated touch; no physical touch certification", trace, scrollBefore,
       scrollAfter: await browser.$("#workbench-evidence").getProperty("scrollTop") });
@@ -614,5 +621,266 @@ describe("M7.3 viewer, loaded scan projection and committed ranges", () => {
     await setInvokeResult("open_mzml_preview", table.open_mzml_preview);
     await failed.$("button").click();
     await browser.$(SCANS).waitForExist();
+  });
+
+  // N-V3: go to a scan, the list following the range, each file as it was left.
+  const shownScans = () => browser.$$(SCANS + " [data-source-index]").map(row => row.getAttribute("data-source-index"));
+  const reads = async () => (await scientificCalls()).filter(call => call.command === "load_selected_spectrum").map(call => call.args.index);
+  /** Nothing cut: what the element holds fits the width it has. */
+  const whole = (css: string) => browser.execute((selector: string) => {
+    const node = document.querySelector<HTMLElement>(selector);
+    return node !== null && node.scrollWidth <= node.clientWidth;
+  }, css);
+  /**
+   * An empty input's placeholder, its only visible name, fits the box it is drawn
+   * in. A search field's hidden clear glyph keeps about 12 px of that box unless a
+   * rule removes it while the placeholder shows, and no DOM measure sees that room,
+   * so the rule itself is looked for.
+   */
+  const placeholderWhole = (css: string) => browser.execute((selector: string) => {
+    const input = document.querySelector<HTMLInputElement>(selector);
+    const context = document.createElement("canvas").getContext("2d");
+    if (input === null || context === null || !input.matches(":placeholder-shown")) return false;
+    const glyph = "::-webkit-search-cancel-button";
+    const glyphGone = input.type !== "search" || [...document.styleSheets]
+      .flatMap(sheet => { try { return [...sheet.cssRules]; } catch { return []; } })
+      .some(rule => rule instanceof CSSStyleRule && rule.style.display === "none" && rule.selectorText.endsWith(":placeholder-shown" + glyph)
+        && input.matches(rule.selectorText.slice(0, -glyph.length)));
+    const style = getComputedStyle(input);
+    context.font = style.font;
+    return glyphGone && context.measureText(input.placeholder).width <= input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  }, css);
+  async function goToScan(text: string) {
+    await browser.$("#scan-go-to").setValue(text);
+    await browser.keys("Enter");
+  }
+  async function setRtRange(words: typeof en | typeof zhCN, low: string, high: string) {
+    await choosePlotMenuItem(".chromatogram-panel", words.rangeSet);
+    await browser.$("#plot-range-rt-low").setValue(low); await browser.$("#plot-range-rt-high").setValue(high);
+    await browser.$(".chromatogram-panel .plot-range-form button[type=submit]").click();
+  }
+  for (const scenario of [
+    { width: 1366, height: 768, dpr: 1, language: "en", words: en },
+    { width: 1366, height: 768, dpr: 1, language: "zh-CN", words: zhCN },
+    { width: 960, height: 640, dpr: 1, language: "en", words: en },
+    { width: 960, height: 640, dpr: 1, language: "zh-CN", words: zhCN },
+  ] as const) it("goes to a scan and follows the range, " + scenario.language + " at " + scenario.width + "x" + scenario.height, async () => {
+    const { words } = scenario;
+    const label = (state: string) => "nav-" + state + "-" + scenario.language + "-" + scenario.width;
+    await open("complete", scenario);
+    await preferences(scenario.language, "comfortable");
+    await revealScans();
+    // A number not in the table is refused in place, and reads nothing.
+    const already = (await reads()).length;
+    await goToScan("99");
+    const refused = words.scanGoToRefused.replace("{{value}}", "99");
+    expect(await browser.$(".scan-go-to-refusal").getText()).toBe(refused);
+    expect(await browser.$("#scan-go-to").getAttribute("aria-invalid")).toBe("true");
+    expect((await reads()).length).toBe(already);
+    await capture(label("refused"));
+    // Six digits and the input's own short name stay whole, and a pasted refusal
+    // wraps rather than running off the panel.
+    for (const text of ["123456", words.scanGoToShort]) {
+      await browser.$("#scan-go-to").setValue(text);
+      expect(await whole("#scan-go-to")).toBe(true);
+    }
+    await goToScan("1".repeat(300));
+    expect(await whole(".scan-go-to-refusal")).toBe(true);
+    expect(await whole(".spectrum-table-panel")).toBe(true);
+    await capture(label("refused-long"));
+    // Filters that hide the scan go; focus stays for the next number.
+    await browser.$(SCANS + ' input[type="search"]').setValue("rare-");
+    expect(await shownScans()).toEqual(["3", "7"]);
+    await goToScan("5");
+    await browser.waitUntil(async () => (await reads()).at(-1) === 4);
+    expect(await browser.$(SCANS + ' input[type="search"]').getValue()).toBe("");
+    expect(await browser.$(row(4)).getAttribute("aria-selected")).toBe("true");
+    expect(await browser.execute(() => document.activeElement?.id)).toBe("scan-go-to");
+    await capture(label("went"));
+    // The list follows the committed range, and the count says how many of how many.
+    await setRtRange(words, "1", "2.5");
+    await browser.waitUntil(async () => (await shownScans()).join() === "1,2", { timeoutMsg: "the list never followed the range" });
+    expect(await browser.$(".scan-result-count:not(:empty)").getText()).toContain("2");
+    expect(await whole(".scan-result-count:not(:empty)")).toBe(true);
+    // The selected scan is outside it: said so, recoverable, with nothing read.
+    const outside = words.scanSelectedOutsideRange.replace("{{name}}", "5");
+    expect(await browser.$("#scan-hidden-selection-reason").getText()).toBe(outside);
+    await capture(label("selected-outside"));
+    // The Scans tab draws no chromatogram, and the range still holds there.
+    const onTab = async (position: number) => { await browser.$('.viewer-tabs [role="tab"]:nth-child(' + position + ")").click(); await browser.$(SCANS).waitForExist(); };
+    await onTab(2);
+    expect(await browser.$(RT).isExisting()).toBe(false);
+    expect(await shownScans()).toEqual(["1", "2"]);
+    await capture(label("scans-tab-selected-outside"));
+    await onTab(1);
+    const before = (await reads()).length;
+    await browser.$(".scan-hidden-selection button").click();
+    await browser.waitUntil(async () => (await shownScans()).includes("4"), { timeoutMsg: "the range never moved to the scan" });
+    expect((await reads()).length).toBe(before);
+    // A narrow range holding no scan names the range, not the filters.
+    await setRtRange(words, "2.2", "2.8");
+    await browser.waitUntil(async () => (await browser.$(SCANS).getText()).includes(words.scanNoMatchesInRange), { timeoutMsg: "the empty range never said so" });
+    expect(await browser.$(SCANS + ' [role="grid"]').getAttribute("aria-rowcount")).toBe("1");
+    await capture(label("empty-range"));
+    await onTab(2);
+    expect(await browser.$(SCANS).getText()).toContain(words.scanNoMatchesInRange);
+    await capture(label("scans-tab-empty-range"));
+    await onTab(1);
+    // Going to a scan the range hides brings the range to it.
+    await goToScan("8");
+    await browser.waitUntil(async () => (await reads()).at(-1) === 7);
+    await browser.waitUntil(async () => (await shownScans()).includes("7"), { timeoutMsg: "the scan never came into the list" });
+    await capture(label("went-into-range"));
+    // While no scan can be selected, Enter says why beside the input, and the number stays.
+    await setInvokeResult("inspect_backend", unavailableBackend);
+    await browser.$("[data-backend-item]").click();
+    await browser.$('[data-backend-action="recheck"]').click();
+    await browser.keys("Escape");
+    await browser.$('#backend-status[data-backend-mode="notice"]').waitForDisplayed({ timeout: 30_000 });
+    await goToScan("3");
+    expect(await browser.$(".scan-go-to-refusal").getText()).toBe(words.viewerSelectionBackend);
+    expect(await browser.$("#scan-go-to").getValue()).toBe("3");
+    await capture(label("no-selection-reason"));
+    expect(await consoleEntries()).toEqual([]);
+  });
+  for (const scenario of [
+    { width: 1366, height: 768, dpr: 1, language: "en" },
+    { width: 1366, height: 768, dpr: 1, language: "zh-CN" },
+    { width: 960, height: 640, dpr: 1, language: "en" },
+    { width: 960, height: 640, dpr: 1, language: "zh-CN" },
+  ] as const) it("keeps a long run's numbers whole in the scan head, " + scenario.language + " at " + scenario.width + "x" + scenario.height, async () => {
+    const label = (state: string) => "long-run-" + state + "-" + scenario.language + "-" + scenario.width;
+    // M0's public file: 36,319 spectra.
+    await open("complete", scenario, 36319);
+    await preferences(scenario.language, "comfortable");
+    await revealScans();
+    expect(await browser.$(".scan-head .scan-result-count").getText()).toBe("36,319");
+    for (const css of [".scan-head", ".scan-head .scan-result-count"]) expect(await whole(css)).toBe(true);
+    for (const css of ["#scan-search", "#scan-go-to"]) expect(await placeholderWhole(css)).toBe(true);
+    await capture(label("one-number"));
+    // Some of them match: the head stays one line with nothing cut, and the counts are whole under it.
+    await browser.$(SCANS + ' input[type="search"]').setValue("scan=1");
+    await browser.waitUntil(async () => (await browser.$(".spectrum-table-panel > .scan-result-count").getText()).includes("36,319"));
+    for (const css of [".scan-head", ".spectrum-table-panel > .scan-result-count"]) expect(await whole(css)).toBe(true);
+    expect(await browser.$(".scan-head").getSize("height")).toBe(36);
+    await browser.$("#scan-go-to").setValue("123456");
+    expect(await whole("#scan-go-to")).toBe(true);
+    await capture(label("three-counts"));
+    expect(await consoleEntries()).toEqual([]);
+  });
+  it("comes back to a file as it was left, and to a scan's own zoom", async () => {
+    await installIpcBoundary({ ...answers("complete"), get_workspace_roster: { capacity: 1024, datasets: [selectedFile, secondFile] } });
+    await metrics(1366, 768, 1);
+    await browser.url("/");
+    await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').waitForExist();
+    await sourceBoundary(1);
+    // Each open's reply is its own object, as one crossing the real boundary is.
+    await browser.execute(() => {
+      const internals = Reflect.get(window, "__TAURI_INTERNALS__") as { invoke: (command: string, args: unknown) => Promise<unknown> };
+      const invoke = internals.invoke;
+      internals.invoke = (command, args) => command === "open_mzml_preview" ? invoke(command, args).then(reply => structuredClone(reply)) : invoke(command, args);
+    });
+    const openRow = async (handle: string) => {
+      const opens = (await ipcCalls()).filter(call => call.command === "open_mzml_preview").length;
+      await revealRosterRow(handle);
+      await browser.$('.grouped-roster [data-handle="' + handle + '"]').click();
+      await browser.waitUntil(async () => (await ipcCalls()).filter(call => call.command === "open_mzml_preview").length === opens + 1);
+      await browser.$(SCANS).waitForExist();
+    };
+    const windows = async () => (await scientificCalls()).filter(call => call.command === "project_selected_spectrum").map(call => [call.args.low, call.args.high]);
+    await openRow(selectedFile.handle);
+    await revealScans();
+    await goToScan("4");
+    await browser.waitUntil(async () => (await reads()).at(-1) === 3);
+    await browser.$(MZ).waitForDisplayed();
+    await choosePlotMenuItem(".spectrum-panel", "Set range…");
+    await browser.$("#plot-range-mz-low").setValue("200"); await browser.$("#plot-range-mz-high").setValue("400");
+    await browser.$(".spectrum-panel .plot-range-form button[type=submit]").click();
+    await browser.waitUntil(async () => (await windows()).at(-1)?.join() === "200,400");
+    await revealScans();
+    await browser.$(SCANS + " select").selectByAttribute("value", "2");
+    await openRow(secondFile.handle);
+    expect(await browser.$(SCANS + " select").getValue()).toBe("all");
+    await openRow(selectedFile.handle);
+    expect(await browser.$(SCANS + " select").getValue()).toBe("2");
+    await browser.waitUntil(async () => (await reads()).at(-1) === 3);
+    await browser.$(MZ).waitForDisplayed();
+    await browser.waitUntil(async () => (await windows()).at(-1)?.join() === "200,400", { timeoutMsg: "the scan's zoom never came back" });
+    await revealScans();
+    expect(await browser.$(row(3)).getAttribute("aria-selected")).toBe("true");
+    await capture("nav-back-to-file");
+    expect(await consoleEntries()).toEqual([]);
+  });
+
+  // N-V3 part 4: what an open selects (V-1, V-1-NOMS1).
+  for (const scenario of [
+    { width: 1366, height: 768, dpr: 1, language: "en", words: en },
+    { width: 1366, height: 768, dpr: 1, language: "zh-CN", words: zhCN },
+    { width: 960, height: 640, dpr: 1, language: "en", words: en },
+    { width: 960, height: 640, dpr: 1, language: "zh-CN", words: zhCN },
+  ] as const) it("shows what an open selects, " + scenario.language + " at " + scenario.width + "x" + scenario.height, async () => {
+    const { words } = scenario;
+    const label = (state: string) => "entry-" + state + "-" + scenario.language + "-" + scenario.width;
+    const selectedSource = () => browser.execute(() => document.querySelector('div.spectrum-table-row[aria-selected="true"]')?.getAttribute("data-source-index") ?? null);
+    const inSpectrumPanel = async (text: string) => (await browser.$(".spectrum-panel").getText()).includes(text);
+    // The apex of the declared TIC among the MS1 rows: index 6, with a larger MS2 at index 7.
+    await open("complete", scenario);
+    await preferences(scenario.language, "comfortable");
+    await browser.waitUntil(async () => (await reads()).at(-1) === 6);
+    await browser.$(MZ).waitForDisplayed();
+    expect(await selectedSource()).toBe("6");
+    await capture(label("apex"));
+    // No MS1: nothing selected, the empty spectrum says what to do, and nothing was read.
+    await open("ms2", scenario);
+    await preferences(scenario.language, "comfortable");
+    expect(await selectedSource()).toBeNull();
+    expect(await reads()).toEqual([]);
+    expect(await inSpectrumPanel(words.viewerChooseHelp)).toBe(true);
+    await capture(label("ms2-only"));
+    // A truncated table: its largest value is a prefix's, so nothing selected either.
+    await open("prefix", scenario);
+    await preferences(scenario.language, "comfortable");
+    expect(await selectedSource()).toBeNull();
+    expect(await reads()).toEqual([]);
+    expect(await inSpectrumPanel(words.viewerChooseHelp)).toBe(true);
+    await capture(label("truncated"));
+    // A numpress file shows its refusal at once, with the table there to choose from.
+    await installIpcBoundary({ ...answers("complete"), load_selected_spectrum: { __reject: {
+      kind: "spectrum_encoding_unsupported", summary: "Rust's words.", detail: null, retryable: false } } });
+    await metrics(scenario.width, scenario.height, scenario.dpr);
+    await browser.url("/");
+    await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').waitForExist();
+    await preferences(scenario.language, "comfortable");
+    await revealRosterRow(selectedFile.handle);
+    await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').click();
+    await browser.$(SCANS).waitForExist();
+    await browser.waitUntil(() => inSpectrumPanel(words.errSpectrumEncodingUnsupported), { timeoutMsg: "the refusal was never shown on open" });
+    expect(await selectedSource()).toBe("6");
+    await capture(label("numpress"));
+    // A press on another file while the read on open is out waits for it, and opens.
+    await installIpcBoundary({ ...answers("complete"), get_workspace_roster: { capacity: 1024, datasets: [selectedFile, secondFile] } });
+    await metrics(scenario.width, scenario.height, scenario.dpr);
+    await browser.url("/");
+    await browser.$('.grouped-roster [data-handle="' + selectedFile.handle + '"]').waitForExist();
+    await sourceBoundary(1);
+    await preferences(scenario.language, "comfortable");
+    const opens = async () => (await ipcCalls()).filter(call => call.command === "open_mzml_preview").map(call => call.args.handle);
+    const press = async (handle: string) => {
+      await revealRosterRow(handle);
+      await browser.$('.grouped-roster [data-handle="' + handle + '"]').click();
+    };
+    await holdInvoke("load_selected_spectrum");
+    await press(selectedFile.handle);
+    await browser.waitUntil(async () => await heldCallers("load_selected_spectrum") === 1, { timeoutMsg: "the read on open never went out" });
+    await press(secondFile.handle);
+    expect(await opens()).toEqual([selectedFile.handle]);
+    await capture(label("second-press-during-read"));
+    await releaseInvokeHold("load_selected_spectrum");
+    await browser.waitUntil(async () => (await opens()).length === 2, { timeoutMsg: "the press never opened its file" });
+    expect(await opens()).toEqual([selectedFile.handle, secondFile.handle]);
+    await browser.waitUntil(async () => (await reads()).length === 2, { timeoutMsg: "the second file's read never went out" });
+    await browser.$(MZ).waitForDisplayed();
+    await capture(label("second-press-opened"));
+    expect(await consoleEntries()).toEqual([]);
   });
 });

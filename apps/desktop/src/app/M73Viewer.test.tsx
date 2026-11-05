@@ -13,7 +13,7 @@ const source = () => {
   return { ...preview, spectrumTable: { ...preview.spectrumTable,
     rows: preview.spectrumTable.rows.map((row, index) => ({ ...row,
       identifier: index === 3 || index === 7 ? `rare-raw-${index}` : `raw-${index}`,
-      msLevel: index % 2 === 0 ? 1 : 2, totalIonCurrent: (index + 1) * 10,
+      totalIonCurrent: (index + 1) * 10,
       retentionTime: { value: index, unit: "notReported" as const },
     })),
   } };
@@ -135,7 +135,7 @@ describe("M7.3 through the delivered application", () => {
     expect(api.requestedSpectra).toEqual([3]);
     const search = screen.getByRole("searchbox", { name: "Search loaded scans" });
     search.focus(); fireEvent.change(search, { target: { value: "raw-1" } });
-    expect(screen.getByText(/Selected scan 3 is hidden by the filters/u)).toBeVisible();
+    expect(screen.getByText(/Selected scan 4 is hidden by the filters/u)).toBeVisible();
     expect(screen.getByRole("button", { name: "Previous scan" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Next scan" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("img", { name: /^Spectrum 3,/u })).toBeInTheDocument();

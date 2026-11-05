@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildRows } from "../../../test/previewFixtures";
-import { adjacentDisplayedScan, indexScanTable, INITIAL_SCAN_TABLE_OPTIONS, projectScanTable, toggleScanSort } from "./scanTableView";
+import { adjacentDisplayedScan, apexMs1Row, findScanByNumber, indexScanTable, INITIAL_SCAN_TABLE_OPTIONS, matchesScanFilters, projectScanTable, toggleScanSort } from "./scanTableView";
 
 const rows = buildRows(5).map((row, position) => ({ ...row,
   index: [70, 20, 90, 30, 40][position]!, identifier: ["z9", "a10", "a2", "a2", "中文"][position]!,
@@ -53,5 +53,69 @@ describe("loaded scan-table projection", () => {
       expect(adjacentDisplayedScan(projection, 70, 1)).toBeNull();
       expect(adjacentDisplayedScan(projection, 70, -1)).toBeNull();
     }
+  });
+});
+
+describe("go to a scan number", () => {
+  it("finds the row declaring the number, as typed or as the list writes it", () => {
+    expect(findScanByNumber(rows, "11")?.index).toBe(70);
+    expect(findScanByNumber(rows, " 11 ")?.index).toBe(70);
+    const thousands = buildRows(1500);
+    expect(findScanByNumber(thousands, "1,234")?.scanNumber).toBe(1234);
+  });
+  it("takes the first in file order where several rows declare one number", () => {
+    expect(findScanByNumber(rows, "2")?.index).toBe(90);
+  });
+  it("answers nothing for a number no row declares, and never reads it as a row index", () => {
+    expect(findScanByNumber(rows, "70")).toBeNull();
+    expect(findScanByNumber(rows, "3")).toBeNull();
+  });
+  it.each(["", "abc", "1.5", "-2", "1e1", "1,2", "12,34", "０"])("refuses %j as not a whole number", text => {
+    expect(findScanByNumber(buildRows(40), text)).toBeNull();
+  });
+  it("says which filters let a row through, for a row the projection dropped", () => {
+    const row = rows[0]!;
+    expect(matchesScanFilters(row, INITIAL_SCAN_TABLE_OPTIONS)).toBe(true);
+    expect(matchesScanFilters(row, { ...INITIAL_SCAN_TABLE_OPTIONS, query: "z9" })).toBe(true);
+    expect(matchesScanFilters(row, { ...INITIAL_SCAN_TABLE_OPTIONS, query: "nothing" })).toBe(false);
+    expect(matchesScanFilters(row, { ...INITIAL_SCAN_TABLE_OPTIONS, msLevel: 2 })).toBe(false);
+  });
+});
+
+describe("the list following the chromatogram's committed range", () => {
+  const range = (low: number, high: number) => ({ low, high });
+  const within = (low: number, high: number, options = INITIAL_SCAN_TABLE_OPTIONS) =>
+    projectScanTable(index, options, range(low, high)).rows.map(row => row.index);
+  it("keeps the rows inside the range, edges included", () => {
+    expect(within(2, 5)).toEqual([20, 90, 40]);
+  });
+  it("adds to the search and the MS-level filter rather than replacing them", () => {
+    expect(within(1, 5, { ...INITIAL_SCAN_TABLE_OPTIONS, query: "a2" })).toEqual([90, 30]);
+    expect(within(1, 5, { ...INITIAL_SCAN_TABLE_OPTIONS, msLevel: 2 })).toEqual([20, 30]);
+  });
+  it("is the whole list with no range, and empty with a range holding no scan", () => {
+    expect(projectScanTable(index, INITIAL_SCAN_TABLE_OPTIONS, null).rows).toHaveLength(5);
+    const empty = projectScanTable(index, INITIAL_SCAN_TABLE_OPTIONS, range(6, 7));
+    expect(empty.rows).toEqual([]);
+    expect(empty.positions.size).toBe(0);
+  });
+});
+
+describe("the scan an open selects", () => {
+  const run = (scans: readonly (readonly [number, number])[]) => buildRows(scans.length).map((row, position) =>
+    ({ ...row, msLevel: scans[position]![0], totalIonCurrent: scans[position]![1] }));
+  it("takes the MS1 declaring the largest TIC, whatever an MS2 declares", () => {
+    expect(apexMs1Row(run([[1, 5], [2, 900], [1, 70], [1, 30]]))?.index).toBe(2);
+  });
+  it("gives a tie to the first in file order", () => {
+    expect(apexMs1Row(run([[2, 70], [1, 70], [1, 70]]))?.index).toBe(1);
+  });
+  it("has nothing to say for a file with no MS1, or no rows", () => {
+    expect(apexMs1Row(run([[2, 70], [3, 80]]))).toBeNull();
+    expect(apexMs1Row([])).toBeNull();
+  });
+  it("skips a declared value that is not a number, and keeps a negative one as a value", () => {
+    expect(apexMs1Row(run([[1, Number.NaN], [1, -5], [1, Number.POSITIVE_INFINITY]]))?.index).toBe(1);
+    expect(apexMs1Row(run([[1, Number.NaN]]))).toBeNull();
   });
 });

@@ -25,7 +25,7 @@ import { describe, expect, it } from "vitest";
 
 import { PreviewApiProvider, type PreviewApi } from "./api";
 import { usePreviewWorkspace } from "./usePreviewWorkspace";
-import { buildPreview, createFakePreviewApi, selectedFile } from "../../test/previewFixtures";
+import { buildPreview, buildSpectrum, createFakePreviewApi, selectedFile } from "../../test/previewFixtures";
 
 function wrapper(api: PreviewApi) {
   return function Wrapper({ children }: { readonly children: ReactNode }) {
@@ -323,9 +323,16 @@ describe("the one scientific export lane", () => {
     // The same rule on the other surface. A spectrum export outliving the
     // spectrum it names holds the lane exactly as a chromatogram's does.
     let release: (() => void) | null = null;
+    let reads = 0;
     const api = createFakePreviewApi({
       initialDatasets: [oneDataset()],
       preview: previewsNamedPerOpen(),
+      // Named freshly on every read, as Rust names it: the reopened file brings
+      // its selected scan back, and that read is not the spectrum being written.
+      spectrum: async (index) => {
+        reads += 1;
+        return { outcome: "spectrum", spectrum: { ...buildSpectrum(index, 12), exportToken: `token-${index}-read-${reads}` } };
+      },
       spectrumExport: async () =>
         new Promise((resolve) => {
           release = () => {

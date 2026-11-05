@@ -206,8 +206,13 @@ describe("M7.3 real native viewer and committed exports", function () {
     // The native reader (ADR 0056) carries the file's own identifier, not
     // msaccess's abbreviation, and the fixture's retention times in their
     // declared minutes, never converted to seconds.
+    // The open selected the MS1 at the apex of the declared TIC (V-1), index 10
+    // of the fixture's 12; searching reads nothing more. Edited with N-V3 part 4,
+    // not run: this spec opens through msaccess and waits for its window.
+    await browser.waitUntil(async () => (await reads()).some(call => call.command === "project_selected_spectrum"));
+    const readByOpen = await reads();
     await browser.$(SCANS + " input[type=search]").setValue("scan=8");
-    expect(await reads()).toEqual([]);
+    expect(await reads()).toEqual(readByOpen);
     await browser.$(row(7) + ' [role="gridcell"]:nth-child(5)').click();
     await browser.waitUntil(async () => await browser.$("#selected-spectrum-summary").getProperty("textContent") === "Spectrum 7, MS2, 12 points.");
     await browser.$("#spectrum-viewport-status").waitForExist();

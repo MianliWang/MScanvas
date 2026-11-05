@@ -154,7 +154,7 @@ describe("stick spectrum at profile-scale point counts", () => {
   });
 });
 
-function TestSpectrumTable(props: Omit<SpectrumTableProps, "view">) {
+function TestSpectrumTable(props: Omit<SpectrumTableProps, "view" | "onRevealSelected">) {
   const view = useScanTableView(props.table.rows);
-  return <SpectrumTable {...props} view={view} />;
+  return <SpectrumTable {...props} view={view} onRevealSelected={view.clearFilters} />;
 }
