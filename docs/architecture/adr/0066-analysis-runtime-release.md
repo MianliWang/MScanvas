@@ -197,6 +197,9 @@ runtime", and `ANALYSIS_WORKERS.md`'s packaging gate lists what to evaluate
    kept them open on 2026-10-30, to be fixed "when that runtime is next
    provisioned and before any release ships the runtime"; `DEPENDENCY_POLICY.md`
    names the fix as the Pillow 13.0.0 wheel.
+   *2026-11-04:* that route is left (B-3.3), and #168, the bump, was closed (D1) with
+   no alert dismissed. The alerts stay open until the experiment lock is deleted, in
+   the change that commits A-07's lock (ask 2).
 7. **The pinned interpreter line has no more binaries.** PEP 719: "Around the
    time of the release of 3.15.0 final, the final 3.13 bugfix update was
    released. After that, it is expected that security updates (source only)
@@ -691,9 +694,10 @@ is never chosen silently (open question 3). Its costs:
 > ([section 4](../../spikes/RUNTIME_360_PROBE.md#4-the-shape),
 > [section 9.1](../../spikes/RUNTIME_360_PROBE.md#91-size-and-verification)):
 > **621 files, 130,632,028 B, about 33.3 MB compressed** (33,255,864 B, the same LZMA2
-> estimate), against 1,790 files, 149,664,787 B and 35,547,248 B above. Three SHA-256
-> passes over every file took 0.65 to 0.78 s; the cost at the installed location stays
-> unmeasured. It holds the four artefacts of
+> estimate), against 1,790 files, 149,664,787 B and 35,547,248 B above. The last three
+> SHA-256 passes over every file took 0.65 to 0.78 s, and every set recorded falls
+> between 0.54 s and 3.81 s, the slowest on a busier host; the cost at the installed
+> location stays unmeasured. It holds the four artefacts of
 > [section 3](../../spikes/RUNTIME_360_PROBE.md#3-the-four-artefacts) and nothing else:
 > no pandas, python-dateutil, six or tzdata, no matplotlib stack and no Qt. Left out of
 > the wheels:
@@ -817,7 +821,8 @@ for those; the SBOM or link map decides.
 2026-11-04).** The table and scans above describe 3.5.0. On this branch their rows
 for Qt, pandas, python-dateutil, six, tzdata and `zlib.dll` do not apply: none of
 those files is in the shape
-([section 9.1](../../spikes/RUNTIME_360_PROBE.md#91-size-and-verification)). The
+([sections 9.1](../../spikes/RUNTIME_360_PROBE.md#91-size-and-verification) and
+[9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)). The
 informal check's column comes from PyPI and from its copy of the 3.6.0 wheel:
 `share/OpenMS/THIRD-PARTY-NOTICES.txt` and `share/OpenMS/LICENSES/`. The notices say
 "This installation of OpenMS contains the third-party software listed below", which
@@ -1116,9 +1121,11 @@ needs the owner's approval.
 >    the CPython 3.14.10 embeddable and `numpy==2.5.3`'s cp314 wheel. A lock file for
 >    them is committed, the experiment lock goes in the same change, and nothing ships.
 >    Not approved: a fifth package, or another version or tag;
-> 3. shipping (A-05). **Open:** the answer says "shipping (ask 3, A-05)" and names no
->    narrower set, and ask 2's "Nothing ships" holds for all four. This record's status
->    does not answer it.
+> 3. shipping (A-05). **Open.** The answer lists "shipping (ask 3, A-05)" among what
+>    ask 2 does not approve, and this record's status does not answer it. B-1 question
+>    8's approval above is not withdrawn. Whether it already covers any of the four
+>    (numpy 2.5.3's cp314 wheel is a version ANA-004 was qualified on) is not settled
+>    here: a reading, not an owner decision.
 >
 > B-3.3 answers "(open question 4)" above: the experiment lock is deleted, not
 > bumped. *2026-11-04 (D1):* #168, that bump, was closed, and no alert was dismissed.
@@ -1179,6 +1186,9 @@ needs the owner's approval.
   elevated package once per runtime version.
 - Shipping tier 3 ends the Pillow alerts for what ships, once the release lock
   replaces the experiment lock and that lock is deleted or bumped.
+  *2026-11-04:* it is deleted, not bumped (B-3.3; #168 closed, D1, with no alert
+  dismissed), and in the change that commits A-07's lock (ask 2), not the release
+  lock's. The alerts stay open until then.
 - The runtime's interpreter line has a binary horizon of about two years, so a
   line move (and its re-qualification) recurs.
 - New code: the release build's runtime and work-area locations, the ASCII and
