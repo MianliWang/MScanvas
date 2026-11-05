@@ -28,7 +28,8 @@
 .workbench-conversion:has(> .run-history) { scroll-padding-bottom: 96px; }
 .run-history-list > li.list-window-spacer { flex: none; margin: 0; padding: 0; border: 0; list-style: none; }
 
-/* A row is a bordered button, in the selected look of the settings' tiles. */
+/* A row is a bordered button; the chosen one is v5.11's selected row, a fill and
+   a 3 px inset edge. */
 .run-history-row.ui-button {
   display: grid;
   width: 100%;
@@ -39,8 +40,9 @@
   white-space: normal;
 }
 .run-history-row[aria-current="true"].ui-button {
-  border-color: var(--color-accent);
+  border-color: var(--color-selected-border);
   background: var(--color-surface-selected);
+  box-shadow: inset 3px 0 0 var(--color-accent);
 }
 .run-history-row-top { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
 .run-history-when { min-width: 0; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
