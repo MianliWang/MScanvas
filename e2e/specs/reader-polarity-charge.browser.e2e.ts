@@ -4,11 +4,15 @@
  * scan table gains no column, and no fact is lost to the two new ones.
  *
  * Deterministic answers at the invoke boundary; the reader's own rules are the
- * Rust tests'. Screenshots go to MSCANVAS_BROWSER_EVIDENCE when it is set.
+ * Rust tests'. The scan number and the size are a real file's (`dto.rs`: the
+ * measured representative acquisition has 36,319 spectra), because a one-digit
+ * scan leaves the head 32 px the real one does not. Screenshots go to
+ * MSCANVAS_BROWSER_EVIDENCE when it is set.
  */
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import type { SelectedSpectrum } from "../../apps/desktop/src/features/mzml-preview/contracts";
 import { en } from "../../apps/desktop/src/features/preferences/locales/en";
 import { zhCN as zh } from "../../apps/desktop/src/features/preferences/locales/zh-CN";
 import { DISPLAY_DEFAULTS, PREFERENCE_SCHEMA_VERSION } from "../../apps/desktop/src/features/preferences/storedPreferences";
@@ -22,10 +26,12 @@ const EVIDENCE = process.env["MSCANVAS_BROWSER_EVIDENCE"];
 const SCANS = ".spectrum-table-panel";
 const HEAD_FACTS = ".spectrum-head-facts";
 const SIZES = [[1366, 768], [960, 640]] as const;
+const SCAN = 36_319;
+const POINTS = 1_234;
 
 type Locale = "en" | "zh-CN";
-type Facts = { readonly polarity: "positive" | "negative" | null; readonly charge: number | null;
-  readonly totalPrecursorCount?: number; readonly representation?: "centroid" | "profile" | "notReported" };
+type Facts = Pick<SelectedSpectrum, "polarity" | "charge">
+  & Partial<Pick<SelectedSpectrum, "totalPrecursorCount" | "representation" | "msLevel" | "precursors">>;
 
 function answers(locale: Locale, facts: Facts) {
   const table: Record<string, unknown> = ipcTable();
@@ -47,7 +53,7 @@ function answers(locale: Locale, facts: Facts) {
 function spectrumAnswer(table: Record<string, unknown>, index: number, facts: Facts) {
   const { authority } = table["load_selected_spectrum"] as { authority: unknown };
   return { authority, outcome: { outcome: "spectrum", spectrum: {
-    ...buildSpectrum(index, 6), representation: "notReported", ...facts } } };
+    ...buildSpectrum(index, POINTS), scanNumber: SCAN - 1 + index, representation: "notReported", ...facts } } };
 }
 
 async function openOn(locale: Locale, [width, height]: readonly [number, number], facts: Facts) {
@@ -70,16 +76,20 @@ async function chooseScan(index: number) {
   await browser.$(HEAD_FACTS).waitForDisplayed();
 }
 
-/** Each fact's words, and which of them the head's box hides. */
+/** Each fact's words, which of them the head has no room for, and which it cuts. */
 function headFacts() {
   return browser.execute((css: string) => {
     const head = document.querySelector<HTMLElement>(css)!;
     const box = head.getBoundingClientRect();
     const facts = [...head.querySelectorAll<HTMLElement>(":scope > span")];
+    const text = (fact: HTMLElement) => fact.textContent ?? "";
+    // On a line the head shows, and not hidden.
+    const shown = (fact: HTMLElement) => getComputedStyle(fact).visibility !== "hidden" && fact.getBoundingClientRect().top < box.bottom - 0.5;
     return {
-      facts: facts.map(fact => fact.textContent ?? ""),
-      dropped: facts.filter(fact => fact.getBoundingClientRect().bottom > box.bottom + 0.5 || fact.getBoundingClientRect().right > box.right + 0.5)
-        .map(fact => fact.textContent ?? ""),
+      facts: facts.map(text),
+      dropped: facts.filter(fact => !shown(fact)).map(text),
+      // Shown, but running past the head's edge: a cut word.
+      cut: facts.filter(fact => shown(fact) && fact.getBoundingClientRect().right > box.right + 0.5).map(text),
       // Inside the head's 36 px, and under none of its buttons.
       overHead: box.bottom > head.closest(".plot-head")!.getBoundingClientRect().bottom + 0.5,
       covered: [...head.closest(".plot-head")!.querySelectorAll<HTMLElement>("button")].filter(button => button.getClientRects().length > 0)
@@ -90,18 +100,21 @@ function headFacts() {
   }, HEAD_FACTS);
 }
 
-/** The head's facts, once they sit inside its 36 px, under no button, with no sideways scroll. */
+/** The head's facts, once no word is cut, they sit inside its 36 px, under no button, with no sideways scroll. */
 async function soundHead() {
   const head = await headFacts();
-  expect([head.overHead, head.covered, head.horizontalOverflow]).toEqual([false, false, 0]);
+  expect({ cut: head.cut, overHead: head.overHead, covered: head.covered, horizontalOverflow: head.horizontalOverflow })
+    .toEqual({ cut: [], overHead: false, covered: false, horizontalOverflow: 0 });
   return head;
 }
 
+/** Opens Details, and checks the head again beside it: at 1366 px it is narrowest then. */
 async function openDetails() {
   await readBackSavedPreferences();
   const toggle = browser.$('[aria-controls="workbench-inspector"]');
   if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
   await browser.$(".spectrum-facts").waitForDisplayed();
+  await soundHead();
 }
 
 function detailsValue(label: string) {
@@ -125,19 +138,22 @@ describe("a spectrum's polarity and charge", () => {
   for (const locale of ["en", "zh-CN"] as const) {
     const words = locale === "en" ? en : zh;
     const charge = (value: string) => words.viewerChargeValue.replace("{{charge}}", value);
-    const points = words.viewerExportPoints.replace("{{count, number}}", "6");
-    const owner = words.viewerChargeOfPrecursor.replace("{{total, number}}", "3");
+    const chargeOf = (value: string, total: string) =>
+      words.viewerChargeValueOfPrecursor.replace("{{charge}}", value).replace("{{total, number}}", total);
+    const points = words.viewerExportPoints.replace("{{count, number}}", "1,234");
 
     for (const size of SIZES) {
       const label = `${locale} ${String(size[0])}x${String(size[1])}`;
       const shot = (state: string) => capture(`${state}-${locale}-${String(size[0])}x${String(size[1])}`);
+      // As built: en at 960 px has no room for the facts below (126 px).
+      const narrowEn = locale === "en" && size[0] <= 1050;
 
       it(`says what the file states, in the head and in Details, ${label}`, async () => {
         await openOn(locale, size, { polarity: "negative", charge: 2, representation: "profile" });
 
         const head = await soundHead();
-        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, charge("2"), words.viewerPolarityNegative, points]);
-        expect(head.dropped).toEqual([]);
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, words.viewerPolarityNegative, charge("2"), points]);
+        expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
         await shot("stated");
 
         await openDetails();
@@ -150,9 +166,10 @@ describe("a spectrum's polarity and charge", () => {
         await openOn(locale, size, { polarity: null, charge: null, representation: "profile" });
 
         const head = await soundHead();
-        expect(head.facts).toContain(words.viewerPolarityChargeNotReported);
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, words.viewerPolarityChargeNotReported, points]);
         expect(head.facts.join(" ")).not.toMatch(/\b0\b/u);
-        expect(head.dropped).not.toContain(words.viewerPolarityChargeNotReported);
+        // Whole or not at all: wider than the head, it is hidden, never cut.
+        expect(head.dropped.includes(words.viewerPolarityChargeNotReported)).toBe(narrowEn);
         await shot("not-reported");
 
         await openDetails();
@@ -161,63 +178,64 @@ describe("a spectrum's polarity and charge", () => {
         await shot("not-reported-details");
       });
 
-      it(`keeps the representation when a file states none of the three, ${label}`, async () => {
+      it(`keeps the representation when a file states none of the three, never cut, ${label}`, async () => {
         await openOn(locale, size, { polarity: null, charge: null, representation: "notReported" });
 
-        // The longest head there is. At 1366 px it is whole. Narrower it drops
-        // from the end, and the representation stays (ADR 0029): as built, en at
-        // 960 px says polarity and charge only in Details, its drawer.
+        // The longest head there is. At 1366 px only the size gives way. At
+        // 960 px en "Representation not reported" is wider than the head, so it
+        // is hidden, never cut, and so is what follows it (ADR 0029: Details).
         const head = await soundHead();
-        expect(head.dropped).not.toContain(words.viewerRepresentationNotReported);
-        if (size[0] >= 1366) expect(head.dropped).toEqual([]);
+        expect(head.dropped.includes(words.viewerRepresentationNotReported)).toBe(narrowEn);
+        if (size[0] >= 1366) expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
         await shot("none-of-three");
 
         await openDetails();
         expect(await detailsValue(words.viewerCharge)).toBe(words.viewerNotReported);
       });
 
-      it(`says whose charge it is beside more than one precursor, never cutting a word, ${label}`, async () => {
+      it(`says whose charge it is beside more than one precursor, in the same fact, ${label}`, async () => {
         await openOn(locale, size, { polarity: "positive", charge: 3, totalPrecursorCount: 3, representation: "centroid" });
 
+        // One fact, so "Charge 3" never stands without whose it is.
         const head = await soundHead();
-        expect(head.facts).toEqual(["MS2", words.viewerRepresentationCentroid, charge("3"), owner, words.viewerPolarityPositive, points]);
-        // Only the size may give way, and it is in Details (P5).
-        expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
-        if (size[0] >= 1366) expect(head.dropped).toEqual([]);
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationCentroid, words.viewerPolarityPositive, chargeOf("3", "3"), points]);
+        expect(head.dropped.filter(fact => fact !== points && !(narrowEn && fact === chargeOf("3", "3")))).toEqual([]);
         await shot("three-precursors");
 
         await openDetails();
-        expect(await detailsValue(words.viewerCharge)).toBe(`3 ${owner}`);
+        expect(await detailsValue(words.viewerCharge)).toBe(words.viewerChargeOfPrecursor.replace("{{value}}", "3").replace("{{total, number}}", "3"));
       });
 
       it(`says whose only beside a stated charge in the head, and always in Details, ${label}`, async () => {
         await openOn(locale, size, { polarity: "positive", charge: null, totalPrecursorCount: 3, representation: "centroid" });
 
         const head = await soundHead();
-        expect(head.facts).toEqual(["MS2", words.viewerRepresentationCentroid, words.viewerChargeNotReported, words.viewerPolarityPositive, points]);
-        expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationCentroid, words.viewerPolarityPositive, words.viewerChargeNotReported, points]);
+        expect(head.dropped).not.toContain(words.viewerPolarityPositive);
         await shot("three-precursors-no-charge");
 
         await openDetails();
-        expect(await detailsValue(words.viewerCharge)).toBe(`${words.viewerNotReported} ${owner}`);
+        expect(await detailsValue(words.viewerCharge))
+          .toBe(words.viewerChargeOfPrecursor.replace("{{value}}", words.viewerNotReported).replace("{{total, number}}", "3"));
       });
 
-      it(`keeps a stated charge beside a polarity not reported, ${label}`, async () => {
+      it(`keeps a stated charge before a polarity not reported, ${label}`, async () => {
         await openOn(locale, size, { polarity: null, charge: 2, representation: "profile" });
 
         const head = await soundHead();
-        expect(head.facts).toEqual(expect.arrayContaining([words.viewerPolarityNotReported, charge("2")]));
-        expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, charge("2"), words.viewerPolarityNotReported, points]);
+        expect(head.dropped).not.toContain(charge("2"));
         await shot("charge-only");
       });
 
       for (const representation of ["profile", "centroid"] as const) {
-        it(`keeps a stated polarity beside a charge not reported, as an MS1 usually has it, ${representation}, ${label}`, async () => {
-          await openOn(locale, size, { polarity: "positive", charge: null, representation });
+        it(`keeps a stated polarity before a charge not reported, as an MS1 has it, ${representation}, ${label}`, async () => {
+          await openOn(locale, size, { polarity: "positive", charge: null, representation, msLevel: 1, precursors: [], totalPrecursorCount: 0 });
 
           const head = await soundHead();
-          expect(head.facts).toEqual(expect.arrayContaining([words.viewerPolarityPositive, words.viewerChargeNotReported]));
-          expect(head.dropped.filter(fact => fact !== points)).toEqual([]);
+          expect(head.facts).toEqual(["MS1", words[representation === "profile" ? "viewerRepresentationProfile" : "viewerRepresentationCentroid"],
+            words.viewerPolarityPositive, words.viewerChargeNotReported, points]);
+          expect(head.dropped).not.toContain(words.viewerPolarityPositive);
           await shot(`polarity-only-${representation}`);
         });
       }

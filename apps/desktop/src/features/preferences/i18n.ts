@@ -203,7 +203,8 @@ export interface MessageParameters {
   readonly viewerSpectrumPrefix: { readonly count: number; readonly total: number };
   readonly viewerPrecursorPrefix: { readonly count: number; readonly total: number };
   readonly viewerChargeValue: { readonly charge: string };
-  readonly viewerChargeOfPrecursor: { readonly total: number };
+  readonly viewerChargeOfPrecursor: { readonly value: string; readonly total: number };
+  readonly viewerChargeValueOfPrecursor: { readonly charge: string; readonly total: number };
   readonly viewerRetentionValue: { readonly value: string };
   readonly viewerBasePeakValue: { readonly mz: string; readonly value: string };
   readonly viewerLoadedNone: { readonly count: number };

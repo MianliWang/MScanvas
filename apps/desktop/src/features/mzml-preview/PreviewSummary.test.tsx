@@ -119,7 +119,7 @@ describe("the Details inspector", () => {
         spectrum={{ ...buildSpectrum(3, 4), polarity, charge, totalPrecursorCount }} />);
 
     const positive = details("positive", 2);
-    expect(value(en.viewerPolarity)).toHaveTextContent(en.viewerPolarityPositive);
+    expect(value(en.viewerPolarity)?.textContent).toBe("Positive");
     expect(value(en.viewerCharge)?.textContent).toBe("2");
     positive.unmount();
 
@@ -130,24 +130,28 @@ describe("the Details inspector", () => {
 
     // A stated 0 is a statement, and with more precursors the charge says whose it is.
     details("negative", 0, 3);
-    expect(value(en.viewerPolarity)).toHaveTextContent(en.viewerPolarityNegative);
+    expect(value(en.viewerPolarity)?.textContent).toBe("Negative");
     expect(value(en.viewerCharge)?.textContent).toBe("0 (precursor 1 of 3)");
   });
 
-  it("states them in zh-CN too", async () => {
+  it("states them in zh-CN too, with no space before a full-width bracket", async () => {
     const zh = UI_RESOURCES["zh-CN"];
     const preferences = createFakePreferencesApi({ stored: storedRecord({ appearance: { locale: "zh-CN" } }) });
-    rtlRender(
+    const details = (polarity: "positive" | "negative") => (
       <PreferencesApiProvider value={preferences}>
         <SessionPreferencesProvider>
           <PreviewSummary chromatogramScanCount={null} file={preview.file} spectrumViewport={initialSpectrumViewportState}
-            spectrum={{ ...buildSpectrum(3, 4), polarity: "negative", charge: null, totalPrecursorCount: 2 }} />
+            spectrum={{ ...buildSpectrum(3, 4), polarity, charge: null, totalPrecursorCount: 2 }} />
         </SessionPreferencesProvider>
-      </PreferencesApiProvider>,
+      </PreferencesApiProvider>
     );
+    const polarity = () => screen.getByText(zh.viewerPolarity).nextElementSibling?.textContent;
+    const { rerender } = rtlRender(details("negative"));
 
-    await waitFor(() => { expect(screen.getByText(zh.viewerPolarity).nextElementSibling).toHaveTextContent(zh.viewerPolarityNegative); });
-    expect(screen.getByText(zh.viewerCharge).nextElementSibling?.textContent).toBe(`${zh.viewerNotReported} （第 1 个前体，共 2 个）`);
+    await waitFor(() => { expect(polarity()).toBe("负离子"); });
+    expect(screen.getByText(zh.viewerCharge).nextElementSibling?.textContent).toBe("未报告（第 1 个前体，共 2 个）");
+    rerender(details("positive"));
+    expect(polarity()).toBe("正离子");
   });
 });
 
