@@ -318,6 +318,7 @@ fn convert_advanced(
 /// folder… recognise the session's finalized outputs by the object, never by
 /// the name. A drop does too, as built in PR #201, 2026-11-03, not an owner
 /// decision. Windows only: elsewhere a finalized output holds no object identity.
+/// 2026-11-04: accepted by the owner (P201-SCOPE).
 #[cfg(windows)]
 #[test]
 fn every_add_route_recognises_a_finalized_output_by_its_object_and_not_its_name() {
@@ -405,6 +406,7 @@ fn every_add_route_recognises_a_finalized_output_by_its_object_and_not_its_name(
 /// A finalized output with no row still answers a project registration: the
 /// label is the object's, and a removed row does not unlabel it. As built in PR
 /// #201, 2026-11-03, not an owner decision (ADR 0055).
+/// 2026-11-04: accepted by the owner (P201-SCOPE).
 #[cfg(windows)]
 #[test]
 fn a_finalized_output_with_no_row_answers_a_project_registration() {

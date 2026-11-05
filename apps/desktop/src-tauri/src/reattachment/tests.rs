@@ -420,6 +420,7 @@ fn a_row_labelled_by_a_reference_gives_its_label_to_the_next_registration() {
 /// added back by any route has it, and the next reference records it rather than
 /// `null`, which nothing writes again (ADR 0055: as built in PR #201, 2026-11-03,
 /// not an owner decision).
+/// 2026-11-04: accepted by the owner (P201-SCOPE).
 #[cfg(windows)]
 #[test]
 fn a_label_a_reference_brought_outlives_the_row_it_was_brought_to() {
@@ -462,6 +463,7 @@ fn a_label_a_reference_brought_outlives_the_row_it_was_brought_to() {
 /// Two references that say different things of one object leave the whole of it
 /// known once the row has left, not one reference's half (ADR 0055: as built in
 /// PR #201, 2026-11-03, not an owner decision).
+/// 2026-11-04: accepted by the owner (P201-SCOPE).
 #[cfg(windows)]
 #[test]
 fn what_two_references_brought_outlives_the_row_whole() {
@@ -501,6 +503,7 @@ fn what_two_references_brought_outlives_the_row_whole() {
 /// A row removed in the moment before its label is given does not forget that
 /// label: the project proved the object, whether or not the row is still there
 /// (ADR 0055: as built in PR #201, 2026-11-03, not an owner decision).
+/// 2026-11-04: accepted by the owner (P201-SCOPE).
 #[cfg(windows)]
 #[test]
 fn a_label_that_finds_its_row_gone_is_still_known_to_the_object() {

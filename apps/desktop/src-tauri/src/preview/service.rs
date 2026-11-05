@@ -1657,14 +1657,19 @@ impl PreviewService {
     ///
     /// Asked by a project registration about the object it just hashed, so
     /// the label follows the object whatever route the user registers it by, as
-    /// far as this process knows it: a row Restore workspace put back in a later
-    /// session has none, so none is recorded (ADR 0055: as built in PR #201,
-    /// 2026-11-03, not an owner decision).
+    /// far as this process knows it: a row Restore workspace put back has the label
+    /// its stored row held, so that is recorded (owner decision P201-RESTORE,
+    /// 2026-11-04). The same file added with Add files in a later session has none,
+    /// so none is recorded, the cost that decision accepted. Added by another route,
+    /// or registered from the file picker while its row still waits, none is recorded
+    /// either, and a later press does not change it: as built on 2026-11-04, not an
+    /// owner decision.
     /// A row's identity is one its lease holds, so a match is that row's own
     /// object. The row is asked first because where a finalized output holds no
     /// identity, as off Windows, the table never hears of it. With no row the
     /// table answers (ADR 0055: as built in PR #201, 2026-11-03, not an owner
     /// decision). Memory only; reads nothing.
+    /// 2026-11-04: accepted by the owner (P201-SCOPE).
     pub(crate) fn not_verified_label_of_object(
         &self,
         identity: (u64, [u8; 16]),
@@ -1686,14 +1691,16 @@ impl PreviewService {
     /// session's finalized outputs (ADR 0055; owner decision A0055 (b),
     /// 2026-10-31, for Add files… and Add mzML folder…; for a drop and a reference
     /// carried back, as built in PR #201, 2026-11-03, not an owner decision).
+    /// 2026-11-04: accepted by the owner (P201-SCOPE).
     ///
     /// Every route a user adds a file by comes through here, so within the
     /// process that finalized an output, or that a project's reference brought a
-    /// label to, a route cannot lose the label. The table ends with that process
-    /// and the restore document keeps no label, so a row Restore workspace puts
-    /// back in a later session has none (ADR 0055: as built
-    /// in PR #201, 2026-11-03, not an owner decision). By object identity and never
-    /// by name: an output moved on its volume keeps it, and a copy under any name
+    /// label to, a route cannot lose the label. The table ends with that process.
+    /// A row Restore workspace puts back in a later session is given its stored
+    /// label. The same file added with Add files instead has none, the cost owner
+    /// decision P201-RESTORE (2026-11-04) accepted; by another route it has none
+    /// either, as built on 2026-11-04, not an owner decision. By object identity and
+    /// never by name: an output moved on its volume keeps it, and a copy under any name
     /// is a new object without it. The slot is asked first and let go of, as
     /// everywhere that needs both.
     fn register_admitted(
@@ -1748,12 +1755,15 @@ impl PreviewService {
     /// project recorded for that object, says it in the add's own answer, and
     /// keeps it in the slot's table, so the row leaving does not forget it (ADR
     /// 0055: as built in PR #201, 2026-11-03, not an owner decision).
+    /// 2026-11-04: accepted by the owner (P201-SCOPE).
     ///
     /// The other half of `not_verified_label_of_object`: the label is a
     /// property of the object, so a reference carried back into the Workbench
     /// brings it to the row (ADR 0055: as built, review of 2026-10-31 (PR #161),
     /// not an owner decision). Called only once the project has claimed `handle`,
-    /// which is what proves the row is the object the label was recorded for.
+    /// or Restore workspace has found the row to be the recorded objects (owner
+    /// decision P201-RESTORE, 2026-11-04), which is what proves the row is the
+    /// object the label was recorded for.
     /// `identity` is the object that claim was of. The table hears first and is
     /// let go of, so a row that has left by now does not forget it either.
     /// Memory only.

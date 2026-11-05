@@ -293,6 +293,15 @@ availability, queue, adoption and export contracts.
    membership, eligibility or order (PM9.4 O2). The three families may be mixed. Vendor rows cannot be previewed,
    and say so, except a Thermo RAW row, which is read through View (ADR 0060, 2026-11-03). There is no `Convert visible` scope: search changes presentation
    only; the selected/all actions remain available.
+   **A third scope holds one file (N-C3, 2026-11-04).** Convert this file…, in a RAW
+   row's pane, a viewed file's row and a failed open, and Open in Conversion, on a
+   Shimadzu or SCIEX row, hold the page to that file and leave every check as it was,
+   before and after the run. A third button, named as the roster names that row, is
+   there only while that scope is current. Like the other two, it excludes an unsupported
+   row and shows its counts. Checked rows, All workspace rows or the Workbench's Convert…
+   leaves it for good, and a later press replaces the file. A removed row leaves the
+   scope empty and refused, with a sentence saying so and naming the ways out: a file
+   added again is a new row, which the scope does not follow.
 3. Choose the conversion settings, or leave the ones MSCanvas ships. Four
    groups — peak processing, spectra included, numeric precision, array
    compression — edit one dimension each, over one combination. A choice either

@@ -238,6 +238,20 @@ describe("PM9.4 O3 and PM9.7 F3: one actionable reason per refused state", () =>
     }
   });
 
+  it("composes the route out of a one-file scope whose row left from the controls' own labels in both languages", () => {
+    const { instance } = createUiRuntime();
+    for (const locale of ["en", "zh-CN"] as const) {
+      const t = bindUiMessages(instance.getFixedT(locale, "ui"));
+      const said = conversionNoticeMessage("no-convertible-target", t, true);
+      const words = UI_RESOURCES[locale];
+      for (const label of [words.rosterToggle, words.addFiles, words.rawViewConvert, words.openInConversion, words.m74CnvSelected, words.m74CnvAll]) expect(said).toContain(label);
+      expect(said).not.toMatch(/\{\{|\$t\(/u);
+      expect(said).not.toBe(conversionNoticeMessage("no-convertible-target", t));
+      // Another reason keeps its sentence whatever the scope holds.
+      expect(conversionNoticeMessage("plan-reading", t, true)).toBe(conversionNoticeMessage("plan-reading", t));
+    }
+  });
+
   it("names the route without unfolding Acquisitions, and stays true folded or open", async () => {
     const api = createFakePreviewApi({ availability: availableBackend });
     renderApp(api);

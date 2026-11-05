@@ -29,6 +29,10 @@ All notable changes will be documented here once versioned releases begin.
   A file not taken is offered at the next start only, except one the workspace
   refused at a press, accepted by the owner on 2026-11-03; a marked file waits
   ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md), decision 10).
+  A file put back keeps its "Not verified by MSCanvas" label, on its row, on its
+  figures and in a project reference made from it; the same file added with Add
+  files instead of put back has none, an owner decision of 2026-11-04
+  ([ADR 0061](docs/architecture/adr/0061-restore-workspace.md), decision 1).
 - **Spreadsheet CSV on a stored targeted result's table.** The results table has
   a third export, spreadsheet CSV / 电子表格 CSV, beside CSV and TSV. It is a
   document of its own, `mscanvas_targeted_ms1_results_spreadsheet` schema 1, that
@@ -49,6 +53,10 @@ All notable changes will be documented here once versioned releases begin.
 
 ### Changed
 
+- **Convert this file… converts this file.** The Conversion page holds that one
+  file, named on a third scope button, and your checked rows stay as they were,
+  before and after the run. **Checked rows** brings them back. **Open in Conversion**
+  on a Shimadzu or SCIEX row does the same.
 - **The preference record is now schema 2, and it keeps what beta 1 saved.** It
   gains text size, contrast, motion, wheel habit, crosshair, grid and whether
   preferences are remembered, each defaulting to what MSCanvas does today. No
