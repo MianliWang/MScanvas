@@ -21,6 +21,7 @@ use super::record::{
     ObservedMember, RecipeBinding, RecipeId, RunFailure, StopFacts, TargetDefinition, TargetId,
     TargetedMs1Parameters, TargetedMs1Plan, TargetedMs1ResultV1,
 };
+pub use super::runtime_pins::{ENGINE_REVISION, ENGINE_VERSION, RUNTIME_MANIFEST_SHA256};
 
 /// The recipe version this build runs.
 pub const RECIPE_VERSION: u32 = 1;
@@ -30,19 +31,10 @@ pub const RECIPE_VERSION: u32 = 1;
 /// there before the interpreter is given it.
 pub const ADAPTER_SOURCE: &[u8] = include_bytes!("../targeted_ms1/adapter_v1.py");
 
-/// SHA-256 of the canonical runtime manifest this build pins, as
-/// `scripts/provision_targeted_ms1_runtime.py` writes it.
-pub const RUNTIME_MANIFEST_SHA256: &str =
-    "6A3EB44A4611DB6B906F43B0278F67BB2B6996DDC7871BF614812E2CAC29B295";
-
 /// The engine the recipe runs, for the interface and the record. Its identity
 /// is the runtime manifest; these are names.
 pub const ENGINE_PACKAGE: &str = "pyopenms";
-pub const ENGINE_VERSION: &str = "3.5.0";
 pub const ENGINE_ALGORITHM: &str = "FeatureFinderAlgorithmMetaboIdent";
-/// The revision OpenMS reports about itself in this runtime. It is not the
-/// `release/3.5.0` tag commit; the two are recorded as different in M9.0.
-pub const ENGINE_REVISION: &str = "c1370fb";
 
 /// The engine parameters the adapter fixes, with the values the engine must
 /// report back after it resolved them, in canonical form.

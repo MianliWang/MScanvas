@@ -561,8 +561,8 @@ fn a_supported_source_travels_the_whole_path_and_survives_save_reopen_and_save_a
     assert_eq!(attempt.adapter_sha256, recipe::adapter_sha256());
     assert_eq!(attempt.source_view, SourceView::HardLinkInWorkArea);
     let report = attempt.engine_report.as_ref().expect("engine report");
-    assert_eq!(report.pyopenms, "3.5.0");
-    assert_eq!(report.openms_revision, "c1370fb");
+    assert_eq!(report.pyopenms, recipe::ENGINE_VERSION);
+    assert_eq!(report.openms_revision, recipe::ENGINE_REVISION);
     assert!(attempt.loaded_modules.iter().any(|module| {
         module
             .name
@@ -4502,7 +4502,9 @@ try:\n    subprocess.run([sys.executable, '-I', '-c', 'pass'], check=True)\n    
 except OSError as error:\n    print('refused', getattr(error, 'winerror', None))\n",
     );
     let scratch = super::development_scratch().expect("a development build");
-    let runtime = scratch.join("m91-runtime").join("cpython-3.13.15-embed");
+    let runtime = scratch
+        .join(crate::project::runtime_pins::DEVELOPMENT_RUNTIME_ROOT)
+        .join(crate::project::runtime_pins::DEVELOPMENT_RUNTIME_DIR);
     let python = runtime.join("python.exe");
     let digest = mscanvas_proteowizard::Sha256Digest::calculate_file(&python).expect("digest");
     let spec = CommandSpec::analysis_worker(
@@ -4816,6 +4818,198 @@ fn a_real_result_is_read_after_reopen_and_save_as_with_neither_the_runtime_nor_t
     assert_eq!(after.runs[0].targeted_ms1, execution_before);
     assert!(!after.dirty);
     assert_eq!(everything(&copied, artifact, &plan), before);
+}
+
+// ---------------------------------------------------------------------------
+// A-07: a real result of one runtime, kept for the next runtime to read back
+// ---------------------------------------------------------------------------
+
+/// Every file below `root`, by its path under it, with its SHA-256.
+fn digests_below(root: &Path) -> std::collections::BTreeMap<String, String> {
+    let mut digests = std::collections::BTreeMap::new();
+    let mut folders = vec![root.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in fs::read_dir(&folder).expect("read the folder") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                folders.push(path);
+                continue;
+            }
+            digests.insert(
+                path.strip_prefix(root)
+                    .expect("below the root")
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+                mscanvas_proteowizard::Sha256Digest::calculate_file(&path)
+                    .expect("digest")
+                    .to_string(),
+            );
+        }
+    }
+    digests
+}
+
+/// What a stored result gives back, by the name each is kept under: its rows
+/// and evidence, each extracted target's figure, its tables and one view of
+/// them. Read from the stored result alone, through what the commands use.
+fn stored_outputs(
+    store: &ProjectStore,
+    artifact: ArtifactId,
+    plan: &TargetedMs1Plan,
+) -> Vec<(String, Vec<u8>)> {
+    let settings = crate::preview::dto::FigureSettingsDto {
+        width_px: 1_200,
+        height_px: 640,
+        png_dpi: 300,
+        theme: "light".to_owned(),
+    };
+    let figure_output =
+        crate::preview::scientific_output::FigureOutput::from_wire(&settings).expect("settings");
+    let resolution = figure_output
+        .png_resolution(&settings)
+        .expect("a PNG resolution");
+    let rows = rows_of(store, artifact);
+    let mut outputs = vec![(
+        "rows.json".to_owned(),
+        serde_json::to_vec_pretty(&rows).expect("rows"),
+    )];
+    for (position, (target, row)) in (1..).zip(plan.targets.iter().zip(&rows)) {
+        if row.ion.is_none() {
+            continue;
+        }
+        let evidence = store
+            .read_targeted_ms1_evidence(artifact, target.target_id)
+            .expect("evidence");
+        let (figure, _) = store
+            .targeted_evidence_figure(
+                artifact,
+                target.target_id,
+                figure_output.size(),
+                figure_output.theme(),
+            )
+            .expect("a stored target draws");
+        outputs.extend([
+            (
+                format!("evidence-target-{position}.json"),
+                serde_json::to_vec_pretty(&evidence).expect("evidence"),
+            ),
+            (
+                format!("figure-target-{position}.svg"),
+                mscanvas_plot_spec::svg::render(&figure).into_bytes(),
+            ),
+            (
+                format!("figure-target-{position}.png"),
+                figure_output.png(&figure, resolution).expect("a PNG"),
+            ),
+        ]);
+    }
+    let detected: Vec<String> = plan
+        .targets
+        .iter()
+        .zip(&rows)
+        .filter(|(_, row)| row.outcome == RowOutcome::Detected)
+        .map(|(target, _)| target.target_id.to_string())
+        .collect();
+    let view = TableView::from_wire(&detected, &["DETECTED".to_owned()], String::new(), None)
+        .expect("a view");
+    let stored = store.stored_targeted_result(artifact).expect("stored");
+    for (format, name) in [
+        (TableFormat::Csv, "results.csv"),
+        (TableFormat::Tsv, "results.tsv"),
+        (TableFormat::SpreadsheetCsv, "results-spreadsheet.csv"),
+    ] {
+        outputs.extend([
+            (
+                name.to_owned(),
+                result_table(&stored, format)
+                    .expect("a table")
+                    .0
+                    .into_bytes(),
+            ),
+            (
+                format!("view-{name}"),
+                view_table(&stored, format, &view)
+                    .expect("a view table")
+                    .0
+                    .into_bytes(),
+            ),
+        ]);
+    }
+    outputs
+}
+
+/// Run once, on the runtime a build is about to leave: the project, its stored
+/// result and all it gives back stay in a folder of their own, under digests,
+/// for the build that follows to open and read back byte for byte. A folder
+/// that already exists is refused, so that result is never replaced.
+#[test]
+#[ignore = "writes a real result on .tmp/m91-runtime to the new folder MSCANVAS_A07_HISTORY_DIR names"]
+fn a_real_result_of_this_runtime_is_kept_for_the_next_runtime_to_read_back() {
+    use std::io::Write as _;
+
+    let folder = PathBuf::from(
+        std::env::var_os("MSCANVAS_A07_HISTORY_DIR")
+            .expect("MSCANVAS_A07_HISTORY_DIR names the new folder this result is kept in"),
+    );
+    fs::create_dir_all(folder.parent().expect("a parent")).expect("the parent");
+    fs::create_dir(&folder).expect("MSCANVAS_A07_HISTORY_DIR names a folder that does not exist");
+    let keep = |path: &Path, bytes: &[u8]| {
+        fs::File::create_new(path)
+            .and_then(|mut file| file.write_all(bytes))
+            .expect("kept, over nothing");
+    };
+
+    let project = folder.join("project");
+    fs::create_dir_all(project.join("data")).expect("the project's folders");
+    let source = project.join("data/plain.mzML");
+    keep(&source, &mzml(&plain(), ""));
+    let document = project.join("study.mscanvas");
+    let (store, _, layer) = project_over(&document, &source);
+    let supervisor = real();
+    let plan = plan(
+        &store,
+        layer,
+        vec![
+            target("caffeine", CAFFEINE, "60", "20"),
+            target("adenine", ADENINE, "40", "10"),
+            target("paracetamol", PARACETAMOL, "60", "20"),
+        ],
+        &supervisor,
+    );
+    let end = run(&store, &plan, &supervisor).expect("recorded");
+    assert_eq!(
+        end.outcome,
+        TerminalOutcome::Completed,
+        "{:?}",
+        failure_of(&store)
+    );
+    let artifact = end.artifact.expect("a result");
+    store.save().expect("save");
+    drop(store);
+
+    let reopened = ProjectStore::new();
+    reopened.open_document(&document, false).expect("open");
+    let outputs = folder.join("outputs");
+    fs::create_dir(&outputs).expect("the outputs' folder");
+    for (name, bytes) in stored_outputs(&reopened, artifact, &plan) {
+        keep(&outputs.join(name), &bytes);
+    }
+    let described = reopened.describe();
+    assert!(!described.dirty, "reading recorded nothing");
+    let execution = described.runs[0].targeted_ms1.as_ref().expect("the block");
+    let attempt = execution.attempt.as_ref().expect("attempt facts");
+    let facts = serde_json::json!({
+        "artifact": artifact.to_string(),
+        "planSha256": plan.plan_sha256,
+        "recipe": plan.recipe,
+        "targets": plan.targets.iter().map(|target| target.target_id.to_string()).collect::<Vec<_>>(),
+        "engineReport": attempt.engine_report,
+        "files": digests_below(&folder),
+    });
+    keep(
+        &folder.join("history.json"),
+        &serde_json::to_vec_pretty(&facts).expect("the facts"),
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@ pub mod observe;
 pub mod payload;
 pub mod recipe;
 pub mod record;
+pub mod runtime_pins;
 pub mod targeted_output;
 
 /// This module's own suite. Reachable from the crate's other test modules so
