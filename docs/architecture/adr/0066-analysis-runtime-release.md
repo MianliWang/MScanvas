@@ -1,11 +1,13 @@
 # ADR 0066 — Releasing the analysis runtime (CPython and pyOpenMS)
 
-Status: **Accepted**, 2026-11-04, no wider than the owner's answers named in the
-block of that date below. Engine: pyOpenMS 3.6.0 without Qt on CPython 3.14
+Status: **Accepted**, 2026-11-04, by this record's reading of B-1 and the roadmap and
+no wider than the owner's answers, both in the block of that date below. Engine:
+pyOpenMS 3.6.0 without Qt on CPython 3.14
 ([decision 8](#8-engine-and-interpreter-the-owners-rule-on-cpython-314)). Proposed
 2026-10-30. Not implemented: nothing here is built, and this status approves no
-shipping, release, upload or outbound message. A decision with no note from the
-owner is still the recommendation of 2026-10-30.
+shipping, release, upload, window or outbound message. What the owner did not answer,
+in the blocks below or in a note under a decision, is still the recommendation of
+2026-10-30.
 
 > **Owner decision B-1, 2026-10-30** ([OWNER_DECISIONS_V511.md](../../development/OWNER_DECISIONS_V511.md),
 > B-1). Decisions 1 and 2 are accepted: a separate, verified runtime package
@@ -66,8 +68,9 @@ owner is still the recommendation of 2026-10-30.
 
 > **Accepted, 2026-11-04, and no wider than the answers.** B-1 says B-2 is decided
 > before this record is accepted, and the roadmap's phase 0 exit says it is accepted
-> with its engine version. Both now hold, so the status follows those two lines. The
-> owner wrote no separate "accepted" for this record. What the owner decided:
+> with its engine version. Both now hold, so the status follows those two lines: a
+> reading, not an owner decision. The owner wrote no separate "accepted" for this
+> record. What the owner decided:
 >
 > - **B-1 (2026-10-30):** the block above: decisions 1 and 2, every fix to a shipped
 >   component an application release, and questions 6, 8 and 9.
@@ -93,7 +96,10 @@ owner is still the recommendation of 2026-10-30.
 >
 > **What was not asked stays as the block above says:** the text of 2026-10-30, not
 > an owner decision, and this status does not change that. LIB-1 adds decision 6's
-> libiconv row to what was answered, and nothing else joins.
+> libiconv row to what was answered, and nothing else joins. That block lists
+> decisions. [Alternatives rejected](#alternatives-rejected) was not asked either,
+> beyond what B-1 and CK-1 chose, so "rejected" there is the recommendation's word and
+> not the owner's.
 >
 > **Accepted does not approve shipping.** Ask 3 (A-05) stays open, and so does
 > everything under [what still blocks a release](#what-still-blocks-a-release). No
@@ -191,6 +197,9 @@ runtime", and `ANALYSIS_WORKERS.md`'s packaging gate lists what to evaluate
    Shipping the runtime makes the wheels it ships production dependencies under
    AGENTS.md's dependency policy: six of the lock's 14 under decision 4
    (`pyopenms`, `numpy`, `pandas`, `python-dateutil`, `six`, `tzdata`).
+   *2026-11-04:* on the branch decision 8 names, the probe's shape holds three wheels
+   and the embeddable (decision 4's note), and `nanobind-backend` and pyOpenMS 3.6.0 are
+   not in this lock. What ships is ask 3 (decision 10).
 6. **Security alerts.** 41 open Dependabot alerts are Pillow in the runtime
    lock (in the alert list exported on 2026-10-29: 5 critical, 23 high,
    13 medium, each fixed in Pillow 13.0.0). The owner
@@ -226,6 +235,8 @@ runtime", and `ANALYSIS_WORKERS.md`'s packaging gate lists what to evaluate
    it carries (OpenSSL, `sqlite3.dll` 3.50.4.0, libffi and others), Qt 6.8.3,
    `zlib.dll` 1.3.1, OpenBLAS and the libraries statically linked into
    `OpenMS.dll` are in no lock, so no alert ever names them.
+   *2026-11-04:* Qt 6.8.3 and `zlib.dll` belong to the 3.5.0 branch, which is not taken:
+   neither is in the probe's shape (decision 6's 3.6.0 rows).
 
 ## Measurements (2026-10-30)
 
@@ -461,8 +472,8 @@ import of `pyopenms.plotting` fails in it; no recipe imports that module.
 ## Decisions (recommended)
 
 *2026-11-04:* "recommended" is this heading's word of 2026-10-30. What the owner
-decided is marked under each decision, and the block of that date at the top says how
-far the status reaches.
+decided is marked under each decision or, for decisions 3 and 5, in the B-1 block at
+the top, and the block of 2026-11-04 says how far the status reaches.
 
 ### 1. Distribution: a separate, verified runtime package the user downloads (B1)
 
@@ -822,12 +833,15 @@ for those; the SBOM or link map decides.
 for Qt, pandas, python-dateutil, six, tzdata and `zlib.dll` do not apply: none of
 those files is in the shape
 ([sections 9.1](../../spikes/RUNTIME_360_PROBE.md#91-size-and-verification) and
-[9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)). The
-informal check's column comes from PyPI and from its copy of the 3.6.0 wheel:
-`share/OpenMS/THIRD-PARTY-NOTICES.txt` and `share/OpenMS/LICENSES/`. The notices say
-"This installation of OpenMS contains the third-party software listed below", which
-does not show what is linked into `OpenMS.dll`, and upstream's comment says a listing
-holds "the license text of every vcpkg port of the target triplet"
+[9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)). Reading these
+rows against that shape is a reading, not an owner decision: what ships is ask 3
+(decision 10). The informal check's column comes from PyPI and from its copy of the
+3.6.0 wheel: `share/OpenMS/THIRD-PARTY-NOTICES.txt` and `share/OpenMS/LICENSES/`. The
+notices say "This installation of OpenMS contains the third-party software listed
+below", which does not show what is linked into `OpenMS.dll`. Upstream's comment says a
+listing holds "the license text of every vcpkg port of the target triplet", and goes on
+"An installation carries the code of each port": a statement about ports in general, and
+no record of any one port in this DLL
 ([section 8](../../spikes/RUNTIME_360_PROBE.md#8-libiconv)). So none of these rows is
 a licence conclusion. The probe's column is not every port: the notices list 156
 entries, upstream's build log installs 155 packages, and only the libraries of
@@ -844,6 +858,7 @@ looked for. The licence slice settles them.
 | libiconv | listed in the notices, text in `LICENSES/vcpkg/libiconv.txt`; the DLL has 0 `iconv` strings and no such import, which does not prove the absence of a static link | **NOT SHOWN:** no import, string or alias name in the 76 native files, no SBOM or link map of this build, and upstream's statements point both ways; its build installed `libiconv` 1.18 for `libxml2[core,iconv,zlib]` ([section 8](../../spikes/RUNTIME_360_PROBE.md#8-libiconv)) | **terms accepted, treated as possibly linked** (LIB-1, below). How a static link's relink term is met is open |
 | The MSVC copies | not inventoried for 3.6.0 | seven files: five at 14.51.36247.0, and one `msvcp140` at 14.40.33810.0 in each of `nanobind_backend.libs` and `numpy.libs`, one digest. Two `msvcp140` versions load in one process ([section 9.3](../../spikes/RUNTIME_360_PROBE.md#93-every-msvc-runtime-copy)) | **open**: RT-3's reading applies on this branch too |
 | The other libraries | not inventoried for 3.6.0 | [section 9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)'s table, and `_arrow_zerocopy.pyd` (7,720,448 B), a static Arrow with zlib and bzip2, never loaded | **open**: the licence slice; a port missing from that table says nothing about that port |
+| `openms-thermo-bridge`'s native half | the notices' entry [25], text in `LICENSES/vcpkg/openms-thermo-bridge.txt`, which decision 4's note leaves out | its files are left out; `OpenMS.dll` keeps the bridge's code, 102 `Thermo` and 13 `hostfxr` strings ([section 7](../../spikes/RUNTIME_360_PROBE.md#7-what-loads)), with `get_hostfxr_path` from `nethost`; build log: 0.3.1 ([section 9.2](../../spikes/RUNTIME_360_PROBE.md#92-the-bundled-native-libraries)) | **open**: the wheel's notices, read for this row, say "The native bridge library links nethost". That the native half is in this DLL is a reading, with no link map, and no licence conclusion. The BSD 3-Clause text's clause 2 says "Redistributions in binary form must reproduce the above copyright notice", and with that file out the text is only entry [25] of the notices file below, headed by the `.doc`'s name and first bytes. If the licence slice finds it linked, the generated notices keep the BSD text, without that heading |
 | `share/OpenMS/THIRD-PARTY-NOTICES.txt` itself | lists `Thermo RawFileReader` with the `.doc`, and `openms-thermo-bridge` with texts [25] and [47]; [47] is `openms_thermo_bridge/managed/THIRD-PARTY-NOTICES.txt`, inside the folder decision 4 leaves out | 522,059 B, left in the copy unedited, so it declares what the copy does not hold; `LICENSES/` keeps 157 files ([section 9.4](../../spikes/RUNTIME_360_PROBE.md#94-notices)) | **open**: whether this file is left out, revised or replaced by the generated notices, so that the package does not declare what it does not ship |
 
 > **LIB-1, the owner, 2026-11-04: "选A" ("option A").** The owner accepts libiconv's
@@ -1025,10 +1040,13 @@ alignment and linking, was not taken: B-2.1 replaces it.
 
 **The interpreter, as recommended and answered by B-2.3.** The next paragraph and
 its list are the text of 2026-10-30. In them, "it" is the engine the rule names, and
-"the same pyOpenMS, numpy and pandas versions" holds on the fail branch only. On the
-branch taken the wheels are the probe's, with no pandas
-([section 3](../../spikes/RUNTIME_360_PROBE.md#3-the-four-artefacts)), and
-`pyopenms-3.6.0-cp311-abi3-win_amd64.whl` is the only Windows wheel. The list's
+"the same pyOpenMS, numpy and pandas versions" holds on the fail branch only, and so
+does "no wheel change" in its last bullet. On the branch taken the wheels are the ones
+the probe measured, with no pandas
+([section 3](../../spikes/RUNTIME_360_PROBE.md#3-the-four-artefacts)), and what ships is
+ask 3: a reading, not an owner decision. `pyopenms-3.6.0-cp311-abi3-win_amd64.whl` is the
+only Windows wheel. On that branch 3.13.17 would need another embeddable and cp313 builds
+of numpy and `nanobind-backend`, which ask 2 does not approve. The list's
 "whether ANA-004 runs on cp314 at all is unmeasured" is answered for that shape by
 [section 6.1](../../spikes/RUNTIME_360_PROBE.md#61-the-edits); the M9.0 protocol still
 has not run.
@@ -1078,6 +1096,9 @@ shape. The probe's numbers above replace it wherever they differ.
   install and support guide) and `tauri.conf.json` declares no installer
   hooks, so both need a new NSIS hook in the application installer (New code,
   under Consequences).
+  *2026-11-04:* `tauri.conf.json` now declares `installer-hooks.nsh` (DEF-2, the view
+  cache only). The work-area removal and the runtime notice are not in it and are not
+  built: the hook here and under Consequences would be additions to that file.
 - **Repair.** A failed pre-launch verification already answers
   `runtimeUnverified`. Its message names the repair: run the runtime package
   again and choose Repair. Repair extracts into staging, verifies, removes the
@@ -1123,9 +1144,9 @@ needs the owner's approval.
 >    Not approved: a fifth package, or another version or tag;
 > 3. shipping (A-05). **Open.** The answer lists "shipping (ask 3, A-05)" among what
 >    ask 2 does not approve, and this record's status does not answer it. B-1 question
->    8's approval above is not withdrawn. Whether it already covers any of the four
->    (numpy 2.5.3's cp314 wheel is a version ANA-004 was qualified on) is not settled
->    here: a reading, not an owner decision.
+>    8's approval above is not withdrawn. Whether it already covers numpy 2.5.3's cp314
+>    wheel, a version ANA-004 was qualified on, is not settled here: a reading, not an
+>    owner decision.
 >
 > B-3.3 answers "(open question 4)" above: the experiment lock is deleted, not
 > bumped. *2026-11-04 (D1):* #168, that bump, was closed, and no alert was dismissed.
@@ -1169,6 +1190,8 @@ needs the owner's approval.
   under MSCanvas's control.
 - **Removing `Qt6Network.dll` to shrink the network surface.** Measured: the
   engine does not load without it.
+  *2026-11-04:* that is 3.5.0, the branch not taken. The probe's shape has no Qt
+  (decision 8).
 - **Bundling more packages now** (scipy, scikit-learn, matchms, statsmodels).
   The statistics plan runs in Rust; each package is a separate approval and a
   new manifest.
@@ -1329,7 +1352,8 @@ this record's status answers none of it.
     looked for;
   - the notices and source pointers for what that table states: curl 8.20.0, OpenSSL
     3.6.4, Arrow and Parquet 24.0.0, Xerces-C 3.3.0, SQLite, libsvm, zlib 1.3.2, bzip2
-    1.0.8, the .NET host and COIN-OR (EPL 2.0 in its `LICENSES/vcpkg` text);
+    1.0.8, the .NET host, the Thermo bridge's native half (its row in decision 6) and
+    COIN-OR (EPL 2.0 in its `LICENSES/vcpkg` text);
   - `pyopenms/_arrow_zerocopy.pyd` (7,720,448 B), never loaded, with a static Arrow, zlib
     and bzip2;
   - `libtommath.dll` in the embeddable, named in neither the SPDX file on python.org nor
@@ -1343,7 +1367,16 @@ this record's status answers none of it.
   (decision 4's licence slice).
 - **ANA-004's qualification on the new manifest (A-07, delivery step 1).** The M9.0
   protocol has not run on these binaries, and the owner has not accepted the numbers the
-  probe saw move (decision 8).
+  probe saw move (decision 8). What happens if that qualification fails, or the owner
+  does not accept those numbers, is not decided: CK-2 answers a failed probe only, and
+  decision 8's 3.13.17 alternative is the text of 2026-10-30, "only by the owner's
+  decision", on wheels ask 2 does not approve.
+- **The package and its installed qualification (A-05, delivery steps 3 and 5).** Not
+  built. The probe measured neither the installed location nor a clean machine
+  ([section 10](../../spikes/RUNTIME_360_PROBE.md#10-what-this-does-not-show)). The
+  qualification needs an idle-desktop window, with SmartScreen and antivirus behaviour
+  ([the roadmap's section 7](../../development/ROADMAP_V511_AND_ANALYSIS.md#7-measurement-and-evidence-gates)).
+  The owner provides that window, and no answer here approves it.
 - **A-06's result under B-1 question 6.** Whether the measurement shows that the
   AppContainer can be enforced without administrator rights is unknown, and the
   answer decides whether the container blocks the release. The probe's findings for that
