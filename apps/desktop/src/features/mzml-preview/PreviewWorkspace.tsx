@@ -17,7 +17,7 @@ import { BackendStatus } from "./BackendStatus";
 import { presentBackend } from "./backendPresentation";
 import { Chromatogram } from "./Chromatogram";
 import { ChromatogramExportResult, ChromatogramExportStatus, ChromatogramExportTools, LinkedFigureResult, describeUnavailable } from "./ChromatogramExportPanel";
-import { resolveConversionScope } from "./conversionScope";
+import { resolveConversionScope, type ConversionFile } from "./conversionScope";
 import { ConversionHistory } from "../run-history/ConversionHistory";
 import { ConversionPanel } from "./ConversionPanel";
 import { DatasetRoster } from "./DatasetRoster";
@@ -410,8 +410,8 @@ export function PreviewWorkspace() {
   // `conversionAvailability.ts`.
 
   const resolvedScope = useMemo(
-    () => resolveConversionScope(workspace.conversionScope, roster),
-    [workspace.conversionScope, roster.datasets, roster.conversionMembership, roster.sort],
+    () => resolveConversionScope(workspace.conversionScope, roster, workspace.conversionFile),
+    [workspace.conversionScope, workspace.conversionFile, roster.datasets, roster.conversionMembership, roster.sort],
   );
 
   const { describe: describeConversion } = workspace.conversionPlan;
@@ -498,10 +498,9 @@ export function PreviewWorkspace() {
   const readAgainOffered = preview.status === "failed" && (preview.error.retryable || preview.error.kind === "selection_superseded" || preview.error.kind === "raw_view_not_ready");
   const rawViewLocalReason = busyReason === null || busyReason === "conversion" || busyReason === rawViewReason ? null : busyReason;
   const nameOfRow = (handle: string) => roster.datasets.find(row => row.handle === handle)?.fileName ?? null;
-  /** Checks one row and shows the Conversion surface. Nothing is read. */
-  const convertRow = (handle: string) => {
-    workspace.dispatchRoster({ type: "membershipChanged", handles: [handle], checked: true });
-    workspace.setConversionScope("selected");
+  /** Holds the Conversion surface to this one file and shows it. The checked rows stay as they are. Nothing is read. */
+  const convertRow = (file: ConversionFile) => {
+    workspace.setConversionScope("file", file);
     pendingSurfaceFocus.current = "conversion";
     setSurface("conversion");
     panels.navigate();
@@ -1130,7 +1129,7 @@ export function PreviewWorkspace() {
               { value: "scans", label: t("viewerTabScans") },
               { value: "metadata", label: t("viewerTabMetadata") },
             ]} actions={viewSource === null ? undefined : <div className="viewer-file-actions">
-              <Button size="sm" data-raw-view-convert="" onClick={() => convertRow(preview.preview.file.handle)}>{t("rawViewConvert")}</Button>
+              <Button size="sm" data-raw-view-convert="" onClick={() => convertRow(preview.preview.file)}>{t("rawViewConvert")}</Button>
             </div>}>
               {viewerView === "metadata" ? (
                 <PreviewMetadata
@@ -1273,7 +1272,7 @@ export function PreviewWorkspace() {
                   // Another row's read has no line of its own anywhere else.
                   openReason={workspace.previewBackendBusy ? t("readingSelected") : null}
                   onOpen={operation => workspace.openRawView(operation, rawPaneRow.handle)}
-                  onConvert={() => convertRow(rawPaneRow.handle)}
+                  onConvert={() => convertRow(rawPaneRow)}
                   onChooseFolder={workspace.chooseInstallation}
                   onShowBackend={() => setBackendOpen(true)}
                   onShowConversion={() => {
@@ -1318,7 +1317,7 @@ export function PreviewWorkspace() {
                       {t("retryEvidence")}
                     </Button> : null}
                     {/* Decision 10: the route with full diagnostics is always there. */}
-                    {workspace.activeDataset.sourceKind === "thermo_raw" ? <Button data-raw-view-convert="" onClick={() => convertRow(workspace.activeDataset?.handle ?? "")}>{t("rawViewConvert")}</Button> : null}
+                    {workspace.activeDataset.sourceKind === "thermo_raw" ? <Button data-raw-view-convert="" onClick={() => { if (workspace.activeDataset !== null) convertRow(workspace.activeDataset); }}>{t("rawViewConvert")}</Button> : null}
                   </div>
                 ) : undefined}
               />
@@ -1357,9 +1356,9 @@ export function PreviewWorkspace() {
                   <strong>{formatDatasetLabel(focusedVendor)}</strong>
                   <span id="preview-needs-conversion-description">{`${SOURCE_KIND_LABEL[focusedVendor.sourceKind]} · ${t("needsConversion")}`}</span>
                 </>}
-                // Checks this row and keeps every other check, then shows the
-                // checked rows on the Conversion surface. Nothing is read.
-                action={<Button variant="primary" onClick={() => convertRow(focusedVendor.handle)}>
+                // Shows this file alone on the Conversion surface, and no check
+                // changes. Nothing is read.
+                action={<Button variant="primary" onClick={() => convertRow(focusedVendor)}>
                   {t("openInConversion")}
                 </Button>}
               />

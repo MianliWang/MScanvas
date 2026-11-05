@@ -391,6 +391,7 @@ async fn save_project_as(
 /// recorded with it (ADR 0055; owner decisions of 2026-10-29 and 2026-10-31,
 /// for an object with a row; with no row, as built in PR #201, 2026-11-03, not
 /// an owner decision).
+/// 2026-11-04: accepted by the owner (P201-SCOPE).
 #[tauri::command]
 async fn add_project_input(
     app: tauri::AppHandle,

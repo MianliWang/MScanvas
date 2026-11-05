@@ -64,13 +64,17 @@ const NOTICE_MESSAGE = {
   "nothing-to-retry": "m74CnvNoticeNothingToRetry",
 } as const satisfies Record<Exclude<ConversionUnavailableReason, "no-convertible-target">, string>;
 
-export function conversionNoticeMessage(reason: ConversionUnavailableReason, t: UiMessage): string {
+export function conversionNoticeMessage(reason: ConversionUnavailableReason, t: UiMessage, heldRowGone = false): string {
+  if (reason !== "no-convertible-target") return t(NOTICE_MESSAGE[reason]);
   // The route names the header toggle and Add files by their own labels, so
   // the guidance and the controls cannot drift apart in either language
   // (PM9.7 F3).
-  return reason === "no-convertible-target"
-    ? t("m74CnvNoticeNoConvertibleTarget", { toggle: t("rosterToggle"), add: t("addFiles") })
-    : t(NOTICE_MESSAGE[reason]);
+  const route = { toggle: t("rosterToggle"), add: t("addFiles") };
+  // Under the one-file scope with its row gone, adding the file does not bring
+  // the scope back: Rust gives it a new handle, and a same name is not a same file.
+  return heldRowGone
+    ? t("m74CnvNoticeHeldRowGone", { ...route, convert: t("rawViewConvert"), open: t("openInConversion"), checkedRows: t("m74CnvSelected"), allRows: t("m74CnvAll") })
+    : t("m74CnvNoticeNoConvertibleTarget", route);
 }
 
 /**

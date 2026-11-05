@@ -28,6 +28,8 @@ This catalog is the concise feature index. Detailed semantics remain in [`PROJEC
 | WSP-011 | Session organization | P1 | One-level groups and Ungrouped support create/rename/disclose/reorder/move/dissolve. ID-based pointer/keyboard drag and menus share atomic checks; bounded undo preserves imports and refuses unsafe inverses. No source deletion; a group with rows in it is kept only through Restore workspace (WSP-010). A group left empty does not come back after a restart (accepted by the owner on 2026-11-03, P204; ADR 0061, Consequences). |
 | WSP-012 | Workbench navigation | P0 | One Home target and real workbench/conversion surfaces preserve mounted authority, viewed evidence, drafts and live work across navigation, Settings and responsive folding. |
 
+*2026-11-04 (owner decision P201-RESTORE, [ADR 0061](../architecture/adr/0061-restore-workspace.md) decision 1's note):* WSP-010's document also records a row's "Not verified by MSCanvas" label, so a row put back in a later session says it, on its row, in Details and on its figures, and a reference registered from it records it. The same file added with Add files instead of being put back has none in the next session. As built on 2026-11-04, not an owner decision: the same by another route, and a reference registered from the file picker while the row still waits records `null`, which the later press does not change.
+
 Implementation notes for the two folder-bearing features follow. The acceptance
 table remains the target, including the unsupported portions called out below:
 
@@ -35,6 +37,10 @@ table remains the target, including the unsupported portions called out below:
 - **WSP-008 — Implemented by M6.7 ([PR #100](https://github.com/MianliWang/MScanvas/pull/100)).** Selected means the
   user's curated checkbox membership in M7.2, including a selection of one; all means every eligible
   workspace row, including rows outside search. Focus never supplies a fallback.
+  **Convert this file… (N-C3, 2026-11-04)** is a third scope, the one file, reached
+  from a RAW row's pane, a viewed file's row, a failed open and a vendor row; no check
+  changes, and its button is there only while it is current. What follows of "both
+  scopes" holds for it too.
   Requested, eligible and excluded counts are visible. Both scopes use the
   complete roster's chosen sort, with added order breaking ties, and show every
   resolved queue member in order. Rust's current capacity is displayed and an

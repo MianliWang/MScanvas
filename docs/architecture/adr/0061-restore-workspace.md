@@ -137,6 +137,46 @@ record keeps "no highlighted or conversion selection". Under it every restored
 row starts unchecked. Collapsed state is not restored, so a marked row never
 starts hidden.
 
+*Owner decision, 2026-11-04 (P201-RESTORE):* asked whether a row Restore
+workspace puts back keeps "Not verified by MSCanvas" (ADR 0055), the owner
+replied "全部按推荐" ("all as recommended"): keep it. The text of this decision
+stands as accepted, with this one exception to "a row's provenance" and "a plain
+row": each stored row also records its label, so the row put back in a later
+session says it, its figures draw it, and a reference registered from it records
+it, not `null`. The cost the answer accepted stays: the same file added with Add
+files instead of being put back has no label in the next session, because a save
+records it as that live row and the restored row's label goes with the restored
+row.
+
+*As built (2026-11-04), not an owner decision, for the owner's eye:*
+
+- The label is an optional field of a stored row, in the project record's shape,
+  and the schema version stays 1. No released build reads this document (beta 1
+  has no restore), a document from before the field reads as no label, and one
+  with no labelled row is byte for byte what it was. A build from before the field
+  refuses a document holding one as `malformed`, as decision 6 says.
+- A stored value that is not a label, by the project record's rule, gives the row
+  no label and refuses nothing. This is the one field that does not follow decision
+  6, which every other unreadable field does: it stays as found while the row waits
+  and is gone once the row is put back and saved. Nothing says so on screen.
+- A value the parser cannot hold (nested past 128 levels, a number out of range, a
+  lone surrogate) makes a document it cannot parse, as damage to the JSON anywhere
+  does, so decision 6 refuses that one whole. No build writes one.
+- Restore workspace over a row already in the Workbench gives that row the stored
+  label, merged with any it has, on the same object proof.
+- As a build writes it, the label is a flag and a bounded, redacted release, which
+  add no path (decision 7). A read checks the release only by the project record's
+  bounds and does not redact it, as a project's reference does not, so a hand-edited
+  document can put a path on the row and on its figures.
+- A row that gains a label without moving is recorded by the next save, which the
+  webview now owes it.
+- The accepted cost names Add files. Three more paths lose the label, none changed
+  here: a reference registered from the file picker while the row still waits
+  records `null`, and the press that later labels the row does not change it; the
+  same file added in a later session by another route (Add mzML folder…, a drop) has
+  none, as with Add files; and a row decision 10 no longer offers leaves the document
+  with its label.
+
 ### 2. Where it is stored
 
 One document, `workspace-restore.json`, in the per-user application-local data
