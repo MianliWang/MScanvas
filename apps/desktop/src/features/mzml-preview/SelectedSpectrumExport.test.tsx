@@ -273,7 +273,7 @@ describe("what the head says the spectrum states", () => {
   it("states polarity and charge as values, before the size, which drops first", () => {
     renderPanel(loaded({ representation: "profile", polarity: "negative", charge: 2 }));
 
-    expect(facts()).toEqual(["MS2", en.viewerRepresentationProfile, en.viewerPolarityNegative, "Charge 2", "4 points"]);
+    expect(facts()).toEqual(["MS2", en.viewerRepresentationProfile, "Charge 2", en.viewerPolarityNegative, "4 points"]);
   });
 
   it("says not reported for each, in one fact for both, never 0, and shows a stated 0 as stated", () => {
@@ -285,15 +285,15 @@ describe("what the head says the spectrum states", () => {
     };
 
     expect(shown(null, null)).toEqual([en.viewerPolarityChargeNotReported]);
-    expect(shown(null, 2)).toEqual([en.viewerPolarityNotReported, "Charge 2"]);
-    expect(shown("positive", null)).toEqual([en.viewerPolarityPositive, en.viewerChargeNotReported]);
-    expect(shown("positive", 0)).toEqual([en.viewerPolarityPositive, "Charge 0"]);
+    expect(shown(null, 2)).toEqual(["Charge 2", en.viewerPolarityNotReported]);
+    expect(shown("positive", null)).toEqual([en.viewerChargeNotReported, en.viewerPolarityPositive]);
+    expect(shown("positive", 0)).toEqual(["Charge 0", en.viewerPolarityPositive]);
   });
 
   it("says whose charge it is where the spectrum has more than one precursor, as a fact of its own", () => {
     renderPanel(loaded({ charge: 3, totalPrecursorCount: 2 }));
 
-    expect(facts().slice(3, 5)).toEqual(["Charge 3", "(precursor 1 of 2)"]);
+    expect(facts().slice(2, 4)).toEqual(["Charge 3", "(precursor 1 of 2)"]);
   });
 
   it("states neither before a spectrum has loaded", () => {

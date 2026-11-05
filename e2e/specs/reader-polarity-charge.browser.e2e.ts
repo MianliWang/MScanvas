@@ -123,8 +123,8 @@ describe("a spectrum's polarity and charge", () => {
         await openOn(locale, size, { polarity: "negative", charge: 2, representation: "profile" });
 
         const head = await headFacts();
-        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, words.viewerPolarityNegative,
-          words.viewerChargeValue.replace("{{charge}}", "2"), words.viewerExportPoints.replace("{{count, number}}", "6")]);
+        expect(head.facts).toEqual(["MS2", words.viewerRepresentationProfile, words.viewerChargeValue.replace("{{charge}}", "2"),
+          words.viewerPolarityNegative, words.viewerExportPoints.replace("{{count, number}}", "6")]);
         expect(head.dropped).toEqual([]);
         expect([head.overHead, head.covered, head.horizontalOverflow]).toEqual([false, false, 0]);
         await capture(`stated-${locale}-${String(size[0])}x${String(size[1])}`);
@@ -180,6 +180,16 @@ describe("a spectrum's polarity and charge", () => {
 
         await openDetails();
         expect(await detailsValue(words.viewerCharge)).toBe(`3 ${owner}`);
+      });
+
+      it(`keeps a stated charge beside a polarity not reported, ${label}`, async () => {
+        await openOn(locale, size, { polarity: null, charge: 2, representation: "profile" });
+
+        const head = await headFacts();
+        expect(head.facts).toEqual(expect.arrayContaining([words.viewerPolarityNotReported, words.viewerChargeValue.replace("{{charge}}", "2")]));
+        // Only the size may give way, and it is in Details (P5).
+        expect(head.dropped.filter(fact => fact !== words.viewerExportPoints.replace("{{count, number}}", "6"))).toEqual([]);
+        await capture(`charge-only-${locale}-${String(size[0])}x${String(size[1])}`);
       });
 
       it(`says a stated polarity and a charge not reported, as an MS1 usually does, ${label}`, async () => {

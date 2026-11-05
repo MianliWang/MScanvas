@@ -60,7 +60,7 @@ const REOPEN_KINDS = new Set(["preview_not_open", "spectrum_not_as_recorded", "s
 
 /**
  * The selected spectrum (direction A): a head with the title, the scan and its
- * steps, the scan's MS level, representation, polarity, charge and size, and one toolbar (m/z range, then the
+ * steps, the scan's MS level, representation, charge, polarity and size, and one toolbar (m/z range, then the
  * figure); the plot; and over the plot's corner, what the last export did.
  * Range, size and theme are the figure dialog's; the spectrum's facts are in
  * Details.
@@ -71,6 +71,7 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
   const reason = figureRefusal(t, props.scientificExportBusy, props.figureSettingsValidation);
   const rangeEditor = usePlotRangeEditor();
   const spectrum = state.status === "loaded" ? state.spectrum : null;
+  const bothUnstated = spectrum?.polarity === null && spectrum.charge === null;
   // With no spectrum, the line between the steps ("No spectrum selected") is
   // why neither can move; otherwise the table's own sentence, where it has one.
   const stepReasonId = props.stepReasonId ?? (spectrum === null ? SCAN_ID : undefined);
@@ -90,12 +91,13 @@ export const SelectedSpectrumPanel = memo(function SelectedSpectrumPanel(props: 
         {/* What the file declares (P5): profile is drawn as a line, the rest as sticks. */}
         <span>{t(spectrum.representation === "notReported" ? "viewerRepresentationNotReported" : REPRESENTATION[spectrum.representation])}</span>
         {/* What the file states; not reported is a value here too, never 0 (R-1).
-            Both unstated take one fact, which keeps the head whole at 1366 px. */}
-        {spectrum.polarity === null && spectrum.charge === null ? <span>{t("viewerPolarityChargeNotReported")}</span> : <>
-          <span>{t(spectrum.polarity === null ? "viewerPolarityNotReported" : POLARITY[spectrum.polarity])}</span>
-          <span>{spectrum.charge === null ? t("viewerChargeNotReported") : t("viewerChargeValue", { charge: String(spectrum.charge) })}</span>
-        </>}
+            Both unstated take one fact, which keeps the head whole at 1366 px; the
+            charge comes first, so at 960 px a stated one is not lost to a polarity
+            not reported, and says whose it is next to it. */}
+        <span>{bothUnstated ? t("viewerPolarityChargeNotReported") : spectrum.charge === null ? t("viewerChargeNotReported")
+          : t("viewerChargeValue", { charge: String(spectrum.charge) })}</span>
         {spectrum.totalPrecursorCount > 1 ? <span>{t("viewerChargeOfPrecursor", { total: spectrum.totalPrecursorCount })}</span> : null}
+        {bothUnstated ? null : <span>{t(spectrum.polarity === null ? "viewerPolarityNotReported" : POLARITY[spectrum.polarity])}</span>}
         <span>{t("viewerExportPoints", { count: spectrum.pointCount })}</span>
       </p>}
       {/* The plot's accessible name, in one sentence. */}
