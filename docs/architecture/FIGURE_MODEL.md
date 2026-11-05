@@ -238,21 +238,24 @@ screen plots draw the domain's two ends one inset inside the frame.
 
 | | |
 | --- | --- |
-| The inset | `DOMAIN_INSET`: 8 figure units in `svg.rs`, 8 viewBox units in `plotAxes.ts`, past each end. Larger than any mark drawn at a position (as built 2026-11-04, not an owner decision) |
-| What stays on the frame | the axis rule, the zero line, the gridlines, the legend, the captions and where a marker label may go. Only positions on the domain axis move: marks, ticks, marker rules and intervals |
+| The inset | `DOMAIN_INSET`: 8 figure units in `svg.rs`, 8 viewBox units in `plotAxes.ts`, past each end. About as large as the largest mark drawn at a position (as built 2026-11-04, not an owner decision) |
+| What stays on the frame | the axis rule, the zero line, the gridlines and the captions |
+| What moves with the band | every position on the domain axis: marks, ticks, marker rules and intervals. The legend and a marker label also end 4 units short of the band's end, so a rule at the last position stands beside them and not through them. A label too wide for that keeps the frame. A rule near the end but not at it can still cross its own label, as it could before the inset (as built 2026-11-04, not an owner decision) |
+| Which ticks | fitted to the band, so the inset can change which round ticks fit, and so what a tick says: `1000..1000.1` at 1200 wide reads `1000.00` to `1000.10` in six ticks where it read `1000.0` and `1000.1`, and `1e6..3.5e6` at 208 wide reads `1e6`, `2e6`, `3e6` where it read six (as built 2026-11-04, not an owner decision) |
 | The domain | still the data's. No tick lands in the inset, the ends stay unlabelled and the description states the same range. A domain with no width is drawn down the middle |
-| Pointer to position | a place in the band reads back through `bandFraction` and `positionAt`, the inverse of `xAt`. A place in the inset is the end beside it, that end's own number, so a range commit is the true range and never reaches past it |
-| Off the range | the screen hides a rule and its label by whether the place is in the band, since the frame's clip no longer hides what lands in the inset. The figure draws no marker outside its window |
-| Headroom | `withHeadroom` and `value_axis`, 5% past the data and never across zero, and the ticks over that axis. One rule, including its one edge: no headroom at all where it would pass the largest number there is |
+| Pointer to position | a place in the band reads back through `bandFraction` and `positionAt`, the inverse of `xAt`. A place in the inset is the end beside it, that end's own number, and a range commit never reaches past the run. A drag across a whole run keeps its span, so it can end a unit in the last place short of the run, as it could before the inset |
+| Off the range | the screen hides a rule and its label by whether the place is in the band, since the frame's clip no longer hides what lands in the inset. The figure draws no marker outside its window (as built 2026-11-04, not an owner decision) |
+| Headroom | `withHeadroom` and `value_axis`, 5% past the data and never across zero, and the ticks over that axis. One rule, including its one edge: no headroom at all where it, or the distance it leaves between the ends, would pass the largest number there is |
 | One table | `fixtures/plot-ticks/axis-geometry.json`, written by `svg.rs` and read by `plotAxes.test.ts`, holds the inset, the headroom and each side's answers to the last bit |
 | Schema | unchanged. Geometry is the renderer's, so a `FigureSpec` is the same value, a saved figure's data digest does not move and its pinned `.msfigure` is byte-identical. Reopening one draws it with the inset |
 
 Every exported SVG and PNG changed by this inset, and every golden document with
-it. Heights did not change: the export already had this headroom.
+it. No colour or height changed: the export already had this headroom. A tick's
+words can change where the band changes which ticks fit, though no golden's did.
 
 Known difference: a value range with no width, where every drawn value is zero,
 puts the zero line in the middle of a figure's panel and at the foot of a screen
-plot (as built, not an owner decision).
+plot (as built 2026-11-04, not an owner decision).
 
 ## The source note — schema 5
 

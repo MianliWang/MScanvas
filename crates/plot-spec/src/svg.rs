@@ -196,9 +196,10 @@ const HEADROOM: f64 = 0.05;
 /// Space on the page and nothing else: a mark at the end of a run stands clear
 /// of the value axis rather than on it, and the rule and gridlines still run the
 /// frame's width. The domain stays the data's, so no tick lands in this space
-/// and the description states the same range. Larger than any mark drawn at a
-/// position. The screen's `DOMAIN_INSET` is this number, in its own viewBox
-/// units, and `fixtures/plot-ticks/axis-geometry.json` holds the two together.
+/// and the description states the same range. About as large as the largest mark
+/// drawn at a position. The screen's `DOMAIN_INSET` is this number, in its own
+/// viewBox units, and `fixtures/plot-ticks/axis-geometry.json` holds the two
+/// together.
 const DOMAIN_INSET: f64 = 8.0;
 
 /// How visible a gridline is, drawn in the axis colour.
@@ -2431,9 +2432,10 @@ fn render_legend(
 
     // Right-aligned inside the plotting area. The value-axis ends are written
     // at its left edge, so this is the one side of the panel that is not
-    // already spoken for.
-    let right = frame.right - MARKER_LABEL_INSET;
-    let room = (frame.right - frame.left) - LEGEND_SWATCH - LEGEND_GAP - MARKER_LABEL_INSET;
+    // already spoken for. Measured from the band, because that is where a rule
+    // at the domain's last position stands, and it must not cross the words.
+    let right = frame.band.1 - MARKER_LABEL_INSET;
+    let room = (right - frame.left) - LEGEND_SWATCH - LEGEND_GAP;
     let mut occupied = Vec::with_capacity(panel.series().len());
     for (row, series) in panel.series().iter().enumerate() {
         let (stroke, dashes) = stroke_for(series.role(), colours);
@@ -2705,8 +2707,13 @@ fn render_marker_label(
         // after the markers, so a label allowed out there was covered by it.
         // An annotation belongs to the plot it annotates; the page is not the
         // right bound for it, and bounding it here needs no second collision
-        // box to discover that.
-        let left = (x + 3.0).max(frame.left).min(frame.right - block);
+        // box to discover that. The right bound is short of the band's end, as
+        // the legend's is, because a rule at the last position stands there: the
+        // frame's would put the rule through the words. A line too wide for that
+        // still has the frame.
+        let left = (x + 3.0)
+            .min(frame.band.1 - MARKER_LABEL_INSET - block)
+            .max(frame.left);
         // The natural place for every label, just inside the top of the plot.
         let wanted = plot_top + 12.0;
         // The block belongs to the panel that owns the marker, not to the
@@ -3011,8 +3018,10 @@ mod shared_table {
         (-2_073_000.0, 1_625_000.0),
         (0.0, 3.15e-4),
         (0.0, 0.0),
-        // Headroom past the largest number there is: none, rather than infinity.
+        // Headroom past the largest number there is: none, rather than infinity,
+        // whether one end would pass it or only the distance between the two.
         (0.0, 1.79e308),
+        (-8.5e307, 8.5e307),
         (500.0, 9000.0),
         (-9000.0, -500.0),
         (5.0, 5.0),

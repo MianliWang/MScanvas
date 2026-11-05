@@ -53,9 +53,11 @@ All notable changes will be documented here once versioned releases begin.
   every exported figure, each end of the x axis is drawn a small inset inside the
   plot's frame, so the first and last marks no longer sit on it and a selected
   scan at the first retention time no longer shares the y axis. **Every exported
-  SVG and PNG changes by this inset**, though no colour, word or height does. The
-  range itself does not change: a pointer in the inset reads as that end of the
-  range, and a range you draw or export is the true one.
+  SVG and PNG changes by this inset.** No colour or height changes. The legend and
+  a marker's label move in with it, and on some ranges and narrow figures the x
+  axis labels different round ticks, because they are fitted to the narrower axis.
+  The range itself does not change: a pointer in the inset reads as that end of
+  the range, and a range you draw never reaches past the run.
 - **The preference record is now schema 2, and it keeps what beta 1 saved.** It
   gains text size, contrast, motion, wheel habit, crosshair, grid and whether
   preferences are remembered, each defaulting to what MSCanvas does today. No

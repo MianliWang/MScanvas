@@ -59,3 +59,10 @@ is `fixtures/saved-figure-golden/linked-full-run.msfigure`, which records no
 geometry. A colour here does not change this way: see FE-1 item 3 in
 `docs/development/OWNER_DECISIONS_V511.md`. See
 `docs/architecture/FIGURE_MODEL.md`.
+
+It took two commits of one pull request. `7d9dce09` moved the positions and left
+the legend on the frame, and review found the dotted window end of
+`targeted-stored-result.svg` running through its legend's words. The second moved
+the legend 8 units further in, the x of its swatches, marks and words and nothing
+else, in the four documents that have one: every one of the five but
+`spectrum-full-source.svg`.

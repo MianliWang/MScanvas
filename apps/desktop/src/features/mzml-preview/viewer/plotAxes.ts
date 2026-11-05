@@ -65,15 +65,16 @@ export const VALUE_HEADROOM = 0.05;
 /**
  * The value range the axis spans: the visible extent, widened by the headroom
  * on each side that holds a value. Zero stays where it is, so an all-positive
- * plot still starts at zero. No headroom at all where it would pass the largest
- * number there is, as `svg.rs` `value_axis`.
+ * plot still starts at zero. No headroom at all where it, or the distance it
+ * would leave between the ends, would pass the largest number there is, as
+ * `svg.rs` `value_axis`.
  */
 export function withHeadroom(low: number, high: number): Range {
   const span = high - low;
   if (!Number.isFinite(span) || !(span > 0)) return { low, high };
   const pad = span * VALUE_HEADROOM;
   const axis = { low: low < 0 ? low - pad : low, high: high > 0 ? high + pad : high };
-  return Number.isFinite(axis.low) && Number.isFinite(axis.high) ? axis : { low, high };
+  return Number.isFinite(axis.high - axis.low) ? axis : { low, high };
 }
 
 /** How many ticks an axis aims for: plot-spec's `TARGET_TICKS`. */

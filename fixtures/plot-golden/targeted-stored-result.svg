@@ -26,12 +26,12 @@
 <circle cx="615.735" cy="545.619" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
 <circle cx="801.157" cy="587.524" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
 <circle cx="986.578" cy="598.000" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
-<line x1="1067.799" y1="55.333" x2="1085.799" y2="55.333" stroke="#1f4e9c" stroke-width="1.000"/>
-<circle cx="1076.799" cy="55.333" r="2.500" fill="#1f4e9c"/>
-<text x="1176.000" y="59.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">M (m/z 195.0877)</text>
-<line x1="1055.258" y1="69.333" x2="1073.258" y2="69.333" stroke="#9a4a00" stroke-width="1.000" stroke-dasharray="6 3"/>
-<circle cx="1064.258" cy="69.333" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
-<text x="1176.000" y="73.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">M+1 (m/z 196.0911)</text>
+<line x1="1059.799" y1="55.333" x2="1077.799" y2="55.333" stroke="#1f4e9c" stroke-width="1.000"/>
+<circle cx="1068.799" cy="55.333" r="2.500" fill="#1f4e9c"/>
+<text x="1168.000" y="59.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">M (m/z 195.0877)</text>
+<line x1="1047.258" y1="69.333" x2="1065.258" y2="69.333" stroke="#9a4a00" stroke-width="1.000" stroke-dasharray="6 3"/>
+<circle cx="1056.258" cy="69.333" r="2.500" fill="#ffffff" stroke="#9a4a00" stroke-width="1.000"/>
+<text x="1168.000" y="73.000" fill="#111111" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000" text-anchor="end" xml:space="preserve">M+1 (m/z 196.0911)</text>
 <line x1="615.735" y1="48.000" x2="615.735" y2="598.000" stroke="#b3261e" stroke-width="1.000" stroke-dasharray="4 3"/>
 <text x="618.735" y="60.000" fill="#b3261e" font-family="Arial, 'Liberation Sans', Helvetica, sans-serif" font-size="11.000"><tspan x="618.735" y="60.000" xml:space="preserve">Apex</tspan></text>
 <line x1="47.471" y1="598.000" x2="51.471" y2="598.000" stroke="#333333" stroke-width="1.000"/>

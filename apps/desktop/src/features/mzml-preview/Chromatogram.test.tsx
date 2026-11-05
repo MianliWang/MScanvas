@@ -807,6 +807,32 @@ describe("choosing a scan", () => {
     expect(parseFloat(document.querySelector<HTMLElement>(".plot-x-ticks .plot-tick")?.style.left ?? "")).toBeCloseTo(7.2, 6);
   });
 
+  it("keeps the frame's clip and rules, so a mark at either end of the band is drawn whole", () => {
+    renderChromatogram();
+
+    const clip = document.querySelector("#chromatogram-clip rect");
+    expect(clip).toHaveAttribute("x", "64");
+    expect(clip).toHaveAttribute("width", "924");
+    const gridline = document.querySelector(".plot-gridlines line");
+    expect(gridline).toHaveAttribute("x1", "64");
+    expect(gridline).toHaveAttribute("x2", "988");
+  });
+
+  it("keeps the last scan's rule and label on a range that ends a unit in the last place short of it", () => {
+    // What the reducer's clamp can leave when a drag reaches the run's end.
+    const last = 0.0125 * 49;
+    const high = last * (1 - Number.EPSILON);
+    expect(high).toBeLessThan(last);
+    renderChromatogram();
+    send({ type: "selection-committed", index: 49, retentionTime: last });
+    send({ type: "viewport-step", domain: { low: 0.2, high } });
+
+    const rule = document.querySelector("g.chromatogram-selected");
+    expect(Number(rule?.querySelector("line")?.getAttribute("x1"))).toBeGreaterThan(980);
+    expect(rule).toHaveAttribute("visibility", "visible");
+    expect(document.querySelector(".chromatogram-cursor-label")).toBeVisible();
+  });
+
   it("hides the rule and its label for a scan off the range on screen, even one that would land in the inset", () => {
     renderChromatogram();
     send({ type: "selection-committed", index: 20, retentionTime: 20 * 0.0125 });

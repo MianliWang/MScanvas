@@ -4,7 +4,7 @@ import { App } from "./App";
 import { PreviewApiProvider } from "../features/mzml-preview/api";
 import { CHROMATOGRAM_PLOT_BAND } from "../features/mzml-preview/Chromatogram";
 import { WorkspaceDropTransportProvider } from "../features/mzml-preview/dropTransport";
-import { SPECTRUM_PLOT_DRAWN_WIDTH, SPECTRUM_PLOT_PADDING_LEFT } from "../features/mzml-preview/StickSpectrum";
+import { SPECTRUM_PLOT_DRAWN_WIDTH, SPECTRUM_PLOT_BAND_LEFT } from "../features/mzml-preview/StickSpectrum";
 import { buildPreview, buildSpectrum, createFakePreviewApi, createFakeWorkspaceDropTransport, selectedFile } from "../test/previewFixtures";
 import { UI_RESOURCES } from "../features/preferences/i18n";
 
@@ -51,7 +51,7 @@ function plotIn(panel: HTMLElement) {
 }
 const point = (axis: "rt" | "mz", fraction: number) => axis === "rt"
   ? CHROMATOGRAM_PLOT_BAND.left + CHROMATOGRAM_PLOT_BAND.drawnWidth * fraction
-  : SPECTRUM_PLOT_PADDING_LEFT + SPECTRUM_PLOT_DRAWN_WIDTH * fraction;
+  : SPECTRUM_PLOT_BAND_LEFT + SPECTRUM_PLOT_DRAWN_WIDTH * fraction;
 function pointer(plot: HTMLElement, name: "pointerDown" | "pointerMove" | "pointerUp", x: number) {
   fireEvent[name](plot, { button: 0, pointerId: 1, isPrimary: true, pointerType: "mouse", clientX: x, clientY: 80 });
 }

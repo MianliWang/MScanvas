@@ -41,9 +41,10 @@ import { formatMz } from "./format";
 import { SpectrumViewport, SpectrumZoomControls } from "./SpectrumViewport";
 import {
   SPECTRUM_PLOT_DRAWN_WIDTH,
-  SPECTRUM_PLOT_PADDING_LEFT,
+  SPECTRUM_PLOT_BAND_LEFT,
   SPECTRUM_PLOT_VIEWBOX_WIDTH,
 } from "./StickSpectrum";
+import { xAt } from "./viewer/plotAxes";
 import type { SpectrumViewportEvent, SpectrumViewportState } from "./viewer/spectrumViewport";
 import { mzDomain, renderedMzDomain } from "./viewer/spectrumViewport";
 import type { SpectrumViewportAction } from "./viewer/spectrumViewportAction";
@@ -78,7 +79,7 @@ const REFUSED: SpectrumViewportDomain = { state: "refused", reason: "sourceNotOr
 const PLOT_PIXELS = SPECTRUM_PLOT_VIEWBOX_WIDTH;
 
 /** The middle of the drawn band, which is where a wheel anchors by default. */
-const CENTRE_X = SPECTRUM_PLOT_PADDING_LEFT + SPECTRUM_PLOT_DRAWN_WIDTH / 2;
+const CENTRE_X = SPECTRUM_PLOT_BAND_LEFT + SPECTRUM_PLOT_DRAWN_WIDTH / 2;
 
 const HEADING_ID = "selected-spectrum-heading";
 const HEADING = "Spectrum";
@@ -453,7 +454,7 @@ function cancelPointer(clientX: number, pointerId = 1): void {
 
 /** Where a fraction of the drawn band falls, in client pixels. */
 function clientXFor(fraction: number): number {
-  return SPECTRUM_PLOT_PADDING_LEFT + fraction * SPECTRUM_PLOT_DRAWN_WIDTH;
+  return SPECTRUM_PLOT_BAND_LEFT + fraction * SPECTRUM_PLOT_DRAWN_WIDTH;
 }
 
 function rangeText(): string {
@@ -1604,6 +1605,13 @@ describe("panning the spectrum with a press", () => {
     // Nothing was published for that frame, and the drawing moved anyway.
     expect(ownerRenders, "no render for the frame").toBe(publishedRenders);
     expect(layer()?.getAttribute("transform"), "the sticks moved").toMatch(/translate/u);
+    // To where the range on screen now puts them, on the band the sticks are drawn over.
+    const [shift, scale] = [...(layer()?.getAttribute("transform") ?? "").matchAll(/\((-?[\d.e+-]+) /gu)]
+      .map((match) => Number(match[1]));
+    const band = { left: 16, drawnWidth: 968 };
+    for (const mz of [200, 250, 300]) {
+      expect(scale * xAt(mz, shown(), band) + shift, `m/z ${String(mz)}`).toBeCloseTo(xAt(mz, liveShown(), band), 6);
+    }
     expect(rangeText(), "the range line moved").not.toBe(startedAt);
     expect(axisLow(), "the axis moved").toBe(formatMz(liveShown().low));
     // And its ticks with it: every one inside the range on screen now.

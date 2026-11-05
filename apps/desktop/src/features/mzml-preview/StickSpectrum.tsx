@@ -35,7 +35,7 @@ const STICK_BLEED = 4;
  */
 const BAND = xBand(PLOT_PADDING_LEFT, PLOT_WIDTH - PLOT_PADDING_RIGHT);
 export const SPECTRUM_PLOT_VIEWBOX_WIDTH = PLOT_WIDTH;
-export const SPECTRUM_PLOT_PADDING_LEFT = BAND.left;
+export const SPECTRUM_PLOT_BAND_LEFT = BAND.left;
 export const SPECTRUM_PLOT_DRAWN_WIDTH = BAND.drawnWidth;
 
 /**
